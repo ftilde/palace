@@ -6,3 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+sha1_smol = "1.0.0"
+memmap = "0.7.0"
+cgmath = "0.18.0"
+bytemuck = "1.12"
