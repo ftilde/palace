@@ -1,5 +1,14 @@
 use clap::Parser;
-use std::{collections::BTreeMap, fs::File, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    fs::File,
+    future::Future,
+    hash::{Hash, Hasher},
+    path::PathBuf,
+    pin::Pin,
+    task::{Context, RawWaker, RawWakerVTable, Waker},
+};
 
 type SVec3 = cgmath::Vector3<u32>;
 
@@ -46,9 +55,30 @@ impl From<Id> for OperatorId {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TaskId(Id);
+impl TaskId {
+    fn new(op: OperatorId, d: &DatumRequest) -> Self {
+        TaskId(Id::combine(&[op.0, d.id()]))
+    }
+}
+
+struct TaskInfo {
+    op: OperatorId,
+    data: DatumRequest,
+}
+impl TaskInfo {
+    fn new(op: OperatorId, data: DatumRequest) -> Self {
+        Self { op, data }
+    }
+    fn id(&self) -> TaskId {
+        TaskId::new(self.op, &self.data)
+    }
+}
+
+#[derive(Copy, Clone, Hash)]
 struct VoxelPosition(SVec3);
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 struct BrickPosition(SVec3);
 
 // TODO: Maybe we don't want this to be copy if it gets too large.
@@ -146,36 +176,33 @@ impl Datum {
 }
 
 #[non_exhaustive]
+#[derive(Hash)]
 enum DatumRequest {
     Value,
     Brick(BrickPosition),
 }
 
-trait Operator {
-    fn id(&self) -> OperatorId;
-    fn compute(&self, rt: &RunTime, info: DatumRequest) -> Result<Datum, Error>;
+impl DatumRequest {
+    fn id(&self) -> Id {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        let v = hasher.finish();
+        let hash = bytemuck::bytes_of(&v);
+        return Id::from_data(hash);
+    }
 }
 
-struct VariableString {
-    value: String,
-    id: OperatorId,
+trait Operator {
+    fn id(&self) -> OperatorId;
+    fn compute<'a>(
+        &'a self,
+        rt: &'a RunTime<'a>,
+        info: DatumRequest,
+    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a>;
 }
 
 // TODO look into thiserror/anyhow
 type Error = Box<(dyn std::error::Error + 'static)>;
-
-impl Operator for VariableString {
-    fn id(&self) -> OperatorId {
-        self.id
-    }
-    fn compute(&self, _rt: &RunTime, info: DatumRequest) -> Result<Datum, Error> {
-        if let DatumRequest::Value = info {
-            Ok(Datum::String(self.value.clone()))
-        } else {
-            Err("Invalid Request".into())
-        }
-    }
-}
 
 struct RawVolumeSource {
     path: PathBuf,
@@ -209,41 +236,50 @@ impl Operator for RawVolumeSource {
         OperatorId::new::<Self>(&[Id::from_data(self.path.to_string_lossy().as_bytes()).into()])
     }
 
-    fn compute(&self, _rt: &RunTime, info: DatumRequest) -> Result<Datum, Error> {
-        match info {
-            DatumRequest::Value => Ok(Datum::Volume(self.metadata)),
-            DatumRequest::Brick(pos) => {
-                let m = &self.metadata;
-                let begin = m.brick_begin(pos);
-                if !(begin.0.x < m.dimensions.0.x
-                    && begin.0.y < m.dimensions.0.y
-                    && begin.0.z < m.dimensions.0.z)
-                {
-                    return Err("Brick position is outside of volume".into());
-                }
-                let brick_dim = m.brick_dim(pos).0;
-
-                let mut brick = vec![0.0; hmul(m.brick_size.0) as usize];
-                let voxel_size = std::mem::size_of::<f32>();
-                for z in 0..brick_dim.z {
-                    for y in 0..brick_dim.y {
-                        let bu8 =
-                            voxel_size * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
-                        let eu8 = voxel_size
-                            * to_linear(begin.0 + cgmath::vec3(brick_dim.x, y, z), m.dimensions.0);
-
-                        let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
-                        let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
-
-                        let in_ = &self.mmap[bu8..eu8];
-                        let out = &mut brick[bf32..ef32];
-                        out.copy_from_slice(bytemuck::cast_slice(in_));
+    fn compute<'a>(
+        &'a self,
+        _rt: &'a RunTime<'a>,
+        info: DatumRequest,
+    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
+        Box::new(async move {
+            match info {
+                DatumRequest::Value => Ok(Datum::Volume(self.metadata)),
+                DatumRequest::Brick(pos) => {
+                    let m = &self.metadata;
+                    let begin = m.brick_begin(pos);
+                    if !(begin.0.x < m.dimensions.0.x
+                        && begin.0.y < m.dimensions.0.y
+                        && begin.0.z < m.dimensions.0.z)
+                    {
+                        return Err("Brick position is outside of volume".into());
                     }
+                    let brick_dim = m.brick_dim(pos).0;
+
+                    let mut brick = vec![0.0; hmul(m.brick_size.0) as usize];
+                    let voxel_size = std::mem::size_of::<f32>();
+                    for z in 0..brick_dim.z {
+                        for y in 0..brick_dim.y {
+                            let bu8 = voxel_size
+                                * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
+                            let eu8 = voxel_size
+                                * to_linear(
+                                    begin.0 + cgmath::vec3(brick_dim.x, y, z),
+                                    m.dimensions.0,
+                                );
+
+                            let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
+                            let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+
+                            let in_ = &self.mmap[bu8..eu8];
+                            let out = &mut brick[bf32..ef32];
+                            out.copy_from_slice(bytemuck::cast_slice(in_));
+                        }
+                    }
+                    Ok(Datum::Brick(brick))
                 }
-                Ok(Datum::Brick(brick))
+                _ => Err("Invalid Request".into()),
             }
-            _ => Err("Invalid Request".into()),
-        }
+        })
     }
 }
 
@@ -257,25 +293,38 @@ impl Operator for Scale {
         OperatorId::new::<Self>(&[self.vol, self.factor])
     }
 
-    fn compute(&self, rt: &RunTime, info: DatumRequest) -> Result<Datum, Error> {
-        match info {
-            DatumRequest::Value => {
-                // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
-                // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
-                // model VolumeMetaData for this.
-                rt.request(self.vol, DatumRequest::Value)
-            }
-            b_req @ DatumRequest::Brick(_) => {
-                let f = rt.request(self.factor, DatumRequest::Value)?.float()?;
-                let mut b = rt.request(self.vol, b_req)?.brick()?;
-
-                for v in &mut b {
-                    *v *= f;
+    fn compute<'a>(
+        &'a self,
+        rt: &'a RunTime<'a>,
+        info: DatumRequest,
+    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
+        Box::new(async move {
+            match info {
+                DatumRequest::Value => {
+                    // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
+                    // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
+                    // model VolumeMetaData for this.
+                    rt.request(self.id(), TaskInfo::new(self.vol, DatumRequest::Value))
+                        .await
                 }
+                b_req @ DatumRequest::Brick(_) => {
+                    let f = rt
+                        .request(self.id(), TaskInfo::new(self.factor, DatumRequest::Value))
+                        .await?
+                        .float()?;
+                    let mut b = rt
+                        .request(self.id(), TaskInfo::new(self.vol, b_req))
+                        .await?
+                        .brick()?;
 
-                Ok(Datum::Brick(b))
+                    for v in &mut b {
+                        *v *= f;
+                    }
+
+                    Ok(Datum::Brick(b))
+                }
             }
-        }
+        })
     }
 }
 
@@ -288,34 +337,47 @@ impl Operator for Mean {
         OperatorId::new::<Self>(&[self.vol])
     }
 
-    fn compute(&self, rt: &RunTime, info: DatumRequest) -> Result<Datum, Error> {
-        match info {
-            DatumRequest::Value => {
-                let mut sum = 0.0;
+    fn compute<'a>(
+        &'a self,
+        rt: &'a RunTime<'a>,
+        info: DatumRequest,
+    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
+        Box::new(async move {
+            match info {
+                DatumRequest::Value => {
+                    let mut sum = 0.0;
 
-                let vol = rt.request(self.vol, DatumRequest::Value)?.volume()?;
+                    let vol = rt
+                        .request(self.id(), TaskInfo::new(self.vol, DatumRequest::Value))
+                        .await?
+                        .volume()?;
 
-                let bd = vol.dimension_in_bricks();
-                for z in 0..bd.0.z {
-                    for y in 0..bd.0.y {
-                        for x in 0..bd.0.x {
-                            let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
-                            let brick_data = rt
-                                .request(self.vol, DatumRequest::Brick(brick_pos))?
-                                .brick()?;
+                    let bd = vol.dimension_in_bricks();
+                    for z in 0..bd.0.z {
+                        for y in 0..bd.0.y {
+                            for x in 0..bd.0.x {
+                                let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
+                                let brick_data = rt
+                                    .request(
+                                        self.id(),
+                                        TaskInfo::new(self.vol, DatumRequest::Brick(brick_pos)),
+                                    )
+                                    .await?
+                                    .brick()?;
 
-                            let brick = Brick::new(&brick_data, vol.brick_dim(brick_pos));
+                                let brick = Brick::new(&brick_data, vol.brick_dim(brick_pos));
 
-                            sum += brick.voxels().sum::<f32>();
+                                sum += brick.voxels().sum::<f32>();
+                            }
                         }
                     }
-                }
 
-                let v = sum / vol.num_voxels() as f32;
-                Ok(Datum::Float(v))
+                    let v = sum / vol.num_voxels() as f32;
+                    Ok(Datum::Float(v))
+                }
+                _ => Err("Invalid Request".into()),
             }
-            _ => Err("Invalid Request".into()),
-        }
+        })
     }
 }
 
@@ -324,21 +386,27 @@ impl Operator for f32 {
         OperatorId::new::<f32>(&[OperatorId(Id::from_data(bytemuck::bytes_of(self)))])
     }
 
-    fn compute(&self, _rt: &RunTime, info: DatumRequest) -> Result<Datum, Error> {
-        match info {
-            DatumRequest::Value => Ok(Datum::Float(*self)),
-            _ => Err("Invalid Request".into()),
-        }
+    fn compute<'a>(
+        &'a self,
+        _rt: &'a RunTime<'a>,
+        info: DatumRequest,
+    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
+        Box::new(async move {
+            match info {
+                DatumRequest::Value => Ok(Datum::Float(*self)),
+                _ => Err("Invalid Request".into()),
+            }
+        })
     }
 }
 
-struct RunTime {
+struct Network {
     operators: BTreeMap<OperatorId, Box<dyn Operator>>,
 }
 
-impl RunTime {
+impl Network {
     fn new() -> Self {
-        RunTime {
+        Network {
             operators: BTreeMap::new(),
         }
     }
@@ -348,12 +416,71 @@ impl RunTime {
         self.operators.insert(op.id(), Box::new(op));
         id
     }
-    fn request(&self, op: OperatorId, info: DatumRequest) -> Result<Datum, Error> {
+}
+
+struct RunTime<'a> {
+    network: &'a Network,
+    waker: Waker,
+    tasks: RefCell<BTreeMap<TaskId, Pin<Box<dyn Future<Output = Result<Datum, Error>> + 'a>>>>,
+}
+
+fn dummy_raw_waker() -> RawWaker {
+    fn no_op(_: *const ()) {}
+    fn clone(_: *const ()) -> RawWaker {
+        dummy_raw_waker()
+    }
+
+    let vtable = &RawWakerVTable::new(clone, no_op, no_op, no_op);
+    RawWaker::new(0 as *const (), vtable)
+}
+
+fn dummy_waker() -> Waker {
+    let raw = dummy_raw_waker();
+    // Safety: The dummy waker literally does nothing and thus upholds all cantracts of
+    // `RawWaker`/`RawWakerVTable`.
+    unsafe { Waker::from_raw(raw) }
+}
+
+impl<'a> RunTime<'a> {
+    fn new(network: &'a Network) -> Self {
+        RunTime {
+            network,
+            waker: dummy_waker(),
+            tasks: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    async fn request(&'a self, caller: OperatorId, info: TaskInfo) -> Result<Datum, Error> {
         // TODO: here caching
-        let Some(op) = self.operators.get(&op) else {
+        let task_id = info.id();
+        let Some(op) = self.network.operators.get(&info.op) else {
             return Err("Operator with specified id not found".into());
         };
-        op.compute(&self, info)
+        let mut task = Box::into_pin(op.compute(&self, info.data));
+        let mut context = Context::from_waker(&self.waker);
+
+        // TODO: not sure if we want to poll here once or not.
+        match task.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(res) => return res,
+            std::task::Poll::Pending => {}
+        }
+
+        self.tasks.borrow_mut().insert(task_id, task);
+
+        loop {
+            let mut tasks = self.tasks.borrow_mut();
+            let task = tasks.get_mut(&task_id).unwrap();
+
+            match task.as_mut().poll(&mut context) {
+                std::task::Poll::Ready(res) => return res,
+                std::task::Poll::Pending => {}
+            }
+        }
+        // TODO: figure out waking up tasks, construct a wait graph using caller and info
+    }
+
+    fn request_blocking(&self, op: OperatorId, info: DatumRequest) -> Result<Datum, Error> {
+        todo!()
     }
 }
 
@@ -376,22 +503,24 @@ struct CliArgs {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
-    let mut rt = RunTime::new();
+    let mut network = Network::new();
 
     let vol_info = VolumeMetaData {
         dimensions: VoxelPosition(cgmath::vec3(args.dim_x, args.dim_y, args.dim_z)),
         brick_size: VoxelPosition(cgmath::vec3(32, 32, 32)),
     };
 
-    let vol = rt.add(RawVolumeSource::open(args.raw_vol, vol_info)?);
+    let vol = network.add(RawVolumeSource::open(args.raw_vol, vol_info)?);
 
-    let factor = rt.add(args.factor);
+    let factor = network.add(args.factor);
 
-    let scaled = rt.add(Scale { vol, factor });
+    let scaled = network.add(Scale { vol, factor });
 
-    let mean = rt.add(Mean { vol: scaled });
+    let mean = network.add(Mean { vol: scaled });
 
-    let mean_val = rt.request(mean, DatumRequest::Value)?.float()?;
+    let rt = RunTime::new(&network);
+
+    let mean_val = rt.request_blocking(mean, DatumRequest::Value)?.float()?;
 
     println!("Computed scaled mean val: {}", mean_val);
     Ok(())
