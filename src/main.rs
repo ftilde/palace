@@ -1,13 +1,13 @@
 use clap::Parser;
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::File,
     future::Future,
     hash::{Hash, Hasher},
     path::PathBuf,
     pin::Pin,
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 mod array;
@@ -138,22 +138,15 @@ impl<'a> Brick<'a> {
 
 type BrickData = Vec<f32>;
 
+#[derive(Clone)] //TODO remove clone bound
 #[non_exhaustive]
 enum Datum {
-    String(String),
     Float(f32),
     Volume(VolumeMetaData),
     Brick(BrickData),
 }
 
 impl Datum {
-    fn string(self) -> Result<String, Error> {
-        if let Datum::String(v) = self {
-            Ok(v)
-        } else {
-            Err("Value is not a string".into())
-        }
-    }
     fn float(self) -> Result<f32, Error> {
         if let Datum::Float(v) = self {
             Ok(v)
@@ -196,11 +189,7 @@ impl DatumRequest {
 
 trait Operator {
     fn id(&self) -> OperatorId;
-    fn compute<'a>(
-        &'a self,
-        rt: &'a RunTime<'a>,
-        info: DatumRequest,
-    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a>;
+    fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a>;
 }
 
 // TODO look into thiserror/anyhow
@@ -238,12 +227,8 @@ impl Operator for RawVolumeSource {
         OperatorId::new::<Self>(&[Id::from_data(self.path.to_string_lossy().as_bytes()).into()])
     }
 
-    fn compute<'a>(
-        &'a self,
-        _rt: &'a RunTime<'a>,
-        info: DatumRequest,
-    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
-        Box::new(async move {
+    fn compute<'a>(&'a self, _rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+        async move {
             match info {
                 DatumRequest::Value => Ok(Datum::Volume(self.metadata)),
                 DatumRequest::Brick(pos) => {
@@ -281,7 +266,8 @@ impl Operator for RawVolumeSource {
                 }
                 _ => Err("Invalid Request".into()),
             }
-        })
+        }
+        .into()
     }
 }
 
@@ -295,27 +281,24 @@ impl Operator for Scale {
         OperatorId::new::<Self>(&[self.vol, self.factor])
     }
 
-    fn compute<'a>(
-        &'a self,
-        rt: &'a RunTime<'a>,
-        info: DatumRequest,
-    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
-        Box::new(async move {
+    fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+        async move {
+            let this_id = TaskId::new(self.id(), &info);
             match info {
                 DatumRequest::Value => {
                     // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
                     // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
                     // model VolumeMetaData for this.
-                    rt.request(self.id(), TaskInfo::new(self.vol, DatumRequest::Value))
+                    rt.request(this_id, TaskInfo::new(self.vol, DatumRequest::Value))
                         .await
                 }
                 b_req @ DatumRequest::Brick(_) => {
                     let f = rt
-                        .request(self.id(), TaskInfo::new(self.factor, DatumRequest::Value))
+                        .request(this_id, TaskInfo::new(self.factor, DatumRequest::Value))
                         .await?
                         .float()?;
                     let mut b = rt
-                        .request(self.id(), TaskInfo::new(self.vol, b_req))
+                        .request(this_id, TaskInfo::new(self.vol, b_req))
                         .await?
                         .brick()?;
 
@@ -326,7 +309,8 @@ impl Operator for Scale {
                     Ok(Datum::Brick(b))
                 }
             }
-        })
+        }
+        .into()
     }
 }
 
@@ -339,18 +323,15 @@ impl Operator for Mean {
         OperatorId::new::<Self>(&[self.vol])
     }
 
-    fn compute<'a>(
-        &'a self,
-        rt: &'a RunTime<'a>,
-        info: DatumRequest,
-    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
-        Box::new(async move {
+    fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+        async move {
+            let this_id = TaskId::new(self.id(), &info);
             match info {
                 DatumRequest::Value => {
                     let mut sum = 0.0;
 
                     let vol = rt
-                        .request(self.id(), TaskInfo::new(self.vol, DatumRequest::Value))
+                        .request(this_id, TaskInfo::new(self.vol, DatumRequest::Value))
                         .await?
                         .volume()?;
 
@@ -361,7 +342,7 @@ impl Operator for Mean {
                                 let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
                                 let brick_data = rt
                                     .request(
-                                        self.id(),
+                                        this_id,
                                         TaskInfo::new(self.vol, DatumRequest::Brick(brick_pos)),
                                     )
                                     .await?
@@ -379,7 +360,8 @@ impl Operator for Mean {
                 }
                 _ => Err("Invalid Request".into()),
             }
-        })
+        }
+        .into()
     }
 }
 
@@ -388,17 +370,14 @@ impl Operator for f32 {
         OperatorId::new::<f32>(&[OperatorId(Id::from_data(bytemuck::bytes_of(self)))])
     }
 
-    fn compute<'a>(
-        &'a self,
-        _rt: &'a RunTime<'a>,
-        info: DatumRequest,
-    ) -> Box<dyn Future<Output = Result<Datum, Error>> + 'a> {
-        Box::new(async move {
+    fn compute<'a>(&'a self, _rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+        async move {
             match info {
                 DatumRequest::Value => Ok(Datum::Float(*self)),
                 _ => Err("Invalid Request".into()),
             }
-        })
+        }
+        .into()
     }
 }
 
@@ -420,10 +399,73 @@ impl Network {
     }
 }
 
-struct RunTime<'a> {
-    network: &'a Network,
-    waker: Waker,
-    tasks: RefCell<BTreeMap<TaskId, Pin<Box<dyn Future<Output = Result<Datum, Error>> + 'a>>>>,
+struct Task<'a>(Pin<Box<dyn Future<Output = Result<Datum, Error>> + 'a>>);
+
+impl<'a, F> From<F> for Task<'a>
+where
+    F: Future<Output = Result<Datum, Error>> + 'a,
+{
+    fn from(inner: F) -> Self {
+        Self(Box::pin(inner))
+    }
+}
+
+struct TaskGraph<'a> {
+    tasks: BTreeMap<TaskId, Task<'a>>,
+    deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // key requires values
+    rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // values require key
+    ready: BTreeSet<TaskId>,
+}
+
+impl<'a> TaskGraph<'a> {
+    fn new() -> Self {
+        Self {
+            tasks: BTreeMap::new(),
+            deps: BTreeMap::new(),
+            rev_deps: BTreeMap::new(),
+            ready: BTreeSet::new(),
+        }
+    }
+
+    fn exists(&self, id: TaskId) -> bool {
+        self.tasks.contains_key(&id)
+    }
+
+    fn add(&mut self, id: TaskId, task: Task<'a>) {
+        let prev = self.tasks.insert(id, task);
+        assert!(prev.is_none(), "Tried to insert task twice");
+        self.ready.insert(id);
+    }
+
+    fn add_dependency(&mut self, wants: TaskId, wanted: TaskId) {
+        self.deps.entry(wants).or_default().insert(wanted);
+        self.rev_deps.entry(wanted).or_default().insert(wants);
+        self.ready.remove(&wants);
+    }
+
+    fn resolved(&mut self, id: TaskId) {
+        let removed = self.tasks.remove(&id);
+        assert!(removed.is_some(), "Task was not present");
+        self.ready.remove(&id);
+
+        for rev_dep in self.rev_deps.remove(&id).iter().flatten() {
+            let deps_of_rev_dep = self.deps.get_mut(&rev_dep).unwrap();
+            let removed = deps_of_rev_dep.remove(&id);
+            assert!(removed);
+            if deps_of_rev_dep.is_empty() {
+                let inserted = self.ready.insert(*rev_dep);
+                assert!(inserted);
+            }
+        }
+    }
+
+    fn get_mut(&mut self, id: TaskId) -> &mut Task<'a> {
+        self.tasks.get_mut(&id).unwrap() //TODO: make api here nicer to avoid unwraps etc.
+    }
+
+    fn ready(&self) -> Vec<TaskId> {
+        self.ready.iter().cloned().collect()
+    }
 }
 
 fn dummy_raw_waker() -> RawWaker {
@@ -443,46 +485,152 @@ fn dummy_waker() -> Waker {
     unsafe { Waker::from_raw(raw) }
 }
 
+struct Request {
+    caller: TaskId,
+    info: TaskInfo,
+}
+
+struct Storage {
+    memory_cache: RefCell<BTreeMap<TaskId, Datum>>,
+}
+
+impl Storage {
+    fn new() -> Self {
+        Self {
+            memory_cache: RefCell::new(BTreeMap::new()),
+        }
+    }
+    fn store_ram(&self, key: TaskId, datum: Datum) {
+        let prev = self.memory_cache.borrow_mut().insert(key, datum);
+        assert!(prev.is_none());
+    }
+    fn read_ram(&self, key: TaskId) -> Option<Datum> {
+        self.memory_cache.borrow().get(&key).cloned()
+    }
+}
+
+struct RunTime<'a> {
+    network: &'a Network,
+    waker: Waker,
+    tasks: TaskGraph<'a>,
+    storage: &'a Storage,
+    request_queue: &'a RequestQueue,
+}
+
+struct RequestQueue {
+    buffer: RefCell<VecDeque<Request>>,
+}
+impl RequestQueue {
+    fn new() -> Self {
+        Self {
+            buffer: RefCell::new(VecDeque::new()),
+        }
+    }
+    fn push(&self, req: Request) {
+        self.buffer.borrow_mut().push_back(req)
+    }
+    fn drain<'a>(&'a self) -> impl Iterator<Item = Request> + 'a {
+        self.buffer
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+
+#[derive(Copy, Clone)]
+struct TaskContext<'a> {
+    requests: &'a RequestQueue,
+    storage: &'a Storage,
+}
+
+impl<'a> TaskContext<'a> {
+    async fn request(&'a self, caller: TaskId, info: TaskInfo) -> Result<Datum, Error> {
+        let task_id = info.id();
+        if let Some(data) = self.storage.read_ram(task_id) {
+            return Ok(data.clone());
+        }
+        self.requests.push(Request { caller, info });
+        std::future::poll_fn(|_ctx| loop {
+            if let Some(data) = self.storage.read_ram(task_id) {
+                return Poll::Ready(Ok(data.clone()));
+            } else {
+                return Poll::Pending;
+            }
+        })
+        .await
+    }
+}
+
 impl<'a> RunTime<'a> {
-    fn new(network: &'a Network) -> Self {
+    fn new(network: &'a Network, storage: &'a Storage, request_queue: &'a RequestQueue) -> Self {
         RunTime {
             network,
             waker: dummy_waker(),
-            tasks: RefCell::new(BTreeMap::new()),
+            tasks: TaskGraph::new(),
+            storage,
+            request_queue,
+        }
+    }
+    fn context(&self) -> TaskContext<'a> {
+        TaskContext {
+            requests: self.request_queue,
+            storage: self.storage,
         }
     }
 
-    async fn request(&'a self, caller: OperatorId, info: TaskInfo) -> Result<Datum, Error> {
-        // TODO: here caching
-        let task_id = info.id();
-        let Some(op) = self.network.operators.get(&info.op) else {
-            return Err("Operator with specified id not found".into());
-        };
-        let mut task = Box::into_pin(op.compute(&self, info.data));
-        let mut context = Context::from_waker(&self.waker);
-
-        // TODO: not sure if we want to poll here once or not.
-        match task.as_mut().poll(&mut context) {
-            std::task::Poll::Ready(res) => return res,
-            std::task::Poll::Pending => {}
-        }
-
-        self.tasks.borrow_mut().insert(task_id, task);
-
+    fn run(&mut self) -> Result<(), Error> {
         loop {
-            let mut tasks = self.tasks.borrow_mut();
-            let task = tasks.get_mut(&task_id).unwrap();
+            let ready = self.tasks.ready();
+            if ready.is_empty() {
+                return Ok(());
+            }
+            for task_id in ready {
+                let mut ctx = Context::from_waker(&self.waker);
+                let task = self.tasks.get_mut(task_id);
+                match task.0.as_mut().poll(&mut ctx) {
+                    Poll::Ready(res) => {
+                        self.storage.store_ram(task_id, res?);
+                        self.tasks.resolved(task_id);
+                    }
+                    Poll::Pending => {
+                        // TODO: we can get rid of the caller argument in a lot of the functions
+                        // above because we implicitly know that these came for precisely this task.
+                        for req in self.request_queue.drain() {
+                            let Some(op) = self.network.operators.get(&req.info.op) else {
+                                return Err("Operator with specified id not found".into());
+                            };
 
-            match task.as_mut().poll(&mut context) {
-                std::task::Poll::Ready(res) => return res,
-                std::task::Poll::Pending => {}
+                            let task_id = req.info.id();
+                            if !self.tasks.exists(task_id) {
+                                let task = op.compute(self.context(), req.info.data);
+
+                                self.tasks.add(task_id, task);
+                            }
+                            self.tasks.add_dependency(req.caller, task_id);
+                        }
+                    }
+                };
             }
         }
-        // TODO: figure out waking up tasks, construct a wait graph using caller and info
     }
 
-    fn request_blocking(&self, op: OperatorId, info: DatumRequest) -> Result<Datum, Error> {
-        todo!()
+    fn request_blocking(&mut self, op: OperatorId, req: DatumRequest) -> Result<Datum, Error> {
+        let info = TaskInfo::new(op, req);
+        let Some(op) = self.network.operators.get(&op) else {
+            return Err("Operator with specified id not found".into());
+        };
+        let task_id = info.id();
+        let task = op.compute(self.context(), info.data);
+
+        self.tasks.add(task_id, task);
+
+        // TODO this can probably be optimized to only compute the values necessary for the
+        // requested task. (Although the question is if such a situation ever occurs with the
+        // current API...)
+        self.run()?;
+
+        Ok(self.storage.read_ram(task_id).unwrap().clone())
     }
 }
 
@@ -516,11 +664,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let factor = network.add(args.factor);
 
-    let scaled = network.add(Scale { vol, factor });
+    let scaled1 = network.add(Scale { vol, factor });
 
-    let mean = network.add(Mean { vol: scaled });
+    let scaled2 = network.add(Scale {
+        vol: scaled1,
+        factor,
+    });
 
-    let rt = RunTime::new(&network);
+    let mean = network.add(Mean { vol: scaled2 });
+
+    let storage = Storage::new();
+    let request_queue = RequestQueue::new();
+    let mut rt = RunTime::new(&network, &storage, &request_queue);
 
     let mean_val = rt.request_blocking(mean, DatumRequest::Value)?.float()?;
 
