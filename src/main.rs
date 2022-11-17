@@ -10,6 +10,8 @@ use std::{
     task::{Context, RawWaker, RawWakerVTable, Waker},
 };
 
+mod array;
+
 type SVec3 = cgmath::Vector3<u32>;
 
 fn hmul<S>(s: cgmath::Vector3<S>) -> S
