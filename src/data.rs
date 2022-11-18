@@ -2,8 +2,6 @@ use crate::task::TaskId;
 use crate::Error;
 use std::{cell::RefCell, collections::BTreeMap};
 
-pub type BrickData = Vec<f32>;
-
 #[derive(Clone)] //TODO remove clone bound
 #[non_exhaustive]
 pub enum Datum {
@@ -62,6 +60,12 @@ where
     s.x * s.y * s.z
 }
 
+pub fn to_linear(pos: SVec3, dim: SVec3) -> usize {
+    let pos = pos.cast::<usize>().unwrap();
+    let dim = dim.cast::<usize>().unwrap();
+    (pos.z * dim.y + pos.y) * dim.y + pos.x
+}
+
 pub type SVec3 = cgmath::Vector3<u32>;
 
 #[derive(Copy, Clone, Hash)]
@@ -100,5 +104,26 @@ impl VolumeMetaData {
     }
     pub fn brick_dim(&self, pos: BrickPosition) -> VoxelPosition {
         VoxelPosition(self.brick_end(pos).0 - self.brick_begin(pos).0)
+    }
+}
+
+pub type BrickData = Vec<f32>;
+
+pub struct Brick<'a> {
+    size: VoxelPosition,
+    data: &'a [f32],
+}
+
+impl<'a> Brick<'a> {
+    pub fn new(data: &'a BrickData, size: VoxelPosition) -> Self {
+        Self {
+            data: data.as_slice(),
+            size,
+        }
+    }
+    pub fn voxels(&'a self) -> impl Iterator<Item = f32> + 'a {
+        itertools::iproduct! { 0..self.size.0.z, 0..self.size.0.y, 0..self.size.0.x }
+            .map(|(z, y, x)| to_linear(cgmath::vec3(x, y, z), self.size.0))
+            .map(|i| self.data[i])
     }
 }
