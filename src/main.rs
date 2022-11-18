@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::{
-    data::{Storage, VolumeMetaData, VoxelPosition},
+    data::{Storage, VoxelPosition},
     operator::Network,
-    operators::{Mean, RawVolumeSource, Scale},
+    operators::{Mean, Scale, VvdVolumeSource},
     task::DatumRequest,
 };
 
@@ -23,13 +23,6 @@ type Error = Box<(dyn std::error::Error + 'static)>;
 #[derive(Parser)]
 struct CliArgs {
     #[arg()]
-    dim_x: u32,
-    #[arg()]
-    dim_y: u32,
-    #[arg()]
-    dim_z: u32,
-
-    #[arg()]
     raw_vol: PathBuf,
 
     #[arg(short, long, default_value = "1.0")]
@@ -41,12 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut network = Network::new();
 
-    let vol_info = VolumeMetaData {
-        dimensions: VoxelPosition(cgmath::vec3(args.dim_x, args.dim_y, args.dim_z)),
-        brick_size: VoxelPosition(cgmath::vec3(32, 32, 32)),
-    };
+    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
 
-    let vol = network.add(RawVolumeSource::open(args.raw_vol, vol_info)?);
+    let vol = network.add(VvdVolumeSource::open(&args.raw_vol, brick_size)?);
 
     let factor = network.add(args.factor);
 

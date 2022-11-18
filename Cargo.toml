@@ -13,3 +13,4 @@ bytemuck = "1.12"
 itertools = "0.10"
 clap = { version = "4.0", features = ["derive"] }
 derive_more = "0.99"
+hard-xml = "0.6"
