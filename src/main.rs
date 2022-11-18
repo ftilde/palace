@@ -38,6 +38,30 @@ impl Id {
     }
 }
 
+#[derive(Copy, Clone)]
+struct TaskContext<'a> {
+    requests: &'a RequestQueue,
+    storage: &'a Storage,
+}
+
+impl<'a> TaskContext<'a> {
+    async fn request(&'a self, caller: TaskId, info: TaskInfo) -> Result<Datum, Error> {
+        let task_id = info.id();
+        if let Some(data) = self.storage.read_ram(task_id) {
+            return Ok(data.clone());
+        }
+        self.requests.push(Request { caller, info });
+        std::future::poll_fn(|_ctx| loop {
+            if let Some(data) = self.storage.read_ram(task_id) {
+                return Poll::Ready(Ok(data.clone()));
+            } else {
+                return Poll::Pending;
+            }
+        })
+        .await
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct OperatorId(Id);
 impl OperatorId {
@@ -509,14 +533,6 @@ impl Storage {
     }
 }
 
-struct RunTime<'a> {
-    network: &'a Network,
-    waker: Waker,
-    tasks: TaskGraph<'a>,
-    storage: &'a Storage,
-    request_queue: &'a RequestQueue,
-}
-
 struct RequestQueue {
     buffer: RefCell<VecDeque<Request>>,
 }
@@ -538,28 +554,23 @@ impl RequestQueue {
     }
 }
 
-#[derive(Copy, Clone)]
-struct TaskContext<'a> {
-    requests: &'a RequestQueue,
-    storage: &'a Storage,
+struct Statistics {
+    tasks_executed: usize,
 }
 
-impl<'a> TaskContext<'a> {
-    async fn request(&'a self, caller: TaskId, info: TaskInfo) -> Result<Datum, Error> {
-        let task_id = info.id();
-        if let Some(data) = self.storage.read_ram(task_id) {
-            return Ok(data.clone());
-        }
-        self.requests.push(Request { caller, info });
-        std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram(task_id) {
-                return Poll::Ready(Ok(data.clone()));
-            } else {
-                return Poll::Pending;
-            }
-        })
-        .await
+impl Statistics {
+    fn new() -> Self {
+        Self { tasks_executed: 0 }
     }
+}
+
+struct RunTime<'a> {
+    network: &'a Network,
+    waker: Waker,
+    tasks: TaskGraph<'a>,
+    storage: &'a Storage,
+    request_queue: &'a RequestQueue,
+    statistics: Statistics,
 }
 
 impl<'a> RunTime<'a> {
@@ -570,6 +581,7 @@ impl<'a> RunTime<'a> {
             tasks: TaskGraph::new(),
             storage,
             request_queue,
+            statistics: Statistics::new(),
         }
     }
     fn context(&self) -> TaskContext<'a> {
@@ -592,6 +604,7 @@ impl<'a> RunTime<'a> {
                     Poll::Ready(res) => {
                         self.storage.store_ram(task_id, res?);
                         self.tasks.resolved(task_id);
+                        self.statistics.tasks_executed += 1;
                     }
                     Poll::Pending => {
                         // TODO: we can get rid of the caller argument in a lot of the functions
@@ -672,6 +685,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let mean = network.add(Mean { vol: scaled2 });
+    let mean_unscaled = network.add(Mean { vol });
 
     let storage = Storage::new();
     let request_queue = RequestQueue::new();
@@ -679,6 +693,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mean_val = rt.request_blocking(mean, DatumRequest::Value)?.float()?;
 
-    println!("Computed scaled mean val: {}", mean_val);
+    let tasks_executed = rt.statistics.tasks_executed;
+    println!(
+        "Computed scaled mean val: {} ({} tasks)",
+        mean_val, tasks_executed
+    );
+    let mean_val_unscaled = rt
+        .request_blocking(mean_unscaled, DatumRequest::Value)?
+        .float()?;
+    let tasks_executed = rt.statistics.tasks_executed - tasks_executed;
+    println!(
+        "Computed unscaled mean val: {} ({} tasks)",
+        mean_val_unscaled, tasks_executed
+    );
+
     Ok(())
 }
