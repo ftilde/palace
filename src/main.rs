@@ -21,7 +21,7 @@ where
     s.x * s.y * s.z
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Id([u8; 20]);
 
 impl Id {
@@ -38,31 +38,7 @@ impl Id {
     }
 }
 
-#[derive(Copy, Clone)]
-struct TaskContext<'a> {
-    requests: &'a RequestQueue,
-    storage: &'a Storage,
-}
-
-impl<'a> TaskContext<'a> {
-    async fn request(&'a self, caller: TaskId, info: TaskInfo) -> Result<Datum, Error> {
-        let task_id = info.id();
-        if let Some(data) = self.storage.read_ram(task_id) {
-            return Ok(data.clone());
-        }
-        self.requests.push(Request { caller, info });
-        std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram(task_id) {
-                return Poll::Ready(Ok(data.clone()));
-            } else {
-                return Poll::Pending;
-            }
-        })
-        .await
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct OperatorId(Id);
 impl OperatorId {
     fn new<T>(inputs: &[OperatorId]) -> Self {
@@ -81,7 +57,7 @@ impl From<Id> for OperatorId {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct TaskId(Id);
 impl TaskId {
     fn new(op: OperatorId, d: &DatumRequest) -> Self {
@@ -211,6 +187,30 @@ impl DatumRequest {
     }
 }
 
+#[derive(Copy, Clone)]
+struct TaskContext<'a> {
+    requests: &'a RequestQueue,
+    storage: &'a Storage,
+}
+
+impl<'a> TaskContext<'a> {
+    async fn request(&'a self, info: TaskInfo) -> Result<Datum, Error> {
+        let task_id = info.id();
+        if let Some(data) = self.storage.read_ram(task_id) {
+            return Ok(data.clone());
+        }
+        self.requests.push(info);
+        std::future::poll_fn(|_ctx| loop {
+            if let Some(data) = self.storage.read_ram(task_id) {
+                return Poll::Ready(Ok(data.clone()));
+            } else {
+                return Poll::Pending;
+            }
+        })
+        .await
+    }
+}
+
 trait Operator {
     fn id(&self) -> OperatorId;
     fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a>;
@@ -307,24 +307,20 @@ impl Operator for Scale {
 
     fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
         async move {
-            let this_id = TaskId::new(self.id(), &info);
             match info {
                 DatumRequest::Value => {
                     // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
                     // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
                     // model VolumeMetaData for this.
-                    rt.request(this_id, TaskInfo::new(self.vol, DatumRequest::Value))
+                    rt.request(TaskInfo::new(self.vol, DatumRequest::Value))
                         .await
                 }
                 b_req @ DatumRequest::Brick(_) => {
                     let f = rt
-                        .request(this_id, TaskInfo::new(self.factor, DatumRequest::Value))
+                        .request(TaskInfo::new(self.factor, DatumRequest::Value))
                         .await?
                         .float()?;
-                    let mut b = rt
-                        .request(this_id, TaskInfo::new(self.vol, b_req))
-                        .await?
-                        .brick()?;
+                    let mut b = rt.request(TaskInfo::new(self.vol, b_req)).await?.brick()?;
 
                     for v in &mut b {
                         *v *= f;
@@ -349,13 +345,12 @@ impl Operator for Mean {
 
     fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
         async move {
-            let this_id = TaskId::new(self.id(), &info);
             match info {
                 DatumRequest::Value => {
                     let mut sum = 0.0;
 
                     let vol = rt
-                        .request(this_id, TaskInfo::new(self.vol, DatumRequest::Value))
+                        .request(TaskInfo::new(self.vol, DatumRequest::Value))
                         .await?
                         .volume()?;
 
@@ -365,10 +360,10 @@ impl Operator for Mean {
                             for x in 0..bd.0.x {
                                 let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
                                 let brick_data = rt
-                                    .request(
-                                        this_id,
-                                        TaskInfo::new(self.vol, DatumRequest::Brick(brick_pos)),
-                                    )
+                                    .request(TaskInfo::new(
+                                        self.vol,
+                                        DatumRequest::Brick(brick_pos),
+                                    ))
                                     .await?
                                     .brick()?;
 
@@ -509,11 +504,6 @@ fn dummy_waker() -> Waker {
     unsafe { Waker::from_raw(raw) }
 }
 
-struct Request {
-    caller: TaskId,
-    info: TaskInfo,
-}
-
 struct Storage {
     memory_cache: RefCell<BTreeMap<TaskId, Datum>>,
 }
@@ -534,7 +524,7 @@ impl Storage {
 }
 
 struct RequestQueue {
-    buffer: RefCell<VecDeque<Request>>,
+    buffer: RefCell<VecDeque<TaskInfo>>,
 }
 impl RequestQueue {
     fn new() -> Self {
@@ -542,15 +532,18 @@ impl RequestQueue {
             buffer: RefCell::new(VecDeque::new()),
         }
     }
-    fn push(&self, req: Request) {
+    fn push(&self, req: TaskInfo) {
         self.buffer.borrow_mut().push_back(req)
     }
-    fn drain<'a>(&'a self) -> impl Iterator<Item = Request> + 'a {
+    fn drain<'a>(&'a self) -> impl Iterator<Item = TaskInfo> + 'a {
         self.buffer
             .borrow_mut()
             .drain(..)
             .collect::<Vec<_>>()
             .into_iter()
+    }
+    fn is_empty(&self) -> bool {
+        self.buffer.borrow().is_empty()
     }
 }
 
@@ -600,6 +593,12 @@ impl<'a> RunTime<'a> {
             for task_id in ready {
                 let mut ctx = Context::from_waker(&self.waker);
                 let task = self.tasks.get_mut(task_id);
+
+                // The queue should always just contain the tasks that are enqueued by polling the
+                // following task! This is important so that we know the calling tasks id for the
+                // generated requests.
+                assert!(self.request_queue.is_empty());
+
                 match task.0.as_mut().poll(&mut ctx) {
                     Poll::Ready(res) => {
                         self.storage.store_ram(task_id, res?);
@@ -607,20 +606,19 @@ impl<'a> RunTime<'a> {
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Pending => {
-                        // TODO: we can get rid of the caller argument in a lot of the functions
-                        // above because we implicitly know that these came for precisely this task.
+                        let caller_id = task_id;
                         for req in self.request_queue.drain() {
-                            let Some(op) = self.network.operators.get(&req.info.op) else {
+                            let Some(op) = self.network.operators.get(&req.op) else {
                                 return Err("Operator with specified id not found".into());
                             };
 
-                            let task_id = req.info.id();
+                            let task_id = req.id();
                             if !self.tasks.exists(task_id) {
-                                let task = op.compute(self.context(), req.info.data);
+                                let task = op.compute(self.context(), req.data);
 
                                 self.tasks.add(task_id, task);
                             }
-                            self.tasks.add_dependency(req.caller, task_id);
+                            self.tasks.add_dependency(caller_id, task_id);
                         }
                     }
                 };
