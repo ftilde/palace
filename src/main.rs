@@ -16,6 +16,7 @@ mod operator;
 mod operators;
 mod runtime;
 mod task;
+mod vulkan;
 
 // TODO look into thiserror/anyhow
 type Error = Box<(dyn std::error::Error + 'static)>;
@@ -30,6 +31,8 @@ struct CliArgs {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _vulkan_manager = vulkan::VulkanManager::new();
+    
     let args = CliArgs::parse();
 
     let mut network = Network::new();
