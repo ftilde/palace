@@ -1,7 +1,7 @@
 use std::{fs::File, path::PathBuf};
 
 use crate::{
-    data::{hmul, to_linear, Datum, VolumeMetaData},
+    data::{hmul, to_linear, VolumeMetaData},
     id::Id,
     operator::{Operator, OperatorId},
     task::{DatumRequest, Task, TaskContext},
@@ -34,10 +34,10 @@ impl Operator for RawVolumeSource {
         OperatorId::new::<Self>(&[Id::from_data(self.path.to_string_lossy().as_bytes()).into()])
     }
 
-    fn compute<'a>(&'a self, _rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+    fn compute<'a>(&'a self, ctx: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
         async move {
             match info {
-                DatumRequest::Value => Ok(Datum::Volume(self.metadata)),
+                DatumRequest::Value => ctx.write_to_ram(&info, self.metadata),
                 DatumRequest::Brick(pos) => {
                     let m = &self.metadata;
                     let begin = m.brick_begin(pos);
@@ -48,28 +48,46 @@ impl Operator for RawVolumeSource {
                         return Err("Brick position is outside of volume".into());
                     }
                     let brick_dim = m.brick_dim(pos).0;
+                    let num_voxels = hmul(m.brick_size.0) as usize;
 
-                    let mut brick = vec![0.0; hmul(m.brick_size.0) as usize];
                     let voxel_size = std::mem::size_of::<f32>();
-                    for z in 0..brick_dim.z {
-                        for y in 0..brick_dim.y {
-                            let bu8 = voxel_size
-                                * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
-                            let eu8 = voxel_size
-                                * to_linear(
-                                    begin.0 + cgmath::vec3(brick_dim.x, y, z),
-                                    m.dimensions.0,
-                                );
 
-                            let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
-                            let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+                    // Safety: We are zeroing all brick data in a first step.
+                    // TODO: We might want to lift this restriction in the future
+                    unsafe {
+                        ctx.with_ram_slot_slice::<f32, _>(&info, num_voxels, |brick_data| {
+                            brick_data.iter_mut().for_each(|v| {
+                                v.write(0.0);
+                            });
 
-                            let in_ = &self.mmap[bu8..eu8];
-                            let out = &mut brick[bf32..ef32];
-                            out.copy_from_slice(bytemuck::cast_slice(in_));
-                        }
+                            for z in 0..brick_dim.z {
+                                for y in 0..brick_dim.y {
+                                    let bu8 = voxel_size
+                                        * to_linear(
+                                            begin.0 + cgmath::vec3(0, y, z),
+                                            m.dimensions.0,
+                                        );
+                                    let eu8 = voxel_size
+                                        * to_linear(
+                                            begin.0 + cgmath::vec3(brick_dim.x, y, z),
+                                            m.dimensions.0,
+                                        );
+
+                                    let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
+                                    let ef32 =
+                                        to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+
+                                    let in_ = &self.mmap[bu8..eu8];
+                                    let out = &mut brick_data[bf32..ef32];
+                                    let in_slice: &[f32] = bytemuck::cast_slice(in_);
+                                    for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
+                                        out.write(*in_);
+                                    }
+                                }
+                            }
+                            Ok(())
+                        })
                     }
-                    Ok(Datum::Brick(brick))
                 }
             }
         }

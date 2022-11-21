@@ -1,57 +1,4 @@
-use crate::task::TaskId;
-use crate::Error;
-use std::{cell::RefCell, collections::BTreeMap};
-
-#[derive(Clone)] //TODO remove clone bound
-#[non_exhaustive]
-pub enum Datum {
-    Float(f32),
-    Volume(VolumeMetaData),
-    Brick(BrickData),
-}
-
-impl Datum {
-    pub fn float(self) -> Result<f32, Error> {
-        if let Datum::Float(v) = self {
-            Ok(v)
-        } else {
-            Err("Value is not a float".into())
-        }
-    }
-    pub fn volume(self) -> Result<VolumeMetaData, Error> {
-        if let Datum::Volume(v) = self {
-            Ok(v)
-        } else {
-            Err("Value is not a volume".into())
-        }
-    }
-    pub fn brick(self) -> Result<BrickData, Error> {
-        if let Datum::Brick(v) = self {
-            Ok(v)
-        } else {
-            Err("Value is not a brick".into())
-        }
-    }
-}
-
-pub struct Storage {
-    memory_cache: RefCell<BTreeMap<TaskId, Datum>>,
-}
-
-impl Storage {
-    pub fn new() -> Self {
-        Self {
-            memory_cache: RefCell::new(BTreeMap::new()),
-        }
-    }
-    pub fn store_ram(&self, key: TaskId, datum: Datum) {
-        let prev = self.memory_cache.borrow_mut().insert(key, datum);
-        assert!(prev.is_none());
-    }
-    pub fn read_ram(&self, key: TaskId) -> Option<Datum> {
-        self.memory_cache.borrow().get(&key).cloned()
-    }
-}
+use bytemuck::{AnyBitPattern, Zeroable};
 
 pub fn hmul<S>(s: cgmath::Vector3<S>) -> S
 where
@@ -73,8 +20,12 @@ pub struct VoxelPosition(pub SVec3);
 #[derive(Copy, Clone, Hash)]
 pub struct BrickPosition(pub SVec3);
 
+// TODO: Check if this is actually valid...
+unsafe impl Zeroable for VoxelPosition {}
+unsafe impl AnyBitPattern for VoxelPosition {}
+
 // TODO: Maybe we don't want this to be copy if it gets too large.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, AnyBitPattern)]
 pub struct VolumeMetaData {
     pub dimensions: VoxelPosition,
     pub brick_size: VoxelPosition,
@@ -107,19 +58,14 @@ impl VolumeMetaData {
     }
 }
 
-pub type BrickData = Vec<f32>;
-
 pub struct Brick<'a> {
     size: VoxelPosition,
     data: &'a [f32],
 }
 
 impl<'a> Brick<'a> {
-    pub fn new(data: &'a BrickData, size: VoxelPosition) -> Self {
-        Self {
-            data: data.as_slice(),
-            size,
-        }
+    pub fn new(data: &'a [f32], size: VoxelPosition) -> Self {
+        Self { data, size }
     }
     pub fn voxels(&'a self) -> impl Iterator<Item = f32> + 'a {
         itertools::iproduct! { 0..self.size.0.z, 0..self.size.0.y, 0..self.size.0.x }

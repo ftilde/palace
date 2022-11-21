@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::{
-    data::{Storage, VoxelPosition},
+    data::VoxelPosition,
     operator::Network,
     operators::{Mean, Scale, VvdVolumeSource},
+    storage::Storage,
     task::DatumRequest,
 };
 
@@ -15,6 +16,7 @@ mod id;
 mod operator;
 mod operators;
 mod runtime;
+mod storage;
 mod task;
 mod vulkan;
 
@@ -53,20 +55,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mean = network.add(Mean::new(scaled2));
     let mean_unscaled = network.add(Mean::new(vol));
 
-    let storage = Storage::new();
+    let storage_size = 1 << 30; //One gigabyte
+    let storage = Storage::new(storage_size);
     let request_queue = runtime::RequestQueue::new();
     let mut rt = runtime::RunTime::new(&network, &storage, &request_queue);
 
-    let mean_val = rt.request_blocking(mean, DatumRequest::Value)?.float()?;
+    let mean_val = unsafe { rt.request_blocking::<f32>(mean, DatumRequest::Value)? };
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
         "Computed scaled mean val: {} ({} tasks)",
         mean_val, tasks_executed
     );
-    let mean_val_unscaled = rt
-        .request_blocking(mean_unscaled, DatumRequest::Value)?
-        .float()?;
+    let mean_val_unscaled =
+        unsafe { rt.request_blocking::<f32>(mean_unscaled, DatumRequest::Value)? };
     let tasks_executed = rt.statistics().tasks_executed - tasks_executed;
     println!(
         "Computed unscaled mean val: {} ({} tasks)",

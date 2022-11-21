@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    data::{Datum, Storage},
     operator::{Network, OperatorId},
+    storage::Storage,
     task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
     Error,
 };
@@ -38,10 +38,11 @@ impl<'a> RunTime<'a> {
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self) -> TaskContext<'a> {
+    fn context(&self, op: OperatorId) -> TaskContext<'a> {
         TaskContext {
             requests: self.request_queue,
             storage: self.storage,
+            active: op,
         }
     }
 
@@ -61,10 +62,12 @@ impl<'a> RunTime<'a> {
                 assert!(self.request_queue.is_empty());
 
                 match task.as_mut().poll(&mut ctx) {
-                    Poll::Ready(res) => {
-                        self.storage.store_ram(task_id, res?);
+                    Poll::Ready(Ok(_)) => {
                         self.tasks.resolved(task_id);
                         self.statistics.tasks_executed += 1;
+                    }
+                    Poll::Ready(Err(e)) => {
+                        panic!("Task executed with error: {}", e)
                     }
                     Poll::Pending => {
                         let caller_id = task_id;
@@ -75,7 +78,7 @@ impl<'a> RunTime<'a> {
 
                             let task_id = req.id();
                             if !self.tasks.exists(task_id) {
-                                let task = op.compute(self.context(), req.data);
+                                let task = op.compute(self.context(req.operator), req.data);
 
                                 self.tasks.add(task_id, task);
                             }
@@ -87,13 +90,18 @@ impl<'a> RunTime<'a> {
         }
     }
 
-    pub fn request_blocking(&mut self, op: OperatorId, req: DatumRequest) -> Result<Datum, Error> {
-        let info = TaskInfo::new(op, req);
-        let Some(op) = self.network.get(op) else {
+    /// Safety: The specified type must be the result of the operation
+    pub unsafe fn request_blocking<T>(
+        &mut self,
+        op_id: OperatorId,
+        req: DatumRequest,
+    ) -> Result<&'a T, Error> {
+        let info = TaskInfo::new(op_id, req);
+        let Some(op) = self.network.get(op_id) else {
             return Err("Operator with specified id not found".into());
         };
         let task_id = info.id();
-        let task = op.compute(self.context(), info.data);
+        let task = op.compute(self.context(op_id), info.data);
 
         self.tasks.add(task_id, task);
 
@@ -102,7 +110,7 @@ impl<'a> RunTime<'a> {
         // current API...)
         self.run()?;
 
-        Ok(self.storage.read_ram(task_id).unwrap().clone())
+        Ok(self.storage.read_ram(task_id).unwrap())
     }
 }
 
