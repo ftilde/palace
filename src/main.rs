@@ -24,7 +24,7 @@ type Error = Box<(dyn std::error::Error + 'static)>;
 #[derive(Parser)]
 struct CliArgs {
     #[arg()]
-    raw_vol: PathBuf,
+    vvd_vol: PathBuf,
 
     #[arg(short, long, default_value = "1.0")]
     factor: f32,
@@ -32,14 +32,14 @@ struct CliArgs {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _vulkan_manager = vulkan::VulkanManager::new();
-    
+
     let args = CliArgs::parse();
 
     let mut network = Network::new();
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
 
-    let vol = network.add(VvdVolumeSource::open(&args.raw_vol, brick_size)?);
+    let vol = network.add(VvdVolumeSource::open(&args.vvd_vol, brick_size)?);
 
     let factor = network.add(args.factor);
 
