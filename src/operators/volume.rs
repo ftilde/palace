@@ -9,44 +9,34 @@ use crate::{
     Error,
 };
 
-use super::{PodOperator, PodOperatorWrite};
+use super::{ScalarOperator, ScalarTaskContext};
 
-pub trait VolumeOperatorWrite {
-    fn write_metadata<'op, 'tasks>(
-        &'op self,
-        ctx: TaskContext<'op, 'tasks>,
-        metadata: VolumeMetaData,
-    ) -> Result<(), Error>;
-    unsafe fn write_brick<'op, 'tasks, F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
-        &'op self,
-        ctx: TaskContext<'op, 'tasks>,
-        pos: BrickPosition,
-        num_voxels: usize,
-        f: F,
-    ) -> Result<(), Error>;
+pub struct VolumeTaskContext<'op, 'tasks> {
+    inner: TaskContext<'op, 'tasks>,
+    id: OperatorId,
 }
 
-impl<T> VolumeOperatorWrite for T
-where
-    T: VolumeOperator + Sized,
-{
-    fn write_metadata<'op, 'tasks>(
-        &'op self,
-        ctx: TaskContext<'op, 'tasks>,
-        metadata: VolumeMetaData,
-    ) -> Result<(), Error> {
-        let id = TaskId::new(self.id(), &DatumRequest::Value);
-        ctx.write_to_ram(id, metadata)
+impl<'op, 'tasks> std::ops::Deref for VolumeTaskContext<'op, 'tasks> {
+    type Target = TaskContext<'op, 'tasks>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
-    unsafe fn write_brick<'op, 'tasks, F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
-        &'op self,
-        ctx: TaskContext<'op, 'tasks>,
+}
+
+impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
+    pub fn write_metadata(&self, metadata: VolumeMetaData) -> Result<(), Error> {
+        let id = TaskId::new(self.id, &DatumRequest::Value);
+        self.inner.write_to_ram(id, metadata)
+    }
+    pub unsafe fn write_brick<F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
+        &self,
         pos: BrickPosition,
         num_voxels: usize,
         f: F,
     ) -> Result<(), Error> {
-        let id = TaskId::new(self.id(), &DatumRequest::Brick(pos));
-        unsafe { ctx.with_ram_slot_slice(id, num_voxels, f) }
+        let id = TaskId::new(self.id, &DatumRequest::Brick(pos));
+        unsafe { self.inner.with_ram_slot_slice(id, num_voxels, f) }
     }
 }
 
@@ -54,10 +44,20 @@ pub async fn request_metadata<'op, 'tasks>(
     vol: &'op dyn VolumeOperator,
     ctx: TaskContext<'op, 'tasks>,
 ) -> Result<&'tasks VolumeMetaData, Error> {
-    let id = TaskId::new(vol.id(), &DatumRequest::Value); //TODO: revisit
+    let op_id = vol.id();
+    let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
     let v: &VolumeMetaData = unsafe {
-        ctx.request(id, Box::new(move |ctx| vol.compute_metadata(ctx)))
-            .await?
+        ctx.request(
+            id,
+            Box::new(move |ctx| {
+                let ctx = VolumeTaskContext {
+                    inner: ctx,
+                    id: op_id,
+                };
+                vol.compute_metadata(ctx)
+            }),
+        )
+        .await?
     };
     Ok(v)
 }
@@ -70,11 +70,18 @@ pub async fn request_brick<'op, 'tasks>(
 ) -> Result<&'tasks [f32], Error> {
     let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
-    let id = TaskId::new(vol.id(), &req); //TODO: revisit
+    let op_id = vol.id();
+    let id = TaskId::new(op_id, &req); //TODO: revisit
     unsafe {
         ctx.request_slice::<f32>(
             id,
-            Box::new(move |ctx| vol.compute_brick(ctx, pos)),
+            Box::new(move |ctx| {
+                let ctx = VolumeTaskContext {
+                    inner: ctx,
+                    id: op_id,
+                };
+                vol.compute_brick(ctx, pos)
+            }),
             num_voxels,
         )
         .await
@@ -82,10 +89,13 @@ pub async fn request_brick<'op, 'tasks>(
 }
 
 pub trait VolumeOperator: Operator {
-    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks>;
+    fn compute_metadata<'op, 'tasks>(
+        &'op self,
+        ctx: VolumeTaskContext<'op, 'tasks>,
+    ) -> Task<'tasks>;
     fn compute_brick<'op, 'tasks>(
         &'op self,
-        ctx: TaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'op, 'tasks>,
         position: BrickPosition,
     ) -> Task<'tasks>;
 
@@ -126,7 +136,7 @@ pub trait VolumeOperator: Operator {
 
 pub struct Scale<'op> {
     pub vol: &'op dyn VolumeOperator,
-    pub factor: &'op dyn PodOperator<f32>,
+    pub factor: &'op dyn ScalarOperator<f32>,
 }
 
 impl Operator for Scale<'_> {
@@ -137,31 +147,34 @@ impl Operator for Scale<'_> {
 }
 
 impl VolumeOperator for Scale<'_> {
-    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
+    fn compute_metadata<'op, 'tasks>(
+        &'op self,
+        ctx: VolumeTaskContext<'op, 'tasks>,
+    ) -> Task<'tasks> {
         // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
         // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
         // model VolumeMetaData for this.
         async move {
-            let m = request_metadata(self.vol, ctx).await?;
-            self.write_metadata(ctx, *m)
+            let m = request_metadata(self.vol, *ctx).await?;
+            ctx.write_metadata(*m)
         }
         .into()
     }
 
     fn compute_brick<'op, 'tasks>(
         &'op self,
-        ctx: TaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'op, 'tasks>,
         position: BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let v = request_metadata(self.vol, ctx).await?;
-            let f = self.factor.request_value(ctx).await?;
-            let b = request_brick(self.vol, ctx, &v, position).await?;
+            let v = request_metadata(self.vol, *ctx).await?;
+            let f = self.factor.request_value(*ctx).await?;
+            let b = request_brick(self.vol, *ctx, &v, position).await?;
 
             let num_voxels = hmul(v.brick_size.0) as usize;
 
             unsafe {
-                self.write_brick(ctx, position, num_voxels, |buf| {
+                ctx.write_brick(position, num_voxels, |buf| {
                     for (i, o) in b.iter().zip(buf.iter_mut()) {
                         o.write(*f * *i);
                     }
@@ -183,19 +196,22 @@ impl Operator for Mean<'_> {
         OperatorId::new::<Self>(&[self.vol.id()])
     }
 }
-impl PodOperator<f32> for Mean<'_> {
-    fn compute_value<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
+impl ScalarOperator<f32> for Mean<'_> {
+    fn compute_value<'op, 'tasks>(
+        &'op self,
+        ctx: ScalarTaskContext<'op, 'tasks, f32>,
+    ) -> Task<'tasks> {
         async move {
             let mut sum = 0.0;
 
-            let vol = request_metadata(self.vol, ctx).await?;
+            let vol = request_metadata(self.vol, *ctx).await?;
 
             let bd = vol.dimension_in_bricks();
             for z in 0..bd.0.z {
                 for y in 0..bd.0.y {
                     for x in 0..bd.0.x {
                         let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
-                        let brick_data = request_brick(self.vol, ctx, &vol, brick_pos).await?;
+                        let brick_data = request_brick(self.vol, *ctx, &vol, brick_pos).await?;
 
                         let brick = Brick::new(brick_data, vol.brick_dim(brick_pos));
 
@@ -206,7 +222,7 @@ impl PodOperator<f32> for Mean<'_> {
 
             let v = sum / vol.num_voxels() as f32;
 
-            self.write(ctx, &v)
+            ctx.write(&v)
         }
         .into()
     }

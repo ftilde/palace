@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    operators::PodOperator,
+    operators::{ScalarOperator, ScalarTaskContext},
     storage::Storage,
     task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
     Error,
@@ -86,10 +86,15 @@ where
     /// Safety: The specified type must be the result of the operation
     pub unsafe fn request_blocking<T: bytemuck::Pod>(
         &mut self,
-        p: &'op dyn PodOperator<T>,
+        p: &'op dyn ScalarOperator<T>,
     ) -> Result<&'tasks T, Error> {
         let op_id = p.id();
-        let task = p.compute_value(self.context());
+        let ctx = ScalarTaskContext {
+            op_id,
+            inner: self.context(),
+            marker: Default::default(),
+        };
+        let task = p.compute_value(ctx);
 
         let task_id = TaskId::new(op_id, &DatumRequest::Value);
         self.tasks.add(task_id, task);

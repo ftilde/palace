@@ -4,8 +4,8 @@ use crate::{
     data::{hmul, to_linear, VolumeMetaData},
     id::Id,
     operator::{Operator, OperatorId},
-    operators::{VolumeOperator, VolumeOperatorWrite},
-    task::{Task, TaskContext},
+    operators::{VolumeOperator, VolumeTaskContext},
+    task::Task,
     Error,
 };
 
@@ -39,7 +39,7 @@ impl Operator for RawVolumeSource {
 impl VolumeOperator for RawVolumeSource {
     fn compute_brick<'op, 'tasks>(
         &'op self,
-        ctx: TaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'op, 'tasks>,
         pos: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {
@@ -59,7 +59,7 @@ impl VolumeOperator for RawVolumeSource {
             // Safety: We are zeroing all brick data in a first step.
             // TODO: We might want to lift this restriction in the future
             unsafe {
-                self.write_brick(ctx, pos, num_voxels, |brick_data| {
+                ctx.write_brick(pos, num_voxels, |brick_data| {
                     brick_data.iter_mut().for_each(|v| {
                         v.write(0.0);
                     });
@@ -92,7 +92,10 @@ impl VolumeOperator for RawVolumeSource {
         .into()
     }
 
-    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
-        async move { self.write_metadata(ctx, self.metadata) }.into()
+    fn compute_metadata<'op, 'tasks>(
+        &'op self,
+        ctx: VolumeTaskContext<'op, 'tasks>,
+    ) -> Task<'tasks> {
+        async move { ctx.write_metadata(self.metadata) }.into()
     }
 }

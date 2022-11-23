@@ -13,39 +13,64 @@ impl<T: bytemuck::Pod> Operator for T {
     }
 }
 
-pub trait PodOperatorWrite<T> {
-    fn write<'op, 'tasks>(&self, ctx: TaskContext<'op, 'tasks>, value: &T) -> Result<(), Error>;
+// TODO remove those pub when request_blocking in RunTime is figured out
+pub struct ScalarTaskContext<'op, 'tasks, T> {
+    pub inner: TaskContext<'op, 'tasks>,
+    pub op_id: OperatorId,
+    pub marker: std::marker::PhantomData<T>,
 }
 
-impl<T, P> PodOperatorWrite<T> for P
-where
-    P: PodOperator<T> + Sized,
-    T: bytemuck::Pod,
-{
-    fn write<'op, 'tasks>(&self, ctx: TaskContext<'op, 'tasks>, value: &T) -> Result<(), Error> {
-        let id = TaskId::new(self.id(), &DatumRequest::Value);
-        ctx.write_to_ram(id, *value)
+impl<'op, 'tasks, T> std::ops::Deref for ScalarTaskContext<'op, 'tasks, T> {
+    type Target = TaskContext<'op, 'tasks>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
-pub trait PodOperator<T: bytemuck::Pod>: Operator {
-    fn compute_value<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks>;
+impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
+    pub fn write(&self, value: &T) -> Result<(), Error> {
+        let id = TaskId::new(self.op_id, &DatumRequest::Value);
+        self.inner.write_to_ram(id, *value)
+    }
+}
+
+pub trait ScalarOperator<T: bytemuck::Pod>: Operator {
+    fn compute_value<'op, 'tasks>(
+        &'op self,
+        ctx: ScalarTaskContext<'op, 'tasks, T>,
+    ) -> Task<'tasks>;
+
     fn request_value<'op, 'tasks>(
         &'op self,
         ctx: TaskContext<'op, 'tasks>,
     ) -> Pin<Box<dyn Future<Output = Result<&'tasks T, Error>> + 'tasks>> {
         Box::pin(async move {
-            let id = TaskId::new(self.id(), &DatumRequest::Value);
+            let op_id = self.id();
+            let id = TaskId::new(op_id, &DatumRequest::Value);
             unsafe {
-                ctx.request::<T>(id, Box::new(move |ctx| self.compute_value(ctx)))
-                    .await
+                ctx.request::<T>(
+                    id,
+                    Box::new(move |ctx| {
+                        let ctx = ScalarTaskContext {
+                            inner: ctx,
+                            op_id,
+                            marker: Default::default(),
+                        };
+                        self.compute_value(ctx)
+                    }),
+                )
+                .await
             }
         })
     }
 }
 
-impl<T: bytemuck::Pod> PodOperator<T> for T {
-    fn compute_value<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
-        async move { self.write(ctx, &*self) }.into()
+impl<T: bytemuck::Pod> ScalarOperator<T> for T {
+    fn compute_value<'op, 'tasks>(
+        &'op self,
+        ctx: ScalarTaskContext<'op, 'tasks, T>,
+    ) -> Task<'tasks> {
+        async move { ctx.write(&*self) }.into()
     }
 }

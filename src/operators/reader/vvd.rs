@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::{
     data::{hmul, SVec3, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
-    operators::{request_brick, request_metadata, VolumeOperator, VolumeOperatorWrite},
-    task::{Task, TaskContext},
+    operators::{request_brick, request_metadata, VolumeOperator, VolumeTaskContext},
+    task::Task,
     Error,
 };
 
@@ -89,25 +89,28 @@ impl Operator for VvdVolumeSource {
 }
 
 impl VolumeOperator for VvdVolumeSource {
-    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
+    fn compute_metadata<'op, 'tasks>(
+        &'op self,
+        ctx: VolumeTaskContext<'op, 'tasks>,
+    ) -> Task<'tasks> {
         async move {
-            let m = request_metadata(&self.raw, ctx).await?;
-            self.write_metadata(ctx, *m)
+            let m = request_metadata(&self.raw, *ctx).await?;
+            ctx.write_metadata(*m)
         }
         .into()
     }
 
     fn compute_brick<'op, 'tasks>(
         &'op self,
-        ctx: TaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'op, 'tasks>,
         position: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let m = request_metadata(&self.raw, ctx).await?;
-            let b = request_brick(&self.raw, ctx, &m, position).await?;
+            let m = request_metadata(&self.raw, *ctx).await?;
+            let b = request_brick(&self.raw, *ctx, &m, position).await?;
             let num_voxels = hmul(m.brick_size.0) as usize;
             unsafe {
-                self.write_brick(ctx, position, num_voxels, |o| {
+                ctx.write_brick(position, num_voxels, |o| {
                     for (i, o) in b.iter().zip(o.iter_mut()) {
                         o.write(*i);
                     }
