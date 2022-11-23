@@ -35,36 +35,38 @@ impl TaskId {
 }
 
 #[derive(Constructor)]
-pub struct TaskInfo {
-    pub operator: OperatorId,
-    pub data: DatumRequest,
+pub struct TaskInfo<'op> {
+    pub id: TaskId,
+    pub task: Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>,
 }
-impl TaskInfo {
+impl TaskInfo<'_> {
     pub fn id(&self) -> TaskId {
-        TaskId::new(self.operator, &self.data)
+        self.id
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct TaskContext<'a> {
-    pub requests: &'a RequestQueue,
-    pub storage: &'a Storage,
-    pub active: OperatorId,
+pub struct TaskContext<'op, 'tasks> {
+    pub requests: &'tasks RequestQueue<'op>,
+    pub storage: &'tasks Storage,
 }
 
-impl<'a> TaskContext<'a> {
+impl<'op, 'tasks> TaskContext<'op, 'tasks>
+where
+    'op: 'tasks,
+{
     /// Safety: The requested type must match the task's result
     pub async unsafe fn request<'r, T: AnyBitPattern + 'r>(
-        &'r self,
-        info: TaskInfo,
-    ) -> Result<&'r T, Error> {
-        let task_id = info.id();
-        if let Some(data) = self.storage.read_ram(task_id) {
+        self,
+        id: TaskId,
+        task: Box<dyn 'op + for<'t> FnOnce(TaskContext<'op, 't>) -> Task<'t>>,
+    ) -> Result<&'tasks T, Error> {
+        if let Some(data) = self.storage.read_ram(id) {
             return Ok(data);
         }
-        self.requests.push(info);
+        self.requests.push(TaskInfo { id, task });
         std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram(task_id) {
+            if let Some(data) = self.storage.read_ram(id) {
                 return Poll::Ready(Ok(data));
             } else {
                 return Poll::Pending;
@@ -74,18 +76,18 @@ impl<'a> TaskContext<'a> {
     }
 
     /// Safety: The requested type must match the task's result
-    pub async unsafe fn request_slice<'r, T: AnyBitPattern + 'r>(
-        &'r self,
-        info: TaskInfo,
+    pub async unsafe fn request_slice<T: AnyBitPattern>(
+        self,
+        id: TaskId,
+        task: Box<dyn 'op + for<'t> FnOnce(TaskContext<'op, 't>) -> Task<'t>>,
         size: usize,
-    ) -> Result<&'r [T], Error> {
-        let task_id = info.id();
-        if let Some(data) = self.storage.read_ram_slice(task_id, size) {
+    ) -> Result<&'tasks [T], Error> {
+        if let Some(data) = self.storage.read_ram_slice(id, size) {
             return Ok(data);
         }
-        self.requests.push(info);
+        self.requests.push(TaskInfo { id, task });
         std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram_slice(task_id, size) {
+            if let Some(data) = self.storage.read_ram_slice(id, size) {
                 return Poll::Ready(Ok(data));
             } else {
                 return Poll::Pending;
@@ -100,10 +102,9 @@ impl<'a> TaskContext<'a> {
         F: FnOnce(&mut MaybeUninit<T>) -> Result<(), Error>,
     >(
         &self,
-        request: &DatumRequest,
+        id: TaskId,
         f: F,
     ) -> Result<(), Error> {
-        let id = TaskId::new(self.active, request);
         self.storage.with_ram_slot(id, f)
     }
 
@@ -113,21 +114,16 @@ impl<'a> TaskContext<'a> {
         F: FnOnce(&mut [MaybeUninit<T>]) -> Result<(), Error>,
     >(
         &self,
-        request: &DatumRequest,
+        id: TaskId,
         size: usize,
         f: F,
     ) -> Result<(), Error> {
-        let id = TaskId::new(self.active, request);
         self.storage.with_ram_slot_slice(id, size, f)
     }
 
-    pub fn write_to_ram<T: AnyBitPattern>(
-        &self,
-        request: &DatumRequest,
-        value: T,
-    ) -> Result<(), Error> {
+    pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
         unsafe {
-            self.with_ram_slot(request, |v| {
+            self.with_ram_slot(id, |v| {
                 v.write(value);
                 Ok(())
             })

@@ -4,9 +4,10 @@ use sxd_xpath::evaluate_xpath;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    data::{SVec3, VolumeMetaData, VoxelPosition},
+    data::{hmul, SVec3, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Task, TaskContext},
+    operators::{request_brick, request_metadata, VolumeOperator, VolumeOperatorWrite},
+    task::{Task, TaskContext},
     Error,
 };
 
@@ -85,8 +86,35 @@ impl Operator for VvdVolumeSource {
     fn id(&self) -> OperatorId {
         OperatorId::new::<Self>(&[self.raw.id()])
     }
+}
 
-    fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
-        self.raw.compute(rt, info)
+impl VolumeOperator for VvdVolumeSource {
+    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
+        async move {
+            let m = request_metadata(&self.raw, ctx).await?;
+            self.write_metadata(ctx, *m)
+        }
+        .into()
+    }
+
+    fn compute_brick<'op, 'tasks>(
+        &'op self,
+        ctx: TaskContext<'op, 'tasks>,
+        position: crate::data::BrickPosition,
+    ) -> Task<'tasks> {
+        async move {
+            let m = request_metadata(&self.raw, ctx).await?;
+            let b = request_brick(&self.raw, ctx, &m, position).await?;
+            let num_voxels = hmul(m.brick_size.0) as usize;
+            unsafe {
+                self.write_brick(ctx, position, num_voxels, |o| {
+                    for (i, o) in b.iter().zip(o.iter_mut()) {
+                        o.write(*i);
+                    }
+                    Ok(())
+                })
+            }
+        }
+        .into()
     }
 }

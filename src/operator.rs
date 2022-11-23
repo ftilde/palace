@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-
 use crate::id::Id;
-use crate::task::{DatumRequest, Task, TaskContext};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct OperatorId(Id);
@@ -27,27 +24,4 @@ impl From<Id> for OperatorId {
 
 pub trait Operator {
     fn id(&self) -> OperatorId;
-    fn compute<'a>(&'a self, rt: TaskContext<'a>, info: DatumRequest) -> Task<'a>;
-}
-
-pub struct Network {
-    operators: BTreeMap<OperatorId, Box<dyn Operator>>,
-}
-
-impl Network {
-    pub fn new() -> Self {
-        Network {
-            operators: BTreeMap::new(),
-        }
-    }
-
-    pub fn add(&mut self, op: impl Operator + 'static) -> OperatorId {
-        let id = op.id();
-        self.operators.insert(op.id(), Box::new(op));
-        id
-    }
-
-    pub fn get(&self, op: OperatorId) -> Option<&dyn Operator> {
-        self.operators.get(&op).map(|op| &**op)
-    }
 }

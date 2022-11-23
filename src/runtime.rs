@@ -5,29 +5,27 @@ use std::{
 };
 
 use crate::{
-    operator::{Network, OperatorId},
+    operators::PodOperator,
     storage::Storage,
     task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
     Error,
 };
 
-pub struct RunTime<'a> {
-    network: &'a Network,
+pub struct RunTime<'op, 'queue, 'tasks> {
     waker: Waker,
-    tasks: TaskGraph<'a>,
-    storage: &'a Storage,
-    request_queue: &'a RequestQueue,
+    tasks: TaskGraph<'tasks>,
+    storage: &'tasks Storage,
+    request_queue: &'queue RequestQueue<'op>,
     statistics: Statistics,
 }
 
-impl<'a> RunTime<'a> {
-    pub fn new(
-        network: &'a Network,
-        storage: &'a Storage,
-        request_queue: &'a RequestQueue,
-    ) -> Self {
+impl<'op, 'queue, 'tasks> RunTime<'op, 'queue, 'tasks>
+where
+    'op: 'queue,
+    'queue: 'tasks,
+{
+    pub fn new(storage: &'tasks Storage, request_queue: &'queue RequestQueue<'op>) -> Self {
         RunTime {
-            network,
             waker: dummy_waker(),
             tasks: TaskGraph::new(),
             storage,
@@ -38,11 +36,10 @@ impl<'a> RunTime<'a> {
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self, op: OperatorId) -> TaskContext<'a> {
+    fn context(&self) -> TaskContext<'op, 'tasks> {
         TaskContext {
             requests: self.request_queue,
             storage: self.storage,
-            active: op,
         }
     }
 
@@ -72,14 +69,10 @@ impl<'a> RunTime<'a> {
                     Poll::Pending => {
                         let caller_id = task_id;
                         for req in self.request_queue.drain() {
-                            let Some(op) = self.network.get(req.operator) else {
-                                return Err("Operator with specified id not found".into());
-                            };
-
                             let task_id = req.id();
+                            let context = self.context();
+                            let task = (req.task)(context);
                             if !self.tasks.exists(task_id) {
-                                let task = op.compute(self.context(req.operator), req.data);
-
                                 self.tasks.add(task_id, task);
                             }
                             self.tasks.add_dependency(caller_id, task_id);
@@ -91,18 +84,14 @@ impl<'a> RunTime<'a> {
     }
 
     /// Safety: The specified type must be the result of the operation
-    pub unsafe fn request_blocking<T>(
+    pub unsafe fn request_blocking<T: bytemuck::Pod>(
         &mut self,
-        op_id: OperatorId,
-        req: DatumRequest,
-    ) -> Result<&'a T, Error> {
-        let info = TaskInfo::new(op_id, req);
-        let Some(op) = self.network.get(op_id) else {
-            return Err("Operator with specified id not found".into());
-        };
-        let task_id = info.id();
-        let task = op.compute(self.context(op_id), info.data);
+        p: &'op dyn PodOperator<T>,
+    ) -> Result<&'tasks T, Error> {
+        let op_id = p.id();
+        let task = p.compute_value(self.context());
 
+        let task_id = TaskId::new(op_id, &DatumRequest::Value);
         self.tasks.add(task_id, task);
 
         // TODO this can probably be optimized to only compute the values necessary for the
@@ -199,19 +188,19 @@ impl Statistics {
     }
 }
 
-pub struct RequestQueue {
-    buffer: RefCell<VecDeque<TaskInfo>>,
+pub struct RequestQueue<'op> {
+    buffer: RefCell<VecDeque<TaskInfo<'op>>>,
 }
-impl RequestQueue {
+impl<'op> RequestQueue<'op> {
     pub fn new() -> Self {
         Self {
             buffer: RefCell::new(VecDeque::new()),
         }
     }
-    pub fn push(&self, req: TaskInfo) {
+    pub fn push(&self, req: TaskInfo<'op>) {
         self.buffer.borrow_mut().push_back(req)
     }
-    pub fn drain<'a>(&'a self) -> impl Iterator<Item = TaskInfo> + 'a {
+    pub fn drain<'b>(&'b self) -> impl Iterator<Item = TaskInfo<'op>> + 'b {
         self.buffer
             .borrow_mut()
             .drain(..)

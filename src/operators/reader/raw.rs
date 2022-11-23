@@ -4,7 +4,8 @@ use crate::{
     data::{hmul, to_linear, VolumeMetaData},
     id::Id,
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Task, TaskContext},
+    operators::{VolumeOperator, VolumeOperatorWrite},
+    task::{Task, TaskContext},
     Error,
 };
 
@@ -33,64 +34,65 @@ impl Operator for RawVolumeSource {
     fn id(&self) -> OperatorId {
         OperatorId::new::<Self>(&[Id::from_data(self.path.to_string_lossy().as_bytes()).into()])
     }
+}
 
-    fn compute<'a>(&'a self, ctx: TaskContext<'a>, info: DatumRequest) -> Task<'a> {
+impl VolumeOperator for RawVolumeSource {
+    fn compute_brick<'op, 'tasks>(
+        &'op self,
+        ctx: TaskContext<'op, 'tasks>,
+        pos: crate::data::BrickPosition,
+    ) -> Task<'tasks> {
         async move {
-            match info {
-                DatumRequest::Value => ctx.write_to_ram(&info, self.metadata),
-                DatumRequest::Brick(pos) => {
-                    let m = &self.metadata;
-                    let begin = m.brick_begin(pos);
-                    if !(begin.0.x < m.dimensions.0.x
-                        && begin.0.y < m.dimensions.0.y
-                        && begin.0.z < m.dimensions.0.z)
-                    {
-                        return Err("Brick position is outside of volume".into());
-                    }
-                    let brick_dim = m.brick_dim(pos).0;
-                    let num_voxels = hmul(m.brick_size.0) as usize;
+            let m = &self.metadata;
+            let begin = m.brick_begin(pos);
+            if !(begin.0.x < m.dimensions.0.x
+                && begin.0.y < m.dimensions.0.y
+                && begin.0.z < m.dimensions.0.z)
+            {
+                return Err("Brick position is outside of volume".into());
+            }
+            let brick_dim = m.brick_dim(pos).0;
+            let num_voxels = hmul(m.brick_size.0) as usize;
 
-                    let voxel_size = std::mem::size_of::<f32>();
+            let voxel_size = std::mem::size_of::<f32>();
 
-                    // Safety: We are zeroing all brick data in a first step.
-                    // TODO: We might want to lift this restriction in the future
-                    unsafe {
-                        ctx.with_ram_slot_slice::<f32, _>(&info, num_voxels, |brick_data| {
-                            brick_data.iter_mut().for_each(|v| {
-                                v.write(0.0);
-                            });
+            // Safety: We are zeroing all brick data in a first step.
+            // TODO: We might want to lift this restriction in the future
+            unsafe {
+                self.write_brick(ctx, pos, num_voxels, |brick_data| {
+                    brick_data.iter_mut().for_each(|v| {
+                        v.write(0.0);
+                    });
 
-                            for z in 0..brick_dim.z {
-                                for y in 0..brick_dim.y {
-                                    let bu8 = voxel_size
-                                        * to_linear(
-                                            begin.0 + cgmath::vec3(0, y, z),
-                                            m.dimensions.0,
-                                        );
-                                    let eu8 = voxel_size
-                                        * to_linear(
-                                            begin.0 + cgmath::vec3(brick_dim.x, y, z),
-                                            m.dimensions.0,
-                                        );
+                    for z in 0..brick_dim.z {
+                        for y in 0..brick_dim.y {
+                            let bu8 = voxel_size
+                                * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
+                            let eu8 = voxel_size
+                                * to_linear(
+                                    begin.0 + cgmath::vec3(brick_dim.x, y, z),
+                                    m.dimensions.0,
+                                );
 
-                                    let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
-                                    let ef32 =
-                                        to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+                            let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
+                            let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
 
-                                    let in_ = &self.mmap[bu8..eu8];
-                                    let out = &mut brick_data[bf32..ef32];
-                                    let in_slice: &[f32] = bytemuck::cast_slice(in_);
-                                    for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
-                                        out.write(*in_);
-                                    }
-                                }
+                            let in_ = &self.mmap[bu8..eu8];
+                            let out = &mut brick_data[bf32..ef32];
+                            let in_slice: &[f32] = bytemuck::cast_slice(in_);
+                            for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
+                                out.write(*in_);
                             }
-                            Ok(())
-                        })
+                        }
                     }
-                }
+                    Ok(())
+                })
             }
         }
         .into()
+    }
+
+    fn compute_metadata<'op, 'tasks>(&'op self, ctx: TaskContext<'op, 'tasks>) -> Task<'tasks> {
+        async move { self.write_metadata(ctx, self.metadata) }.into()
     }
 }

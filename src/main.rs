@@ -4,10 +4,8 @@ use clap::Parser;
 
 use crate::{
     data::VoxelPosition,
-    operator::Network,
     operators::{Mean, Scale, VvdVolumeSource},
     storage::Storage,
-    task::DatumRequest,
 };
 
 mod array;
@@ -37,38 +35,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = CliArgs::parse();
 
-    let mut network = Network::new();
+    let storage_size = 1 << 30; //One gigabyte
+    let storage = Storage::new(storage_size);
+
+    let request_queue = Box::leak(Box::new(runtime::RequestQueue::new()));
+
+    let factor = args.factor;
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
 
-    let vol = network.add(VvdVolumeSource::open(&args.vvd_vol, brick_size)?);
+    let vol = VvdVolumeSource::open(&args.vvd_vol, brick_size)?;
 
-    let factor = network.add(args.factor);
+    let scaled1 = Scale {
+        vol: &vol,
+        factor: &factor,
+    };
 
-    let scaled1 = network.add(Scale { vol, factor });
+    let scaled2 = Scale {
+        vol: &scaled1,
+        factor: &factor,
+    };
 
-    let scaled2 = network.add(Scale {
-        vol: scaled1,
-        factor,
-    });
+    let mean = Mean::new(&scaled2);
+    let mean_unscaled = Mean::new(&vol);
 
-    let mean = network.add(Mean::new(scaled2));
-    let mean_unscaled = network.add(Mean::new(vol));
+    let mut rt = runtime::RunTime::new(&storage, &request_queue);
 
-    let storage_size = 1 << 30; //One gigabyte
-    let storage = Storage::new(storage_size);
-    let request_queue = runtime::RequestQueue::new();
-    let mut rt = runtime::RunTime::new(&network, &storage, &request_queue);
-
-    let mean_val = unsafe { rt.request_blocking::<f32>(mean, DatumRequest::Value)? };
+    let mean_val = *unsafe { rt.request_blocking::<f32>(&mean)? };
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
         "Computed scaled mean val: {} ({} tasks)",
         mean_val, tasks_executed
     );
-    let mean_val_unscaled =
-        unsafe { rt.request_blocking::<f32>(mean_unscaled, DatumRequest::Value)? };
+    let mean_val_unscaled = *unsafe { rt.request_blocking::<f32>(&mean_unscaled)? };
     let tasks_executed = rt.statistics().tasks_executed - tasks_executed;
     println!(
         "Computed unscaled mean val: {} ({} tasks)",
