@@ -136,6 +136,7 @@ impl<'a> TaskGraph<'a> {
     }
 
     fn add_dependency(&mut self, wants: TaskId, wanted: TaskId) {
+        assert_ne!(wants, wanted, "Tasks cannot wait on themselves");
         self.deps.entry(wants).or_default().insert(wanted);
         self.rev_deps.entry(wanted).or_default().insert(wants);
         self.ready.remove(&wants);
