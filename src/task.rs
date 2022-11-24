@@ -15,11 +15,11 @@ use bytemuck::AnyBitPattern;
 use derive_more::{Constructor, Deref, DerefMut};
 
 #[derive(Deref, DerefMut)]
-pub struct Task<'a>(Pin<Box<dyn Future<Output = Result<(), Error>> + 'a>>);
+pub struct Task<'a, R = ()>(Pin<Box<dyn Future<Output = Result<R, Error>> + 'a>>);
 
-impl<'a, F> From<F> for Task<'a>
+impl<'a, F, R> From<F> for Task<'a, R>
 where
-    F: Future<Output = Result<(), Error>> + 'a,
+    F: Future<Output = Result<R, Error>> + 'a,
 {
     fn from(inner: F) -> Self {
         Self(Box::pin(inner))

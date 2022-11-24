@@ -4,7 +4,7 @@ use clap::Parser;
 
 use crate::{
     data::VoxelPosition,
-    operators::{Mean, Scale, VvdVolumeSource},
+    operators::{request_value, Mean, Scale, VvdVolumeSource},
     storage::Storage,
 };
 
@@ -61,14 +61,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut rt = runtime::RunTime::new(&storage, &request_queue);
 
-    let mean_val = *unsafe { rt.request_blocking::<f32>(&mean)? };
+    // TODO: it's slightly annoying that we have to construct the reference here (because of async
+    // move). Is there a better way, i.e. to only move some values into the future?
+    let mean = &mean;
+    let mean_val = rt.resolve(|ctx| async move { Ok(*request_value(mean, ctx).await?) }.into())?;
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
         "Computed scaled mean val: {} ({} tasks)",
         mean_val, tasks_executed
     );
-    let mean_val_unscaled = *unsafe { rt.request_blocking::<f32>(&mean_unscaled)? };
+
+    // Neat: We can even write to references in the closure/future below to get results out.
+    let mean_unscaled = &mean_unscaled;
+    let mut mean_val_unscaled = 0.0;
+    let muv_ref = &mut mean_val_unscaled;
+    rt.resolve(|ctx| {
+        async move {
+            *muv_ref = *request_value(mean_unscaled, ctx).await?;
+            Ok(())
+        }
+        .into()
+    })?;
     let tasks_executed = rt.statistics().tasks_executed - tasks_executed;
     println!(
         "Computed unscaled mean val: {} ({} tasks)",

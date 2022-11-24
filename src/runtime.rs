@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    operators::{ScalarOperator, ScalarTaskContext},
+    operator::OperatorId,
     storage::Storage,
     task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
     Error,
@@ -43,7 +43,7 @@ where
         }
     }
 
-    pub fn run(&mut self) -> Result<(), Error> {
+    fn try_resolve_implied(&mut self) -> Result<(), Error> {
         loop {
             let ready = self.tasks.ready();
             if ready.is_empty() {
@@ -51,7 +51,7 @@ where
             }
             for task_id in ready {
                 let mut ctx = Context::from_waker(&self.waker);
-                let task = self.tasks.get_mut(task_id);
+                let task = self.tasks.get_implied_mut(task_id);
 
                 // The queue should always just contain the tasks that are enqueued by polling the
                 // following task! This is important so that we know the calling tasks id for the
@@ -60,56 +60,58 @@ where
 
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
-                        self.tasks.resolved(task_id);
+                        self.tasks.resolved_implied(task_id);
                         self.statistics.tasks_executed += 1;
                     }
-                    Poll::Ready(Err(e)) => {
-                        panic!("Task executed with error: {}", e)
+                    Poll::Ready(e) => {
+                        return e;
                     }
                     Poll::Pending => {
-                        let caller_id = task_id;
-                        for req in self.request_queue.drain() {
-                            let task_id = req.id();
-                            let context = self.context();
-                            let task = (req.task)(context);
-                            if !self.tasks.exists(task_id) {
-                                self.tasks.add(task_id, task);
-                            }
-                            self.tasks.add_dependency(caller_id, task_id);
-                        }
+                        self.enqueue_requested(task_id);
                     }
                 };
             }
         }
     }
 
+    fn enqueue_requested(&mut self, from: TaskId) {
+        for req in self.request_queue.drain() {
+            let task_id = req.id();
+            let context = self.context();
+            if !self.tasks.exists(task_id) {
+                let task = (req.task)(context);
+                self.tasks.add_implied(task_id, task);
+            }
+            self.tasks.add_dependency(from, task_id);
+        }
+    }
+
     /// Safety: The specified type must be the result of the operation
-    pub unsafe fn request_blocking<T: bytemuck::Pod>(
-        &mut self,
-        p: &'op dyn ScalarOperator<T>,
-    ) -> Result<&'tasks T, Error> {
-        let op_id = p.id();
-        let ctx = ScalarTaskContext {
-            op_id,
-            inner: self.context(),
-            marker: Default::default(),
-        };
-        let task = p.compute_value(ctx);
-
+    pub fn resolve<'call, R, F: FnOnce(TaskContext<'op, 'tasks>) -> Task<'call, R>>(
+        &'call mut self,
+        task: F,
+    ) -> Result<R, Error> {
+        let op_id = OperatorId::new::<F>(&[]);
         let task_id = TaskId::new(op_id, &DatumRequest::Value);
-        self.tasks.add(task_id, task);
+        let mut task = task(self.context());
 
-        // TODO this can probably be optimized to only compute the values necessary for the
-        // requested task. (Although the question is if such a situation ever occurs with the
-        // current API...)
-        self.run()?;
-
-        Ok(self.storage.read_ram(task_id).unwrap())
+        loop {
+            let mut ctx = Context::from_waker(&self.waker);
+            match task.as_mut().poll(&mut ctx) {
+                Poll::Ready(res) => {
+                    return res;
+                }
+                Poll::Pending => {
+                    self.enqueue_requested(task_id);
+                }
+            };
+            self.try_resolve_implied()?;
+        }
     }
 }
 
 struct TaskGraph<'a> {
-    tasks: BTreeMap<TaskId, Task<'a>>,
+    implied_tasks: BTreeMap<TaskId, Task<'a>>,
     deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // key requires values
     rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // values require key
     ready: BTreeSet<TaskId>,
@@ -118,7 +120,7 @@ struct TaskGraph<'a> {
 impl<'a> TaskGraph<'a> {
     fn new() -> Self {
         Self {
-            tasks: BTreeMap::new(),
+            implied_tasks: BTreeMap::new(),
             deps: BTreeMap::new(),
             rev_deps: BTreeMap::new(),
             ready: BTreeSet::new(),
@@ -126,11 +128,11 @@ impl<'a> TaskGraph<'a> {
     }
 
     fn exists(&self, id: TaskId) -> bool {
-        self.tasks.contains_key(&id)
+        self.implied_tasks.contains_key(&id)
     }
 
-    fn add(&mut self, id: TaskId, task: Task<'a>) {
-        let prev = self.tasks.insert(id, task);
+    fn add_implied(&mut self, id: TaskId, task: Task<'a>) {
+        let prev = self.implied_tasks.insert(id, task);
         assert!(prev.is_none(), "Tried to insert task twice");
         self.ready.insert(id);
     }
@@ -142,8 +144,8 @@ impl<'a> TaskGraph<'a> {
         self.ready.remove(&wants);
     }
 
-    fn resolved(&mut self, id: TaskId) {
-        let removed = self.tasks.remove(&id);
+    fn resolved_implied(&mut self, id: TaskId) {
+        let removed = self.implied_tasks.remove(&id);
         assert!(removed.is_some(), "Task was not present");
         self.ready.remove(&id);
 
@@ -158,12 +160,16 @@ impl<'a> TaskGraph<'a> {
         }
     }
 
-    fn get_mut(&mut self, id: TaskId) -> &mut Task<'a> {
-        self.tasks.get_mut(&id).unwrap() //TODO: make api here nicer to avoid unwraps etc.
+    fn get_implied_mut(&mut self, id: TaskId) -> &mut Task<'a> {
+        self.implied_tasks.get_mut(&id).unwrap() //TODO: make api here nicer to avoid unwraps etc.
     }
 
     fn ready(&self) -> Vec<TaskId> {
-        self.ready.iter().cloned().collect()
+        self.ready
+            .iter()
+            .filter(|t| self.implied_tasks.contains_key(&t))
+            .cloned()
+            .collect()
     }
 }
 

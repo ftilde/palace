@@ -35,35 +35,35 @@ impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
     }
 }
 
+pub fn request_value<'op, 'tasks, T: bytemuck::Pod>(
+    op: &'op dyn ScalarOperator<T>,
+    ctx: TaskContext<'op, 'tasks>,
+) -> Pin<Box<dyn Future<Output = Result<&'tasks T, Error>> + 'tasks>> {
+    Box::pin(async move {
+        let op_id = op.id();
+        let id = TaskId::new(op_id, &DatumRequest::Value);
+        unsafe {
+            ctx.request::<T>(
+                id,
+                Box::new(move |ctx| {
+                    let ctx = ScalarTaskContext {
+                        inner: ctx,
+                        op_id,
+                        marker: Default::default(),
+                    };
+                    op.compute_value(ctx)
+                }),
+            )
+            .await
+        }
+    })
+}
+
 pub trait ScalarOperator<T: bytemuck::Pod>: Operator {
     fn compute_value<'op, 'tasks>(
         &'op self,
         ctx: ScalarTaskContext<'op, 'tasks, T>,
     ) -> Task<'tasks>;
-
-    fn request_value<'op, 'tasks>(
-        &'op self,
-        ctx: TaskContext<'op, 'tasks>,
-    ) -> Pin<Box<dyn Future<Output = Result<&'tasks T, Error>> + 'tasks>> {
-        Box::pin(async move {
-            let op_id = self.id();
-            let id = TaskId::new(op_id, &DatumRequest::Value);
-            unsafe {
-                ctx.request::<T>(
-                    id,
-                    Box::new(move |ctx| {
-                        let ctx = ScalarTaskContext {
-                            inner: ctx,
-                            op_id,
-                            marker: Default::default(),
-                        };
-                        self.compute_value(ctx)
-                    }),
-                )
-                .await
-            }
-        })
-    }
 }
 
 impl<T: bytemuck::Pod> ScalarOperator<T> for T {
