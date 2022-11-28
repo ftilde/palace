@@ -16,6 +16,7 @@ pub struct RunTime<'op, 'queue, 'tasks> {
     tasks: TaskGraph<'tasks>,
     storage: &'tasks Storage,
     request_queue: &'queue RequestQueue<'op>,
+    hints: &'queue TaskHints,
     statistics: Statistics,
 }
 
@@ -24,12 +25,17 @@ where
     'op: 'queue,
     'queue: 'tasks,
 {
-    pub fn new(storage: &'tasks Storage, request_queue: &'queue RequestQueue<'op>) -> Self {
+    pub fn new(
+        storage: &'tasks Storage,
+        request_queue: &'queue RequestQueue<'op>,
+        hints: &'queue TaskHints,
+    ) -> Self {
         RunTime {
             waker: dummy_waker(),
             tasks: TaskGraph::new(),
             storage,
             request_queue,
+            hints,
             statistics: Statistics::new(),
         }
     }
@@ -40,16 +46,21 @@ where
         TaskContext {
             requests: self.request_queue,
             storage: self.storage,
+            hints: self.hints,
         }
     }
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
         loop {
-            let ready = self.tasks.ready();
+            let ready = self.tasks.next_ready();
             if ready.is_empty() {
                 return Ok(());
             }
-            for task_id in ready {
+            for ready in ready {
+                let task_id = ready.id;
+                let resolved_deps = ready.resolved_deps;
+                self.hints.completed.set(resolved_deps);
+
                 let mut ctx = Context::from_waker(&self.waker);
                 let task = self.tasks.get_implied_mut(task_id);
 
@@ -82,7 +93,8 @@ where
                 let task = (req.task)(context);
                 self.tasks.add_implied(task_id, task);
             }
-            self.tasks.add_dependency(from, task_id);
+            self.tasks
+                .add_dependency(from, task_id, req.progress_indicator);
         }
     }
 
@@ -110,11 +122,17 @@ where
     }
 }
 
+pub enum ProgressIndicator {
+    PartialPossible,
+    WaitForComplete,
+}
+
 struct TaskGraph<'a> {
     implied_tasks: BTreeMap<TaskId, Task<'a>>,
-    deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // key requires values
-    rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>, // values require key
+    deps: BTreeMap<TaskId, BTreeMap<TaskId, ProgressIndicator>>, // key requires values
+    rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>,                // values require key
     ready: BTreeSet<TaskId>,
+    resolved_deps: BTreeMap<TaskId, Vec<TaskId>>,
 }
 
 impl<'a> TaskGraph<'a> {
@@ -124,6 +142,7 @@ impl<'a> TaskGraph<'a> {
             deps: BTreeMap::new(),
             rev_deps: BTreeMap::new(),
             ready: BTreeSet::new(),
+            resolved_deps: BTreeMap::new(),
         }
     }
 
@@ -137,9 +156,17 @@ impl<'a> TaskGraph<'a> {
         self.ready.insert(id);
     }
 
-    fn add_dependency(&mut self, wants: TaskId, wanted: TaskId) {
+    fn add_dependency(
+        &mut self,
+        wants: TaskId,
+        wanted: TaskId,
+        progress_indicator: ProgressIndicator,
+    ) {
         assert_ne!(wants, wanted, "Tasks cannot wait on themselves");
-        self.deps.entry(wants).or_default().insert(wanted);
+        self.deps
+            .entry(wants)
+            .or_default()
+            .insert(wanted, progress_indicator);
         self.rev_deps.entry(wanted).or_default().insert(wants);
         self.ready.remove(&wants);
     }
@@ -151,11 +178,12 @@ impl<'a> TaskGraph<'a> {
 
         for rev_dep in self.rev_deps.remove(&id).iter().flatten() {
             let deps_of_rev_dep = self.deps.get_mut(&rev_dep).unwrap();
-            let removed = deps_of_rev_dep.remove(&id);
-            assert!(removed);
-            if deps_of_rev_dep.is_empty() {
-                let inserted = self.ready.insert(*rev_dep);
-                assert!(inserted);
+            let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
+            self.resolved_deps.entry(*rev_dep).or_default().push(id);
+            if deps_of_rev_dep.is_empty()
+                || matches!(progress_indicator, ProgressIndicator::PartialPossible)
+            {
+                self.ready.insert(*rev_dep);
             }
         }
     }
@@ -164,13 +192,21 @@ impl<'a> TaskGraph<'a> {
         self.implied_tasks.get_mut(&id).unwrap() //TODO: make api here nicer to avoid unwraps etc.
     }
 
-    fn ready(&self) -> Vec<TaskId> {
+    fn next_ready(&mut self) -> Vec<ReadyTask> {
         self.ready
             .iter()
             .filter(|t| self.implied_tasks.contains_key(&t))
-            .cloned()
+            .map(|t| ReadyTask {
+                id: *t,
+                resolved_deps: self.resolved_deps.remove(t).unwrap_or_default(),
+            })
             .collect()
     }
+}
+
+struct ReadyTask {
+    id: TaskId,
+    resolved_deps: Vec<TaskId>,
 }
 
 fn dummy_raw_waker() -> RawWaker {
@@ -197,6 +233,21 @@ pub struct Statistics {
 impl Statistics {
     fn new() -> Self {
         Self { tasks_executed: 0 }
+    }
+}
+
+pub struct TaskHints {
+    completed: std::cell::Cell<Vec<TaskId>>,
+}
+
+impl TaskHints {
+    pub fn new() -> Self {
+        TaskHints {
+            completed: std::cell::Cell::new(Vec::new()),
+        }
+    }
+    pub fn drain_completed(&self) -> Vec<TaskId> {
+        self.completed.take()
     }
 }
 

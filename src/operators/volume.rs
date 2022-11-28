@@ -1,11 +1,13 @@
 use std::mem::MaybeUninit;
 
+use futures::stream::StreamExt;
+
 use derive_more::Constructor;
 
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Task, TaskContext, TaskId},
+    task::{DatumRequest, Request, Task, TaskContext, TaskId},
     Error,
 };
 
@@ -40,51 +42,43 @@ impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
     }
 }
 
-pub async fn request_metadata<'op, 'tasks>(
+pub fn request_metadata<'tasks, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-    ctx: TaskContext<'op, 'tasks>,
-) -> Result<&'tasks VolumeMetaData, Error> {
+) -> Request<'tasks, VolumeMetaData> {
     let op_id = vol.id();
     let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
-    let v: &VolumeMetaData = unsafe {
-        ctx.request(
-            id,
-            Box::new(move |ctx| {
-                let ctx = VolumeTaskContext {
-                    inner: ctx,
-                    current_op_id: op_id,
-                };
-                vol.compute_metadata(ctx)
-            }),
-        )
-        .await?
-    };
-    Ok(v)
+    Request {
+        id,
+        compute: Box::new(move |ctx| {
+            let ctx = VolumeTaskContext {
+                inner: ctx,
+                current_op_id: op_id,
+            };
+            vol.compute_metadata(ctx)
+        }),
+        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+    }
 }
 
-pub async fn request_brick<'op, 'tasks>(
+pub fn request_brick<'tasks, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-    ctx: TaskContext<'op, 'tasks>,
     metadata: &VolumeMetaData,
     pos: BrickPosition,
-) -> Result<&'tasks [f32], Error> {
+) -> Request<'tasks, [f32]> {
     let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = vol.id();
     let id = TaskId::new(op_id, &req); //TODO: revisit
-    unsafe {
-        ctx.request_slice::<f32>(
-            id,
-            Box::new(move |ctx| {
-                let ctx = VolumeTaskContext {
-                    inner: ctx,
-                    current_op_id: op_id,
-                };
-                vol.compute_brick(ctx, pos)
-            }),
-            num_voxels,
-        )
-        .await
+    Request {
+        id,
+        compute: Box::new(move |ctx| {
+            let ctx = VolumeTaskContext {
+                inner: ctx,
+                current_op_id: op_id,
+            };
+            vol.compute_brick(ctx, pos)
+        }),
+        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id, num_voxels) }),
     }
 }
 
@@ -122,7 +116,7 @@ impl VolumeOperator for LinearRescale<'_> {
         // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
         // model VolumeMetaData for this.
         async move {
-            let m = request_metadata(self.vol, *ctx).await?;
+            let m = ctx.submit(request_metadata(self.vol)).await;
             ctx.write_metadata(*m)
         }
         .into()
@@ -134,12 +128,12 @@ impl VolumeOperator for LinearRescale<'_> {
         position: BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let (v, factor, offset) = futures::try_join! {
-                request_metadata(self.vol, *ctx),
-                request_value(self.factor, *ctx),
-                request_value(self.offset, *ctx),
-            }?;
-            let b = request_brick(self.vol, *ctx, &v, position).await?;
+            let (v, factor, offset) = futures::join! {
+                ctx.submit(request_metadata(self.vol)),
+                ctx.submit(request_value(self.factor)),
+                ctx.submit(request_value(self.offset)),
+            };
+            let b = ctx.submit(request_brick(self.vol, &v, position)).await;
 
             let num_voxels = hmul(v.brick_size.0) as usize;
 
@@ -174,22 +168,17 @@ impl ScalarOperator<f32> for Mean<'_> {
         async move {
             let mut sum = 0.0;
 
-            let vol = request_metadata(self.vol, *ctx).await?;
+            let vol = ctx.submit(request_metadata(self.vol)).await;
 
-            let bd = vol.dimension_in_bricks();
-            for z in 0..bd.0.z {
-                for y in 0..bd.0.y {
-                    for x in 0..bd.0.x {
-                        let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
-                        let brick_data = request_brick(self.vol, *ctx, &vol, brick_pos).await?;
+            let mut stream = ctx.submit_unordered(
+                vol.brick_positions()
+                    .map(|pos| (request_brick(self.vol, &vol, pos), pos)),
+            );
+            while let Some((brick_data, brick_pos)) = stream.next().await {
+                let brick = Brick::new(brick_data, vol.brick_dim(brick_pos), vol.brick_size);
 
-                        let brick =
-                            Brick::new(brick_data, vol.brick_dim(brick_pos), vol.brick_size);
-
-                        let voxels = brick.voxels().collect::<Vec<_>>();
-                        sum += voxels.iter().sum::<f32>();
-                    }
-                }
+                let voxels = brick.voxels().collect::<Vec<_>>();
+                sum += voxels.iter().sum::<f32>();
             }
 
             let v = sum / vol.num_voxels() as f32;

@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
@@ -7,7 +8,7 @@ use std::task::Poll;
 use crate::data::BrickPosition;
 use crate::id::Id;
 use crate::operator::OperatorId;
-use crate::runtime::RequestQueue;
+use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
 use crate::Error;
 
@@ -38,6 +39,7 @@ impl TaskId {
 pub struct TaskInfo<'op> {
     pub id: TaskId,
     pub task: Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>,
+    pub progress_indicator: ProgressIndicator,
 }
 impl TaskInfo<'_> {
     pub fn id(&self) -> TaskId {
@@ -45,55 +47,91 @@ impl TaskInfo<'_> {
     }
 }
 
+type ResultPoll<'op, V> = Box<dyn for<'tasks> FnMut(TaskContext<'op, 'tasks>) -> Option<&'tasks V>>;
+
+pub struct Request<'op, V: ?Sized> {
+    pub id: TaskId,
+    pub compute: Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>,
+    pub poll: ResultPoll<'op, V>,
+}
+
 #[derive(Copy, Clone)]
 pub struct TaskContext<'op, 'tasks> {
     pub requests: &'tasks RequestQueue<'op>,
     pub storage: &'tasks Storage,
+    pub hints: &'tasks TaskHints,
 }
 
 impl<'op, 'tasks> TaskContext<'op, 'tasks>
 where
     'op: 'tasks,
 {
-    /// Safety: The requested type must match the task's result
-    pub async unsafe fn request<'r, T: AnyBitPattern + 'r>(
+    pub fn submit<V: ?Sized>(
         self,
-        id: TaskId,
-        task: Box<dyn 'op + for<'t> FnOnce(TaskContext<'op, 't>) -> Task<'t>>,
-    ) -> Result<&'tasks T, Error> {
-        if let Some(data) = self.storage.read_ram(id) {
-            return Ok(data);
+        mut request: Request<'op, V>,
+    ) -> Pin<Box<dyn Future<Output = &'tasks V> + 'tasks>> {
+        if let Some(data) = (request.poll)(self) {
+            return Box::pin(std::future::poll_fn(move |_| Poll::Ready(data)));
         }
-        self.requests.push(TaskInfo { id, task });
-        std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram(id) {
-                return Poll::Ready(Ok(data));
+        self.requests.push(TaskInfo {
+            id: request.id,
+            task: request.compute,
+            progress_indicator: ProgressIndicator::WaitForComplete,
+        });
+        Box::pin(std::future::poll_fn(move |_ctx| loop {
+            if let Some(data) = (request.poll)(self) {
+                return Poll::Ready(data);
             } else {
                 return Poll::Pending;
             }
-        })
-        .await
+        }))
     }
 
-    /// Safety: The requested type must match the task's result
-    pub async unsafe fn request_slice<T: AnyBitPattern>(
+    pub fn submit_unordered<V: 'tasks + ?Sized, D: 'tasks>(
         self,
-        id: TaskId,
-        task: Box<dyn 'op + for<'t> FnOnce(TaskContext<'op, 't>) -> Task<'t>>,
-        size: usize,
-    ) -> Result<&'tasks [T], Error> {
-        if let Some(data) = self.storage.read_ram_slice(id, size) {
-            return Ok(data);
-        }
-        self.requests.push(TaskInfo { id, task });
-        std::future::poll_fn(|_ctx| loop {
-            if let Some(data) = self.storage.read_ram_slice(id, size) {
-                return Poll::Ready(Ok(data));
-            } else {
-                return Poll::Pending;
-            }
-        })
-        .await
+        requests: impl Iterator<Item = (Request<'op, V>, D)>,
+    ) -> Pin<Box<dyn futures::stream::Stream<Item = (&'tasks V, D)> + 'tasks>> {
+        let mut initial_ready = Vec::new();
+        let mut task_map = requests
+            .into_iter()
+            .filter_map(|(mut req, data)| {
+                if let Some(r) = (req.poll)(self) {
+                    initial_ready.push((r, data));
+                    return None;
+                }
+                self.requests.push(TaskInfo {
+                    id: req.id,
+                    task: req.compute,
+                    progress_indicator: ProgressIndicator::PartialPossible,
+                });
+                Some((req.id, (req.poll, data)))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut completed = VecDeque::new();
+        Box::pin(futures::stream::poll_fn(
+            move |_f_ctx| -> Poll<Option<(&'tasks V, D)>> {
+                completed.extend(self.hints.drain_completed());
+                if let Some(r) = initial_ready.pop() {
+                    return Poll::Ready(Some(r));
+                }
+                if task_map.is_empty() {
+                    return Poll::Ready(None);
+                }
+                assert!(!completed.is_empty());
+
+                loop {
+                    let Some(completed_id) = completed.pop_front() else {
+                        return Poll::Pending;
+                    };
+                    let Some((mut result_poll, data)) = task_map.remove(&completed_id) else { continue };
+
+                    match result_poll(self) {
+                        Some(v) => return Poll::Ready(Some((v, data))),
+                        None => panic!("Task should have been ready!"),
+                    }
+                }
+            },
+        ))
     }
 
     /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).

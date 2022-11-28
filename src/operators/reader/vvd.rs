@@ -94,7 +94,7 @@ impl VolumeOperator for VvdVolumeSource {
         ctx: VolumeTaskContext<'op, 'tasks>,
     ) -> Task<'tasks> {
         async move {
-            let m = request_metadata(&self.raw, *ctx).await?;
+            let m = ctx.submit(request_metadata(&self.raw)).await;
             ctx.write_metadata(*m)
         }
         .into()
@@ -106,8 +106,8 @@ impl VolumeOperator for VvdVolumeSource {
         position: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let m = request_metadata(&self.raw, *ctx).await?;
-            let b = request_brick(&self.raw, *ctx, &m, position).await?;
+            let m = ctx.submit(request_metadata(&self.raw)).await;
+            let b = ctx.submit(request_brick(&self.raw, &m, position)).await;
             let num_voxels = hmul(m.brick_size.0) as usize;
             unsafe {
                 ctx.write_brick(position, num_voxels, |o| {

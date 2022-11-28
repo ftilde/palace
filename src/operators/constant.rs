@@ -1,9 +1,7 @@
-use std::{future::Future, pin::Pin};
-
 use crate::{
     id::Id,
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Task, TaskContext, TaskId},
+    task::{DatumRequest, Request, Task, TaskContext, TaskId},
     Error,
 };
 
@@ -35,28 +33,23 @@ impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
     }
 }
 
-pub fn request_value<'op, 'tasks, T: bytemuck::Pod>(
+pub fn request_value<'tasks, 'op: 'tasks, T: bytemuck::Pod>(
     op: &'op dyn ScalarOperator<T>,
-    ctx: TaskContext<'op, 'tasks>,
-) -> Pin<Box<dyn Future<Output = Result<&'tasks T, Error>> + 'tasks>> {
-    Box::pin(async move {
-        let op_id = op.id();
-        let id = TaskId::new(op_id, &DatumRequest::Value);
-        unsafe {
-            ctx.request::<T>(
-                id,
-                Box::new(move |ctx| {
-                    let ctx = ScalarTaskContext {
-                        inner: ctx,
-                        op_id,
-                        marker: Default::default(),
-                    };
-                    op.compute_value(ctx)
-                }),
-            )
-            .await
-        }
-    })
+) -> Request<'tasks, T> {
+    let op_id = op.id();
+    let id = TaskId::new(op_id, &DatumRequest::Value);
+    Request {
+        id,
+        compute: Box::new(move |ctx| {
+            let ctx = ScalarTaskContext {
+                inner: ctx,
+                op_id,
+                marker: Default::default(),
+            };
+            op.compute_value(ctx)
+        }),
+        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+    }
 }
 
 pub trait ScalarOperator<T: bytemuck::Pod>: Operator {

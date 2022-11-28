@@ -56,6 +56,12 @@ impl VolumeMetaData {
     pub fn brick_dim(&self, pos: BrickPosition) -> VoxelPosition {
         VoxelPosition(self.brick_end(pos).0 - self.brick_begin(pos).0)
     }
+
+    pub fn brick_positions(&self) -> impl Iterator<Item = BrickPosition> {
+        let bp = self.dimension_in_bricks();
+        itertools::iproduct! { 0..bp.0.z, 0..bp.0.y, 0..bp.0.x }
+            .map(|(z, y, x)| BrickPosition(cgmath::vec3(x, y, z)))
+    }
 }
 
 pub struct Brick<'a> {

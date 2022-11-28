@@ -38,11 +38,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_size = 1 << 30; //One gigabyte
     let storage = Storage::new(storage_size);
 
-    let request_queue = Box::leak(Box::new(runtime::RequestQueue::new()));
-
     let factor = args.factor;
 
-    let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
+    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
 
     let vol = VvdVolumeSource::open(&args.vvd_vol, brick_size)?;
 
@@ -61,12 +59,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mean = Mean::new(&scaled2);
     let mean_unscaled = Mean::new(&vol);
 
-    let mut rt = runtime::RunTime::new(&storage, &request_queue);
+    let request_queue = runtime::RequestQueue::new();
+    let hints = runtime::TaskHints::new();
+    let mut rt = runtime::RunTime::new(&storage, &request_queue, &hints);
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean = &mean;
-    let mean_val = rt.resolve(|ctx| async move { Ok(*request_value(mean, ctx).await?) }.into())?;
+    let mean_val =
+        rt.resolve(|ctx| async move { Ok(*ctx.submit(request_value(mean)).await) }.into())?;
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
@@ -80,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let muv_ref = &mut mean_val_unscaled;
     rt.resolve(|ctx| {
         async move {
-            *muv_ref = *request_value(mean_unscaled, ctx).await?;
+            *muv_ref = *ctx.submit(request_value(mean_unscaled)).await;
             Ok(())
         }
         .into()
