@@ -100,19 +100,20 @@ pub trait VolumeOperator: Operator {
     ) -> Task<'tasks>;
 }
 
-pub struct Scale<'op> {
+pub struct LinearRescale<'op> {
     pub vol: &'op dyn VolumeOperator,
     pub factor: &'op dyn ScalarOperator<f32>,
+    pub offset: &'op dyn ScalarOperator<f32>,
 }
 
-impl Operator for Scale<'_> {
+impl Operator for LinearRescale<'_> {
     fn id(&self) -> OperatorId {
         //TODO: we may want to cache operatorids in the operators themselves
-        OperatorId::new::<Self>(&[self.vol.id(), self.factor.id()])
+        OperatorId::new::<Self>(&[self.vol.id(), self.factor.id(), self.offset.id()])
     }
 }
 
-impl VolumeOperator for Scale<'_> {
+impl VolumeOperator for LinearRescale<'_> {
     fn compute_metadata<'op, 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
@@ -133,8 +134,11 @@ impl VolumeOperator for Scale<'_> {
         position: BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let v = request_metadata(self.vol, *ctx).await?;
-            let f = request_value(self.factor, *ctx).await?;
+            let (v, factor, offset) = futures::try_join! {
+                request_metadata(self.vol, *ctx),
+                request_value(self.factor, *ctx),
+                request_value(self.offset, *ctx),
+            }?;
             let b = request_brick(self.vol, *ctx, &v, position).await?;
 
             let num_voxels = hmul(v.brick_size.0) as usize;
@@ -142,7 +146,7 @@ impl VolumeOperator for Scale<'_> {
             unsafe {
                 ctx.write_brick(position, num_voxels, |buf| {
                     for (i, o) in b.iter().zip(buf.iter_mut()) {
-                        o.write(*f * *i);
+                        o.write(*factor * *i + offset);
                     }
                     Ok(())
                 })

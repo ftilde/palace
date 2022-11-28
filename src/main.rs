@@ -4,7 +4,7 @@ use clap::Parser;
 
 use crate::{
     data::VoxelPosition,
-    operators::{request_value, Mean, Scale, VvdVolumeSource},
+    operators::{request_value, LinearRescale, Mean, VvdVolumeSource},
     storage::Storage,
 };
 
@@ -42,18 +42,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let factor = args.factor;
 
-    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
+    let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
 
     let vol = VvdVolumeSource::open(&args.vvd_vol, brick_size)?;
 
-    let scaled1 = Scale {
+    let scaled1 = LinearRescale {
         vol: &vol,
         factor: &factor,
+        offset: &0.0,
     };
 
-    let scaled2 = Scale {
+    let scaled2 = LinearRescale {
         vol: &scaled1,
         factor: &factor,
+        offset: &0.0,
     };
 
     let mean = Mean::new(&scaled2);
