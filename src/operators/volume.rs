@@ -179,9 +179,11 @@ impl ScalarOperator<f32> for Mean<'_> {
                         let brick_pos = BrickPosition(cgmath::vec3(x, y, z));
                         let brick_data = request_brick(self.vol, *ctx, &vol, brick_pos).await?;
 
-                        let brick = Brick::new(brick_data, vol.brick_dim(brick_pos));
+                        let brick =
+                            Brick::new(brick_data, vol.brick_dim(brick_pos), vol.brick_size);
 
-                        sum += brick.voxels().sum::<f32>();
+                        let voxels = brick.voxels().collect::<Vec<_>>();
+                        sum += voxels.iter().sum::<f32>();
                     }
                 }
             }

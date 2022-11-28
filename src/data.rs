@@ -60,16 +60,21 @@ impl VolumeMetaData {
 
 pub struct Brick<'a> {
     size: VoxelPosition,
+    mem_size: VoxelPosition,
     data: &'a [f32],
 }
 
 impl<'a> Brick<'a> {
-    pub fn new(data: &'a [f32], size: VoxelPosition) -> Self {
-        Self { data, size }
+    pub fn new(data: &'a [f32], size: VoxelPosition, mem_size: VoxelPosition) -> Self {
+        Self {
+            data,
+            size,
+            mem_size,
+        }
     }
     pub fn voxels(&'a self) -> impl Iterator<Item = f32> + 'a {
         itertools::iproduct! { 0..self.size.0.z, 0..self.size.0.y, 0..self.size.0.x }
-            .map(|(z, y, x)| to_linear(cgmath::vec3(x, y, z), self.size.0))
+            .map(|(z, y, x)| to_linear(cgmath::vec3(x, y, z), self.mem_size.0))
             .map(|i| self.data[i])
     }
 }
