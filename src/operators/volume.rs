@@ -44,7 +44,7 @@ impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
 
 pub fn request_metadata<'tasks, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-) -> Request<'tasks, VolumeMetaData> {
+) -> Request<'op, VolumeMetaData> {
     let op_id = vol.id();
     let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
     Request {
@@ -64,7 +64,7 @@ pub fn request_brick<'tasks, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
     metadata: &VolumeMetaData,
     pos: BrickPosition,
-) -> Request<'tasks, [f32]> {
+) -> Request<'op, [f32]> {
     let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = vol.id();

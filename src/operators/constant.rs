@@ -35,7 +35,7 @@ impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
 
 pub fn request_value<'tasks, 'op: 'tasks, T: bytemuck::Pod>(
     op: &'op dyn ScalarOperator<T>,
-) -> Request<'tasks, T> {
+) -> Request<T> {
     let op_id = op.id();
     let id = TaskId::new(op_id, &DatumRequest::Value);
     Request {
