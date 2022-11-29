@@ -11,6 +11,7 @@ use crate::operator::OperatorId;
 use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
 use crate::Error;
+use futures::stream::{Stream, StreamExt};
 
 use bytemuck::AnyBitPattern;
 use derive_more::{Constructor, Deref, DerefMut};
@@ -87,10 +88,20 @@ where
         }))
     }
 
-    pub fn submit_unordered<V: 'tasks + ?Sized, D: 'tasks>(
+    pub fn submit_unordered<V: 'tasks + ?Sized>(
+        self,
+        requests: impl Iterator<Item = Request<'op, V>>,
+    ) -> Pin<Box<dyn Stream<Item = &'tasks V> + 'tasks>> {
+        Box::pin(
+            self.submit_unordered_with_data(requests.map(|r| (r, ())))
+                .map(|(r, ())| r),
+        )
+    }
+
+    pub fn submit_unordered_with_data<V: 'tasks + ?Sized, D: 'tasks>(
         self,
         requests: impl Iterator<Item = (Request<'op, V>, D)>,
-    ) -> Pin<Box<dyn futures::stream::Stream<Item = (&'tasks V, D)> + 'tasks>> {
+    ) -> Pin<Box<dyn Stream<Item = (&'tasks V, D)> + 'tasks>> {
         let mut initial_ready = Vec::new();
         let mut task_map = requests
             .into_iter()

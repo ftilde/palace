@@ -170,7 +170,7 @@ impl ScalarOperator<f32> for Mean<'_> {
 
             let vol = ctx.submit(request_metadata(self.vol)).await;
 
-            let mut stream = ctx.submit_unordered(
+            let mut stream = ctx.submit_unordered_with_data(
                 vol.brick_positions()
                     .map(|pos| (request_brick(self.vol, &vol, pos), pos)),
             );
