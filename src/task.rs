@@ -10,11 +10,12 @@ use crate::id::Id;
 use crate::operator::OperatorId;
 use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
+use crate::threadpool::ThreadPool;
 use crate::Error;
 use futures::stream::StreamExt;
 
 use bytemuck::AnyBitPattern;
-use derive_more::{Constructor, Deref, DerefMut};
+use derive_more::{Constructor, Deref, DerefMut, From};
 
 #[derive(Deref, DerefMut)]
 pub struct Task<'a, R = ()>(Pin<Box<dyn Future<Output = Result<R, Error>> + 'a>>);
@@ -28,7 +29,7 @@ where
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
 pub struct TaskId(Id);
 impl TaskId {
     pub fn new(op: OperatorId, d: &DatumRequest) -> Self {
@@ -64,6 +65,7 @@ where
     pub requests: &'tasks RequestQueue<'op>,
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
+    pub thread_pool: &'tasks ThreadPool<'tasks>,
 }
 
 // Workaround for a compiler bug(?)

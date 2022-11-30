@@ -16,6 +16,7 @@ mod operators;
 mod runtime;
 mod storage;
 mod task;
+mod threadpool;
 mod vulkan;
 
 // TODO look into thiserror/anyhow
@@ -37,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_size = 1 << 30; //One gigabyte
     let storage = Storage::new(storage_size);
+    let thread_pool_size = 4;
 
     let factor = args.factor;
 
@@ -61,7 +63,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request_queue = runtime::RequestQueue::new();
     let hints = runtime::TaskHints::new();
-    let mut rt = runtime::RunTime::new(&storage, &request_queue, &hints);
+    let thread_pool = threadpool::ThreadPool::new(thread_pool_size);
+    let mut rt = runtime::RunTime::new(&storage, &thread_pool, &request_queue, &hints);
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?

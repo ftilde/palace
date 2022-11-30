@@ -8,6 +8,7 @@ use crate::{
     operator::OperatorId,
     storage::Storage,
     task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
+    threadpool::ThreadPool,
     Error,
 };
 
@@ -15,6 +16,7 @@ pub struct RunTime<'op, 'queue, 'tasks> {
     waker: Waker,
     tasks: TaskGraph<'tasks>,
     storage: &'tasks Storage,
+    thread_pool: &'tasks ThreadPool<'tasks>,
     request_queue: &'queue RequestQueue<'op>,
     hints: &'queue TaskHints,
     statistics: Statistics,
@@ -27,6 +29,7 @@ where
 {
     pub fn new(
         storage: &'tasks Storage,
+        thread_pool: &'tasks ThreadPool<'tasks>,
         request_queue: &'queue RequestQueue<'op>,
         hints: &'queue TaskHints,
     ) -> Self {
@@ -34,6 +37,7 @@ where
             waker: dummy_waker(),
             tasks: TaskGraph::new(),
             storage,
+            thread_pool,
             request_queue,
             hints,
             statistics: Statistics::new(),
@@ -47,6 +51,7 @@ where
             requests: self.request_queue,
             storage: self.storage,
             hints: self.hints,
+            thread_pool: self.thread_pool,
         }
     }
 
