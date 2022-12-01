@@ -8,7 +8,7 @@ use crate::{
     operator::OperatorId,
     storage::Storage,
     task::{DatumRequest, RequestType, Task, TaskContext, TaskId, TaskInfo},
-    threadpool::ThreadPool,
+    threadpool::{Job, ThreadPool, ThreadSpawner},
     Error,
 };
 
@@ -16,7 +16,8 @@ pub struct RunTime<'op, 'queue, 'tasks> {
     waker: Waker,
     tasks: TaskGraph<'tasks>,
     storage: &'tasks Storage,
-    thread_pool: &'tasks ThreadPool<'tasks>,
+    thread_pool: ThreadPool,
+    thread_spawner: &'tasks ThreadSpawner,
     request_queue: &'queue RequestQueue<'op>,
     hints: &'queue TaskHints,
     statistics: Statistics,
@@ -29,7 +30,8 @@ where
 {
     pub fn new(
         storage: &'tasks Storage,
-        thread_pool: &'tasks ThreadPool<'tasks>,
+        thread_pool: ThreadPool,
+        thread_spawner: &'tasks ThreadSpawner,
         request_queue: &'queue RequestQueue<'op>,
         hints: &'queue TaskHints,
     ) -> Self {
@@ -38,6 +40,7 @@ where
             tasks: TaskGraph::new(),
             storage,
             thread_pool,
+            thread_spawner,
             request_queue,
             hints,
             statistics: Statistics::new(),
@@ -51,12 +54,14 @@ where
             requests: self.request_queue,
             storage: self.storage,
             hints: self.hints,
-            thread_pool: self.thread_pool,
+            thread_pool: self.thread_spawner,
         }
     }
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
         loop {
+            self.handle_thread_pool();
+
             let ready = self.tasks.next_ready();
             if ready.is_empty() {
                 return Ok(());
@@ -103,8 +108,25 @@ where
                     self.tasks
                         .add_dependency(from, task_id, req.progress_indicator);
                 }
-                RequestType::ThreadPoolJob(_) => todo!(),
+                RequestType::ThreadPoolJob(job) => {
+                    self.tasks.thread_pool_waiting.push_back((task_id, job));
+                    self.tasks
+                        .add_dependency(from, task_id, req.progress_indicator);
+                }
             }
+        }
+    }
+
+    fn handle_thread_pool(&mut self) {
+        while let Some(task) = self.thread_pool.finished() {
+            self.tasks.resolved_implied(task);
+        }
+
+        // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
+        // pull something from either collection if only either one is ready.
+        while self.thread_pool.worker_available() && !self.tasks.thread_pool_waiting.is_empty() {
+            let (id, job) = self.tasks.thread_pool_waiting.pop_front().unwrap();
+            self.thread_pool.submit(id, job);
         }
     }
 
@@ -113,6 +135,8 @@ where
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {
+        // TODO: Not sure if passing F here is a valid way to generate a unique id? E.g. when
+        // running in a loop with changed parameters. We should try this out
         let op_id = OperatorId::new::<F>(&[]);
         let task_id = TaskId::new(op_id, &DatumRequest::Value);
         let mut task = task(self.context());
@@ -139,6 +163,7 @@ pub enum ProgressIndicator {
 
 struct TaskGraph<'a> {
     implied_tasks: BTreeMap<TaskId, Task<'a>>,
+    thread_pool_waiting: VecDeque<(TaskId, Job)>,
     deps: BTreeMap<TaskId, BTreeMap<TaskId, ProgressIndicator>>, // key requires values
     rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>,                // values require key
     ready: BTreeSet<TaskId>,
@@ -149,6 +174,7 @@ impl<'a> TaskGraph<'a> {
     fn new() -> Self {
         Self {
             implied_tasks: BTreeMap::new(),
+            thread_pool_waiting: VecDeque::new(),
             deps: BTreeMap::new(),
             rev_deps: BTreeMap::new(),
             ready: BTreeSet::new(),

@@ -89,7 +89,7 @@ impl Operator for VvdVolumeSource {
 }
 
 impl VolumeOperator for VvdVolumeSource {
-    fn compute_metadata<'op, 'tasks>(
+    fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
     ) -> Task<'tasks> {
@@ -100,7 +100,7 @@ impl VolumeOperator for VvdVolumeSource {
         .into()
     }
 
-    fn compute_brick<'op, 'tasks>(
+    fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
         position: crate::data::BrickPosition,
@@ -110,7 +110,7 @@ impl VolumeOperator for VvdVolumeSource {
             let b = ctx.submit(request_brick(&self.raw, &m, position)).await;
             let num_voxels = hmul(m.brick_size.0) as usize;
             unsafe {
-                ctx.write_brick(position, num_voxels, |o| {
+                ctx.with_brick_slot(position, num_voxels, |o| {
                     for (i, o) in b.iter().zip(o.iter_mut()) {
                         o.write(*i);
                     }

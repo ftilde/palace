@@ -1,14 +1,39 @@
 use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit};
 
+use bytemuck::AnyBitPattern;
+
 use crate::{task::TaskId, Error};
 
+enum StorageEntryState {
+    Uninitialized,
+    Initialized,
+}
+
+impl StorageEntryState {
+    fn initialized(&self) -> bool {
+        matches!(self, StorageEntryState::Initialized)
+    }
+}
+
 struct StorageEntry {
+    state: StorageEntryState,
     offset: usize,
 }
 
 pub struct Storage {
     index: RefCell<BTreeMap<TaskId, StorageEntry>>,
     buffer: BumpAllocator,
+}
+
+#[must_use]
+pub struct RamSlotToken {
+    id: TaskId,
+}
+
+impl Drop for RamSlotToken {
+    fn drop(&mut self) {
+        panic!("The RamSlotToken must be consumed by returning it to storage.mark_initialized()!");
+    }
 }
 
 impl Storage {
@@ -20,63 +45,98 @@ impl Storage {
         }
     }
 
-    fn alloc<T>(&self, key: TaskId) -> Result<&mut MaybeUninit<T>, Error> {
-        let layout = Layout::new::<T>();
+    fn alloc(&self, key: TaskId, layout: Layout) -> Result<*mut u8, Error> {
         let offset = self.buffer.alloc(layout)?;
 
-        let entry = StorageEntry { offset };
+        let entry = StorageEntry {
+            state: StorageEntryState::Uninitialized,
+            offset,
+        };
 
         // Safety: We have just obtained this offset from alloc
         let ptr = unsafe { self.buffer.buffer.offset(offset as _) };
-        let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
         let prev = self.index.borrow_mut().insert(key, entry);
         assert!(prev.is_none());
+
+        Ok(ptr)
+    }
+
+    pub fn alloc_ram_slot<T: AnyBitPattern>(
+        &self,
+        key: TaskId,
+    ) -> Result<(&mut MaybeUninit<T>, RamSlotToken), Error> {
+        let layout = Layout::new::<T>();
+        let ptr = self.alloc(key, layout)?;
+
+        let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { &mut *t_ptr as _ };
-        Ok(t_ref)
+        Ok((t_ref, RamSlotToken { id: key }))
     }
 
-    fn alloc_slice<T>(&self, key: TaskId, size: usize) -> Result<&mut [MaybeUninit<T>], Error> {
+    pub fn alloc_ram_slot_slice<T: AnyBitPattern>(
+        &self,
+        key: TaskId,
+        size: usize,
+    ) -> Result<(&mut [MaybeUninit<T>], RamSlotToken), Error> {
         let layout = Layout::array::<T>(size).unwrap();
-        let offset = self.buffer.alloc(layout)?;
+        let ptr = self.alloc(key, layout)?;
 
-        let entry = StorageEntry { offset };
-
-        // Safety: We have just obtained this offset from alloc
-        let ptr = unsafe { self.buffer.buffer.offset(offset as _) };
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
-
-        let prev = self.index.borrow_mut().insert(key, entry);
-        assert!(prev.is_none());
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        Ok(t_ref)
+        Ok((t_ref, RamSlotToken { id: key }))
     }
 
-    // Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot<T, F: FnOnce(&mut MaybeUninit<T>) -> Result<(), Error>>(
+    /// Safety: The corresponding slot has to have been completely written to.
+    pub unsafe fn mark_initialized(&self, token: RamSlotToken) {
+        self.index.borrow_mut().get_mut(&token.id).unwrap().state = StorageEntryState::Initialized;
+
+        // Avoid running the destructor of RamSlotToken (which always panics)
+        std::mem::forget(token);
+    }
+
+    pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
+        unsafe {
+            self.with_ram_slot(id, |v| {
+                v.write(value);
+                Ok(())
+            })
+        }
+    }
+
+    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
+    pub unsafe fn with_ram_slot<
+        T: AnyBitPattern,
+        F: FnOnce(&mut MaybeUninit<T>) -> Result<(), Error>,
+    >(
         &self,
         key: TaskId,
         f: F,
     ) -> Result<(), Error> {
-        let mut slot = self.alloc(key)?;
+        let (mut slot, token) = self.alloc_ram_slot(key)?;
         f(&mut slot)?;
+        self.mark_initialized(token);
 
         Ok(())
     }
 
-    // Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot_slice<T, F: FnOnce(&mut [MaybeUninit<T>]) -> Result<(), Error>>(
+    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
+    pub unsafe fn with_ram_slot_slice<
+        T: AnyBitPattern,
+        F: FnOnce(&mut [MaybeUninit<T>]) -> Result<(), Error>,
+    >(
         &self,
         key: TaskId,
         size: usize,
         f: F,
     ) -> Result<(), Error> {
-        let mut slot = self.alloc_slice(key, size)?;
+        let (mut slot, token) = self.alloc_ram_slot_slice(key, size)?;
         f(&mut slot)?;
+        self.mark_initialized(token);
 
         Ok(())
     }
@@ -85,6 +145,7 @@ impl Storage {
     pub unsafe fn read_ram<T>(&self, key: TaskId) -> Option<&T> {
         let index = self.index.borrow();
         let entry = index.get(&key)?;
+        assert!(entry.state.initialized());
 
         let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
         let t_ptr = ptr.cast::<T>();

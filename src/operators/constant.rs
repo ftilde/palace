@@ -29,7 +29,7 @@ impl<'op, 'tasks, T> std::ops::Deref for ScalarTaskContext<'op, 'tasks, T> {
 impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
     pub fn write(&self, value: &T) -> Result<(), Error> {
         let id = TaskId::new(self.op_id, &DatumRequest::Value);
-        self.inner.write_to_ram(id, *value)
+        self.inner.storage.write_to_ram(id, *value)
     }
 }
 
@@ -49,6 +49,7 @@ pub fn request_value<'tasks, 'op: 'tasks, T: bytemuck::Pod>(
             op.compute_value(ctx)
         })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+        _marker: Default::default(),
     }
 }
 

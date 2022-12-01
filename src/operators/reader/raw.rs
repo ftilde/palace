@@ -37,7 +37,14 @@ impl Operator for RawVolumeSource {
 }
 
 impl VolumeOperator for RawVolumeSource {
-    fn compute_brick<'op, 'tasks>(
+    fn compute_metadata<'tasks, 'op: 'tasks>(
+        &'op self,
+        ctx: VolumeTaskContext<'op, 'tasks>,
+    ) -> Task<'tasks> {
+        async move { ctx.write_metadata(self.metadata) }.into()
+    }
+
+    fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
         pos: crate::data::BrickPosition,
@@ -58,44 +65,38 @@ impl VolumeOperator for RawVolumeSource {
 
             // Safety: We are zeroing all brick data in a first step.
             // TODO: We might want to lift this restriction in the future
-            unsafe {
-                ctx.write_brick(pos, num_voxels, |brick_data| {
-                    brick_data.iter_mut().for_each(|v| {
-                        v.write(0.0);
-                    });
+            let (brick_data, token) = ctx.brick_slot(pos, num_voxels)?;
+            ctx.submit(ctx.thread_pool.spawn(move || {
+                brick_data.iter_mut().for_each(|v| {
+                    v.write(0.0);
+                });
 
-                    for z in 0..brick_dim.z {
-                        for y in 0..brick_dim.y {
-                            let bu8 = voxel_size
-                                * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
-                            let eu8 = voxel_size
-                                * to_linear(
-                                    begin.0 + cgmath::vec3(brick_dim.x, y, z),
-                                    m.dimensions.0,
-                                );
+                for z in 0..brick_dim.z {
+                    for y in 0..brick_dim.y {
+                        let bu8 =
+                            voxel_size * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
+                        let eu8 = voxel_size
+                            * to_linear(begin.0 + cgmath::vec3(brick_dim.x, y, z), m.dimensions.0);
 
-                            let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
-                            let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+                        let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
+                        let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
 
-                            let in_ = &self.mmap[bu8..eu8];
-                            let out = &mut brick_data[bf32..ef32];
-                            let in_slice: &[f32] = bytemuck::cast_slice(in_);
-                            for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
-                                out.write(*in_);
-                            }
+                        let in_ = &self.mmap[bu8..eu8];
+                        let out = &mut brick_data[bf32..ef32];
+                        let in_slice: &[f32] = bytemuck::cast_slice(in_);
+                        for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
+                            out.write(*in_);
                         }
                     }
-                    Ok(())
-                })
-            }
+                }
+            }))
+            .await;
+
+            // At this point the thread pool job above has finished and has initialized all bytes
+            // in the brick.
+            unsafe { ctx.storage.mark_initialized(token) };
+            Ok(())
         }
         .into()
-    }
-
-    fn compute_metadata<'op, 'tasks>(
-        &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
-    ) -> Task<'tasks> {
-        async move { ctx.write_metadata(self.metadata) }.into()
     }
 }

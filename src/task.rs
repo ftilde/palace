@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::hash::{Hash, Hasher};
-use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::Poll;
 
@@ -10,11 +9,10 @@ use crate::id::Id;
 use crate::operator::OperatorId;
 use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
-use crate::threadpool::{self, ThreadPool};
+use crate::threadpool::{self, ThreadSpawner};
 use crate::Error;
 use futures::stream::StreamExt;
 
-use bytemuck::AnyBitPattern;
 use derive_more::{Constructor, Deref, DerefMut, From};
 
 #[derive(Deref, DerefMut)]
@@ -49,7 +47,8 @@ impl TaskInfo<'_> {
     }
 }
 
-type ResultPoll<'op, V> = Box<dyn for<'tasks> FnMut(TaskContext<'op, 'tasks>) -> Option<&'tasks V>>;
+type ResultPoll<'op, V> =
+    Box<dyn for<'tasks> FnMut(&TaskContext<'op, 'tasks>) -> Option<&'tasks V>>;
 
 pub type TaskConstructor<'op> =
     Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>;
@@ -60,10 +59,11 @@ pub enum RequestType<'op> {
     ThreadPoolJob(threadpool::Job),
 }
 
-pub struct Request<'op, V: ?Sized> {
+pub struct Request<'req, 'op, V: ?Sized> {
     pub id: TaskId,
     pub type_: RequestType<'op>,
     pub poll: ResultPoll<'op, V>,
+    pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
 #[derive(Copy, Clone)]
@@ -74,7 +74,7 @@ where
     pub requests: &'tasks RequestQueue<'op>,
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
-    pub thread_pool: &'tasks ThreadPool<'tasks>,
+    pub thread_pool: &'tasks ThreadSpawner,
 }
 
 // Workaround for a compiler bug(?)
@@ -86,10 +86,10 @@ impl<'op, 'tasks> TaskContext<'op, 'tasks>
 where
     'op: 'tasks,
 {
-    pub fn submit<V: ?Sized + 'tasks>(
-        self,
-        mut request: Request<'op, V>,
-    ) -> impl Future<Output = &'tasks V> + 'tasks + WeUseThisLifetime<'op> {
+    pub fn submit<'req, V: ?Sized + 'req>(
+        &'req self,
+        mut request: Request<'req, 'op, V>,
+    ) -> impl Future<Output = &'req V> + 'req + WeUseThisLifetime<'op> {
         // TODO: Maybe we don't need this optimization for data requests
         let initial_ready = match request.type_ {
             RequestType::Data(_) => (request.poll)(self),
@@ -114,18 +114,24 @@ where
     }
 
     #[allow(unused)] //We will probably use this at some point
-    pub fn submit_unordered<V: 'tasks + ?Sized>(
-        self,
-        requests: impl Iterator<Item = Request<'op, V>> + 'tasks,
-    ) -> impl StreamExt<Item = &'tasks V> + 'tasks + WeUseThisLifetime<'op> {
+    pub fn submit_unordered<'req, V: 'req + ?Sized>(
+        &'req self,
+        requests: impl Iterator<Item = Request<'req, 'op, V>> + 'req,
+    ) -> impl StreamExt<Item = &'req V> + 'req + WeUseThisLifetime<'op>
+    where
+        'tasks: 'req,
+    {
         self.submit_unordered_with_data(requests.map(|r| (r, ())))
             .map(|(r, ())| r)
     }
 
-    pub fn submit_unordered_with_data<V: 'tasks + ?Sized, D: 'tasks>(
-        self,
-        requests: impl Iterator<Item = (Request<'op, V>, D)>,
-    ) -> impl StreamExt<Item = (&'tasks V, D)> + 'tasks + WeUseThisLifetime<'op> {
+    pub fn submit_unordered_with_data<'req, V: 'req + ?Sized, D: 'tasks>(
+        &'req self,
+        requests: impl Iterator<Item = (Request<'req, 'op, V>, D)> + 'req,
+    ) -> impl StreamExt<Item = (&'req V, D)> + 'req + WeUseThisLifetime<'op>
+    where
+        'tasks: 'req,
+    {
         let mut initial_ready = Vec::new();
         let mut task_map = requests
             .into_iter()
@@ -148,7 +154,7 @@ where
             })
             .collect::<BTreeMap<_, _>>();
         let mut completed = VecDeque::new();
-        futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(&'tasks V, D)>> {
+        futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(&'req V, D)>> {
             completed.extend(self.hints.drain_completed());
             if let Some(r) = initial_ready.pop() {
                 return Poll::Ready(Some(r));
@@ -170,40 +176,6 @@ where
                 }
             }
         })
-    }
-
-    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot<
-        T: AnyBitPattern,
-        F: FnOnce(&mut MaybeUninit<T>) -> Result<(), Error>,
-    >(
-        &self,
-        id: TaskId,
-        f: F,
-    ) -> Result<(), Error> {
-        self.storage.with_ram_slot(id, f)
-    }
-
-    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot_slice<
-        T: AnyBitPattern,
-        F: FnOnce(&mut [MaybeUninit<T>]) -> Result<(), Error>,
-    >(
-        &self,
-        id: TaskId,
-        size: usize,
-        f: F,
-    ) -> Result<(), Error> {
-        self.storage.with_ram_slot_slice(id, size, f)
-    }
-
-    pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
-        unsafe {
-            self.with_ram_slot(id, |v| {
-                v.write(value);
-                Ok(())
-            })
-        }
     }
 }
 

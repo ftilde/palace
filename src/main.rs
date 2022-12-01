@@ -63,8 +63,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request_queue = runtime::RequestQueue::new();
     let hints = runtime::TaskHints::new();
-    let thread_pool = threadpool::ThreadPool::new(thread_pool_size);
-    let mut rt = runtime::RunTime::new(&storage, &thread_pool, &request_queue, &hints);
+    let (thread_pool, thread_spawner) = threadpool::create_pool(thread_pool_size);
+    let mut rt = runtime::RunTime::new(
+        &storage,
+        thread_pool,
+        &thread_spawner,
+        &request_queue,
+        &hints,
+    );
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?

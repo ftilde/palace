@@ -7,12 +7,14 @@ use derive_more::Constructor;
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
+    storage::RamSlotToken,
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
 
 use super::{request_value, ScalarOperator, ScalarTaskContext};
 
+#[derive(Copy, Clone)]
 pub struct VolumeTaskContext<'op, 'tasks> {
     inner: TaskContext<'op, 'tasks>,
     current_op_id: OperatorId,
@@ -29,22 +31,31 @@ impl<'op, 'tasks> std::ops::Deref for VolumeTaskContext<'op, 'tasks> {
 impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
     pub fn write_metadata(&self, metadata: VolumeMetaData) -> Result<(), Error> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Value);
-        self.inner.write_to_ram(id, metadata)
+        self.inner.storage.write_to_ram(id, metadata)
     }
-    pub unsafe fn write_brick<F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
+    pub unsafe fn with_brick_slot<F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
         &self,
         pos: BrickPosition,
         num_voxels: usize,
         f: F,
     ) -> Result<(), Error> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
-        unsafe { self.inner.with_ram_slot_slice(id, num_voxels, f) }
+        unsafe { self.inner.storage.with_ram_slot_slice(id, num_voxels, f) }
+    }
+
+    pub fn brick_slot<'a>(
+        &'a self,
+        pos: BrickPosition,
+        num_voxels: usize,
+    ) -> Result<(&'a mut [MaybeUninit<f32>], RamSlotToken), Error> {
+        let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
+        self.inner.storage.alloc_ram_slot_slice(id, num_voxels)
     }
 }
 
-pub fn request_metadata<'tasks, 'op: 'tasks>(
+pub fn request_metadata<'req, 'tasks: 'req, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-) -> Request<'op, VolumeMetaData> {
+) -> Request<'req, 'op, VolumeMetaData> {
     let op_id = vol.id();
     let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
     Request {
@@ -57,14 +68,15 @@ pub fn request_metadata<'tasks, 'op: 'tasks>(
             vol.compute_metadata(ctx)
         })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+        _marker: Default::default(),
     }
 }
 
-pub fn request_brick<'tasks, 'op: 'tasks>(
+pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
     metadata: &VolumeMetaData,
     pos: BrickPosition,
-) -> Request<'op, [f32]> {
+) -> Request<'req, 'op, [f32]> {
     let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = vol.id();
@@ -79,15 +91,16 @@ pub fn request_brick<'tasks, 'op: 'tasks>(
             vol.compute_brick(ctx, pos)
         })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id, num_voxels) }),
+        _marker: Default::default(),
     }
 }
 
 pub trait VolumeOperator: Operator {
-    fn compute_metadata<'op, 'tasks>(
+    fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
     ) -> Task<'tasks>;
-    fn compute_brick<'op, 'tasks>(
+    fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
         position: BrickPosition,
@@ -108,7 +121,7 @@ impl Operator for LinearRescale<'_> {
 }
 
 impl VolumeOperator for LinearRescale<'_> {
-    fn compute_metadata<'op, 'tasks>(
+    fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
     ) -> Task<'tasks> {
@@ -122,7 +135,7 @@ impl VolumeOperator for LinearRescale<'_> {
         .into()
     }
 
-    fn compute_brick<'op, 'tasks>(
+    fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
         ctx: VolumeTaskContext<'op, 'tasks>,
         position: BrickPosition,
@@ -138,7 +151,7 @@ impl VolumeOperator for LinearRescale<'_> {
             let num_voxels = hmul(v.brick_size.0) as usize;
 
             unsafe {
-                ctx.write_brick(position, num_voxels, |buf| {
+                ctx.with_brick_slot(position, num_voxels, |buf| {
                     for (i, o) in b.iter().zip(buf.iter_mut()) {
                         o.write(*factor * *i + offset);
                     }
