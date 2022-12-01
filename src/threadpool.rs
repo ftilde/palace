@@ -1,12 +1,13 @@
+use std::cell::Cell;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
-use std::{cell::Cell, task::Poll};
 
-use crate::{operator::OperatorId, task::Request};
+use crate::operator::OperatorId;
+use crate::task::Request;
 
 const WORKER_THREAD_NAME_BASE: &'static str = concat!(env!("CARGO_PKG_NAME"), " worker");
 
-type Job = Box<dyn FnOnce() + Send>;
+pub type Job = Box<dyn FnOnce() + Send>;
 
 struct Worker {
     thread: JoinHandle<()>,
@@ -45,7 +46,7 @@ impl<'tasks> ThreadPool<'tasks> {
         }
     }
 
-    pub fn spawn(&self, _f: impl FnOnce() + Send + 'tasks) -> Request<'tasks, ()> {
+    pub fn spawn(&'tasks self, f: impl FnOnce() + Send + 'tasks) -> Request<'tasks, ()> {
         let job_num = self.job_counter.get() + 1;
         self.job_counter.set(job_num);
 
@@ -53,9 +54,15 @@ impl<'tasks> ThreadPool<'tasks> {
         use crate::operator::Operator;
         let id = OperatorId::new::<Self>(&[job_num.id()]);
         let id = id.inner().into();
+
+        let f: Box<dyn FnOnce() + Send + 'tasks> = Box::new(f);
+
+        // TODO: Ensure the safety of this
+        let f = unsafe { std::mem::transmute(f) };
+
         Request {
             id,
-            compute: Box::new(move |_ctx| std::future::poll_fn(|_| Poll::Ready(Ok(()))).into()),
+            type_: crate::task::RequestType::ThreadPoolJob(f),
             poll: Box::new(move |_ctx| Some(&())),
         }
     }

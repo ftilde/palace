@@ -7,7 +7,7 @@ use std::{
 use crate::{
     operator::OperatorId,
     storage::Storage,
-    task::{DatumRequest, Task, TaskContext, TaskId, TaskInfo},
+    task::{DatumRequest, RequestType, Task, TaskContext, TaskId, TaskInfo},
     threadpool::ThreadPool,
     Error,
 };
@@ -93,13 +93,18 @@ where
     fn enqueue_requested(&mut self, from: TaskId) {
         for req in self.request_queue.drain() {
             let task_id = req.id();
-            let context = self.context();
-            if !self.tasks.exists(task_id) {
-                let task = (req.task)(context);
-                self.tasks.add_implied(task_id, task);
+            match req.task {
+                RequestType::Data(task_constr) => {
+                    let context = self.context();
+                    if !self.tasks.exists(task_id) {
+                        let task = (task_constr)(context);
+                        self.tasks.add_implied(task_id, task);
+                    }
+                    self.tasks
+                        .add_dependency(from, task_id, req.progress_indicator);
+                }
+                RequestType::ThreadPoolJob(_) => todo!(),
             }
-            self.tasks
-                .add_dependency(from, task_id, req.progress_indicator);
         }
     }
 

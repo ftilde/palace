@@ -1,7 +1,7 @@
 use crate::{
     id::Id,
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Request, Task, TaskContext, TaskId},
+    task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
 
@@ -40,14 +40,14 @@ pub fn request_value<'tasks, 'op: 'tasks, T: bytemuck::Pod>(
     let id = TaskId::new(op_id, &DatumRequest::Value);
     Request {
         id,
-        compute: Box::new(move |ctx| {
+        type_: RequestType::Data(Box::new(move |ctx| {
             let ctx = ScalarTaskContext {
                 inner: ctx,
                 op_id,
                 marker: Default::default(),
             };
             op.compute_value(ctx)
-        }),
+        })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
     }
 }

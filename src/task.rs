@@ -10,7 +10,7 @@ use crate::id::Id;
 use crate::operator::OperatorId;
 use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
-use crate::threadpool::ThreadPool;
+use crate::threadpool::{self, ThreadPool};
 use crate::Error;
 use futures::stream::StreamExt;
 
@@ -40,7 +40,7 @@ impl TaskId {
 #[derive(Constructor)]
 pub struct TaskInfo<'op> {
     pub id: TaskId,
-    pub task: Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>,
+    pub task: RequestType<'op>,
     pub progress_indicator: ProgressIndicator,
 }
 impl TaskInfo<'_> {
@@ -51,9 +51,18 @@ impl TaskInfo<'_> {
 
 type ResultPoll<'op, V> = Box<dyn for<'tasks> FnMut(TaskContext<'op, 'tasks>) -> Option<&'tasks V>>;
 
+pub type TaskConstructor<'op> =
+    Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>;
+
+#[derive(From)]
+pub enum RequestType<'op> {
+    Data(TaskConstructor<'op>),
+    ThreadPoolJob(threadpool::Job),
+}
+
 pub struct Request<'op, V: ?Sized> {
     pub id: TaskId,
-    pub compute: Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>,
+    pub type_: RequestType<'op>,
     pub poll: ResultPoll<'op, V>,
 }
 
@@ -81,11 +90,15 @@ where
         self,
         mut request: Request<'op, V>,
     ) -> impl Future<Output = &'tasks V> + 'tasks + WeUseThisLifetime<'op> {
-        let initial_ready = (request.poll)(self);
+        // TODO: Maybe we don't need this optimization for data requests
+        let initial_ready = match request.type_ {
+            RequestType::Data(_) => (request.poll)(self),
+            RequestType::ThreadPoolJob(_) => None,
+        };
         if initial_ready.is_none() {
             self.requests.push(TaskInfo {
                 id: request.id,
-                task: request.compute,
+                task: request.type_,
                 progress_indicator: ProgressIndicator::WaitForComplete,
             });
         }
@@ -100,6 +113,7 @@ where
         })
     }
 
+    #[allow(unused)] //We will probably use this at some point
     pub fn submit_unordered<V: 'tasks + ?Sized>(
         self,
         requests: impl Iterator<Item = Request<'op, V>> + 'tasks,
@@ -116,13 +130,18 @@ where
         let mut task_map = requests
             .into_iter()
             .filter_map(|(mut req, data)| {
-                if let Some(r) = (req.poll)(self) {
-                    initial_ready.push((r, data));
-                    return None;
-                }
+                match req.type_ {
+                    RequestType::Data(_) => {
+                        if let Some(r) = (req.poll)(self) {
+                            initial_ready.push((r, data));
+                            return None;
+                        }
+                    }
+                    RequestType::ThreadPoolJob(_) => {}
+                };
                 self.requests.push(TaskInfo {
                     id: req.id,
-                    task: req.compute,
+                    task: req.type_,
                     progress_indicator: ProgressIndicator::PartialPossible,
                 });
                 Some((req.id, (req.poll, data)))

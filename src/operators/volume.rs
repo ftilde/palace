@@ -7,7 +7,7 @@ use derive_more::Constructor;
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    task::{DatumRequest, Request, Task, TaskContext, TaskId},
+    task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
 
@@ -49,13 +49,13 @@ pub fn request_metadata<'tasks, 'op: 'tasks>(
     let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
     Request {
         id,
-        compute: Box::new(move |ctx| {
+        type_: RequestType::Data(Box::new(move |ctx| {
             let ctx = VolumeTaskContext {
                 inner: ctx,
                 current_op_id: op_id,
             };
             vol.compute_metadata(ctx)
-        }),
+        })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
     }
 }
@@ -71,13 +71,13 @@ pub fn request_brick<'tasks, 'op: 'tasks>(
     let id = TaskId::new(op_id, &req); //TODO: revisit
     Request {
         id,
-        compute: Box::new(move |ctx| {
+        type_: RequestType::Data(Box::new(move |ctx| {
             let ctx = VolumeTaskContext {
                 inner: ctx,
                 current_op_id: op_id,
             };
             vol.compute_brick(ctx, pos)
-        }),
+        })),
         poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id, num_voxels) }),
     }
 }
