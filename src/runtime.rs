@@ -69,7 +69,9 @@ where
             for ready in ready {
                 let task_id = ready.id;
                 let resolved_deps = ready.resolved_deps;
-                self.hints.completed.set(resolved_deps);
+                let old_hints = self.hints.completed.replace(resolved_deps);
+                // We require polled tasks to empty the resolved_deps before yielding
+                assert!(old_hints.is_empty());
 
                 let mut ctx = Context::from_waker(&self.waker);
                 let task = self.tasks.get_implied_mut(task_id);
@@ -81,6 +83,7 @@ where
 
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
+                        assert!(self.request_queue.is_empty());
                         self.tasks.resolved_implied(task_id);
                         self.statistics.tasks_executed += 1;
                     }
@@ -152,6 +155,7 @@ where
                 }
             };
             self.try_resolve_implied()?;
+            assert!(self.request_queue.is_empty());
         }
     }
 }
@@ -208,8 +212,7 @@ impl<'a> TaskGraph<'a> {
     }
 
     fn resolved_implied(&mut self, id: TaskId) {
-        let removed = self.implied_tasks.remove(&id);
-        assert!(removed.is_some(), "Task was not present");
+        self.implied_tasks.remove(&id);
         self.ready.remove(&id);
 
         for rev_dep in self.rev_deps.remove(&id).iter().flatten() {

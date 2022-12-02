@@ -90,27 +90,34 @@ where
         &'req self,
         mut request: Request<'req, 'op, V>,
     ) -> impl Future<Output = &'req V> + 'req + WeUseThisLifetime<'op> {
-        // TODO: Maybe we don't need this optimization for data requests
-        let initial_ready = match request.type_ {
-            RequestType::Data(_) => (request.poll)(self),
-            RequestType::ThreadPoolJob(_) => None,
-        };
-        if initial_ready.is_none() {
+        async move {
+            let _ = self.hints.drain_completed();
+            match request.type_ {
+                RequestType::Data(_) => {
+                    if let Some(res) = (request.poll)(self) {
+                        return std::future::ready(res).await;
+                    }
+                }
+                RequestType::ThreadPoolJob(_) => {}
+            };
+
             self.requests.push(TaskInfo {
                 id: request.id,
                 task: request.type_,
                 progress_indicator: ProgressIndicator::WaitForComplete,
             });
-        }
-        std::future::poll_fn(move |_ctx| loop {
-            if let Some(data) = initial_ready {
-                return Poll::Ready(data);
-            } else if let Some(data) = (request.poll)(self) {
-                return Poll::Ready(data);
-            } else {
-                return Poll::Pending;
+
+            futures::pending!();
+
+            loop {
+                let _ = self.hints.drain_completed();
+                if let Some(data) = (request.poll)(self) {
+                    return std::future::ready(data).await;
+                } else {
+                    futures::pending!();
+                }
             }
-        })
+        }
     }
 
     #[allow(unused)] //We will probably use this at some point
@@ -162,7 +169,6 @@ where
             if task_map.is_empty() {
                 return Poll::Ready(None);
             }
-            assert!(!completed.is_empty());
 
             loop {
                 let Some(completed_id) = completed.pop_front() else {
