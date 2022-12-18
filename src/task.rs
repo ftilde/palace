@@ -9,7 +9,7 @@ use crate::id::Id;
 use crate::operator::OperatorId;
 use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
 use crate::storage::Storage;
-use crate::threadpool::{self, ThreadSpawner};
+use crate::task_manager::ThreadSpawner;
 use crate::Error;
 use futures::stream::StreamExt;
 
@@ -56,7 +56,12 @@ pub type TaskConstructor<'op> =
 #[derive(From)]
 pub enum RequestType<'op> {
     Data(TaskConstructor<'op>),
-    ThreadPoolJob(threadpool::Job),
+    ThreadPoolJob(ThreadPoolJob),
+}
+
+pub struct ThreadPoolJob {
+    pub waiting_id: TaskId,
+    pub job: crate::threadpool::Job,
 }
 
 pub struct Request<'req, 'op, V: ?Sized> {
@@ -75,6 +80,7 @@ where
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
     pub thread_pool: &'tasks ThreadSpawner,
+    pub current_task: TaskId,
 }
 
 // Workaround for a compiler bug(?)
@@ -86,6 +92,10 @@ impl<'op, 'tasks> TaskContext<'op, 'tasks>
 where
     'op: 'tasks,
 {
+    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'op, ()> {
+        self.thread_pool.spawn(self.current_task, f)
+    }
+
     pub fn submit<'req, V: ?Sized + 'req>(
         &'req self,
         mut request: Request<'req, 'op, V>,

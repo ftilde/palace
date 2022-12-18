@@ -16,6 +16,7 @@ mod operators;
 mod runtime;
 mod storage;
 mod task;
+mod task_manager;
 mod threadpool;
 mod vulkan;
 
@@ -63,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let request_queue = runtime::RequestQueue::new();
     let hints = runtime::TaskHints::new();
-    let (thread_pool, thread_spawner) = threadpool::create_pool(thread_pool_size);
+    let (thread_pool, thread_spawner) = task_manager::create_task_manager(thread_pool_size);
     let mut rt = runtime::RunTime::new(
         &storage,
         thread_pool,

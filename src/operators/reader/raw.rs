@@ -66,7 +66,7 @@ impl VolumeOperator for RawVolumeSource {
             // Safety: We are zeroing all brick data in a first step.
             // TODO: We might want to lift this restriction in the future
             let (brick_data, token) = ctx.brick_slot(pos, num_voxels)?;
-            ctx.submit(ctx.thread_pool.spawn(move || {
+            ctx.submit(ctx.spawn_job(move || {
                 brick_data.iter_mut().for_each(|v| {
                     v.write(0.0);
                 });

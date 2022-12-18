@@ -7,16 +7,16 @@ use std::{
 use crate::{
     operator::OperatorId,
     storage::Storage,
-    task::{DatumRequest, RequestType, Task, TaskContext, TaskId, TaskInfo},
-    threadpool::{Job, ThreadPool, ThreadSpawner},
+    task::{DatumRequest, RequestType, Task, TaskContext, TaskId, TaskInfo, ThreadPoolJob},
+    task_manager::{TaskManager, ThreadSpawner},
     Error,
 };
 
 pub struct RunTime<'op, 'queue, 'tasks> {
     waker: Waker,
-    tasks: TaskGraph<'tasks>,
+    task_graph: TaskGraph,
     storage: &'tasks Storage,
-    thread_pool: ThreadPool,
+    task_manager: TaskManager<'tasks>,
     thread_spawner: &'tasks ThreadSpawner,
     request_queue: &'queue RequestQueue<'op>,
     hints: &'queue TaskHints,
@@ -30,16 +30,16 @@ where
 {
     pub fn new(
         storage: &'tasks Storage,
-        thread_pool: ThreadPool,
+        task_manager: TaskManager<'tasks>,
         thread_spawner: &'tasks ThreadSpawner,
         request_queue: &'queue RequestQueue<'op>,
         hints: &'queue TaskHints,
     ) -> Self {
         RunTime {
             waker: dummy_waker(),
-            tasks: TaskGraph::new(),
+            task_graph: TaskGraph::new(),
             storage,
-            thread_pool,
+            task_manager,
             thread_spawner,
             request_queue,
             hints,
@@ -49,12 +49,13 @@ where
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self) -> TaskContext<'op, 'tasks> {
+    fn context(&self, current: TaskId) -> TaskContext<'op, 'tasks> {
         TaskContext {
             requests: self.request_queue,
             storage: self.storage,
             hints: self.hints,
             thread_pool: self.thread_spawner,
+            current_task: current,
         }
     }
 
@@ -62,7 +63,7 @@ where
         loop {
             self.handle_thread_pool();
 
-            let ready = self.tasks.next_ready();
+            let ready = self.task_graph.next_ready();
             if ready.is_empty() {
                 return Ok(());
             }
@@ -74,7 +75,7 @@ where
                 assert!(old_hints.is_empty());
 
                 let mut ctx = Context::from_waker(&self.waker);
-                let task = self.tasks.get_implied_mut(task_id);
+                let task = self.task_manager.get_task(task_id).unwrap();
 
                 // The queue should always just contain the tasks that are enqueued by polling the
                 // following task! This is important so that we know the calling tasks id for the
@@ -84,7 +85,8 @@ where
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
                         assert!(self.request_queue.is_empty());
-                        self.tasks.resolved_implied(task_id);
+                        self.task_graph.resolved_implied(task_id);
+                        self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Ready(e) => {
@@ -103,17 +105,20 @@ where
             let task_id = req.id();
             match req.task {
                 RequestType::Data(task_constr) => {
-                    let context = self.context();
-                    if !self.tasks.exists(task_id) {
+                    let context = self.context(task_id);
+                    if !self.task_graph.exists(task_id) {
                         let task = (task_constr)(context);
-                        self.tasks.add_implied(task_id, task);
+                        self.task_manager.add_task(task_id, task);
+                        self.task_graph.add_implied(task_id);
                     }
-                    self.tasks
+                    self.task_graph
                         .add_dependency(from, task_id, req.progress_indicator);
                 }
                 RequestType::ThreadPoolJob(job) => {
-                    self.tasks.thread_pool_waiting.push_back((task_id, job));
-                    self.tasks
+                    self.task_graph
+                        .thread_pool_waiting
+                        .push_back((task_id, job));
+                    self.task_graph
                         .add_dependency(from, task_id, req.progress_indicator);
                 }
             }
@@ -121,15 +126,17 @@ where
     }
 
     fn handle_thread_pool(&mut self) {
-        while let Some(task) = self.thread_pool.finished() {
-            self.tasks.resolved_implied(task);
+        while let Some(task) = self.task_manager.job_finished() {
+            self.task_graph.resolved_implied(task);
         }
 
         // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
         // pull something from either collection if only either one is ready.
-        while self.thread_pool.worker_available() && !self.tasks.thread_pool_waiting.is_empty() {
-            let (id, job) = self.tasks.thread_pool_waiting.pop_front().unwrap();
-            self.thread_pool.submit(id, job);
+        while self.task_manager.pool_worker_available()
+            && !self.task_graph.thread_pool_waiting.is_empty()
+        {
+            let (id, job) = self.task_graph.thread_pool_waiting.pop_front().unwrap();
+            self.task_manager.spawn_job(id, job).unwrap();
         }
     }
 
@@ -142,7 +149,7 @@ where
         // running in a loop with changed parameters. We should try this out
         let op_id = OperatorId::new::<F>(&[]);
         let task_id = TaskId::new(op_id, &DatumRequest::Value);
-        let mut task = task(self.context());
+        let mut task = task(self.context(task_id));
 
         loop {
             let mut ctx = Context::from_waker(&self.waker);
@@ -165,19 +172,19 @@ pub enum ProgressIndicator {
     WaitForComplete,
 }
 
-struct TaskGraph<'a> {
-    implied_tasks: BTreeMap<TaskId, Task<'a>>,
-    thread_pool_waiting: VecDeque<(TaskId, Job)>,
+struct TaskGraph {
+    implied_tasks: BTreeSet<TaskId>,
+    thread_pool_waiting: VecDeque<(TaskId, ThreadPoolJob)>,
     deps: BTreeMap<TaskId, BTreeMap<TaskId, ProgressIndicator>>, // key requires values
     rev_deps: BTreeMap<TaskId, BTreeSet<TaskId>>,                // values require key
     ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, Vec<TaskId>>,
 }
 
-impl<'a> TaskGraph<'a> {
+impl TaskGraph {
     fn new() -> Self {
         Self {
-            implied_tasks: BTreeMap::new(),
+            implied_tasks: BTreeSet::new(),
             thread_pool_waiting: VecDeque::new(),
             deps: BTreeMap::new(),
             rev_deps: BTreeMap::new(),
@@ -187,12 +194,12 @@ impl<'a> TaskGraph<'a> {
     }
 
     fn exists(&self, id: TaskId) -> bool {
-        self.implied_tasks.contains_key(&id)
+        self.implied_tasks.contains(&id)
     }
 
-    fn add_implied(&mut self, id: TaskId, task: Task<'a>) {
-        let prev = self.implied_tasks.insert(id, task);
-        assert!(prev.is_none(), "Tried to insert task twice");
+    fn add_implied(&mut self, id: TaskId) {
+        let inserted = self.implied_tasks.insert(id);
+        assert!(inserted, "Tried to insert task twice");
         self.ready.insert(id);
     }
 
@@ -227,14 +234,10 @@ impl<'a> TaskGraph<'a> {
         }
     }
 
-    fn get_implied_mut(&mut self, id: TaskId) -> &mut Task<'a> {
-        self.implied_tasks.get_mut(&id).unwrap() //TODO: make api here nicer to avoid unwraps etc.
-    }
-
     fn next_ready(&mut self) -> Vec<ReadyTask> {
         self.ready
             .iter()
-            .filter(|t| self.implied_tasks.contains_key(&t))
+            .filter(|t| self.implied_tasks.contains(&t))
             .map(|t| ReadyTask {
                 id: *t,
                 resolved_deps: self.resolved_deps.remove(t).unwrap_or_default(),
