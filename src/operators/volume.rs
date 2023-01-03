@@ -7,7 +7,7 @@ use derive_more::Constructor;
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    storage::RamSlotToken,
+    storage::{RamSlotToken, ReadHandle},
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
@@ -55,7 +55,7 @@ impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
 
 pub fn request_metadata<'req, 'tasks: 'req, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-) -> Request<'req, 'op, VolumeMetaData> {
+) -> Request<'req, 'op, ReadHandle<'req, VolumeMetaData>> {
     let op_id = vol.id();
     let id = TaskId::new(op_id, &DatumRequest::Value); //TODO: revisit
     Request {
@@ -76,7 +76,7 @@ pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
     metadata: &VolumeMetaData,
     pos: BrickPosition,
-) -> Request<'req, 'op, [f32]> {
+) -> Request<'req, 'op, ReadHandle<'req, [f32]>> {
     let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = vol.id();
@@ -153,7 +153,7 @@ impl VolumeOperator for LinearRescale<'_> {
             unsafe {
                 ctx.with_brick_slot(position, num_voxels, |buf| {
                     for (i, o) in b.iter().zip(buf.iter_mut()) {
-                        o.write(*factor * *i + offset);
+                        o.write(*factor * *i + *offset);
                     }
                     Ok(())
                 })
@@ -188,7 +188,7 @@ impl ScalarOperator<f32> for Mean<'_> {
                     .map(|pos| (request_brick(self.vol, &vol, pos), pos)),
             );
             while let Some((brick_data, brick_pos)) = stream.next().await {
-                let brick = Brick::new(brick_data, vol.brick_dim(brick_pos), vol.brick_size);
+                let brick = Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
 
                 let voxels = brick.voxels().collect::<Vec<_>>();
                 sum += voxels.iter().sum::<f32>();

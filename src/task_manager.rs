@@ -163,7 +163,7 @@ impl ThreadSpawner {
             id,
             type_: crate::task::RequestType::ThreadPoolJob(job),
             poll: Box::new(move |_ctx| match drop_checker.try_recv() {
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(&()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(()),
                 _ => None,
             }),
             _marker: Default::default(),

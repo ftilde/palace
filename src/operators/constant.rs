@@ -1,6 +1,7 @@
 use crate::{
     id::Id,
     operator::{Operator, OperatorId},
+    storage::ReadHandle,
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
@@ -33,9 +34,9 @@ impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
     }
 }
 
-pub fn request_value<'tasks, 'op: 'tasks, T: bytemuck::Pod>(
+pub fn request_value<'req, 'tasks: 'req, 'op: 'tasks, T: bytemuck::Pod + 'req>(
     op: &'op dyn ScalarOperator<T>,
-) -> Request<T> {
+) -> Request<'req, 'op, ReadHandle<'req, T>> {
     let op_id = op.id();
     let id = TaskId::new(op_id, &DatumRequest::Value);
     Request {

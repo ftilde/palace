@@ -17,12 +17,39 @@ impl StorageEntryState {
 
 struct StorageEntry {
     state: StorageEntryState,
+    num_readers: usize,
     offset: usize,
 }
 
-pub struct Storage {
-    index: RefCell<BTreeMap<TaskId, StorageEntry>>,
-    buffer: BumpAllocator,
+pub struct ReadHandle<'a, T: ?Sized> {
+    storage: &'a Storage,
+    id: TaskId,
+    data: &'a T,
+}
+impl<'a, T: ?Sized> ReadHandle<'a, T> {
+    fn new(storage: &'a Storage, id: TaskId, data: &'a T) -> Self {
+        storage.index.borrow_mut().get_mut(&id).unwrap().num_readers += 1;
+
+        Self { storage, id, data }
+    }
+}
+impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl<T: ?Sized> Drop for ReadHandle<'_, T> {
+    fn drop(&mut self) {
+        self.storage
+            .index
+            .borrow_mut()
+            .get_mut(&self.id)
+            .unwrap()
+            .num_readers -= 1;
+    }
 }
 
 #[must_use]
@@ -36,6 +63,11 @@ impl Drop for RamSlotToken {
     }
 }
 
+pub struct Storage {
+    index: RefCell<BTreeMap<TaskId, StorageEntry>>,
+    buffer: BumpAllocator,
+}
+
 impl Storage {
     pub fn new(size: usize) -> Self {
         let buffer = BumpAllocator::new(size);
@@ -45,11 +77,22 @@ impl Storage {
         }
     }
 
+    pub fn try_free(&self, key: TaskId) -> Result<(), ()> {
+        let mut index = self.index.borrow_mut();
+        if index.get(&key).unwrap().num_readers == 0 {
+            index.remove(&key);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
     fn alloc(&self, key: TaskId, layout: Layout) -> Result<*mut u8, Error> {
         let offset = self.buffer.alloc(layout)?;
 
         let entry = StorageEntry {
             state: StorageEntryState::Uninitialized,
+            num_readers: 0,
             offset,
         };
 
@@ -142,31 +185,39 @@ impl Storage {
     }
 
     // Safety: The initial allocation for the TaskId must have happened with the same type.
-    pub unsafe fn read_ram<T>(&self, key: TaskId) -> Option<&T> {
-        let index = self.index.borrow();
-        let entry = index.get(&key)?;
-        assert!(entry.state.initialized());
+    pub unsafe fn read_ram<'a, T>(&'a self, key: TaskId) -> Option<ReadHandle<'a, T>> {
+        let t_ref = {
+            let index = self.index.borrow();
+            let entry = index.get(&key)?;
+            assert!(entry.state.initialized());
 
-        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
-        let t_ptr = ptr.cast::<T>();
+            let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+            let t_ptr = ptr.cast::<T>();
 
-        // Safety: Must be upheld by caller
-        let t_ref = unsafe { &mut *t_ptr as _ };
-        Some(t_ref)
+            // Safety: Must be upheld by caller
+            unsafe { &mut *t_ptr as _ }
+        };
+        Some(ReadHandle::new(self, key, t_ref))
     }
 
     // Safety: The initial allocation for the TaskId must have happened with the same type and the
     // size must match the initial allocation
-    pub unsafe fn read_ram_slice<T>(&self, key: TaskId, size: usize) -> Option<&[T]> {
-        let index = self.index.borrow();
-        let entry = index.get(&key)?;
+    pub unsafe fn read_ram_slice<'a, T>(
+        &'a self,
+        key: TaskId,
+        size: usize,
+    ) -> Option<ReadHandle<'a, [T]>> {
+        let t_ref = {
+            let index = self.index.borrow();
+            let entry = index.get(&key)?;
 
-        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
-        let t_ptr = ptr.cast::<T>();
+            let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+            let t_ptr = ptr.cast::<T>();
 
-        // Safety: Must be upheld by caller
-        let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, size) };
-        Some(t_ref)
+            // Safety: Must be upheld by caller
+            unsafe { std::slice::from_raw_parts(t_ptr, size) }
+        };
+        Some(ReadHandle::new(self, key, t_ref))
     }
 }
 

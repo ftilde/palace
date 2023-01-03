@@ -89,6 +89,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mean_unscaled = &mean_unscaled;
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
+    let tasks_executed_prev = rt.statistics().tasks_executed;
+    let id = rt.resolve(|ctx| {
+        async move {
+            let req = request_value(mean_unscaled);
+            let id = req.id;
+            *muv_ref = *ctx.submit(req).await;
+            Ok(id)
+        }
+        .into()
+    })?;
+    let tasks_executed = rt.statistics().tasks_executed - tasks_executed_prev;
+    println!(
+        "Computed unscaled mean val: {} ({} tasks)",
+        mean_val_unscaled, tasks_executed
+    );
+
+    storage.try_free(id).unwrap();
+
+    let tasks_executed_prev = rt.statistics().tasks_executed;
+    let muv_ref = &mut mean_val_unscaled;
     rt.resolve(|ctx| {
         async move {
             *muv_ref = *ctx.submit(request_value(mean_unscaled)).await;
@@ -96,9 +116,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         .into()
     })?;
-    let tasks_executed = rt.statistics().tasks_executed - tasks_executed;
+    let tasks_executed = rt.statistics().tasks_executed - tasks_executed_prev;
     println!(
-        "Computed unscaled mean val: {} ({} tasks)",
+        "Computed unscaled mean val again, after deletion: {} ({} tasks)",
         mean_val_unscaled, tasks_executed
     );
 

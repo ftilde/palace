@@ -47,8 +47,7 @@ impl TaskInfo<'_> {
     }
 }
 
-type ResultPoll<'op, V> =
-    Box<dyn for<'tasks> FnMut(&TaskContext<'op, 'tasks>) -> Option<&'tasks V>>;
+type ResultPoll<'req, 'op, V> = Box<dyn FnMut(TaskContext<'op, 'req>) -> Option<V>>;
 
 pub type TaskConstructor<'op> =
     Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>;
@@ -64,10 +63,10 @@ pub struct ThreadPoolJob {
     pub job: crate::threadpool::Job,
 }
 
-pub struct Request<'req, 'op, V: ?Sized> {
+pub struct Request<'req, 'op, V> {
     pub id: TaskId,
     pub type_: RequestType<'op>,
-    pub poll: ResultPoll<'op, V>,
+    pub poll: ResultPoll<'req, 'op, V>,
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
@@ -96,15 +95,15 @@ where
         self.thread_pool.spawn(self.current_task, f)
     }
 
-    pub fn submit<'req, V: ?Sized + 'req>(
+    pub fn submit<'req, V: 'req>(
         &'req self,
         mut request: Request<'req, 'op, V>,
-    ) -> impl Future<Output = &'req V> + 'req + WeUseThisLifetime<'op> {
+    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'op> {
         async move {
             let _ = self.hints.drain_completed();
             match request.type_ {
                 RequestType::Data(_) => {
-                    if let Some(res) = (request.poll)(self) {
+                    if let Some(res) = (request.poll)(*self) {
                         return std::future::ready(res).await;
                     }
                 }
@@ -121,7 +120,7 @@ where
 
             loop {
                 let _ = self.hints.drain_completed();
-                if let Some(data) = (request.poll)(self) {
+                if let Some(data) = (request.poll)(*self) {
                     return std::future::ready(data).await;
                 } else {
                     futures::pending!();
@@ -131,10 +130,10 @@ where
     }
 
     #[allow(unused)] //We will probably use this at some point
-    pub fn submit_unordered<'req, V: 'req + ?Sized>(
+    pub fn submit_unordered<'req, V: 'req>(
         &'req self,
         requests: impl Iterator<Item = Request<'req, 'op, V>> + 'req,
-    ) -> impl StreamExt<Item = &'req V> + 'req + WeUseThisLifetime<'op>
+    ) -> impl StreamExt<Item = V> + 'req + WeUseThisLifetime<'op>
     where
         'tasks: 'req,
     {
@@ -142,10 +141,10 @@ where
             .map(|(r, ())| r)
     }
 
-    pub fn submit_unordered_with_data<'req, V: 'req + ?Sized, D: 'tasks>(
+    pub fn submit_unordered_with_data<'req, V: 'req, D: 'tasks>(
         &'req self,
         requests: impl Iterator<Item = (Request<'req, 'op, V>, D)> + 'req,
-    ) -> impl StreamExt<Item = (&'req V, D)> + 'req + WeUseThisLifetime<'op>
+    ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'op>
     where
         'tasks: 'req,
     {
@@ -155,7 +154,7 @@ where
             .filter_map(|(mut req, data)| {
                 match req.type_ {
                     RequestType::Data(_) => {
-                        if let Some(r) = (req.poll)(self) {
+                        if let Some(r) = (req.poll)(*self) {
                             initial_ready.push((r, data));
                             return None;
                         }
@@ -171,7 +170,7 @@ where
             })
             .collect::<BTreeMap<_, _>>();
         let mut completed = VecDeque::new();
-        futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(&'req V, D)>> {
+        futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(V, D)>> {
             completed.extend(self.hints.drain_completed());
             if let Some(r) = initial_ready.pop() {
                 return Poll::Ready(Some(r));
@@ -186,7 +185,7 @@ where
                     };
                 let Some((mut result_poll, data)) = task_map.remove(&completed_id) else { continue };
 
-                match result_poll(self) {
+                match result_poll(*self) {
                     Some(v) => return Poll::Ready(Some((v, data))),
                     None => panic!("Task should have been ready!"),
                 }
