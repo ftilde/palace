@@ -40,7 +40,6 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
         self.data
     }
 }
-
 impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     fn drop(&mut self) {
         self.storage
@@ -52,14 +51,44 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     }
 }
 
-#[must_use]
-pub struct RamSlotToken {
+pub struct WriteHandle<'a, T: ?Sized> {
+    storage: &'a Storage,
     id: TaskId,
+    data: &'a mut T,
 }
+impl<'a, T: ?Sized> WriteHandle<'a, T> {
+    fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
+        Self { storage, id, data }
+    }
 
-impl Drop for RamSlotToken {
+    /// Safety: The corresponding slot has to have been completely written to.
+    pub unsafe fn mark_initialized(self) {
+        self.storage
+            .index
+            .borrow_mut()
+            .get_mut(&self.id)
+            .unwrap()
+            .state = StorageEntryState::Initialized;
+
+        // Avoid running the destructor of RamSlotToken (which always panics)
+        std::mem::forget(self);
+    }
+}
+impl<T: ?Sized> std::ops::Deref for WriteHandle<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+impl<T: ?Sized> std::ops::DerefMut for WriteHandle<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+impl<T: ?Sized> Drop for WriteHandle<'_, T> {
     fn drop(&mut self) {
-        panic!("The RamSlotToken must be consumed by returning it to storage.mark_initialized()!");
+        panic!("The WriteHandle MUST be consumed by calling mark_initialized!");
     }
 }
 
@@ -108,7 +137,7 @@ impl Storage {
     pub fn alloc_ram_slot<T: AnyBitPattern>(
         &self,
         key: TaskId,
-    ) -> Result<(&mut MaybeUninit<T>, RamSlotToken), Error> {
+    ) -> Result<WriteHandle<MaybeUninit<T>>, Error> {
         let layout = Layout::new::<T>();
         let ptr = self.alloc(key, layout)?;
 
@@ -116,14 +145,14 @@ impl Storage {
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { &mut *t_ptr as _ };
-        Ok((t_ref, RamSlotToken { id: key }))
+        Ok(WriteHandle::new(self, key, t_ref))
     }
 
     pub fn alloc_ram_slot_slice<T: AnyBitPattern>(
         &self,
         key: TaskId,
         size: usize,
-    ) -> Result<(&mut [MaybeUninit<T>], RamSlotToken), Error> {
+    ) -> Result<WriteHandle<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
         let ptr = self.alloc(key, layout)?;
 
@@ -131,15 +160,7 @@ impl Storage {
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        Ok((t_ref, RamSlotToken { id: key }))
-    }
-
-    /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn mark_initialized(&self, token: RamSlotToken) {
-        self.index.borrow_mut().get_mut(&token.id).unwrap().state = StorageEntryState::Initialized;
-
-        // Avoid running the destructor of RamSlotToken (which always panics)
-        std::mem::forget(token);
+        Ok(WriteHandle::new(self, key, t_ref))
     }
 
     pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
@@ -160,9 +181,9 @@ impl Storage {
         key: TaskId,
         f: F,
     ) -> Result<(), Error> {
-        let (mut slot, token) = self.alloc_ram_slot(key)?;
+        let mut slot = self.alloc_ram_slot(key)?;
         f(&mut slot)?;
-        self.mark_initialized(token);
+        slot.mark_initialized();
 
         Ok(())
     }
@@ -177,9 +198,9 @@ impl Storage {
         size: usize,
         f: F,
     ) -> Result<(), Error> {
-        let (mut slot, token) = self.alloc_ram_slot_slice(key, size)?;
+        let mut slot = self.alloc_ram_slot_slice(key, size)?;
         f(&mut slot)?;
-        self.mark_initialized(token);
+        slot.mark_initialized();
 
         Ok(())
     }

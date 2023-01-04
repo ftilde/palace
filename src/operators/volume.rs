@@ -7,7 +7,7 @@ use derive_more::Constructor;
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    storage::{RamSlotToken, ReadHandle},
+    storage::{ReadHandle, WriteHandle},
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
@@ -47,7 +47,7 @@ impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
         &'a self,
         pos: BrickPosition,
         num_voxels: usize,
-    ) -> Result<(&'a mut [MaybeUninit<f32>], RamSlotToken), Error> {
+    ) -> Result<WriteHandle<'a, [MaybeUninit<f32>]>, Error> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
         self.inner.storage.alloc_ram_slot_slice(id, num_voxels)
     }
