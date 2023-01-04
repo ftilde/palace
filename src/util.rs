@@ -13,3 +13,12 @@ pub const fn array_elm_size<T>() -> usize {
     let padding = len_rounded_up.wrapping_sub(len);
     len + padding
 }
+
+pub fn num_elms_in_array<T>(size_in_bytes: usize) -> usize {
+    let size_with_padding = crate::util::array_elm_size::<T>();
+    // TODO: This may still break if the array size does not include
+    // padding for the last element, but it probably should. See
+    // https://rust-lang.github.io/unsafe-code-guidelines/layout/arrays-and-slices.html
+    let num_elements = size_in_bytes / size_with_padding;
+    num_elements
+}

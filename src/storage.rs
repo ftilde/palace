@@ -2,7 +2,7 @@ use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit}
 
 use bytemuck::AnyBitPattern;
 
-use crate::{task::TaskId, Error};
+use crate::{task::TaskId, util::num_elms_in_array, Error};
 
 enum StorageEntryState {
     Uninitialized,
@@ -138,15 +138,6 @@ pub struct Storage {
     buffer: BumpAllocator,
 }
 
-#[allow(unused)] // See try_update_inplace
-pub type InplaceResult<'a, T> = Result<
-    &'a mut T,
-    (
-        ReadHandle<'a, T>,
-        Result<WriteHandle<'a, MaybeUninit<T>>, Error>,
-    ),
->;
-
 pub type InplaceResultSlice<'a, T> = Result<
     &'a mut [T],
     (
@@ -244,11 +235,7 @@ impl Storage {
             let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
             let t_ptr = ptr.cast::<T>();
 
-            let size_with_padding = crate::util::array_elm_size::<T>();
-            // TODO: This may still break if the array size does not include
-            // padding for the last element, but it probably should. See
-            // https://rust-lang.github.io/unsafe-code-guidelines/layout/arrays-and-slices.html
-            let num_elements = entry.size / size_with_padding;
+            let num_elements = num_elms_in_array::<T>(entry.size);
 
             // Safety: Must be upheld by caller
             unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
@@ -265,14 +252,15 @@ impl Storage {
     ) -> Option<InplaceResultSlice<'a, T>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;
-        let size = entry.size;
         assert!(entry.state.initialized());
+
+        let num_elements = num_elms_in_array::<T>(entry.size);
 
         let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
         let t_ptr = ptr.cast::<T>();
 
         // Safety: Must be upheld by caller
-        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
+        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
 
         let in_place_possible = entry.safe_to_delete();
         Some(if in_place_possible {
@@ -286,7 +274,7 @@ impl Storage {
         } else {
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = self.alloc_ram_slot_slice(new_key, size);
+            let w = self.alloc_ram_slot_slice(new_key, num_elements);
             let r = ReadHandle::new(self, old_key, t_ref);
             Err((r, w))
         })
