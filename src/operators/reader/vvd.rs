@@ -107,7 +107,7 @@ impl VolumeOperator for VvdVolumeSource {
     ) -> Task<'tasks> {
         async move {
             let m = ctx.submit(request_metadata(&self.raw)).await;
-            let b = ctx.submit(request_brick(&self.raw, &m, position)).await;
+            let b = ctx.submit(request_brick(&self.raw, position)).await;
             let num_voxels = hmul(m.brick_size.0) as usize;
             unsafe {
                 ctx.with_brick_slot(position, num_voxels, |o| {

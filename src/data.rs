@@ -31,16 +31,16 @@ pub struct VolumeMetaData {
     pub brick_size: VoxelPosition,
 }
 
-fn div_round_up(v1: u32, v2: u32) -> u32 {
-    (v1 + v2 - 1) / v2
-}
-
 impl VolumeMetaData {
     pub fn num_voxels(&self) -> u64 {
         hmul(self.dimensions.0.cast::<u64>().unwrap())
     }
     pub fn dimension_in_bricks(&self) -> BrickPosition {
-        BrickPosition(self.dimensions.0.zip(self.brick_size.0, div_round_up))
+        BrickPosition(
+            self.dimensions
+                .0
+                .zip(self.brick_size.0, crate::util::div_round_up),
+        )
     }
     //pub fn brick_pos(&self, pos: VoxelPosition) -> BrickPosition {
     //    BrickPosition(pos.0.zip(self.brick_size.0, |a, b| a / b))

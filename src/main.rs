@@ -18,6 +18,7 @@ mod storage;
 mod task;
 mod task_manager;
 mod threadpool;
+mod util;
 mod vulkan;
 
 // TODO look into thiserror/anyhow

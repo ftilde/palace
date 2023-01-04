@@ -5,7 +5,7 @@ use futures::stream::StreamExt;
 use derive_more::Constructor;
 
 use crate::{
-    data::{hmul, Brick, BrickPosition, VolumeMetaData},
+    data::{Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
     storage::{InplaceResultSlice, ReadHandle, WriteHandle},
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
@@ -74,10 +74,8 @@ pub fn request_metadata<'req, 'tasks: 'req, 'op: 'tasks>(
 
 pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
     vol: &'op dyn VolumeOperator,
-    metadata: &VolumeMetaData,
     pos: BrickPosition,
 ) -> Request<'req, 'op, ReadHandle<'req, [f32]>> {
-    let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = vol.id();
     let id = TaskId::new(op_id, &req); //TODO: revisit
@@ -90,18 +88,16 @@ pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
             };
             vol.compute_brick(ctx, pos)
         })),
-        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id, num_voxels) }),
+        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id) }),
         _marker: Default::default(),
     }
 }
 
 pub fn request_inplace_rw_brick<'req, 'tasks: 'req, 'op: 'tasks>(
     read_vol: &'op dyn VolumeOperator,
-    metadata: &VolumeMetaData,
     pos: BrickPosition,
     write_vol: &'op dyn VolumeOperator,
 ) -> Request<'req, 'op, InplaceResultSlice<'req, f32>> {
-    let num_voxels = hmul(metadata.brick_size.0) as usize;
     let req = DatumRequest::Brick(pos);
     let op_id = read_vol.id();
     let read_id = TaskId::new(op_id, &req); //TODO: revisit
@@ -116,8 +112,7 @@ pub fn request_inplace_rw_brick<'req, 'tasks: 'req, 'op: 'tasks>(
             read_vol.compute_brick(ctx, pos)
         })),
         poll: Box::new(move |ctx| unsafe {
-            ctx.storage
-                .try_update_inplace_slice(read_id, write_id, num_voxels)
+            ctx.storage.try_update_inplace_slice(read_id, write_id)
         }),
         _marker: Default::default(),
     }
@@ -169,14 +164,13 @@ impl VolumeOperator for LinearRescale<'_> {
         position: BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let (v, factor, offset) = futures::join! {
-                ctx.submit(request_metadata(self.vol)),
+            let (factor, offset) = futures::join! {
                 ctx.submit(request_value(self.factor)),
                 ctx.submit(request_value(self.offset)),
             };
 
             match ctx
-                .submit(request_inplace_rw_brick(self.vol, &v, position, self))
+                .submit(request_inplace_rw_brick(self.vol, position, self))
                 .await
             {
                 Ok(rw) => {
@@ -220,7 +214,7 @@ impl ScalarOperator<f32> for Mean<'_> {
 
             let mut stream = ctx.submit_unordered_with_data(
                 vol.brick_positions()
-                    .map(|pos| (request_brick(self.vol, &vol, pos), pos)),
+                    .map(|pos| (request_brick(self.vol, pos), pos)),
             );
             while let Some((brick_data, brick_pos)) = stream.next().await {
                 let brick = Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);

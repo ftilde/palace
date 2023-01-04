@@ -19,6 +19,7 @@ struct StorageEntry {
     state: StorageEntryState,
     num_readers: usize,
     offset: usize,
+    size: usize,
 }
 
 impl StorageEntry {
@@ -146,6 +147,7 @@ impl Storage {
             state: StorageEntryState::Uninitialized,
             num_readers: 0,
             offset,
+            size: layout.size(),
         };
 
         // Safety: We have just obtained this offset from alloc
@@ -281,12 +283,10 @@ impl Storage {
         })
     }
 
-    // Safety: The initial allocation for the TaskId must have happened with the same type and the
-    // size must match the initial allocation
+    // Safety: The initial allocation for the TaskId must have happened with the same type
     pub unsafe fn read_ram_slice<'a, T: AnyBitPattern>(
         &'a self,
         key: TaskId,
-        size: usize,
     ) -> Option<ReadHandle<'a, [T]>> {
         let t_ref = {
             let index = self.index.borrow();
@@ -295,8 +295,14 @@ impl Storage {
             let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
             let t_ptr = ptr.cast::<T>();
 
+            let size_with_padding = crate::util::array_elm_size::<T>();
+            // TODO: This may still break if the array size does not include
+            // padding for the last element, but it probably should. See
+            // https://rust-lang.github.io/unsafe-code-guidelines/layout/arrays-and-slices.html
+            let num_elements = entry.size / size_with_padding;
+
             // Safety: Must be upheld by caller
-            unsafe { std::slice::from_raw_parts(t_ptr, size) }
+            unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
         };
         Some(ReadHandle::new(self, key, t_ref))
     }
@@ -307,10 +313,10 @@ impl Storage {
         &'a self,
         old_key: TaskId,
         new_key: TaskId,
-        size: usize,
     ) -> Option<InplaceResultSlice<'a, T>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;
+        let size = entry.size;
         assert!(entry.state.initialized());
 
         let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
