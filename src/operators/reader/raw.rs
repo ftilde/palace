@@ -39,14 +39,14 @@ impl Operator for RawVolumeSource {
 impl VolumeOperator for RawVolumeSource {
     fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
     ) -> Task<'tasks> {
         async move { ctx.write_metadata(self.metadata) }.into()
     }
 
     fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
         pos: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {

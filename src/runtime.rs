@@ -12,7 +12,7 @@ use crate::{
     Error,
 };
 
-pub struct RunTime<'op, 'queue, 'tasks> {
+pub struct RunTime<'tasks, 'queue, 'op> {
     waker: Waker,
     task_graph: TaskGraph,
     storage: &'tasks Storage,
@@ -23,11 +23,7 @@ pub struct RunTime<'op, 'queue, 'tasks> {
     statistics: Statistics,
 }
 
-impl<'op, 'queue, 'tasks> RunTime<'op, 'queue, 'tasks>
-where
-    'op: 'queue,
-    'queue: 'tasks,
-{
+impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
     pub fn new(
         storage: &'tasks Storage,
         task_manager: TaskManager<'tasks>,
@@ -49,7 +45,7 @@ where
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self, current: TaskId) -> TaskContext<'op, 'tasks> {
+    fn context(&self, current: TaskId) -> TaskContext<'tasks, 'op> {
         TaskContext {
             requests: self.request_queue,
             storage: self.storage,
@@ -141,7 +137,7 @@ where
     }
 
     /// Safety: The specified type must be the result of the operation
-    pub fn resolve<'call, R, F: FnOnce(TaskContext<'op, 'tasks>) -> Task<'call, R>>(
+    pub fn resolve<'call, R, F: FnOnce(TaskContext<'tasks, 'op>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {

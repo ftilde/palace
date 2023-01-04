@@ -91,7 +91,7 @@ impl Operator for VvdVolumeSource {
 impl VolumeOperator for VvdVolumeSource {
     fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
     ) -> Task<'tasks> {
         async move {
             let m = ctx.submit(request_metadata(&self.raw)).await;
@@ -102,7 +102,7 @@ impl VolumeOperator for VvdVolumeSource {
 
     fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
         position: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {

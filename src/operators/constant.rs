@@ -13,14 +13,14 @@ impl<T: bytemuck::Pod> Operator for T {
 }
 
 // TODO remove those pub when request_blocking in RunTime is figured out
-pub struct ScalarTaskContext<'op, 'tasks, T> {
-    pub inner: TaskContext<'op, 'tasks>,
+pub struct ScalarTaskContext<'tasks, 'op, T> {
+    pub inner: TaskContext<'tasks, 'op>,
     pub op_id: OperatorId,
     pub marker: std::marker::PhantomData<T>,
 }
 
-impl<'op, 'tasks, T> std::ops::Deref for ScalarTaskContext<'op, 'tasks, T> {
-    type Target = TaskContext<'op, 'tasks>;
+impl<'tasks, 'op, T> std::ops::Deref for ScalarTaskContext<'tasks, 'op, T> {
+    type Target = TaskContext<'tasks, 'op>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -55,16 +55,16 @@ pub fn request_value<'req, 'tasks: 'req, 'op: 'tasks, T: bytemuck::Pod + 'req>(
 }
 
 pub trait ScalarOperator<T: bytemuck::Pod>: Operator {
-    fn compute_value<'op, 'tasks>(
+    fn compute_value<'tasks, 'op>(
         &'op self,
-        ctx: ScalarTaskContext<'op, 'tasks, T>,
+        ctx: ScalarTaskContext<'tasks, 'op, T>,
     ) -> Task<'tasks>;
 }
 
 impl<T: bytemuck::Pod> ScalarOperator<T> for T {
-    fn compute_value<'op, 'tasks>(
+    fn compute_value<'tasks, 'op>(
         &'op self,
-        ctx: ScalarTaskContext<'op, 'tasks, T>,
+        ctx: ScalarTaskContext<'tasks, 'op, T>,
     ) -> Task<'tasks> {
         async move { ctx.write(&*self) }.into()
     }

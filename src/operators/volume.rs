@@ -15,20 +15,20 @@ use crate::{
 use super::{request_value, ScalarOperator, ScalarTaskContext};
 
 #[derive(Copy, Clone)]
-pub struct VolumeTaskContext<'op, 'tasks> {
-    inner: TaskContext<'op, 'tasks>,
+pub struct VolumeTaskContext<'tasks, 'op> {
+    inner: TaskContext<'tasks, 'op>,
     current_op_id: OperatorId,
 }
 
-impl<'op, 'tasks> std::ops::Deref for VolumeTaskContext<'op, 'tasks> {
-    type Target = TaskContext<'op, 'tasks>;
+impl<'tasks, 'op> std::ops::Deref for VolumeTaskContext<'tasks, 'op> {
+    type Target = TaskContext<'tasks, 'op>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<'op, 'tasks> VolumeTaskContext<'op, 'tasks> {
+impl<'tasks, 'op> VolumeTaskContext<'tasks, 'op> {
     pub fn write_metadata(&self, metadata: VolumeMetaData) -> Result<(), Error> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Value);
         self.inner.storage.write_to_ram(id, metadata)
@@ -98,11 +98,11 @@ pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
 pub trait VolumeOperator: Operator {
     fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
     ) -> Task<'tasks>;
     fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
         position: BrickPosition,
     ) -> Task<'tasks>;
 }
@@ -123,7 +123,7 @@ impl Operator for LinearRescale<'_> {
 impl VolumeOperator for LinearRescale<'_> {
     fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
     ) -> Task<'tasks> {
         // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
         // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
@@ -137,7 +137,7 @@ impl VolumeOperator for LinearRescale<'_> {
 
     fn compute_brick<'tasks, 'op: 'tasks>(
         &'op self,
-        ctx: VolumeTaskContext<'op, 'tasks>,
+        ctx: VolumeTaskContext<'tasks, 'op>,
         position: BrickPosition,
     ) -> Task<'tasks> {
         async move {
@@ -174,9 +174,9 @@ impl Operator for Mean<'_> {
     }
 }
 impl ScalarOperator<f32> for Mean<'_> {
-    fn compute_value<'op, 'tasks>(
+    fn compute_value<'tasks, 'op>(
         &'op self,
-        ctx: ScalarTaskContext<'op, 'tasks, f32>,
+        ctx: ScalarTaskContext<'tasks, 'op, f32>,
     ) -> Task<'tasks> {
         async move {
             let mut sum = 0.0;

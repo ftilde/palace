@@ -47,10 +47,10 @@ impl TaskInfo<'_> {
     }
 }
 
-type ResultPoll<'req, 'op, V> = Box<dyn FnMut(TaskContext<'op, 'req>) -> Option<V>>;
+type ResultPoll<'req, 'op, V> = Box<dyn FnMut(TaskContext<'req, 'op>) -> Option<V>>;
 
 pub type TaskConstructor<'op> =
-    Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'op, 'tasks>) -> Task<'tasks>>;
+    Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'tasks, 'op>) -> Task<'tasks>>;
 
 #[derive(From)]
 pub enum RequestType<'op> {
@@ -71,10 +71,7 @@ pub struct Request<'req, 'op, V> {
 }
 
 #[derive(Copy, Clone)]
-pub struct TaskContext<'op, 'tasks>
-where
-    'op: 'tasks,
-{
+pub struct TaskContext<'tasks, 'op: 'tasks> {
     pub requests: &'tasks RequestQueue<'op>,
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
@@ -87,10 +84,7 @@ where
 pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
-impl<'op, 'tasks> TaskContext<'op, 'tasks>
-where
-    'op: 'tasks,
-{
+impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
     pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'op, ()> {
         self.thread_pool.spawn(self.current_task, f)
     }
