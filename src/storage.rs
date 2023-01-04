@@ -21,6 +21,12 @@ struct StorageEntry {
     offset: usize,
 }
 
+impl StorageEntry {
+    fn safe_to_delete(&self) -> bool {
+        self.num_readers == 0
+    }
+}
+
 pub struct ReadHandle<'a, T: ?Sized> {
     storage: &'a Storage,
     id: TaskId,
@@ -97,6 +103,23 @@ pub struct Storage {
     buffer: BumpAllocator,
 }
 
+#[allow(unused)] // See try_update_inplace
+pub type InplaceResult<'a, T> = Result<
+    &'a mut T,
+    (
+        ReadHandle<'a, T>,
+        Result<WriteHandle<'a, MaybeUninit<T>>, Error>,
+    ),
+>;
+
+pub type InplaceResultSlice<'a, T> = Result<
+    &'a mut [T],
+    (
+        ReadHandle<'a, [T]>,
+        Result<WriteHandle<'a, [MaybeUninit<T>]>, Error>,
+    ),
+>;
+
 impl Storage {
     pub fn new(size: usize) -> Self {
         let buffer = BumpAllocator::new(size);
@@ -108,7 +131,7 @@ impl Storage {
 
     pub fn try_free(&self, key: TaskId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
-        if index.get(&key).unwrap().num_readers == 0 {
+        if index.get(&key).unwrap().safe_to_delete() {
             index.remove(&key);
             Ok(())
         } else {
@@ -206,7 +229,10 @@ impl Storage {
     }
 
     // Safety: The initial allocation for the TaskId must have happened with the same type.
-    pub unsafe fn read_ram<'a, T>(&'a self, key: TaskId) -> Option<ReadHandle<'a, T>> {
+    pub unsafe fn read_ram<'a, T: AnyBitPattern>(
+        &'a self,
+        key: TaskId,
+    ) -> Option<ReadHandle<'a, T>> {
         let t_ref = {
             let index = self.index.borrow();
             let entry = index.get(&key)?;
@@ -221,9 +247,43 @@ impl Storage {
         Some(ReadHandle::new(self, key, t_ref))
     }
 
+    // Safety: The initial allocation for the TaskId must have happened with the same type
+    #[allow(unused)] // TODO: Not sure if we will ever use the non-slice version. maybe just remove this
+    pub unsafe fn try_update_inplace<'a, T: AnyBitPattern>(
+        &'a self,
+        old_key: TaskId,
+        new_key: TaskId,
+    ) -> Option<InplaceResult<'a, T>> {
+        let mut index = self.index.borrow_mut();
+        let entry = index.get(&old_key)?;
+        assert!(entry.state.initialized());
+
+        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+        let t_ptr = ptr.cast::<T>();
+        // Safety: Must be upheld by caller
+        let t_ref = unsafe { &mut *t_ptr as _ };
+
+        let in_place_possible = entry.safe_to_delete();
+        Some(if in_place_possible {
+            let mut entry = index.remove(&old_key).unwrap();
+            entry.state = StorageEntryState::Initialized;
+
+            let prev = index.insert(new_key, entry);
+            assert!(prev.is_none());
+
+            Ok(t_ref)
+        } else {
+            std::mem::drop(index); // Release borrow for alloc
+
+            let w = self.alloc_ram_slot(new_key);
+            let r = ReadHandle::new(self, old_key, t_ref);
+            Err((r, w))
+        })
+    }
+
     // Safety: The initial allocation for the TaskId must have happened with the same type and the
     // size must match the initial allocation
-    pub unsafe fn read_ram_slice<'a, T>(
+    pub unsafe fn read_ram_slice<'a, T: AnyBitPattern>(
         &'a self,
         key: TaskId,
         size: usize,
@@ -239,6 +299,42 @@ impl Storage {
             unsafe { std::slice::from_raw_parts(t_ptr, size) }
         };
         Some(ReadHandle::new(self, key, t_ref))
+    }
+
+    // Safety: The initial allocation for the TaskId must have happened with the same type and the
+    // size must match the initial allocation
+    pub unsafe fn try_update_inplace_slice<'a, T: AnyBitPattern>(
+        &'a self,
+        old_key: TaskId,
+        new_key: TaskId,
+        size: usize,
+    ) -> Option<InplaceResultSlice<'a, T>> {
+        let mut index = self.index.borrow_mut();
+        let entry = index.get(&old_key)?;
+        assert!(entry.state.initialized());
+
+        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+        let t_ptr = ptr.cast::<T>();
+
+        // Safety: Must be upheld by caller
+        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
+
+        let in_place_possible = entry.safe_to_delete();
+        Some(if in_place_possible {
+            let mut entry = index.remove(&old_key).unwrap();
+            entry.state = StorageEntryState::Initialized;
+
+            let prev = index.insert(new_key, entry);
+            assert!(prev.is_none());
+
+            Ok(t_ref)
+        } else {
+            std::mem::drop(index); // Release borrow for alloc
+
+            let w = self.alloc_ram_slot_slice(new_key, size);
+            let r = ReadHandle::new(self, old_key, t_ref);
+            Err((r, w))
+        })
     }
 }
 

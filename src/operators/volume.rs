@@ -7,7 +7,7 @@ use derive_more::Constructor;
 use crate::{
     data::{hmul, Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    storage::{ReadHandle, WriteHandle},
+    storage::{InplaceResultSlice, ReadHandle, WriteHandle},
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
@@ -95,6 +95,34 @@ pub fn request_brick<'req, 'tasks: 'req, 'op: 'tasks>(
     }
 }
 
+pub fn request_inplace_rw_brick<'req, 'tasks: 'req, 'op: 'tasks>(
+    read_vol: &'op dyn VolumeOperator,
+    metadata: &VolumeMetaData,
+    pos: BrickPosition,
+    write_vol: &'op dyn VolumeOperator,
+) -> Request<'req, 'op, InplaceResultSlice<'req, f32>> {
+    let num_voxels = hmul(metadata.brick_size.0) as usize;
+    let req = DatumRequest::Brick(pos);
+    let op_id = read_vol.id();
+    let read_id = TaskId::new(op_id, &req); //TODO: revisit
+    let write_id = TaskId::new(write_vol.id(), &req);
+    Request {
+        id: read_id,
+        type_: RequestType::Data(Box::new(move |ctx| {
+            let ctx = VolumeTaskContext {
+                inner: ctx,
+                current_op_id: op_id,
+            };
+            read_vol.compute_brick(ctx, pos)
+        })),
+        poll: Box::new(move |ctx| unsafe {
+            ctx.storage
+                .try_update_inplace_slice(read_id, write_id, num_voxels)
+        }),
+        _marker: Default::default(),
+    }
+}
+
 pub trait VolumeOperator: Operator {
     fn compute_metadata<'tasks, 'op: 'tasks>(
         &'op self,
@@ -146,18 +174,25 @@ impl VolumeOperator for LinearRescale<'_> {
                 ctx.submit(request_value(self.factor)),
                 ctx.submit(request_value(self.offset)),
             };
-            let b = ctx.submit(request_brick(self.vol, &v, position)).await;
 
-            let num_voxels = hmul(v.brick_size.0) as usize;
-
-            unsafe {
-                ctx.with_brick_slot(position, num_voxels, |buf| {
-                    for (i, o) in b.iter().zip(buf.iter_mut()) {
+            match ctx
+                .submit(request_inplace_rw_brick(self.vol, &v, position, self))
+                .await
+            {
+                Ok(rw) => {
+                    for v in rw.iter_mut() {
+                        *v = *factor * *v + *offset;
+                    }
+                }
+                Err((r, w)) => {
+                    let mut w = w?;
+                    for (i, o) in r.iter().zip(w.iter_mut()) {
                         o.write(*factor * *i + *offset);
                     }
-                    Ok(())
-                })
+                    unsafe { w.mark_initialized() };
+                }
             }
+            Ok(())
         }
         .into()
     }
