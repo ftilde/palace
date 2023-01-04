@@ -33,17 +33,8 @@ impl<'tasks, 'op> VolumeTaskContext<'tasks, 'op> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Value);
         self.inner.storage.write_to_ram(id, metadata)
     }
-    pub unsafe fn with_brick_slot<F: FnOnce(&mut [MaybeUninit<f32>]) -> Result<(), Error>>(
-        &self,
-        pos: BrickPosition,
-        num_voxels: usize,
-        f: F,
-    ) -> Result<(), Error> {
-        let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
-        unsafe { self.inner.storage.with_ram_slot_slice(id, num_voxels, f) }
-    }
 
-    pub fn brick_slot<'a>(
+    pub fn alloc_brick<'a>(
         &'a self,
         pos: BrickPosition,
         num_voxels: usize,

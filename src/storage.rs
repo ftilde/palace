@@ -39,6 +39,17 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
 
         Self { storage, id, data }
     }
+
+    pub fn map<O>(self, f: impl FnOnce(&'a T) -> &'a O) -> ReadHandle<'a, O> {
+        let ret = ReadHandle {
+            storage: self.storage,
+            id: self.id,
+            data: f(&self.data),
+        };
+        // Avoid running destructor which would signify that we are done reading.
+        std::mem::forget(self);
+        ret
+    }
 }
 impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
     type Target = T;
@@ -58,14 +69,27 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     }
 }
 
+struct DropError;
+impl Drop for DropError {
+    fn drop(&mut self) {
+        panic!("The WriteHandle MUST be consumed by calling mark_initialized!");
+    }
+}
+
 pub struct WriteHandle<'a, T: ?Sized> {
     storage: &'a Storage,
     id: TaskId,
     data: &'a mut T,
+    _drop_err: DropError,
 }
 impl<'a, T: ?Sized> WriteHandle<'a, T> {
     fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
-        Self { storage, id, data }
+        Self {
+            storage,
+            id,
+            data,
+            _drop_err: DropError,
+        }
     }
 
     /// Safety: The corresponding slot has to have been completely written to.
@@ -77,8 +101,23 @@ impl<'a, T: ?Sized> WriteHandle<'a, T> {
             .unwrap()
             .state = StorageEntryState::Initialized;
 
-        // Avoid running the destructor of RamSlotToken (which always panics)
+        // Avoid running the destructor of _drop_err (which always panics)
         std::mem::forget(self);
+    }
+
+    pub fn map<O>(self, f: impl FnOnce(&'a mut T) -> &'a mut O) -> WriteHandle<'a, O> {
+        let WriteHandle {
+            storage,
+            id,
+            data,
+            _drop_err,
+        } = self;
+        WriteHandle {
+            storage,
+            id,
+            data: f(data),
+            _drop_err,
+        }
     }
 }
 impl<T: ?Sized> std::ops::Deref for WriteHandle<'_, T> {
@@ -91,11 +130,6 @@ impl<T: ?Sized> std::ops::Deref for WriteHandle<'_, T> {
 impl<T: ?Sized> std::ops::DerefMut for WriteHandle<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
-    }
-}
-impl<T: ?Sized> Drop for WriteHandle<'_, T> {
-    fn drop(&mut self) {
-        panic!("The WriteHandle MUST be consumed by calling mark_initialized!");
     }
 }
 
@@ -163,14 +197,8 @@ impl Storage {
         &self,
         key: TaskId,
     ) -> Result<WriteHandle<MaybeUninit<T>>, Error> {
-        let layout = Layout::new::<T>();
-        let ptr = self.alloc(key, layout)?;
-
-        let t_ptr = ptr.cast::<MaybeUninit<T>>();
-
-        // Safety: We constructed the pointer with the required layout
-        let t_ref = unsafe { &mut *t_ptr as _ };
-        Ok(WriteHandle::new(self, key, t_ref))
+        self.alloc_ram_slot_slice(key, 1)
+            .map(|v| v.map(|a| &mut a[0]))
     }
 
     pub fn alloc_ram_slot_slice<T: AnyBitPattern>(
@@ -189,101 +217,22 @@ impl Storage {
     }
 
     pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
-        unsafe {
-            self.with_ram_slot(id, |v| {
-                v.write(value);
-                Ok(())
-            })
-        }
-    }
-
-    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot<
-        T: AnyBitPattern,
-        F: FnOnce(&mut MaybeUninit<T>) -> Result<(), Error>,
-    >(
-        &self,
-        key: TaskId,
-        f: F,
-    ) -> Result<(), Error> {
-        let mut slot = self.alloc_ram_slot(key)?;
-        f(&mut slot)?;
-        slot.mark_initialized();
+        let mut slot = self.alloc_ram_slot(id)?;
+        slot.write(value);
+        unsafe { slot.mark_initialized() };
 
         Ok(())
     }
 
-    /// Safety: the MaybeUninit needs to be written to in f (i.e., made valid).
-    pub unsafe fn with_ram_slot_slice<
-        T: AnyBitPattern,
-        F: FnOnce(&mut [MaybeUninit<T>]) -> Result<(), Error>,
-    >(
-        &self,
-        key: TaskId,
-        size: usize,
-        f: F,
-    ) -> Result<(), Error> {
-        let mut slot = self.alloc_ram_slot_slice(key, size)?;
-        f(&mut slot)?;
-        slot.mark_initialized();
-
-        Ok(())
-    }
-
-    // Safety: The initial allocation for the TaskId must have happened with the same type.
+    /// Safety: The initial allocation for the TaskId must have happened with the same type.
     pub unsafe fn read_ram<'a, T: AnyBitPattern>(
         &'a self,
         key: TaskId,
     ) -> Option<ReadHandle<'a, T>> {
-        let t_ref = {
-            let index = self.index.borrow();
-            let entry = index.get(&key)?;
-            assert!(entry.state.initialized());
-
-            let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
-            let t_ptr = ptr.cast::<T>();
-
-            // Safety: Must be upheld by caller
-            unsafe { &mut *t_ptr as _ }
-        };
-        Some(ReadHandle::new(self, key, t_ref))
+        self.read_ram_slice(key).map(|v| v.map(|a| &a[0]))
     }
 
-    // Safety: The initial allocation for the TaskId must have happened with the same type
-    #[allow(unused)] // TODO: Not sure if we will ever use the non-slice version. maybe just remove this
-    pub unsafe fn try_update_inplace<'a, T: AnyBitPattern>(
-        &'a self,
-        old_key: TaskId,
-        new_key: TaskId,
-    ) -> Option<InplaceResult<'a, T>> {
-        let mut index = self.index.borrow_mut();
-        let entry = index.get(&old_key)?;
-        assert!(entry.state.initialized());
-
-        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
-        let t_ptr = ptr.cast::<T>();
-        // Safety: Must be upheld by caller
-        let t_ref = unsafe { &mut *t_ptr as _ };
-
-        let in_place_possible = entry.safe_to_delete();
-        Some(if in_place_possible {
-            let mut entry = index.remove(&old_key).unwrap();
-            entry.state = StorageEntryState::Initialized;
-
-            let prev = index.insert(new_key, entry);
-            assert!(prev.is_none());
-
-            Ok(t_ref)
-        } else {
-            std::mem::drop(index); // Release borrow for alloc
-
-            let w = self.alloc_ram_slot(new_key);
-            let r = ReadHandle::new(self, old_key, t_ref);
-            Err((r, w))
-        })
-    }
-
-    // Safety: The initial allocation for the TaskId must have happened with the same type
+    /// Safety: The initial allocation for the TaskId must have happened with the same type
     pub unsafe fn read_ram_slice<'a, T: AnyBitPattern>(
         &'a self,
         key: TaskId,
@@ -307,8 +256,8 @@ impl Storage {
         Some(ReadHandle::new(self, key, t_ref))
     }
 
-    // Safety: The initial allocation for the TaskId must have happened with the same type and the
-    // size must match the initial allocation
+    /// Safety: The initial allocation for the TaskId must have happened with the same type and the
+    /// size must match the initial allocation
     pub unsafe fn try_update_inplace_slice<'a, T: AnyBitPattern>(
         &'a self,
         old_key: TaskId,

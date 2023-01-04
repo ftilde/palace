@@ -4,9 +4,9 @@ use sxd_xpath::evaluate_xpath;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    data::{hmul, SVec3, VolumeMetaData, VoxelPosition},
+    data::{SVec3, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
-    operators::{request_brick, request_metadata, VolumeOperator, VolumeTaskContext},
+    operators::{request_inplace_rw_brick, request_metadata, VolumeOperator, VolumeTaskContext},
     task::Task,
     Error,
 };
@@ -106,17 +106,22 @@ impl VolumeOperator for VvdVolumeSource {
         position: crate::data::BrickPosition,
     ) -> Task<'tasks> {
         async move {
-            let m = ctx.submit(request_metadata(&self.raw)).await;
-            let b = ctx.submit(request_brick(&self.raw, position)).await;
-            let num_voxels = hmul(m.brick_size.0) as usize;
-            unsafe {
-                ctx.with_brick_slot(position, num_voxels, |o| {
-                    for (i, o) in b.iter().zip(o.iter_mut()) {
+            match ctx
+                .submit(request_inplace_rw_brick(&self.raw, position, self))
+                .await
+            {
+                Ok(_rw) => {
+                    // Nothing to do: we just want to pass on the raw brick
+                }
+                Err((r, w)) => {
+                    let mut w = w?;
+                    for (i, o) in r.iter().zip(w.iter_mut()) {
                         o.write(*i);
                     }
-                    Ok(())
-                })
+                    unsafe { w.mark_initialized() };
+                }
             }
+            Ok(())
         }
         .into()
     }
