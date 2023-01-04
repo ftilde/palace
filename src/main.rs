@@ -30,12 +30,17 @@ struct CliArgs {
 
     #[arg(short, long, default_value = "1.0")]
     factor: f32,
+
+    #[arg(long, default_value = "false")]
+    with_vulkan: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _vulkan_manager = vulkan::VulkanManager::new();
-
     let args = CliArgs::parse();
+
+    if args.with_vulkan {
+        let _vulkan_manager = vulkan::VulkanManager::new();
+    }
 
     let storage_size = 1 << 30; //One gigabyte
     let storage = Storage::new(storage_size);
