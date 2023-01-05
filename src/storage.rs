@@ -1,4 +1,4 @@
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit};
+use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit, pin::Pin};
 
 use bytemuck::AnyBitPattern;
 
@@ -18,7 +18,7 @@ impl StorageEntryState {
 struct StorageEntry {
     state: StorageEntryState,
     num_readers: usize,
-    offset: usize,
+    data: *mut u8,
     size: usize,
 }
 
@@ -157,7 +157,7 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
 
 pub struct Storage {
     index: RefCell<BTreeMap<TaskId, StorageEntry>>,
-    buffer: BumpAllocator,
+    allocator: Allocator,
 }
 
 pub type InplaceResultSlice<'a, T> = Result<
@@ -170,17 +170,21 @@ pub type InplaceResultSlice<'a, T> = Result<
 
 impl Storage {
     pub fn new(size: usize) -> Self {
-        let buffer = BumpAllocator::new(size);
+        let allocator = Allocator::new(size);
         Self {
             index: RefCell::new(BTreeMap::new()),
-            buffer,
+            allocator,
         }
     }
 
     pub fn try_free(&self, key: TaskId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
         if index.get(&key).unwrap().safe_to_delete() {
-            index.remove(&key);
+            let entry = index.remove(&key).unwrap();
+            // Safety: all data ptrs in the index have been allocated with the allocator.
+            // Deallocation only happens exactly here where the entry is also removed from the
+            // index.
+            unsafe { self.allocator.dealloc(entry.data) };
             Ok(())
         } else {
             Err(())
@@ -188,22 +192,19 @@ impl Storage {
     }
 
     fn alloc(&self, key: TaskId, layout: Layout) -> Result<*mut u8, Error> {
-        let offset = self.buffer.alloc(layout)?;
+        let data = self.allocator.alloc(layout)?;
 
         let entry = StorageEntry {
             state: StorageEntryState::Initializing,
             num_readers: 0,
-            offset,
+            data,
             size: layout.size(),
         };
-
-        // Safety: We have just obtained this offset from alloc
-        let ptr = unsafe { self.buffer.buffer.offset(offset as _) };
 
         let prev = self.index.borrow_mut().insert(key, entry);
         assert!(prev.is_none());
 
-        Ok(ptr)
+        Ok(data)
     }
 
     pub fn alloc_ram_slot<T: AnyBitPattern>(
@@ -255,7 +256,7 @@ impl Storage {
             let entry = index.get(&key)?;
             assert!(entry.state.initialized());
 
-            let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+            let ptr = entry.data;
             let t_ptr = ptr.cast::<T>();
 
             let num_elements = num_elms_in_array::<T>(entry.size);
@@ -280,7 +281,7 @@ impl Storage {
 
         let num_elements = num_elms_in_array::<T>(entry.size);
 
-        let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
+        let ptr = entry.data;
         let t_ptr = ptr.cast::<T>();
 
         let in_place_possible = entry.safe_to_delete();
@@ -311,13 +312,13 @@ impl Storage {
     }
 }
 
-struct BumpAllocator {
+struct Allocator {
+    alloc: RefCell<Pin<Box<good_memory_allocator::Allocator>>>,
     buffer: *mut u8,
-    next_alloc_offset: std::cell::Cell<usize>,
-    size: usize,
+    storage_layout: Layout,
 }
 
-impl BumpAllocator {
+impl Allocator {
     pub fn new(size: usize) -> Self {
         let alignment = 4096;
         let storage_layout = Layout::from_size_align(size, alignment).unwrap();
@@ -326,30 +327,43 @@ impl BumpAllocator {
 
         // Safety: size is > 0
         let buffer = unsafe { std::alloc::alloc(storage_layout) };
+
+        let mut alloc = Box::pin(good_memory_allocator::Allocator::empty());
+
+        // Safety: The allocator is pinned and will thus not move. The memory region is only used
+        // by the allocator.
+        unsafe { alloc.init(buffer as usize, size) };
+
+        let alloc = RefCell::new(alloc);
+
         Self {
             buffer,
-            next_alloc_offset: std::cell::Cell::new(0),
-            size,
+            alloc,
+            storage_layout,
         }
     }
 
-    pub fn alloc(&self, layout: Layout) -> Result<usize, Error> {
-        let next_alloc_offset = self.next_alloc_offset.get();
-        if next_alloc_offset + layout.align() + layout.size() > self.size {
-            return Err("Out of memory".into());
+    pub fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {
+        let mut alloc = self.alloc.borrow_mut();
+        let ret = unsafe { alloc.alloc(layout) };
+        if ret.is_null() {
+            Err("Out of memory".into())
+        } else {
+            Ok(ret)
         }
+    }
 
-        // Safety: Offset does not exceed allocation size
-        let next_ptr = unsafe { self.buffer.offset(next_alloc_offset.try_into().unwrap()) };
-        let offset = next_ptr.align_offset(layout.align());
-        assert_ne!(offset, usize::MAX, "unable to align pointer");
+    /// Safety: `ptr` must have been allocated with this allocator and must not have been
+    /// deallocated already.
+    pub unsafe fn dealloc(&self, ptr: *mut u8) {
+        let mut alloc = self.alloc.borrow_mut();
+        unsafe { alloc.dealloc(ptr) };
+    }
+}
 
-        let new_alloc_start = next_alloc_offset + offset;
-        let new_alloc_end = new_alloc_start + layout.size();
-
-        // Safety: Offset does not exceed allocation size
-        self.next_alloc_offset.set(new_alloc_end);
-
-        return Ok(new_alloc_start);
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        // Safety: buffer was allocated with exactly this layout, see new()
+        unsafe { std::alloc::dealloc(self.buffer, self.storage_layout) }
     }
 }

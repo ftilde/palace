@@ -17,3 +17,4 @@ sxd-xpath = "0.4"
 sxd-document = "0.3"
 ash = { version = "0.37.0" }
 futures = "0.3"
+good_memory_allocator = "0.1.7"
