@@ -345,6 +345,9 @@ impl Allocator {
 
     pub fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {
         let mut alloc = self.alloc.borrow_mut();
+
+        assert!(layout.size() > 0);
+        // Safety: We ensure that layout.size() > 0
         let ret = unsafe { alloc.alloc(layout) };
         if ret.is_null() {
             Err("Out of memory".into())
