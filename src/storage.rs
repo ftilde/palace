@@ -5,7 +5,7 @@ use bytemuck::AnyBitPattern;
 use crate::{task::TaskId, util::num_elms_in_array, Error};
 
 enum StorageEntryState {
-    Uninitialized,
+    Initializing,
     Initialized,
 }
 
@@ -24,7 +24,7 @@ struct StorageEntry {
 
 impl StorageEntry {
     fn safe_to_delete(&self) -> bool {
-        self.num_readers == 0
+        self.num_readers == 0 && matches!(self.state, StorageEntryState::Initialized)
     }
 }
 
@@ -69,67 +69,89 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     }
 }
 
-struct DropError;
-impl Drop for DropError {
-    fn drop(&mut self) {
-        panic!("The WriteHandle MUST be consumed by calling mark_initialized!");
-    }
-}
-
-pub struct WriteHandle<'a, T: ?Sized> {
+pub struct DropError<'a> {
     storage: &'a Storage,
     id: TaskId,
-    data: &'a mut T,
-    _drop_err: DropError,
 }
-impl<'a, T: ?Sized> WriteHandle<'a, T> {
-    fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
-        Self {
-            storage,
-            id,
-            data,
-            _drop_err: DropError,
-        }
+impl Drop for DropError<'_> {
+    fn drop(&mut self) {
+        panic!("The WriteHandle was not marked initialized!");
     }
-
-    /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn mark_initialized(self) {
+}
+pub struct DropMarkInitialized<'a> {
+    storage: &'a Storage,
+    id: TaskId,
+}
+impl Drop for DropMarkInitialized<'_> {
+    fn drop(&mut self) {
         self.storage
             .index
             .borrow_mut()
             .get_mut(&self.id)
             .unwrap()
             .state = StorageEntryState::Initialized;
-
-        // Avoid running the destructor of _drop_err (which always panics)
-        std::mem::forget(self);
     }
+}
 
-    pub fn map<O>(self, f: impl FnOnce(&'a mut T) -> &'a mut O) -> WriteHandle<'a, O> {
-        let WriteHandle {
-            storage,
-            id,
-            data,
-            _drop_err,
-        } = self;
+pub struct WriteHandle<'a, T: ?Sized, DropHandler> {
+    data: &'a mut T,
+    drop_handler: DropHandler,
+}
+
+impl<'a, T: ?Sized, DropHandler> WriteHandle<'a, T, DropHandler> {
+    pub fn map<O>(self, f: impl FnOnce(&'a mut T) -> &'a mut O) -> WriteHandle<'a, O, DropHandler> {
+        let WriteHandle { data, drop_handler } = self;
         WriteHandle {
-            storage,
-            id,
+            drop_handler,
             data: f(data),
-            _drop_err,
         }
     }
 }
-impl<T: ?Sized> std::ops::Deref for WriteHandle<'_, T> {
+impl<T: ?Sized, D> std::ops::Deref for WriteHandle<'_, T, D> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         self.data
     }
 }
-impl<T: ?Sized> std::ops::DerefMut for WriteHandle<'_, T> {
+impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
+    }
+}
+
+pub type WriteHandleUninit<'a, T> = WriteHandle<'a, T, DropError<'a>>;
+impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
+    pub fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
+        WriteHandle {
+            drop_handler: DropError { id, storage },
+            data,
+        }
+    }
+    /// Safety: The corresponding slot has to have been completely written to.
+    pub unsafe fn initialized(self) -> WriteHandleInit<'a, T> {
+        let WriteHandle { data, drop_handler } = self;
+        let ret = WriteHandle {
+            drop_handler: DropMarkInitialized {
+                id: drop_handler.id,
+                storage: drop_handler.storage,
+            },
+            data,
+        };
+
+        // Avoid running destructor which would panic
+        std::mem::forget(drop_handler);
+
+        ret
+    }
+}
+pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
+impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
+    pub fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
+        WriteHandle {
+            drop_handler: DropMarkInitialized { id, storage },
+            data,
+        }
     }
 }
 
@@ -139,10 +161,10 @@ pub struct Storage {
 }
 
 pub type InplaceResultSlice<'a, T> = Result<
-    &'a mut [T],
+    WriteHandleInit<'a, [T]>,
     (
         ReadHandle<'a, [T]>,
-        Result<WriteHandle<'a, [MaybeUninit<T>]>, Error>,
+        Result<WriteHandleUninit<'a, [MaybeUninit<T>]>, Error>,
     ),
 >;
 
@@ -169,7 +191,7 @@ impl Storage {
         let offset = self.buffer.alloc(layout)?;
 
         let entry = StorageEntry {
-            state: StorageEntryState::Uninitialized,
+            state: StorageEntryState::Initializing,
             num_readers: 0,
             offset,
             size: layout.size(),
@@ -187,7 +209,7 @@ impl Storage {
     pub fn alloc_ram_slot<T: AnyBitPattern>(
         &self,
         key: TaskId,
-    ) -> Result<WriteHandle<MaybeUninit<T>>, Error> {
+    ) -> Result<WriteHandleUninit<MaybeUninit<T>>, Error> {
         self.alloc_ram_slot_slice(key, 1)
             .map(|v| v.map(|a| &mut a[0]))
     }
@@ -196,7 +218,7 @@ impl Storage {
         &self,
         key: TaskId,
         size: usize,
-    ) -> Result<WriteHandle<[MaybeUninit<T>]>, Error> {
+    ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
         let ptr = self.alloc(key, layout)?;
 
@@ -204,13 +226,13 @@ impl Storage {
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        Ok(WriteHandle::new(self, key, t_ref))
+        Ok(WriteHandleUninit::new(self, key, t_ref))
     }
 
     pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
         let mut slot = self.alloc_ram_slot(id)?;
         slot.write(value);
-        unsafe { slot.mark_initialized() };
+        unsafe { slot.initialized() };
 
         Ok(())
     }
@@ -231,13 +253,15 @@ impl Storage {
         let t_ref = {
             let index = self.index.borrow();
             let entry = index.get(&key)?;
+            assert!(entry.state.initialized());
 
             let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
             let t_ptr = ptr.cast::<T>();
 
             let num_elements = num_elms_in_array::<T>(entry.size);
 
-            // Safety: Must be upheld by caller
+            // Safety: Type matches as per contract upheld by caller. There are also no mutable
+            // references to the slot since it has already been initialized.
             unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
         };
         Some(ReadHandle::new(self, key, t_ref))
@@ -259,20 +283,26 @@ impl Storage {
         let ptr = unsafe { self.buffer.buffer.offset(entry.offset as _) };
         let t_ptr = ptr.cast::<T>();
 
-        // Safety: Must be upheld by caller
-        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
-
         let in_place_possible = entry.safe_to_delete();
         Some(if in_place_possible {
             let mut entry = index.remove(&old_key).unwrap();
-            entry.state = StorageEntryState::Initialized;
+            entry.state = StorageEntryState::Initializing;
 
             let prev = index.insert(new_key, entry);
             assert!(prev.is_none());
 
-            Ok(t_ref)
+            // Safety: Type matches as per contract upheld by caller. There are also no other
+            // references to the slot since it has (1.) been already initialized and (2.) there are
+            // no readers. In other words: safe_to_delete also implies no other references.
+            let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
+
+            Ok(WriteHandleInit::new(self, new_key, t_ref))
         } else {
             std::mem::drop(index); // Release borrow for alloc
+
+            // Safety: Type matches as per contract upheld by caller. There are also no mutable
+            // references to the slot since it has already been initialized.
+            let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
             let w = self.alloc_ram_slot_slice(new_key, num_elements);
             let r = ReadHandle::new(self, old_key, t_ref);

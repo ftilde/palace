@@ -95,7 +95,7 @@ impl VolumeOperator for RawVolumeSource {
 
             // At this point the thread pool job above has finished and has initialized all bytes
             // in the brick.
-            unsafe { brick_handle.mark_initialized() };
+            unsafe { brick_handle.initialized() };
             Ok(())
         }
         .into()

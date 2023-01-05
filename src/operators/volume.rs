@@ -7,7 +7,7 @@ use derive_more::Constructor;
 use crate::{
     data::{Brick, BrickPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
-    storage::{InplaceResultSlice, ReadHandle, WriteHandle},
+    storage::{InplaceResultSlice, ReadHandle, WriteHandleUninit},
     task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
     Error,
 };
@@ -38,7 +38,7 @@ impl<'tasks, 'op> VolumeTaskContext<'tasks, 'op> {
         &'a self,
         pos: BrickPosition,
         num_voxels: usize,
-    ) -> Result<WriteHandle<'a, [MaybeUninit<f32>]>, Error> {
+    ) -> Result<WriteHandleUninit<'a, [MaybeUninit<f32>]>, Error> {
         let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
         self.inner.storage.alloc_ram_slot_slice(id, num_voxels)
     }
@@ -164,7 +164,7 @@ impl VolumeOperator for LinearRescale<'_> {
                 .submit(request_inplace_rw_brick(self.vol, position, self))
                 .await
             {
-                Ok(rw) => {
+                Ok(mut rw) => {
                     for v in rw.iter_mut() {
                         *v = *factor * *v + *offset;
                     }
@@ -174,7 +174,7 @@ impl VolumeOperator for LinearRescale<'_> {
                     for (i, o) in r.iter().zip(w.iter_mut()) {
                         o.write(*factor * *i + *offset);
                     }
-                    unsafe { w.mark_initialized() };
+                    unsafe { w.initialized() };
                 }
             }
             Ok(())

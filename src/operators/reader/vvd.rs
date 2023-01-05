@@ -118,7 +118,7 @@ impl VolumeOperator for VvdVolumeSource {
                     for (i, o) in r.iter().zip(w.iter_mut()) {
                         o.write(*i);
                     }
-                    unsafe { w.mark_initialized() };
+                    unsafe { w.initialized() };
                 }
             }
             Ok(())
