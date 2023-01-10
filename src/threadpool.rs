@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
-use crate::task::TaskId;
+use crate::task_graph::TaskId;
 
 const WORKER_THREAD_NAME_BASE: &'static str = concat!(env!("CARGO_PKG_NAME"), " worker");
 
@@ -20,9 +20,18 @@ pub struct ThreadPool {
     finished: mpsc::Receiver<(JobInfo, WorkerId)>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct JobId(usize);
+
+impl JobId {
+    pub fn new(id: usize) -> Self {
+        JobId(id)
+    }
+}
+
 pub struct JobInfo {
     pub caller: TaskId,
-    pub job_id: TaskId,
+    pub job_id: JobId,
 }
 
 impl ThreadPool {

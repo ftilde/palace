@@ -2,7 +2,7 @@ use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit,
 
 use bytemuck::AnyBitPattern;
 
-use crate::{task::TaskId, util::num_elms_in_array, Error};
+use crate::{operator::DataId, util::num_elms_in_array, Error};
 
 enum StorageEntryState {
     Initializing,
@@ -30,11 +30,11 @@ impl StorageEntry {
 
 pub struct ReadHandle<'a, T: ?Sized> {
     storage: &'a Storage,
-    id: TaskId,
+    id: DataId,
     data: &'a T,
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
-    fn new(storage: &'a Storage, id: TaskId, data: &'a T) -> Self {
+    fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
         storage.index.borrow_mut().get_mut(&id).unwrap().num_readers += 1;
 
         Self { storage, id, data }
@@ -71,7 +71,7 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
 
 pub struct DropError<'a> {
     storage: &'a Storage,
-    id: TaskId,
+    id: DataId,
 }
 impl Drop for DropError<'_> {
     fn drop(&mut self) {
@@ -80,7 +80,7 @@ impl Drop for DropError<'_> {
 }
 pub struct DropMarkInitialized<'a> {
     storage: &'a Storage,
-    id: TaskId,
+    id: DataId,
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
@@ -122,7 +122,7 @@ impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
 
 pub type WriteHandleUninit<'a, T> = WriteHandle<'a, T, DropError<'a>>;
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
-    pub fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
+    pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
         WriteHandle {
             drop_handler: DropError { id, storage },
             data,
@@ -147,7 +147,7 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
 }
 pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
 impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
-    pub fn new(storage: &'a Storage, id: TaskId, data: &'a mut T) -> Self {
+    pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
         WriteHandle {
             drop_handler: DropMarkInitialized { id, storage },
             data,
@@ -156,7 +156,7 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
 }
 
 pub struct Storage {
-    index: RefCell<BTreeMap<TaskId, StorageEntry>>,
+    index: RefCell<BTreeMap<DataId, StorageEntry>>,
     allocator: Allocator,
 }
 
@@ -177,7 +177,7 @@ impl Storage {
         }
     }
 
-    pub fn try_free(&self, key: TaskId) -> Result<(), ()> {
+    pub fn try_free(&self, key: DataId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
         if index.get(&key).unwrap().safe_to_delete() {
             let entry = index.remove(&key).unwrap();
@@ -191,7 +191,7 @@ impl Storage {
         }
     }
 
-    fn alloc(&self, key: TaskId, layout: Layout) -> Result<*mut u8, Error> {
+    fn alloc(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
         let data = self.allocator.alloc(layout)?;
 
         let entry = StorageEntry {
@@ -209,7 +209,7 @@ impl Storage {
 
     pub fn alloc_ram_slot<T: AnyBitPattern>(
         &self,
-        key: TaskId,
+        key: DataId,
     ) -> Result<WriteHandleUninit<MaybeUninit<T>>, Error> {
         self.alloc_ram_slot_slice(key, 1)
             .map(|v| v.map(|a| &mut a[0]))
@@ -217,7 +217,7 @@ impl Storage {
 
     pub fn alloc_ram_slot_slice<T: AnyBitPattern>(
         &self,
-        key: TaskId,
+        key: DataId,
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
@@ -230,7 +230,7 @@ impl Storage {
         Ok(WriteHandleUninit::new(self, key, t_ref))
     }
 
-    pub fn write_to_ram<T: AnyBitPattern>(&self, id: TaskId, value: T) -> Result<(), Error> {
+    pub fn write_to_ram<T: AnyBitPattern>(&self, id: DataId, value: T) -> Result<(), Error> {
         let mut slot = self.alloc_ram_slot(id)?;
         slot.write(value);
         unsafe { slot.initialized() };
@@ -241,7 +241,7 @@ impl Storage {
     /// Safety: The initial allocation for the TaskId must have happened with the same type.
     pub unsafe fn read_ram<'a, T: AnyBitPattern>(
         &'a self,
-        key: TaskId,
+        key: DataId,
     ) -> Option<ReadHandle<'a, T>> {
         self.read_ram_slice(key).map(|v| v.map(|a| &a[0]))
     }
@@ -249,7 +249,7 @@ impl Storage {
     /// Safety: The initial allocation for the TaskId must have happened with the same type
     pub unsafe fn read_ram_slice<'a, T: AnyBitPattern>(
         &'a self,
-        key: TaskId,
+        key: DataId,
     ) -> Option<ReadHandle<'a, [T]>> {
         let t_ref = {
             let index = self.index.borrow();
@@ -272,8 +272,8 @@ impl Storage {
     /// size must match the initial allocation
     pub unsafe fn try_update_inplace_slice<'a, T: AnyBitPattern>(
         &'a self,
-        old_key: TaskId,
-        new_key: TaskId,
+        old_key: DataId,
+        new_key: DataId,
     ) -> Option<InplaceResultSlice<'a, T>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;

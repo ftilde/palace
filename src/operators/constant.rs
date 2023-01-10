@@ -1,71 +1,72 @@
 use crate::{
     id::Id,
-    operator::{Operator, OperatorId},
-    storage::ReadHandle,
-    task::{DatumRequest, Request, RequestType, Task, TaskContext, TaskId},
-    Error,
+    operator::{DataId, Operator, OperatorId},
 };
 
-impl<T: bytemuck::Pod> Operator for T {
-    fn id(&self) -> OperatorId {
-        OperatorId::new::<f32>(&[Id::from_data(bytemuck::bytes_of(self)).into()])
+pub type ScalarOperator<'tasks, T> = Operator<'tasks, (), T>;
+
+impl<'tasks, T: bytemuck::Pod> From<&'tasks T> for ScalarOperator<'tasks, T> {
+    fn from(value: &'tasks T) -> Self {
+        scalar(value)
     }
+}
+
+fn scalar<'tasks, T: bytemuck::Pod>(val: &'tasks T) -> ScalarOperator<'tasks, T> {
+    let op_id = OperatorId::new(
+        std::any::type_name::<T>(),
+        &[Id::from_data(bytemuck::bytes_of(val)).into()],
+    );
+    let val = *val;
+    Operator::new(
+        op_id,
+        Box::new(move |ctx, d, _| {
+            async move {
+                let id = DataId::new(op_id, &d);
+                ctx.storage.write_to_ram(id, val)
+            }
+            .into()
+        }),
+    )
 }
 
 // TODO remove those pub when request_blocking in RunTime is figured out
-pub struct ScalarTaskContext<'tasks, 'op, T> {
-    pub inner: TaskContext<'tasks, 'op>,
-    pub op_id: OperatorId,
-    pub marker: std::marker::PhantomData<T>,
-}
+//pub struct ScalarTaskContext<'tasks, 'op, T> {
+//    pub inner: TaskContext<'tasks, 'op>,
+//    pub op_id: OperatorId,
+//    pub marker: std::marker::PhantomData<T>,
+//}
+//
+//impl<'tasks, 'op, T> std::ops::Deref for ScalarTaskContext<'tasks, 'op, T> {
+//    type Target = TaskContext<'tasks, 'op>;
+//
+//    fn deref(&self) -> &Self::Target {
+//        &self.inner
+//    }
+//}
+//
+//impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
+//    pub fn write(&self, value: &T) -> Result<(), Error> {
+//        let id = TaskId::new(self.op_id, &DatumRequest::Value);
+//        self.inner.storage.write_to_ram(id, *value)
+//    }
+//}
 
-impl<'tasks, 'op, T> std::ops::Deref for ScalarTaskContext<'tasks, 'op, T> {
-    type Target = TaskContext<'tasks, 'op>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T: bytemuck::Pod> ScalarTaskContext<'_, '_, T> {
-    pub fn write(&self, value: &T) -> Result<(), Error> {
-        let id = TaskId::new(self.op_id, &DatumRequest::Value);
-        self.inner.storage.write_to_ram(id, *value)
-    }
-}
-
-pub fn request_value<'req, 'tasks: 'req, 'op: 'tasks, T: bytemuck::Pod + 'req>(
-    op: &'op dyn ScalarOperator<T>,
-) -> Request<'req, 'op, ReadHandle<'req, T>> {
-    let op_id = op.id();
-    let id = TaskId::new(op_id, &DatumRequest::Value);
-    Request {
-        id,
-        type_: RequestType::Data(Box::new(move |ctx| {
-            let ctx = ScalarTaskContext {
-                inner: ctx,
-                op_id,
-                marker: Default::default(),
-            };
-            op.compute_value(ctx)
-        })),
-        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
-        _marker: Default::default(),
-    }
-}
-
-pub trait ScalarOperator<T: bytemuck::Pod>: Operator {
-    fn compute_value<'tasks, 'op>(
-        &'op self,
-        ctx: ScalarTaskContext<'tasks, 'op, T>,
-    ) -> Task<'tasks>;
-}
-
-impl<T: bytemuck::Pod> ScalarOperator<T> for T {
-    fn compute_value<'tasks, 'op>(
-        &'op self,
-        ctx: ScalarTaskContext<'tasks, 'op, T>,
-    ) -> Task<'tasks> {
-        async move { ctx.write(&*self) }.into()
-    }
-}
+//pub fn request_value<'req, 'tasks: 'req, 'op: 'tasks, T: bytemuck::Pod + 'req>(
+//    op: &'op dyn ScalarOperator<T>,
+//) -> Request<'req, 'op, ReadHandle<'req, T>> {
+//    let op_id = op.id();
+//    let id = TaskId::new(op_id, &DatumRequest::Value);
+//    Request {
+//        id,
+//        type_: RequestType::Data(Box::new(move |ctx| {
+//            let ctx = ScalarTaskContext {
+//                inner: ctx,
+//                op_id,
+//                marker: Default::default(),
+//            };
+//            op.compute_value(ctx)
+//        })),
+//        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+//        _marker: Default::default(),
+//    }
+//}

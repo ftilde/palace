@@ -1,6 +1,6 @@
 mod constant;
 mod reader;
-mod volume;
+pub mod volume;
 
 pub use constant::*;
 pub use reader::*;

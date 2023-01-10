@@ -1,9 +1,9 @@
 use std::{cell::Cell, collections::BTreeMap};
 
 use crate::{
-    operator::OperatorId,
-    task::{Request, Task, TaskId, ThreadPoolJob},
-    threadpool::ThreadPool,
+    task::{Request, Task, ThreadPoolJob},
+    task_graph::TaskId,
+    threadpool::{JobId, ThreadPool},
 };
 
 struct TaskData<'a> {
@@ -53,7 +53,7 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    pub fn add_task(&mut self, task_id: TaskId, task: Task<'a>) {
+    pub fn add_task(&mut self, task_id: TaskId, task: Task<'a>) -> &mut Task<'a> {
         self.managed_tasks.insert(
             task_id,
             TaskData {
@@ -61,6 +61,14 @@ impl<'a> TaskManager<'a> {
                 waiting_on_threads: 0,
             },
         );
+        self.managed_tasks
+            .get_mut(&task_id)
+            .map(|v| &mut v.task)
+            .unwrap()
+    }
+
+    pub fn has_task(&self, task_id: TaskId) -> bool {
+        self.managed_tasks.contains_key(&task_id)
     }
 
     pub fn get_task(&mut self, task_id: TaskId) -> Result<&mut Task<'a>, Error> {
@@ -81,7 +89,7 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    pub fn job_finished(&mut self) -> Option<TaskId> {
+    pub fn job_finished(&mut self) -> Option<JobId> {
         match self.thread_pool.finished() {
             Some(info) => {
                 self.managed_tasks
@@ -98,7 +106,7 @@ impl<'a> TaskManager<'a> {
         self.thread_pool.worker_available()
     }
 
-    pub fn spawn_job<'job>(&mut self, job_id: TaskId, job: ThreadPoolJob) -> Result<(), Error>
+    pub fn spawn_job<'job>(&mut self, job: ThreadPoolJob) -> Result<(), Error>
     where
         'a: 'job,
     {
@@ -111,7 +119,7 @@ impl<'a> TaskManager<'a> {
         self.thread_pool.submit(
             crate::threadpool::JobInfo {
                 caller: job.waiting_id,
-                job_id,
+                job_id: job.id,
             },
             job.job,
         );
@@ -128,14 +136,11 @@ impl ThreadSpawner {
         &'req self,
         caller: TaskId,
         f: impl FnOnce() + Send + 'req,
-    ) -> Request<'req, 'op, ()> {
+    ) -> Request<'req, ()> {
         let job_num = self.job_counter.get() + 1;
         self.job_counter.set(job_num);
 
-        // TODO: This is a giant hack. possibly revisit the concept of TaskId altogether
-        use crate::operator::Operator;
-        let id = OperatorId::new::<Self>(&[job_num.id()]);
-        let id = id.inner().into();
+        let id = JobId::new(job_num);
 
         let (drop_notifier, drop_checker) = std::sync::mpsc::sync_channel::<()>(0);
         let f = move || {
@@ -156,11 +161,11 @@ impl ThreadSpawner {
         let f = unsafe { std::mem::transmute(f) };
 
         let job = ThreadPoolJob {
+            id,
             waiting_id: caller,
             job: f,
         };
         Request {
-            id,
             type_: crate::task::RequestType::ThreadPoolJob(job),
             poll: Box::new(move |_ctx| match drop_checker.try_recv() {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(()),

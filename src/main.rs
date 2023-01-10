@@ -4,18 +4,20 @@ use clap::Parser;
 
 use crate::{
     data::VoxelPosition,
-    operators::{request_value, LinearRescale, Mean, VvdVolumeSource},
+    operators::{volume, RawVolumeSourceState},
     storage::Storage,
 };
 
 mod array;
 mod data;
+//mod experiment; //CHANGE_ME_BACK
 mod id;
 mod operator;
 mod operators;
 mod runtime;
 mod storage;
 mod task;
+mod task_graph;
 mod task_manager;
 mod threadpool;
 mod util;
@@ -45,32 +47,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_size = 1 << 30; //One gigabyte
     let storage = Storage::new(storage_size);
-    let thread_pool_size = 4;
-
-    let factor = args.factor;
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
 
-    let vol = VvdVolumeSource::open(&args.vvd_vol, brick_size)?;
-
-    let scaled1 = LinearRescale {
-        vol: &vol,
-        factor: &factor,
-        offset: &0.0,
+    //let vol_state = VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?; //CHANGE_ME_BACK
+    let metadata = data::VolumeMetaData {
+        dimensions: VoxelPosition((40, 40, 40).into()),
+        brick_size,
     };
+    let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
+    eval_network(&vol_state, &args.factor, &storage)
+}
 
-    let scaled2 = LinearRescale {
-        vol: &scaled1,
-        factor: &factor,
-        offset: &0.0,
-    };
+fn eval_network(
+    vol: &RawVolumeSourceState,
+    factor: &f32,
+    storage: &Storage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    //TODO: We want to move the threadpool out of this function
+    let thread_pool_size = 4;
 
-    let mean = Mean::new(&scaled2);
-    let mean_unscaled = Mean::new(&vol);
+    let factor = factor.into();
+    let vol = vol.operate();
+
+    let offset = (&0.0).into();
+    let scaled1 = volume::linear_rescale(&vol, &factor, &offset);
+    let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
+
+    let mean = volume::mean(&scaled2);
+    let mean_unscaled = volume::mean(&vol);
 
     let request_queue = runtime::RequestQueue::new();
     let hints = runtime::TaskHints::new();
     let (thread_pool, thread_spawner) = task_manager::create_task_manager(thread_pool_size);
+
     let mut rt = runtime::RunTime::new(
         &storage,
         thread_pool,
@@ -81,9 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
-    let mean = &mean;
+    let mean_ref = &mean;
     let mean_val =
-        rt.resolve(|ctx| async move { Ok(*ctx.submit(request_value(mean)).await) }.into())?;
+        rt.resolve(|ctx| async move { Ok(ctx.submit(mean_ref.request(())).await[0]) }.into())?;
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
@@ -92,15 +102,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Neat: We can even write to references in the closure/future below to get results out.
-    let mean_unscaled = &mean_unscaled;
+    let mean_unscaled_ref = &mean_unscaled;
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
     let tasks_executed_prev = rt.statistics().tasks_executed;
     let id = rt.resolve(|ctx| {
         async move {
-            let req = request_value(mean_unscaled);
-            let id = req.id;
-            *muv_ref = *ctx.submit(req).await;
+            let req = mean_unscaled_ref.request(());
+            let id = req.id().unwrap_data();
+            *muv_ref = ctx.submit(req).await[0];
             Ok(id)
         }
         .into()
@@ -117,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let muv_ref = &mut mean_val_unscaled;
     rt.resolve(|ctx| {
         async move {
-            *muv_ref = *ctx.submit(request_value(mean_unscaled)).await;
+            *muv_ref = ctx.submit(mean_unscaled_ref.request(())).await[0];
             Ok(())
         }
         .into()

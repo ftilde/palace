@@ -1,15 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
-use std::hash::{Hash, Hasher};
 use std::pin::Pin;
 use std::task::Poll;
 
-use crate::data::BrickPosition;
-use crate::id::Id;
-use crate::operator::OperatorId;
-use crate::runtime::{ProgressIndicator, RequestQueue, TaskHints};
+use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
+use crate::runtime::{RequestQueue, TaskHints};
 use crate::storage::Storage;
+use crate::task_graph::{ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
+use crate::threadpool::JobId;
 use crate::Error;
 use futures::stream::StreamExt;
 
@@ -27,56 +26,71 @@ where
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
-pub struct TaskId(Id);
-impl TaskId {
-    pub fn new(op: OperatorId, d: &DatumRequest) -> Self {
-        TaskId(Id::combine(&[op.inner(), d.id()]))
-    }
-}
-
 #[derive(Constructor)]
-pub struct TaskInfo<'op> {
-    pub id: TaskId,
-    pub task: RequestType<'op>,
+pub struct RequestInfo {
+    pub task: RequestType,
     pub progress_indicator: ProgressIndicator,
 }
-impl TaskInfo<'_> {
-    pub fn id(&self) -> TaskId {
-        self.id
+impl RequestInfo {
+    pub fn id(&self) -> RequestId {
+        self.task.id()
     }
 }
 
-type ResultPoll<'req, 'op, V> = Box<dyn FnMut(TaskContext<'req, 'op>) -> Option<V>>;
+type ResultPoll<'rt, V> = Box<dyn FnMut(PollContext<'rt>) -> Option<V>>;
 
-pub type TaskConstructor<'op> =
-    Box<dyn 'op + for<'tasks> FnOnce(TaskContext<'tasks, 'op>) -> Task<'tasks>>;
+pub struct DataRequest {
+    pub id: DataId,
+    pub source: *const dyn OpaqueOperator,
+    pub item: TypeErased,
+}
 
 #[derive(From)]
-pub enum RequestType<'op> {
-    Data(TaskConstructor<'op>),
+pub enum RequestType {
+    Data(DataRequest),
     ThreadPoolJob(ThreadPoolJob),
 }
 
+impl RequestType {
+    fn id(&self) -> RequestId {
+        match self {
+            RequestType::Data(d) => RequestId::Data(d.id),
+            RequestType::ThreadPoolJob(j) => RequestId::Job(j.id),
+        }
+    }
+}
+
 pub struct ThreadPoolJob {
+    pub id: JobId,
     pub waiting_id: TaskId,
     pub job: crate::threadpool::Job,
 }
 
-pub struct Request<'req, 'op, V> {
-    pub id: TaskId,
-    pub type_: RequestType<'op>,
-    pub poll: ResultPoll<'req, 'op, V>,
+pub struct Request<'req, V> {
+    pub type_: RequestType,
+    pub poll: ResultPoll<'req, V>,
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
+impl<V> Request<'_, V> {
+    pub fn id(&self) -> RequestId {
+        self.type_.id()
+    }
+}
+
 #[derive(Copy, Clone)]
-pub struct TaskContext<'tasks, 'op: 'tasks> {
-    pub requests: &'tasks RequestQueue<'op>,
+pub struct PollContext<'rt> {
+    pub storage: &'rt Storage,
+}
+
+#[derive(Copy, Clone)]
+pub struct TaskContext<'tasks> {
+    pub requests: &'tasks RequestQueue<'tasks>,
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
     pub thread_pool: &'tasks ThreadSpawner,
-    pub current_task: TaskId,
+    pub current_task: TaskId, //TODO: Clean this up
+    pub current_op: OperatorId,
 }
 
 // Workaround for a compiler bug(?)
@@ -84,28 +98,29 @@ pub struct TaskContext<'tasks, 'op: 'tasks> {
 pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
-impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
-    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'op, ()> {
+impl<'tasks> TaskContext<'tasks> {
+    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, ()> {
         self.thread_pool.spawn(self.current_task, f)
     }
 
     pub fn submit<'req, V: 'req>(
         &'req self,
-        mut request: Request<'req, 'op, V>,
-    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'op> {
+        mut request: Request<'req, V>,
+    ) -> impl Future<Output = V> + 'req {
         async move {
             let _ = self.hints.drain_completed();
             match request.type_ {
                 RequestType::Data(_) => {
-                    if let Some(res) = (request.poll)(*self) {
+                    if let Some(res) = (request.poll)(PollContext {
+                        storage: self.storage,
+                    }) {
                         return std::future::ready(res).await;
                     }
                 }
                 RequestType::ThreadPoolJob(_) => {}
             };
 
-            self.requests.push(TaskInfo {
-                id: request.id,
+            self.requests.push(RequestInfo {
                 task: request.type_,
                 progress_indicator: ProgressIndicator::WaitForComplete,
             });
@@ -114,7 +129,9 @@ impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
 
             loop {
                 let _ = self.hints.drain_completed();
-                if let Some(data) = (request.poll)(*self) {
+                if let Some(data) = (request.poll)(PollContext {
+                    storage: self.storage,
+                }) {
                     return std::future::ready(data).await;
                 } else {
                     futures::pending!();
@@ -126,8 +143,8 @@ impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
     #[allow(unused)] //We will probably use this at some point
     pub fn submit_unordered<'req, V: 'req>(
         &'req self,
-        requests: impl Iterator<Item = Request<'req, 'op, V>> + 'req,
-    ) -> impl StreamExt<Item = V> + 'req + WeUseThisLifetime<'op>
+        requests: impl Iterator<Item = Request<'req, V>> + 'req,
+    ) -> impl StreamExt<Item = V> + 'req
     where
         'tasks: 'req,
     {
@@ -137,8 +154,8 @@ impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
 
     pub fn submit_unordered_with_data<'req, V: 'req, D: 'tasks>(
         &'req self,
-        requests: impl Iterator<Item = (Request<'req, 'op, V>, D)> + 'req,
-    ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'op>
+        requests: impl Iterator<Item = (Request<'req, V>, D)> + 'req,
+    ) -> impl StreamExt<Item = (V, D)> + 'req
     where
         'tasks: 'req,
     {
@@ -148,19 +165,21 @@ impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
             .filter_map(|(mut req, data)| {
                 match req.type_ {
                     RequestType::Data(_) => {
-                        if let Some(r) = (req.poll)(*self) {
+                        if let Some(r) = (req.poll)(PollContext {
+                            storage: self.storage,
+                        }) {
                             initial_ready.push((r, data));
                             return None;
                         }
                     }
                     RequestType::ThreadPoolJob(_) => {}
                 };
-                self.requests.push(TaskInfo {
-                    id: req.id,
+                let id = req.type_.id();
+                self.requests.push(RequestInfo {
                     task: req.type_,
                     progress_indicator: ProgressIndicator::PartialPossible,
                 });
-                Some((req.id, (req.poll, data)))
+                Some((id, (req.poll, data)))
             })
             .collect::<BTreeMap<_, _>>();
         let mut completed = VecDeque::new();
@@ -179,28 +198,13 @@ impl<'tasks, 'op: 'tasks> TaskContext<'tasks, 'op> {
                     };
                 let Some((mut result_poll, data)) = task_map.remove(&completed_id) else { continue };
 
-                match result_poll(*self) {
+                match result_poll(PollContext {
+                    storage: self.storage,
+                }) {
                     Some(v) => return Poll::Ready(Some((v, data))),
                     None => panic!("Task should have been ready!"),
                 }
             }
         })
-    }
-}
-
-#[non_exhaustive]
-#[derive(Hash, Copy, Clone)]
-pub enum DatumRequest {
-    Value,
-    Brick(BrickPosition),
-}
-
-impl DatumRequest {
-    pub fn id(&self) -> Id {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.hash(&mut hasher);
-        let v = hasher.finish();
-        let hash = bytemuck::bytes_of(&v);
-        return Id::from_data(hash);
     }
 }

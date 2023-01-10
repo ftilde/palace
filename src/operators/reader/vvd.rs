@@ -5,16 +5,16 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     data::{SVec3, VolumeMetaData, VoxelPosition},
-    operator::{Operator, OperatorId},
-    operators::{request_inplace_rw_brick, request_metadata, VolumeOperator, VolumeTaskContext},
-    task::Task,
+    operator::{DataId, OpaqueOperator, OperatorId},
+    operators::VolumeOperator,
+    task::TaskContext,
     Error,
 };
 
-use super::RawVolumeSource;
+use super::RawVolumeSourceState;
 
-pub struct VvdVolumeSource {
-    raw: RawVolumeSource,
+pub struct VvdVolumeSourceState {
+    raw: RawVolumeSourceState,
 }
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {
@@ -38,7 +38,7 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
     None
 }
 
-impl VvdVolumeSource {
+impl VvdVolumeSourceState {
     pub fn open(path: &Path, brick_size: VoxelPosition) -> Result<Self, Error> {
         let content = std::fs::read_to_string(path)?;
         let package = parser::parse(&content)?;
@@ -77,52 +77,51 @@ impl VvdVolumeSource {
             brick_size,
         };
 
-        let raw = RawVolumeSource::open(raw_path, vmd)?;
-        Ok(VvdVolumeSource { raw })
-    }
-}
-
-impl Operator for VvdVolumeSource {
-    fn id(&self) -> OperatorId {
-        OperatorId::new::<Self>(&[self.raw.id()])
-    }
-}
-
-impl VolumeOperator for VvdVolumeSource {
-    fn compute_metadata<'tasks, 'op: 'tasks>(
-        &'op self,
-        ctx: VolumeTaskContext<'tasks, 'op>,
-    ) -> Task<'tasks> {
-        async move {
-            let m = ctx.submit(request_metadata(&self.raw)).await;
-            ctx.write_metadata(*m)
-        }
-        .into()
+        let raw = RawVolumeSourceState::open(raw_path, vmd)?;
+        Ok(VvdVolumeSourceState { raw })
     }
 
-    fn compute_brick<'tasks, 'op: 'tasks>(
-        &'op self,
-        ctx: VolumeTaskContext<'tasks, 'op>,
-        position: crate::data::BrickPosition,
-    ) -> Task<'tasks> {
-        async move {
-            match ctx
-                .submit(request_inplace_rw_brick(&self.raw, position, self))
-                .await
-            {
-                Ok(_rw) => {
-                    // Nothing to do: we just want to pass on the raw brick
+    pub fn operate<'op>(&'op self) -> VolumeOperator<'op> {
+        let raw = self.raw.operate();
+        VolumeOperator::new(
+            OperatorId::new(
+                "VvdVolumeSourceState::operate",
+                &[*raw.metadata.id(), *raw.bricks.id()],
+            ),
+            move |ctx: TaskContext<'_, 'op>, _| {
+                async move {
+                    let raw = self.raw.operate();
+                    let m = ctx.submit(raw.metadata.request(())).await;
+                    let id = DataId::new(ctx.current_op, &());
+                    ctx.storage.write_to_ram(id, m[0])
                 }
-                Err((r, w)) => {
-                    let mut w = w?;
-                    for (i, o) in r.iter().zip(w.iter_mut()) {
-                        o.write(*i);
+                .into()
+            },
+            move |ctx: TaskContext, positions| {
+                async move {
+                    let raw = self.raw.operate();
+                    // TODO unordered dispatch
+                    for position in positions {
+                        match ctx
+                            .submit(raw.bricks.request_inplace(position, ctx.current_op))
+                            .await
+                        {
+                            Ok(_rw) => {
+                                // Nothing to do: we just want to pass on the raw brick
+                            }
+                            Err((r, w)) => {
+                                let mut w = w?;
+                                for (i, o) in r.iter().zip(w.iter_mut()) {
+                                    o.write(*i);
+                                }
+                                unsafe { w.initialized() };
+                            }
+                        }
                     }
-                    unsafe { w.initialized() };
+                    Ok(())
                 }
-            }
-            Ok(())
-        }
-        .into()
+                .into()
+            },
+        )
     }
 }
