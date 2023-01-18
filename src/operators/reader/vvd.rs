@@ -7,7 +7,6 @@ use crate::{
     data::{SVec3, VolumeMetaData, VoxelPosition},
     operator::{DataId, OpaqueOperator, OperatorId},
     operators::VolumeOperator,
-    task::TaskContext,
     Error,
 };
 
@@ -88,7 +87,7 @@ impl VvdVolumeSourceState {
                 "VvdVolumeSourceState::operate",
                 &[*raw.metadata.id(), *raw.bricks.id()],
             ),
-            move |ctx: TaskContext<'_, 'op>, _| {
+            Box::new(move |ctx, _, _| {
                 async move {
                     let raw = self.raw.operate();
                     let m = ctx.submit(raw.metadata.request(())).await;
@@ -96,8 +95,8 @@ impl VvdVolumeSourceState {
                     ctx.storage.write_to_ram(id, m[0])
                 }
                 .into()
-            },
-            move |ctx: TaskContext, positions| {
+            }),
+            Box::new(move |ctx, positions, _| {
                 async move {
                     let raw = self.raw.operate();
                     // TODO unordered dispatch
@@ -121,7 +120,7 @@ impl VvdVolumeSourceState {
                     Ok(())
                 }
                 .into()
-            },
+            }),
         )
     }
 }

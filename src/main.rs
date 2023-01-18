@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use operators::VvdVolumeSourceState;
 
-use crate::{
-    data::VoxelPosition,
-    operators::{volume, RawVolumeSourceState},
-    storage::Storage,
-};
+use crate::{data::VoxelPosition, operators::volume, storage::Storage};
 
 mod array;
 mod data;
@@ -50,17 +47,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
 
-    //let vol_state = VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?; //CHANGE_ME_BACK
-    let metadata = data::VolumeMetaData {
-        dimensions: VoxelPosition((40, 40, 40).into()),
-        brick_size,
-    };
-    let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
+    let vol_state = VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?;
+    //let metadata = data::VolumeMetaData {
+    //    dimensions: VoxelPosition((40, 40, 40).into()),
+    //    brick_size,
+    //};
+    //let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
     eval_network(&vol_state, &args.factor, &storage)
 }
 
 fn eval_network(
-    vol: &RawVolumeSourceState,
+    vol: &VvdVolumeSourceState,
     factor: &f32,
     storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error>> {
