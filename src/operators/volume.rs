@@ -126,10 +126,10 @@ pub fn linear_rescale<'op>(
     offset: &'op ScalarOperator<'_, f32>,
 ) -> VolumeOperator<'op> {
     VolumeOperator::new(
-        OperatorId::new(
-            "volume_scale",
-            &[*input.metadata.id(), *input.bricks.id(), *factor.id()],
-        ),
+        OperatorId::new("volume_scale")
+            .dependent_on(*input.metadata.id())
+            .dependent_on(*input.bricks.id())
+            .dependent_on(*factor.id()),
         Box::new(move |ctx, d, _| {
             // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
             // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
@@ -183,7 +183,9 @@ pub fn linear_rescale<'op>(
 
 pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
     ScalarOperator::new(
-        OperatorId::new("volume_mean", &[*input.metadata.id(), *input.bricks.id()]),
+        OperatorId::new("volume_mean")
+            .dependent_on(*input.metadata.id())
+            .dependent_on(*input.bricks.id()),
         Box::new(move |ctx, d, _| {
             assert!(d.len() <= 1);
             async move {

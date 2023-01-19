@@ -16,3 +16,9 @@ impl Id {
         Self(sha.digest().bytes())
     }
 }
+
+impl From<&[u8]> for Id {
+    fn from(value: &[u8]) -> Self {
+        Self::from_data(value)
+    }
+}

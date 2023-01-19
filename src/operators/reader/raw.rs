@@ -1,10 +1,8 @@
 use std::{fs::File, mem::MaybeUninit, path::PathBuf};
 
 use crate::{
-    data::{to_linear, VolumeMetaData},
-    id::Id,
-    operator::{DataId, OperatorId},
-    operators::VolumeOperator,
+    data::{to_linear, BrickPosition, VolumeMetaData, VoxelPosition},
+    operator::{DataId, Operator, OperatorId},
     storage::WriteHandleUninit,
     task::TaskContext,
     Error,
@@ -14,49 +12,35 @@ pub struct RawVolumeSourceState {
     path: PathBuf,
     _file: File,
     mmap: memmap::Mmap,
-    metadata: VolumeMetaData,
-}
-
-impl<'op> From<&'op RawVolumeSourceState> for VolumeOperator<'op> {
-    fn from(value: &'op RawVolumeSourceState) -> Self {
-        value.operate()
-    }
+    size: VoxelPosition,
 }
 
 impl RawVolumeSourceState {
-    pub fn open(path: PathBuf, metadata: VolumeMetaData) -> Result<Self, Error> {
+    pub fn open(path: PathBuf, size: VoxelPosition) -> Result<Self, Error> {
         let file = File::open(&path)?;
         let mmap = unsafe { memmap::Mmap::map(&file)? };
+
+        let byte_size = crate::data::hmul(size.0) as usize * std::mem::size_of::<f32>();
+        assert_eq!(file.metadata()?.len(), byte_size as u64);
 
         Ok(Self {
             path,
             _file: file,
             mmap,
-            metadata,
+            size,
         })
     }
 
-    pub fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        VolumeOperator::new(
-            OperatorId::new(
-                "RawVolumeSourceState::operate",
-                &[Id::from_data(self.path.to_string_lossy().as_bytes()).into()],
-            ),
-            Box::new(move |ctx, d, _| {
-                assert!(d.len() <= 1);
-                async move {
-                    for d in d {
-                        let m = &self.metadata;
-                        let id = DataId::new(ctx.current_op, &d);
-                        ctx.storage.write_to_ram(id, *m)?;
-                    }
-                    Ok(())
-                }
-                .into()
-            }),
+    pub fn operate<'op>(&'op self, brick_size: VoxelPosition) -> Operator<'op, BrickPosition, f32> {
+        Operator::new(
+            OperatorId::new("RawVolumeSourceState::operate")
+                .dependent_on(self.path.to_string_lossy().as_bytes()),
             Box::new(move |ctx: TaskContext, positions, _| {
+                let m = VolumeMetaData {
+                    dimensions: self.size,
+                    brick_size,
+                };
                 async move {
-                    let m = &self.metadata;
                     for pos in positions {
                         let begin = m.brick_begin(pos);
                         if !(begin.0.x < m.dimensions.0.x

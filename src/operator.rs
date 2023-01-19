@@ -9,19 +9,24 @@ use crate::{
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct OperatorId(Id);
 impl OperatorId {
-    pub fn new(name: &'static str, inputs: &[OperatorId]) -> Self {
-        // TODO: Maybe it's more efficient to use the sha.update method directly.
-        let mut id = Id::from_data(name.as_bytes());
-        for i in inputs {
-            id = Id::combine(&[id, i.0]);
-        }
+    pub fn new(name: &'static str) -> Self {
+        let id = Id::from_data(name.as_bytes());
         OperatorId(id)
+    }
+    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
+        OperatorId(Id::combine(&[self.0, id.into()]))
     }
     pub fn slot(&self, slot_number: usize) -> Self {
         let id = Id::combine(&[self.0, Id::from_data(bytemuck::bytes_of(&slot_number))]);
         OperatorId(id)
     }
     pub fn inner(&self) -> Id {
+        self.0
+    }
+}
+
+impl Into<Id> for OperatorId {
+    fn into(self) -> Id {
         self.0
     }
 }

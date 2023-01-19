@@ -239,7 +239,7 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {
-        let op_id = OperatorId::new("bleh", &[]); //TODO unique ID
+        let op_id = OperatorId::new("bleh"); //TODO unique ID
         let task_id = self.request_batcher.task_id_manager.gen_id(op_id);
         let mut task = task(self.context(task_id, op_id));
 

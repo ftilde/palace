@@ -14,6 +14,7 @@ use super::RawVolumeSourceState;
 
 pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
+    metadata: VolumeMetaData,
 }
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {
@@ -71,42 +72,37 @@ impl VvdVolumeSourceState {
             return Err("No valid .raw file path in file".into());
         };
 
-        let vmd = VolumeMetaData {
+        let metadata = VolumeMetaData {
             dimensions: size,
             brick_size,
         };
 
-        let raw = RawVolumeSourceState::open(raw_path, vmd)?;
-        Ok(VvdVolumeSourceState { raw })
+        let raw = RawVolumeSourceState::open(raw_path, size)?;
+        Ok(VvdVolumeSourceState { raw, metadata })
     }
 
     pub fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        let raw = self.raw.operate();
+        let raw = self.raw.operate(self.metadata.brick_size);
         VolumeOperator::new(
-            OperatorId::new(
-                "VvdVolumeSourceState::operate",
-                &[*raw.metadata.id(), *raw.bricks.id()],
-            ),
+            OperatorId::new("VvdVolumeSourceState::operate").dependent_on(*raw.id()),
             Box::new(move |ctx, d, _| {
                 assert!(d.len() <= 1);
                 async move {
                     for d in d {
-                        let raw = self.raw.operate();
-                        let m = ctx.submit(raw.metadata.request(())).await;
                         let id = DataId::new(ctx.current_op, &d);
-                        ctx.storage.write_to_ram(id, m[0])?;
+                        ctx.storage.write_to_ram(id, self.metadata)?;
                     }
                     Ok(())
                 }
                 .into()
             }),
             Box::new(move |ctx, positions, _| {
+                let raw = self.raw.operate(self.metadata.brick_size);
                 async move {
-                    let raw = self.raw.operate();
                     // TODO unordered dispatch
                     for position in positions {
                         match ctx
-                            .submit(raw.bricks.request_inplace(position, ctx.current_op))
+                            .submit(raw.request_inplace(position, ctx.current_op))
                             .await
                         {
                             Ok(_rw) => {

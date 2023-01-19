@@ -1,7 +1,4 @@
-use crate::{
-    id::Id,
-    operator::{DataId, Operator, OperatorId},
-};
+use crate::operator::{DataId, Operator, OperatorId};
 
 pub type ScalarOperator<'tasks, T> = Operator<'tasks, (), T>;
 
@@ -12,10 +9,7 @@ impl<'tasks, T: bytemuck::Pod> From<&'tasks T> for ScalarOperator<'tasks, T> {
 }
 
 fn scalar<'tasks, T: bytemuck::Pod>(val: &'tasks T) -> ScalarOperator<'tasks, T> {
-    let op_id = OperatorId::new(
-        std::any::type_name::<T>(),
-        &[Id::from_data(bytemuck::bytes_of(val)).into()],
-    );
+    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(bytemuck::bytes_of(val));
     let val = *val;
     Operator::new(
         op_id,
