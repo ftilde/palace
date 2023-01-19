@@ -89,7 +89,7 @@ impl VvdVolumeSourceState {
                 assert!(d.len() <= 1);
                 async move {
                     for d in d {
-                        let id = DataId::new(ctx.current_op, &d);
+                        let id = DataId::new(ctx.current_op(), &d);
                         ctx.storage.write_to_ram(id, self.metadata)?;
                     }
                     Ok(())
@@ -102,7 +102,7 @@ impl VvdVolumeSourceState {
                     // TODO unordered dispatch
                     for position in positions {
                         match ctx
-                            .submit(raw.request_inplace(position, ctx.current_op))
+                            .submit(raw.request_inplace(position, ctx.current_op()))
                             .await
                         {
                             Ok(_rw) => {

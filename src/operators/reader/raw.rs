@@ -56,7 +56,7 @@ impl RawVolumeSourceState {
 
                         // Safety: We are zeroing all brick data in a first step.
                         // TODO: We might want to lift this restriction in the future
-                        let id = DataId::new(ctx.current_op, &pos);
+                        let id = DataId::new(ctx.current_op(), &pos);
                         let mut brick_handle: WriteHandleUninit<[MaybeUninit<f32>]> =
                             ctx.storage.alloc_ram_slot_slice(id, num_voxels)?;
                         let brick_data = &mut *brick_handle;

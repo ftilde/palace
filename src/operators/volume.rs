@@ -140,7 +140,7 @@ pub fn linear_rescale<'op>(
                 for d in d {
                     let req = input.metadata.request(());
                     let m = ctx.submit(req).await;
-                    let id = DataId::new(ctx.current_op, &d);
+                    let id = DataId::new(ctx.current_op(), &d);
                     ctx.storage.write_to_ram(id, m[0])?;
                 }
                 Ok(())
@@ -158,7 +158,7 @@ pub fn linear_rescale<'op>(
 
                 for pos in positions {
                     match ctx
-                        .submit(input.bricks.request_inplace(pos, ctx.current_op))
+                        .submit(input.bricks.request_inplace(pos, ctx.current_op()))
                         .await
                     {
                         Ok(mut rw) => {
@@ -209,7 +209,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
 
                     let v = sum / vol.num_voxels() as f32;
 
-                    let id = DataId::new(ctx.current_op, &d);
+                    let id = DataId::new(ctx.current_op(), &d);
                     ctx.storage.write_to_ram(id, v)?;
                 }
                 Ok(())

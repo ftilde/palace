@@ -89,8 +89,7 @@ pub struct TaskContext<'tasks> {
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
     pub thread_pool: &'tasks ThreadSpawner,
-    pub current_task: TaskId, //TODO: Clean this up
-    pub current_op: OperatorId,
+    pub current_task: TaskId,
 }
 
 // Workaround for a compiler bug(?)
@@ -101,6 +100,10 @@ impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 impl<'tasks> TaskContext<'tasks> {
     pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, ()> {
         self.thread_pool.spawn(self.current_task, f)
+    }
+
+    pub fn current_op(&self) -> OperatorId {
+        self.current_task.operator()
     }
 
     pub fn submit<'req, V: 'req>(

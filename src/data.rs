@@ -20,13 +20,11 @@ pub struct VoxelPosition(pub SVec3);
 #[derive(Copy, Clone, Hash)]
 pub struct BrickPosition(pub SVec3);
 
-// TODO: Check if this is actually valid...
 unsafe impl Zeroable for VoxelPosition {}
 unsafe impl AnyBitPattern for VoxelPosition {}
 unsafe impl Zeroable for BrickPosition {}
 unsafe impl Pod for BrickPosition {}
 
-// TODO: Maybe we don't want this to be copy if it gets too large.
 #[derive(Copy, Clone, AnyBitPattern)]
 pub struct VolumeMetaData {
     pub dimensions: VoxelPosition,

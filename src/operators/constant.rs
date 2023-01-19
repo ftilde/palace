@@ -17,7 +17,7 @@ fn scalar<'tasks, T: bytemuck::Pod>(val: &'tasks T) -> ScalarOperator<'tasks, T>
             async move {
                 assert!(d.len() <= 1);
                 for d in d {
-                    let id = DataId::new(ctx.current_op, &d);
+                    let id = DataId::new(ctx.current_op(), &d);
                     ctx.storage.write_to_ram(id, val)?;
                 }
                 Ok(())
