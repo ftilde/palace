@@ -47,7 +47,6 @@ pub struct TaskGraph {
     implied_tasks: BTreeSet<TaskId>,
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
-    fulfilled_by: BTreeMap<DataId, TaskId>,
     ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, Vec<RequestId>>,
 }
@@ -73,15 +72,12 @@ impl TaskGraph {
 
     pub fn add_implied(&mut self, id: TaskId) {
         let inserted = self.implied_tasks.insert(id);
+        self.waits_on.insert(id, BTreeMap::new());
         assert!(inserted, "Tried to insert task twice");
         self.ready.insert(id);
     }
 
     pub fn resolved_implied(&mut self, id: RequestId) {
-        if let RequestId::Data(id) = id {
-            self.fulfilled_by.remove(&id);
-        }
-
         for rev_dep in self.required_by.remove(&id).iter().flatten() {
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
@@ -96,6 +92,9 @@ impl TaskGraph {
 
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
+        self.ready.remove(&id);
+        let deps = self.waits_on.remove(&id).unwrap();
+        assert!(deps.is_empty());
     }
 
     pub fn next_ready(&mut self) -> Vec<ReadyTask> {
@@ -106,14 +105,6 @@ impl TaskGraph {
                 id: *t,
                 resolved_deps: self.resolved_deps.remove(t).unwrap_or_default(),
             })
-            .collect()
-    }
-
-    //TODO: Remove and let tasks report fulfilled requests back immediately
-    pub fn fullfilled_requests(&self, task: TaskId) -> Vec<DataId> {
-        self.fulfilled_by
-            .iter()
-            .filter_map(|(r, t)| if *t == task { Some(*r) } else { None })
             .collect()
     }
 }

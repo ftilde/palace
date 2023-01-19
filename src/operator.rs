@@ -5,7 +5,6 @@ use crate::{
     storage::{InplaceResultSlice, ReadHandle},
     task::{DataRequest, Request, RequestType, Task, TaskContext},
 };
-use std::hash::{Hash, Hasher};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct OperatorId(Id);
@@ -30,11 +29,8 @@ impl OperatorId {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DataId(Id);
 impl DataId {
-    pub fn new(op: OperatorId, descriptor: &impl Hash) -> Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        descriptor.hash(&mut hasher);
-        let v = hasher.finish();
-        let hash = bytemuck::bytes_of(&v);
+    pub fn new(op: OperatorId, descriptor: &impl bytemuck::Pod) -> Self {
+        let hash = bytemuck::bytes_of(descriptor);
         let data_id = Id::from_data(hash);
 
         DataId(Id::combine(&[op.inner(), data_id]))
@@ -82,7 +78,7 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     _marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
 }
 
-impl<'op, ItemDescriptor: Hash + 'static, Output: AnyBitPattern>
+impl<'op, ItemDescriptor: bytemuck::Pod + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
     pub fn new(id: OperatorId, compute: ComputeFunction<'op, ItemDescriptor>) -> Self {

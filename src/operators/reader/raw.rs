@@ -42,11 +42,15 @@ impl RawVolumeSourceState {
                 "RawVolumeSourceState::operate",
                 &[Id::from_data(self.path.to_string_lossy().as_bytes()).into()],
             ),
-            Box::new(move |ctx, _, _| {
+            Box::new(move |ctx, d, _| {
+                assert!(d.len() <= 1);
                 async move {
-                    let m = &self.metadata;
-                    let id = DataId::new(ctx.current_op, &());
-                    ctx.storage.write_to_ram(id, *m)
+                    for d in d {
+                        let m = &self.metadata;
+                        let id = DataId::new(ctx.current_op, &d);
+                        ctx.storage.write_to_ram(id, *m)?;
+                    }
+                    Ok(())
                 }
                 .into()
             }),

@@ -1,9 +1,16 @@
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit, pin::Pin};
+use std::{
+    alloc::Layout,
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    mem::MaybeUninit,
+    pin::Pin,
+};
 
 use bytemuck::AnyBitPattern;
 
 use crate::{operator::DataId, util::num_elms_in_array, Error};
 
+#[derive(Debug, Eq, PartialEq)]
 enum StorageEntryState {
     Initializing,
     Initialized,
@@ -84,12 +91,7 @@ pub struct DropMarkInitialized<'a> {
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.storage
-            .index
-            .borrow_mut()
-            .get_mut(&self.id)
-            .unwrap()
-            .state = StorageEntryState::Initialized;
+        self.storage.mark_initialized(self.id);
     }
 }
 
@@ -157,6 +159,7 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, StorageEntry>>,
+    new_data: RefCell<BTreeSet<DataId>>,
     allocator: Allocator,
 }
 
@@ -173,6 +176,7 @@ impl Storage {
         let allocator = Allocator::new(size);
         Self {
             index: RefCell::new(BTreeMap::new()),
+            new_data: RefCell::new(BTreeSet::new()),
             allocator,
         }
     }
@@ -185,10 +189,24 @@ impl Storage {
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
             unsafe { self.allocator.dealloc(entry.data) };
+            self.new_data.borrow_mut().remove(&key);
             Ok(())
         } else {
             Err(())
         }
+    }
+    pub fn mark_initialized(&self, key: DataId) {
+        self.new_data.borrow_mut().insert(key);
+        let mut binding = self.index.borrow_mut();
+        let state = &mut binding.get_mut(&key).unwrap().state;
+        assert_ne!(*state, StorageEntryState::Initialized);
+        *state = StorageEntryState::Initialized;
+    }
+    pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataId> {
+        let mut place_holder = BTreeSet::new();
+        let mut d = self.new_data.borrow_mut();
+        std::mem::swap(&mut *d, &mut place_holder);
+        place_holder.into_iter()
     }
 
     fn alloc(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {

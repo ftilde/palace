@@ -87,12 +87,16 @@ impl VvdVolumeSourceState {
                 "VvdVolumeSourceState::operate",
                 &[*raw.metadata.id(), *raw.bricks.id()],
             ),
-            Box::new(move |ctx, _, _| {
+            Box::new(move |ctx, d, _| {
+                assert!(d.len() <= 1);
                 async move {
-                    let raw = self.raw.operate();
-                    let m = ctx.submit(raw.metadata.request(())).await;
-                    let id = DataId::new(ctx.current_op, &());
-                    ctx.storage.write_to_ram(id, m[0])
+                    for d in d {
+                        let raw = self.raw.operate();
+                        let m = ctx.submit(raw.metadata.request(())).await;
+                        let id = DataId::new(ctx.current_op, &d);
+                        ctx.storage.write_to_ram(id, m[0])?;
+                    }
+                    Ok(())
                 }
                 .into()
             }),

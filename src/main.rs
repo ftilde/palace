@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Storage::new(storage_size);
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
+    //let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
 
     let vol_state = VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?;
     //let metadata = data::VolumeMetaData {

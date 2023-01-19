@@ -183,9 +183,6 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
                         assert!(self.request_queue.is_empty());
-                        for r in self.task_graph.fullfilled_requests(task_id) {
-                            self.task_graph.resolved_implied(r.into());
-                        }
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
@@ -197,6 +194,9 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
                         self.enqueue_requested(task_id);
                     }
                 };
+                for d in self.storage.newest_data() {
+                    self.task_graph.resolved_implied(d.into());
+                }
             }
         }
     }
