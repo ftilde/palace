@@ -52,7 +52,7 @@ impl TaskIdManager {
 struct RequestBatch<'op> {
     items: BTreeSet<DataRequestItem>,
     op: &'op dyn OpaqueOperator,
-    batch_id: TaskId,
+    //batch_id: TaskId,
 }
 
 #[derive(Default)]
@@ -62,7 +62,7 @@ struct RequestBatcher<'op> {
 }
 
 impl<'op> RequestBatcher<'op> {
-    unsafe fn add(&mut self, request: DataRequest) {
+    unsafe fn add(&mut self, request: DataRequest) -> Option<TaskId> {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
@@ -73,14 +73,17 @@ impl<'op> RequestBatcher<'op> {
             std::collections::btree_map::Entry::Vacant(o) => {
                 let mut items = BTreeSet::new();
                 items.insert(req_item);
+                let batch_id = self.task_id_manager.gen_id(*op_id);
                 o.insert(RequestBatch {
                     items,
                     op: source,
-                    batch_id: self.task_id_manager.gen_id(*op_id),
+                    //batch_id,
                 });
+                Some(batch_id)
             }
             std::collections::btree_map::Entry::Occupied(mut o) => {
                 o.get_mut().items.insert(req_item);
+                None
             }
         }
     }
@@ -172,9 +175,9 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
 
                 let mut ctx = Context::from_waker(&self.waker);
 
-                // The queue should always just contain the tasks that are enqueued by polling the
-                // following task! This is important so that we know the calling tasks id for the
-                // generated requests.
+                // The queue should always just contain the requests that are enqueued by polling
+                // the following task! This is important so that we know the calling tasks id for
+                // the generated requests.
                 assert!(self.request_queue.is_empty());
 
                 match task.as_mut().poll(&mut ctx) {
@@ -183,6 +186,7 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
                         for r in self.task_graph.fullfilled_requests(task_id) {
                             self.task_graph.resolved_implied(r.into());
                         }
+                        self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
@@ -199,17 +203,19 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
 
     fn enqueue_requested(&mut self, from: TaskId) {
         for req in self.request_queue.drain() {
-            let task_id = req.id();
+            let req_id = req.id();
             match req.task {
                 RequestType::Data(data_request) => {
-                    unsafe { self.request_batcher.add(data_request) };
+                    if let Some(new_batch_id) = unsafe { self.request_batcher.add(data_request) } {
+                        self.task_graph.add_implied(new_batch_id);
+                    }
                     self.task_graph
-                        .add_dependency(from, task_id, req.progress_indicator);
+                        .add_dependency(from, req_id, req.progress_indicator);
                 }
                 RequestType::ThreadPoolJob(job) => {
                     self.thread_pool_waiting.push_back(job);
                     self.task_graph
-                        .add_dependency(from, task_id, req.progress_indicator);
+                        .add_dependency(from, req_id, req.progress_indicator);
                 }
             }
         }
@@ -233,9 +239,7 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {
-        // TODO: Not sure if passing F here is a valid way to generate a unique id? E.g. when
-        // running in a loop with changed parameters. We should try this out
-        let op_id = OperatorId::new("bleh", &[]);
+        let op_id = OperatorId::new("bleh", &[]); //TODO unique ID
         let task_id = self.request_batcher.task_id_manager.gen_id(op_id);
         let mut task = task(self.context(task_id, op_id));
 
