@@ -30,6 +30,11 @@ impl Into<Id> for OperatorId {
         self.0
     }
 }
+impl<I, O> Into<Id> for &Operator<'_, I, O> {
+    fn into(self) -> Id {
+        self.id.into()
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DataId(Id);
@@ -69,7 +74,7 @@ pub type ComputeFunction<'op, ItemDescriptor> = Box<
 >;
 
 pub trait OpaqueOperator {
-    fn id(&self) -> &OperatorId; //TODO: return value. this is annoying
+    fn id(&self) -> OperatorId;
     unsafe fn compute<'tasks>(
         &'tasks self,
         context: TaskContext<'tasks>,
@@ -143,8 +148,8 @@ impl<'op, ItemDescriptor: bytemuck::Pod + 'static, Output: AnyBitPattern>
 }
 
 impl<'op, ItemDescriptor, Output> OpaqueOperator for Operator<'op, ItemDescriptor, Output> {
-    fn id(&self) -> &OperatorId {
-        &self.id
+    fn id(&self) -> OperatorId {
+        self.id
     }
     unsafe fn compute<'tasks>(
         &'tasks self,

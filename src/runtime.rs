@@ -69,11 +69,11 @@ impl<'op> RequestBatcher<'op> {
             id: request.id,
             item: request.item,
         };
-        match self.pending_batches.entry(*op_id) {
+        match self.pending_batches.entry(op_id) {
             std::collections::btree_map::Entry::Vacant(o) => {
                 let mut items = BTreeSet::new();
                 items.insert(req_item);
-                let batch_id = self.task_id_manager.gen_id(*op_id);
+                let batch_id = self.task_id_manager.gen_id(op_id);
                 o.insert(RequestBatch {
                     items,
                     op: source,

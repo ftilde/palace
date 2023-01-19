@@ -2,7 +2,7 @@ use futures::stream::StreamExt;
 
 use crate::{
     data::{Brick, BrickPosition, VolumeMetaData},
-    operator::{ComputeFunction, DataId, OpaqueOperator, Operator, OperatorId},
+    operator::{ComputeFunction, DataId, Operator, OperatorId},
 };
 
 use super::ScalarOperator;
@@ -127,9 +127,10 @@ pub fn linear_rescale<'op>(
 ) -> VolumeOperator<'op> {
     VolumeOperator::new(
         OperatorId::new("volume_scale")
-            .dependent_on(*input.metadata.id())
-            .dependent_on(*input.bricks.id())
-            .dependent_on(*factor.id()),
+            .dependent_on(&input.metadata)
+            .dependent_on(&input.bricks)
+            .dependent_on(factor)
+            .dependent_on(offset),
         Box::new(move |ctx, d, _| {
             // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
             // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
@@ -184,8 +185,8 @@ pub fn linear_rescale<'op>(
 pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
     ScalarOperator::new(
         OperatorId::new("volume_mean")
-            .dependent_on(*input.metadata.id())
-            .dependent_on(*input.bricks.id()),
+            .dependent_on(&input.metadata)
+            .dependent_on(&input.bricks),
         Box::new(move |ctx, d, _| {
             assert!(d.len() <= 1);
             async move {
