@@ -148,13 +148,10 @@ pub fn linear_rescale<'op>(
         }),
         Box::new(move |ctx, positions, _| {
             async move {
-                //let (factor, offset) = futures::join! {
-                //    ctx.submit(factor.request(())),
-                //    ctx.submit(offset.request(())),
-                //};
-                let factor = ctx.submit(factor.request(())).await;
-                let offset = ctx.submit(offset.request(())).await;
-                // CHANGEME: Use ctx stuff again
+                let (factor, offset) = futures::join! {
+                    ctx.submit(factor.request(())),
+                    ctx.submit(offset.request(())),
+                };
                 let factor = factor[0];
                 let offset = offset[0];
 

@@ -7,7 +7,6 @@ use crate::{data::VoxelPosition, operators::volume, storage::Storage};
 
 mod array;
 mod data;
-//mod experiment; //CHANGE_ME_BACK
 mod id;
 mod operator;
 mod operators;
