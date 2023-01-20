@@ -1,4 +1,4 @@
-use bytemuck::{AnyBitPattern, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable};
 
 pub fn hmul<S>(s: cgmath::Vector3<S>) -> S
 where
@@ -21,11 +21,12 @@ pub struct VoxelPosition(pub SVec3);
 pub struct BrickPosition(pub SVec3);
 
 unsafe impl Zeroable for VoxelPosition {}
-unsafe impl AnyBitPattern for VoxelPosition {}
+unsafe impl Pod for VoxelPosition {}
 unsafe impl Zeroable for BrickPosition {}
 unsafe impl Pod for BrickPosition {}
 
-#[derive(Copy, Clone, AnyBitPattern)]
+#[repr(C)]
+#[derive(Copy, Clone, Zeroable, Pod)]
 pub struct VolumeMetaData {
     pub dimensions: VoxelPosition,
     pub brick_size: VoxelPosition,

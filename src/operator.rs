@@ -91,10 +91,20 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
 impl<'op, ItemDescriptor: bytemuck::Pod + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
-    pub fn new(id: OperatorId, compute: ComputeFunction<'op, ItemDescriptor>) -> Self {
+    pub fn new<
+        F: for<'tasks> Fn(
+                TaskContext<'tasks>,
+                Vec<ItemDescriptor>,
+                OutlivesMarker<'op, 'tasks>,
+            ) -> Task<'tasks>
+            + 'op,
+    >(
+        id: OperatorId,
+        compute: F,
+    ) -> Self {
         Self {
             id,
-            compute,
+            compute: Box::new(compute),
             _marker: Default::default(),
         }
     }

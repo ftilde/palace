@@ -1,7 +1,7 @@
-mod constant;
 mod reader;
+mod scalar;
 pub mod volume;
 
-pub use constant::*;
 pub use reader::*;
+pub use scalar::*;
 pub use volume::*;

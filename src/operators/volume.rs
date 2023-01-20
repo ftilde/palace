@@ -2,10 +2,11 @@ use futures::stream::StreamExt;
 
 use crate::{
     data::{Brick, BrickPosition, VolumeMetaData},
-    operator::{ComputeFunction, DataId, Operator, OperatorId},
+    operator::{ComputeFunction, Operator, OperatorId},
+    task::Task,
 };
 
-use super::ScalarOperator;
+use super::{ScalarOperator, ScalarTaskContext};
 
 //#[derive(Copy, Clone)]
 //pub struct VolumeTaskContext<'op, 'op> {
@@ -108,13 +109,19 @@ pub struct VolumeOperator<'op> {
 }
 
 impl<'op> VolumeOperator<'op> {
-    pub fn new(
+    pub fn new<
+        F: for<'tasks> Fn(
+                ScalarTaskContext<'tasks, VolumeMetaData>,
+                crate::operator::OutlivesMarker<'op, 'tasks>,
+            ) -> Task<'tasks>
+            + 'op,
+    >(
         base_id: OperatorId,
-        metadata: ComputeFunction<'op, ()>,
+        metadata: F,
         bricks: ComputeFunction<'op, BrickPosition>,
     ) -> Self {
         Self {
-            metadata: Operator::new(base_id.slot(0), metadata),
+            metadata: crate::operators::scalar(base_id.slot(0), metadata),
             bricks: Operator::new(base_id.slot(1), bricks),
         }
     }
@@ -131,22 +138,14 @@ pub fn linear_rescale<'op>(
             .dependent_on(&input.bricks)
             .dependent_on(factor)
             .dependent_on(offset),
-        Box::new(move |ctx, d, _| {
-            // TODO: Depending on what exactly we store in the VolumeMetaData, we will have to
-            // update this. Maybe see VolumeFilterList in Voreen as a reference for how to
-            // model VolumeMetaData for this.
-            assert!(d.len() <= 1);
+        move |ctx, _| {
             async move {
-                for d in d {
-                    let req = input.metadata.request(());
-                    let m = ctx.submit(req).await;
-                    let id = DataId::new(ctx.current_op(), &d);
-                    ctx.storage.write_to_ram(id, m[0])?;
-                }
-                Ok(())
+                let req = input.metadata.request(());
+                let m = ctx.submit(req).await;
+                ctx.write(m[0])
             }
             .into()
-        }),
+        },
         Box::new(move |ctx, positions, _| {
             async move {
                 let (factor, offset) = futures::join! {
@@ -183,38 +182,32 @@ pub fn linear_rescale<'op>(
 }
 
 pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
-    ScalarOperator::new(
+    crate::operators::scalar(
         OperatorId::new("volume_mean")
             .dependent_on(&input.metadata)
             .dependent_on(&input.bricks),
-        Box::new(move |ctx, d, _| {
-            assert!(d.len() <= 1);
+        move |ctx, _| {
             async move {
-                for d in d {
-                    let mut sum = 0.0;
+                let mut sum = 0.0;
 
-                    let vol = ctx.submit(input.metadata.request(())).await[0];
+                let vol = ctx.submit(input.metadata.request(())).await[0];
 
-                    let mut stream = ctx.submit_unordered_with_data(
-                        vol.brick_positions()
-                            .map(|pos| (input.bricks.request(pos), pos)),
-                    );
-                    while let Some((brick_data, brick_pos)) = stream.next().await {
-                        let brick =
-                            Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
+                let mut stream = ctx.submit_unordered_with_data(
+                    vol.brick_positions()
+                        .map(|pos| (input.bricks.request(pos), pos)),
+                );
+                while let Some((brick_data, brick_pos)) = stream.next().await {
+                    let brick = Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
 
-                        let voxels = brick.voxels().collect::<Vec<_>>();
-                        sum += voxels.iter().sum::<f32>();
-                    }
-
-                    let v = sum / vol.num_voxels() as f32;
-
-                    let id = DataId::new(ctx.current_op(), &d);
-                    ctx.storage.write_to_ram(id, v)?;
+                    let voxels = brick.voxels().collect::<Vec<_>>();
+                    sum += voxels.iter().sum::<f32>();
                 }
-                Ok(())
+
+                let v = sum / vol.num_voxels() as f32;
+
+                ctx.write(v)
             }
             .into()
-        }),
+        },
     )
 }

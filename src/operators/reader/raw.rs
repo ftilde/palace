@@ -35,7 +35,7 @@ impl RawVolumeSourceState {
         Operator::new(
             OperatorId::new("RawVolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes()),
-            Box::new(move |ctx: TaskContext, positions, _| {
+            move |ctx: TaskContext, positions, _| {
                 let m = VolumeMetaData {
                     dimensions: self.size,
                     brick_size,
@@ -100,7 +100,7 @@ impl RawVolumeSourceState {
                     Ok(())
                 }
                 .into()
-            }),
+            },
         )
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     data::{SVec3, VolumeMetaData, VoxelPosition},
-    operator::{DataId, OperatorId},
+    operator::OperatorId,
     operators::VolumeOperator,
     Error,
 };
@@ -85,17 +85,7 @@ impl VvdVolumeSourceState {
         let raw = self.raw.operate(self.metadata.brick_size);
         VolumeOperator::new(
             OperatorId::new("VvdVolumeSourceState::operate").dependent_on(&raw),
-            Box::new(move |ctx, d, _| {
-                assert!(d.len() <= 1);
-                async move {
-                    for d in d {
-                        let id = DataId::new(ctx.current_op(), &d);
-                        ctx.storage.write_to_ram(id, self.metadata)?;
-                    }
-                    Ok(())
-                }
-                .into()
-            }),
+            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
             Box::new(move |ctx, positions, _| {
                 let raw = self.raw.operate(self.metadata.brick_size);
                 async move {
