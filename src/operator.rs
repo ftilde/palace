@@ -63,6 +63,9 @@ impl TypeErased {
     }
 }
 
+// Workaround because to limit the lifetime of allowed values in HRTBs. For example, we cannot
+// write for<'a: 'b> or restrict 'a in a where clause.
+// See https://stackoverflow.com/questions/75147315/rust-returning-this-value-requires-that-op-must-outlive-static-with-hrt
 pub type OutlivesMarker<'longer, 'shorter> = &'shorter &'longer ();
 pub type ComputeFunction<'op, ItemDescriptor, Output> = Box<
     dyn for<'tasks> Fn(
