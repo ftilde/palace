@@ -228,14 +228,6 @@ impl Storage {
     pub fn alloc_ram_slot<T: AnyBitPattern>(
         &self,
         key: DataId,
-    ) -> Result<WriteHandleUninit<MaybeUninit<T>>, Error> {
-        self.alloc_ram_slot_slice(key, 1)
-            .map(|v| v.map(|a| &mut a[0]))
-    }
-
-    pub fn alloc_ram_slot_slice<T: AnyBitPattern>(
-        &self,
-        key: DataId,
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
@@ -246,14 +238,6 @@ impl Storage {
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
         Ok(WriteHandleUninit::new(self, key, t_ref))
-    }
-
-    pub fn write_to_ram<T: AnyBitPattern>(&self, id: DataId, value: T) -> Result<(), Error> {
-        let mut slot = self.alloc_ram_slot(id)?;
-        slot.write(value);
-        unsafe { slot.initialized() };
-
-        Ok(())
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
@@ -315,7 +299,7 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = self.alloc_ram_slot_slice(new_key, num_elements);
+            let w = self.alloc_ram_slot(new_key, num_elements);
             let r = ReadHandle::new(self, old_key, t_ref);
             Err((r, w))
         })

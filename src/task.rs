@@ -245,13 +245,16 @@ impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
         let id = DataId::new(self.inner.current_op(), &item);
-        self.inner.storage.alloc_ram_slot_slice(id, size)
+        self.inner.storage.alloc_ram_slot(id, size)
     }
 }
 
 impl<'tasks, Output: bytemuck::AnyBitPattern> TaskContext<'tasks, (), Output> {
     pub fn write(&self, value: Output) -> Result<(), Error> {
-        let data_id = DataId::new(self.current_op(), &());
-        self.inner.storage.write_to_ram(data_id, value)
+        let mut slot = self.alloc_slot((), 1)?;
+        slot[0].write(value);
+        unsafe { slot.initialized() };
+
+        Ok(())
     }
 }
