@@ -92,8 +92,6 @@ impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
         let item = ();
         let id = DataId::new(self.id, &item);
 
-        // Safety: We make sure to only use objects with appropriate lifetimes when using the
-        // pointer.
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
@@ -134,8 +132,6 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     ) -> Request<'req, 't, ReadHandle<'req, [Output]>> {
         let id = DataId::new(self.id, &item);
 
-        // Safety: We make sure to only use objects with appropriate lifetimes when using the
-        // pointer.
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
@@ -154,8 +150,6 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
-        // Safety: We make sure to only use objects with appropriate lifetimes when using the
-        // pointer.
         Request {
             type_: RequestType::Data(DataRequest {
                 id: read_id,
