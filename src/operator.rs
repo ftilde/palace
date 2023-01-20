@@ -39,7 +39,7 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DataId(Id);
 impl DataId {
-    pub fn new(op: OperatorId, descriptor: &impl bytemuck::Pod) -> Self {
+    pub fn new(op: OperatorId, descriptor: &impl bytemuck::NoUninit) -> Self {
         let hash = bytemuck::bytes_of(descriptor);
         let data_id = Id::from_data(hash);
 
@@ -88,7 +88,7 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     _marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
 }
 
-impl<'op, ItemDescriptor: bytemuck::Pod + 'static, Output: AnyBitPattern>
+impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
     pub fn new<
