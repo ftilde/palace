@@ -90,7 +90,7 @@ fn eval_network(
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
     let mean_val =
-        rt.resolve(|ctx| async move { Ok(ctx.submit(mean_ref.request(())).await[0]) }.into())?;
+        rt.resolve(|ctx| async move { Ok(*ctx.submit(mean_ref.request_scalar()).await) }.into())?;
 
     let tasks_executed = rt.statistics().tasks_executed;
     println!(
@@ -105,9 +105,9 @@ fn eval_network(
     let tasks_executed_prev = rt.statistics().tasks_executed;
     let id = rt.resolve(|ctx| {
         async move {
-            let req = mean_unscaled_ref.request(());
+            let req = mean_unscaled_ref.request_scalar();
             let id = req.id().unwrap_data();
-            *muv_ref = ctx.submit(req).await[0];
+            *muv_ref = *ctx.submit(req).await;
             Ok(id)
         }
         .into()
@@ -124,7 +124,7 @@ fn eval_network(
     let muv_ref = &mut mean_val_unscaled;
     rt.resolve(|ctx| {
         async move {
-            *muv_ref = ctx.submit(mean_unscaled_ref.request(())).await[0];
+            *muv_ref = *ctx.submit(mean_unscaled_ref.request_scalar()).await;
             Ok(())
         }
         .into()

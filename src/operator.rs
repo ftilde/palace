@@ -2,7 +2,7 @@ use bytemuck::AnyBitPattern;
 
 use crate::{
     id::Id,
-    storage::{InplaceResultSlice, ReadHandle},
+    storage::{InplaceResult, ReadHandle},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
 };
 
@@ -87,6 +87,29 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     compute: ComputeFunction<'op, ItemDescriptor, Output>,
 }
 
+impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
+    pub fn request_scalar<'req>(&'req self) -> Request<'req, ReadHandle<'req, Output>> {
+        let item = ();
+        let id = DataId::new(self.id, &item);
+
+        // Safety: We make sure to only use objects with appropriate lifetimes when using the
+        // pointer.
+        let self_static: &Operator<'static, (), Output> = unsafe { std::mem::transmute(self) };
+        let self_ptr: *const dyn OpaqueOperator = self_static;
+        Request {
+            type_: RequestType::Data(DataRequest {
+                id,
+                source: self_ptr,
+                item: TypeErased::pack(item),
+            }),
+            poll: Box::new(move |ctx| unsafe {
+                ctx.storage.read_ram(id).map(|v| v.map(|a| &a[0]))
+            }),
+            _marker: Default::default(),
+        }
+    }
+}
+
 impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
@@ -124,7 +147,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
                 source: self_ptr,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram_slice(id) }),
+            poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
             _marker: Default::default(),
         }
     }
@@ -132,7 +155,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         &'req self,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, InplaceResultSlice<'req, f32>> {
+    ) -> Request<'req, InplaceResult<'req, f32>> {
         let read_id = DataId::new(self.id, &item); //TODO: revisit
         let write_id = DataId::new(write_id, &item);
 
@@ -147,9 +170,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
                 source: self_ptr,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| unsafe {
-                ctx.storage.try_update_inplace_slice(read_id, write_id)
-            }),
+            poll: Box::new(move |ctx| unsafe { ctx.storage.try_update_inplace(read_id, write_id) }),
             _marker: Default::default(),
         }
     }

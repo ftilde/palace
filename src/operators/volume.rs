@@ -115,20 +115,18 @@ pub fn linear_rescale<'op>(
             .dependent_on(offset),
         move |ctx, _| {
             async move {
-                let req = input.metadata.request(());
+                let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
-                ctx.write(m[0])
+                ctx.write(*m)
             }
             .into()
         },
         move |ctx, positions, _| {
             async move {
                 let (factor, offset) = futures::join! {
-                    ctx.submit(factor.request(())),
-                    ctx.submit(offset.request(())),
+                    ctx.submit(factor.request_scalar()),
+                    ctx.submit(offset.request_scalar()),
                 };
-                let factor = factor[0];
-                let offset = offset[0];
 
                 for pos in positions {
                     match ctx
@@ -137,13 +135,13 @@ pub fn linear_rescale<'op>(
                     {
                         Ok(mut rw) => {
                             for v in rw.iter_mut() {
-                                *v = factor * *v + offset;
+                                *v = *factor * *v + *offset;
                             }
                         }
                         Err((r, w)) => {
                             let mut w = w?;
                             for (i, o) in r.iter().zip(w.iter_mut()) {
-                                o.write(factor * *i + offset);
+                                o.write(*factor * *i + *offset);
                             }
                             unsafe { w.initialized() };
                         }
@@ -165,7 +163,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
             async move {
                 let mut sum = 0.0;
 
-                let vol = ctx.submit(input.metadata.request(())).await[0];
+                let vol = ctx.submit(input.metadata.request_scalar()).await;
 
                 let mut stream = ctx.submit_unordered_with_data(
                     vol.brick_positions()

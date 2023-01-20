@@ -163,7 +163,7 @@ pub struct Storage {
     allocator: Allocator,
 }
 
-pub type InplaceResultSlice<'a, T> = Result<
+pub type InplaceResult<'a, T> = Result<
     WriteHandleInit<'a, [T]>,
     (
         ReadHandle<'a, [T]>,
@@ -256,16 +256,8 @@ impl Storage {
         Ok(())
     }
 
-    /// Safety: The initial allocation for the TaskId must have happened with the same type.
-    pub unsafe fn read_ram<'a, T: AnyBitPattern>(
-        &'a self,
-        key: DataId,
-    ) -> Option<ReadHandle<'a, T>> {
-        self.read_ram_slice(key).map(|v| v.map(|a| &a[0]))
-    }
-
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read_ram_slice<'a, T: AnyBitPattern>(
+    pub unsafe fn read_ram<'a, T: AnyBitPattern>(
         &'a self,
         key: DataId,
     ) -> Option<ReadHandle<'a, [T]>> {
@@ -288,11 +280,11 @@ impl Storage {
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace_slice<'a, T: AnyBitPattern>(
+    pub unsafe fn try_update_inplace<'a, T: AnyBitPattern>(
         &'a self,
         old_key: DataId,
         new_key: DataId,
-    ) -> Option<InplaceResultSlice<'a, T>> {
+    ) -> Option<InplaceResult<'a, T>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;
         assert!(entry.state.initialized());
