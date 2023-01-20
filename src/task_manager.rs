@@ -136,7 +136,7 @@ impl ThreadSpawner {
         &'req self,
         caller: TaskId,
         f: impl FnOnce() + Send + 'req,
-    ) -> Request<'req, ()> {
+    ) -> Request<'req, 'op, ()> {
         let job_num = self.job_counter.get() + 1;
         self.job_counter.set(job_num);
 

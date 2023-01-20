@@ -28,11 +28,11 @@ where
 }
 
 #[derive(Constructor)]
-pub struct RequestInfo {
-    pub task: RequestType,
+pub struct RequestInfo<'rt> {
+    pub task: RequestType<'rt>,
     pub progress_indicator: ProgressIndicator,
 }
-impl RequestInfo {
+impl RequestInfo<'_> {
     pub fn id(&self) -> RequestId {
         self.task.id()
     }
@@ -40,19 +40,19 @@ impl RequestInfo {
 
 type ResultPoll<'rt, V> = Box<dyn FnMut(PollContext<'rt>) -> Option<V>>;
 
-pub struct DataRequest {
+pub struct DataRequest<'rt> {
     pub id: DataId,
-    pub source: *const dyn OpaqueOperator,
+    pub source: &'rt dyn OpaqueOperator,
     pub item: TypeErased,
 }
 
 #[derive(From)]
-pub enum RequestType {
-    Data(DataRequest),
+pub enum RequestType<'rt> {
+    Data(DataRequest<'rt>),
     ThreadPoolJob(ThreadPoolJob),
 }
 
-impl RequestType {
+impl RequestType<'_> {
     fn id(&self) -> RequestId {
         match self {
             RequestType::Data(d) => RequestId::Data(d.id),
@@ -67,13 +67,13 @@ pub struct ThreadPoolJob {
     pub job: crate::threadpool::Job,
 }
 
-pub struct Request<'req, V> {
-    pub type_: RequestType,
+pub struct Request<'req, 'rt, V> {
+    pub type_: RequestType<'rt>,
     pub poll: ResultPoll<'req, V>,
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
-impl<V> Request<'_, V> {
+impl<V> Request<'_, '_, V> {
     pub fn id(&self) -> RequestId {
         self.type_.id()
     }
@@ -97,8 +97,6 @@ pub struct OpaqueTaskContext<'tasks> {
 // See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999
 pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
-
-impl<'tasks> OpaqueTaskContext<'tasks> {}
 
 #[derive(Copy, Clone)]
 pub struct TaskContext<'tasks, ItemDescriptor, Output: ?Sized> {
@@ -125,7 +123,10 @@ impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern
         self.inner.storage.alloc_ram_slot(id, size)
     }
 
-    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, ()> {
+    pub fn spawn_job<'req>(
+        &'req self,
+        f: impl FnOnce() + Send + 'req,
+    ) -> Request<'req, 'tasks, ()> {
         self.inner.thread_pool.spawn(self.inner.current_task, f)
     }
 
@@ -135,8 +136,8 @@ impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern
 
     pub fn submit<'req, V: 'req>(
         &'req self,
-        mut request: Request<'req, V>,
-    ) -> impl Future<Output = V> + 'req {
+        mut request: Request<'req, 'tasks, V>,
+    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'tasks> {
         async move {
             let _ = self.inner.hints.drain_completed();
             match request.type_ {
@@ -173,8 +174,8 @@ impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern
     #[allow(unused)] //We will probably use this at some point
     pub fn submit_unordered<'req, V: 'req>(
         &'req self,
-        requests: impl Iterator<Item = Request<'req, V>> + 'req,
-    ) -> impl StreamExt<Item = V> + 'req
+        requests: impl Iterator<Item = Request<'req, 'tasks, V>> + 'req,
+    ) -> impl StreamExt<Item = V> + 'req + WeUseThisLifetime<'tasks>
     where
         'tasks: 'req,
     {
@@ -184,8 +185,8 @@ impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern
 
     pub fn submit_unordered_with_data<'req, V: 'req, D: 'tasks>(
         &'req self,
-        requests: impl Iterator<Item = (Request<'req, V>, D)> + 'req,
-    ) -> impl StreamExt<Item = (V, D)> + 'req
+        requests: impl Iterator<Item = (Request<'req, 'tasks, V>, D)> + 'req,
+    ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'tasks>
     where
         'tasks: 'req,
     {

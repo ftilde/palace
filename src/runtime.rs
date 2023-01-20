@@ -64,7 +64,7 @@ struct RequestBatcher<'op> {
 }
 
 impl<'op> RequestBatcher<'op> {
-    unsafe fn add(&mut self, request: DataRequest) -> Option<TaskId> {
+    fn add(&mut self, request: DataRequest<'op>) -> Option<TaskId> {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
@@ -110,7 +110,7 @@ pub struct RunTime<'tasks, 'queue, 'op> {
     statistics: Statistics,
 }
 
-impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
+impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
     pub fn new(
         storage: &'tasks Storage,
         task_manager: TaskManager<'tasks>,
@@ -207,7 +207,7 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
             let req_id = req.id();
             match req.task {
                 RequestType::Data(data_request) => {
-                    if let Some(new_batch_id) = unsafe { self.request_batcher.add(data_request) } {
+                    if let Some(new_batch_id) = self.request_batcher.add(data_request) {
                         self.task_graph.add_implied(new_batch_id);
                     }
                     self.task_graph
@@ -305,18 +305,16 @@ impl TaskHints {
 }
 
 pub struct RequestQueue<'op> {
-    buffer: RefCell<VecDeque<RequestInfo>>,
-    _marker: std::marker::PhantomData<&'op ()>,
+    buffer: RefCell<VecDeque<RequestInfo<'op>>>,
 }
-// CHANGE_ME add unsafety info here somewhere
+
 impl<'op> RequestQueue<'op> {
     pub fn new() -> Self {
         Self {
             buffer: RefCell::new(VecDeque::new()),
-            _marker: Default::default(),
         }
     }
-    pub fn push(&self, req: RequestInfo) {
+    pub fn push(&self, req: RequestInfo<'op>) {
         self.buffer.borrow_mut().push_back(req)
     }
     pub fn drain<'b>(&'b self) -> impl Iterator<Item = RequestInfo> + 'b {

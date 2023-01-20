@@ -82,32 +82,15 @@ impl VvdVolumeSourceState {
     }
 
     pub fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        let raw = self.raw.operate(self.metadata.brick_size);
         VolumeOperator::new(
-            OperatorId::new("VvdVolumeSourceState::operate").dependent_on(&raw),
+            OperatorId::new("VvdVolumeSourceState::operate")
+                .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
             move |ctx, _| async move { ctx.write(self.metadata) }.into(),
             move |ctx, positions, _| {
-                let raw = self.raw.operate(self.metadata.brick_size);
                 async move {
-                    // TODO unordered dispatch
-                    for position in positions {
-                        match ctx
-                            .submit(raw.request_inplace(position, ctx.current_op()))
-                            .await
-                        {
-                            Ok(_rw) => {
-                                // Nothing to do: we just want to pass on the raw brick
-                            }
-                            Err((r, w)) => {
-                                let mut w = w?;
-                                for (i, o) in r.iter().zip(w.iter_mut()) {
-                                    o.write(*i);
-                                }
-                                unsafe { w.initialized() };
-                            }
-                        }
-                    }
-                    Ok(())
+                    self.raw
+                        .load_raw_bricks(self.metadata.brick_size, ctx, positions)
+                        .await
                 }
                 .into()
             },

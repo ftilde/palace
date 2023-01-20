@@ -88,18 +88,16 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
 }
 
 impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
-    pub fn request_scalar<'req>(&'req self) -> Request<'req, ReadHandle<'req, Output>> {
+    pub fn request_scalar<'req, 't: 'req>(&'t self) -> Request<'req, 't, ReadHandle<'req, Output>> {
         let item = ();
         let id = DataId::new(self.id, &item);
 
         // Safety: We make sure to only use objects with appropriate lifetimes when using the
         // pointer.
-        let self_static: &Operator<'static, (), Output> = unsafe { std::mem::transmute(self) };
-        let self_ptr: *const dyn OpaqueOperator = self_static;
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                source: self_ptr,
+                source: self,
                 item: TypeErased::pack(item),
             }),
             poll: Box::new(move |ctx| unsafe {
@@ -130,44 +128,38 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         }
     }
 
-    pub fn request<'req>(
-        &'req self,
+    pub fn request<'req, 't: 'req>(
+        &'t self,
         item: ItemDescriptor,
-    ) -> Request<'req, ReadHandle<'req, [Output]>> {
+    ) -> Request<'req, 't, ReadHandle<'req, [Output]>> {
         let id = DataId::new(self.id, &item);
 
         // Safety: We make sure to only use objects with appropriate lifetimes when using the
         // pointer.
-        let self_static: &Operator<'static, ItemDescriptor, Output> =
-            unsafe { std::mem::transmute(self) };
-        let self_ptr: *const dyn OpaqueOperator = self_static;
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                source: self_ptr,
+                source: self,
                 item: TypeErased::pack(item),
             }),
             poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
             _marker: Default::default(),
         }
     }
-    pub fn request_inplace<'req>(
-        &'req self,
+    pub fn request_inplace<'req, 't: 'req>(
+        &'t self,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, InplaceResult<'req, f32>> {
+    ) -> Request<'req, 't, InplaceResult<'req, f32>> {
         let read_id = DataId::new(self.id, &item); //TODO: revisit
         let write_id = DataId::new(write_id, &item);
 
         // Safety: We make sure to only use objects with appropriate lifetimes when using the
         // pointer.
-        let self_static: &Operator<'static, ItemDescriptor, Output> =
-            unsafe { std::mem::transmute(self) };
-        let self_ptr: *const dyn OpaqueOperator = self_static;
         Request {
             type_: RequestType::Data(DataRequest {
                 id: read_id,
-                source: self_ptr,
+                source: self,
                 item: TypeErased::pack(item),
             }),
             poll: Box::new(move |ctx| unsafe { ctx.storage.try_update_inplace(read_id, write_id) }),
