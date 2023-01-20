@@ -151,7 +151,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         item: ItemDescriptor,
         write_id: OperatorId,
     ) -> Request<'req, 't, InplaceResult<'req, f32>> {
-        let read_id = DataId::new(self.id, &item); //TODO: revisit
+        let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
         // Safety: We make sure to only use objects with appropriate lifetimes when using the
