@@ -98,13 +98,39 @@ pub struct OpaqueTaskContext<'tasks> {
 pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
-impl<'tasks> OpaqueTaskContext<'tasks> {
+impl<'tasks> OpaqueTaskContext<'tasks> {}
+
+#[derive(Copy, Clone)]
+pub struct TaskContext<'tasks, ItemDescriptor, Output: ?Sized> {
+    inner: OpaqueTaskContext<'tasks>,
+    _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
+}
+
+impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+    TaskContext<'tasks, ItemDescriptor, Output>
+{
+    pub(crate) fn new(inner: OpaqueTaskContext<'tasks>) -> Self {
+        Self {
+            inner,
+            _output_marker: Default::default(),
+        }
+    }
+
+    pub fn alloc_slot(
+        &self,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
+        let id = DataId::new(self.current_op(), &item);
+        self.inner.storage.alloc_ram_slot(id, size)
+    }
+
     pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, ()> {
-        self.thread_pool.spawn(self.current_task, f)
+        self.inner.thread_pool.spawn(self.inner.current_task, f)
     }
 
     pub fn current_op(&self) -> OperatorId {
-        self.current_task.operator()
+        self.inner.current_task.operator()
     }
 
     pub fn submit<'req, V: 'req>(
@@ -112,11 +138,11 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
         mut request: Request<'req, V>,
     ) -> impl Future<Output = V> + 'req {
         async move {
-            let _ = self.hints.drain_completed();
+            let _ = self.inner.hints.drain_completed();
             match request.type_ {
                 RequestType::Data(_) => {
                     if let Some(res) = (request.poll)(PollContext {
-                        storage: self.storage,
+                        storage: self.inner.storage,
                     }) {
                         return std::future::ready(res).await;
                     }
@@ -124,7 +150,7 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
                 RequestType::ThreadPoolJob(_) => {}
             };
 
-            self.requests.push(RequestInfo {
+            self.inner.requests.push(RequestInfo {
                 task: request.type_,
                 progress_indicator: ProgressIndicator::WaitForComplete,
             });
@@ -132,9 +158,9 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
             futures::pending!();
 
             loop {
-                let _ = self.hints.drain_completed();
+                let _ = self.inner.hints.drain_completed();
                 if let Some(data) = (request.poll)(PollContext {
-                    storage: self.storage,
+                    storage: self.inner.storage,
                 }) {
                     return std::future::ready(data).await;
                 } else {
@@ -170,7 +196,7 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
                 match req.type_ {
                     RequestType::Data(_) => {
                         if let Some(r) = (req.poll)(PollContext {
-                            storage: self.storage,
+                            storage: self.inner.storage,
                         }) {
                             initial_ready.push((r, data));
                             return None;
@@ -179,7 +205,7 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
                     RequestType::ThreadPoolJob(_) => {}
                 };
                 let id = req.type_.id();
-                self.requests.push(RequestInfo {
+                self.inner.requests.push(RequestInfo {
                     task: req.type_,
                     progress_indicator: ProgressIndicator::PartialPossible,
                 });
@@ -188,7 +214,7 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
             .collect::<BTreeMap<_, _>>();
         let mut completed = VecDeque::new();
         futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(V, D)>> {
-            completed.extend(self.hints.drain_completed());
+            completed.extend(self.inner.hints.drain_completed());
             if let Some(r) = initial_ready.pop() {
                 return Poll::Ready(Some(r));
             }
@@ -203,49 +229,13 @@ impl<'tasks> OpaqueTaskContext<'tasks> {
                 let Some((mut result_poll, data)) = task_map.remove(&completed_id) else { continue };
 
                 match result_poll(PollContext {
-                    storage: self.storage,
+                    storage: self.inner.storage,
                 }) {
                     Some(v) => return Poll::Ready(Some((v, data))),
                     None => panic!("Task should have been ready!"),
                 }
             }
         })
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct TaskContext<'tasks, ItemDescriptor, Output: ?Sized> {
-    inner: OpaqueTaskContext<'tasks>,
-    _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
-}
-
-impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
-    std::ops::Deref for TaskContext<'tasks, ItemDescriptor, Output>
-{
-    type Target = OpaqueTaskContext<'tasks>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
-    TaskContext<'tasks, ItemDescriptor, Output>
-{
-    pub(crate) fn new(inner: OpaqueTaskContext<'tasks>) -> Self {
-        Self {
-            inner,
-            _output_marker: Default::default(),
-        }
-    }
-
-    pub fn alloc_slot(
-        &self,
-        item: ItemDescriptor,
-        size: usize,
-    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
-        let id = DataId::new(self.inner.current_op(), &item);
-        self.inner.storage.alloc_ram_slot(id, size)
     }
 }
 

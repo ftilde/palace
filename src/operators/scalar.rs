@@ -36,23 +36,3 @@ impl<'tasks, T: bytemuck::Pod> From<&'tasks T> for ScalarOperator<'tasks, T> {
         constant(value)
     }
 }
-
-//pub fn request_value<'req, 'tasks: 'req, 'op: 'tasks, T: bytemuck::Pod + 'req>(
-//    op: &'op dyn ScalarOperator<T>,
-//) -> Request<'req, 'op, ReadHandle<'req, T>> {
-//    let op_id = op.id();
-//    let id = TaskId::new(op_id, &DatumRequest::Value);
-//    Request {
-//        id,
-//        type_: RequestType::Data(Box::new(move |ctx| {
-//            let ctx = ScalarTaskContext {
-//                inner: ctx,
-//                op_id,
-//                marker: Default::default(),
-//            };
-//            op.compute_value(ctx)
-//        })),
-//        poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
-//        _marker: Default::default(),
-//    }
-//}
