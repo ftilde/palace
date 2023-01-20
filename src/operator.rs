@@ -3,7 +3,7 @@ use bytemuck::AnyBitPattern;
 use crate::{
     id::Id,
     storage::{InplaceResultSlice, ReadHandle},
-    task::{DataRequest, Request, RequestType, Task, TaskContext},
+    task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -64,9 +64,9 @@ impl TypeErased {
 }
 
 pub type OutlivesMarker<'longer, 'shorter> = &'shorter &'longer ();
-pub type ComputeFunction<'op, ItemDescriptor> = Box<
+pub type ComputeFunction<'op, ItemDescriptor, Output> = Box<
     dyn for<'tasks> Fn(
-            TaskContext<'tasks>,
+            TaskContext<'tasks, ItemDescriptor, Output>,
             Vec<ItemDescriptor>,
             OutlivesMarker<'op, 'tasks>,
         ) -> Task<'tasks>
@@ -77,15 +77,14 @@ pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
     unsafe fn compute<'tasks>(
         &'tasks self,
-        context: TaskContext<'tasks>,
+        context: OpaqueTaskContext<'tasks>,
         items: Vec<TypeErased>,
     ) -> Task<'tasks>;
 }
 
 pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     id: OperatorId,
-    compute: ComputeFunction<'op, ItemDescriptor>,
-    _marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
+    compute: ComputeFunction<'op, ItemDescriptor, Output>,
 }
 
 impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
@@ -93,7 +92,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
 {
     pub fn new<
         F: for<'tasks> Fn(
-                TaskContext<'tasks>,
+                TaskContext<'tasks, ItemDescriptor, Output>,
                 Vec<ItemDescriptor>,
                 OutlivesMarker<'op, 'tasks>,
             ) -> Task<'tasks>
@@ -105,7 +104,6 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         Self {
             id,
             compute: Box::new(compute),
-            _marker: Default::default(),
         }
     }
 
@@ -157,19 +155,22 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     }
 }
 
-impl<'op, ItemDescriptor, Output> OpaqueOperator for Operator<'op, ItemDescriptor, Output> {
+impl<'op, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern> OpaqueOperator
+    for Operator<'op, ItemDescriptor, Output>
+{
     fn id(&self) -> OperatorId {
         self.id
     }
     unsafe fn compute<'tasks>(
         &'tasks self,
-        context: TaskContext<'tasks>,
+        ctx: OpaqueTaskContext<'tasks>,
         items: Vec<TypeErased>,
     ) -> Task<'tasks> {
         let items = items
             .into_iter()
             .map(|v| unsafe { v.unpack() })
             .collect::<Vec<_>>();
-        (self.compute)(context, items, &&())
+        let ctx = TaskContext::new(ctx);
+        (self.compute)(ctx, items, &&())
     }
 }

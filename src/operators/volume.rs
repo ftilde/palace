@@ -2,42 +2,11 @@ use futures::stream::StreamExt;
 
 use crate::{
     data::{Brick, BrickPosition, VolumeMetaData},
-    operator::{ComputeFunction, Operator, OperatorId},
-    task::Task,
+    operator::{Operator, OperatorId},
+    task::{Task, TaskContext},
 };
 
-use super::{ScalarOperator, ScalarTaskContext};
-
-//#[derive(Copy, Clone)]
-//pub struct VolumeTaskContext<'op, 'op> {
-//    inner: TaskContext<'op, 'op>,
-//    current_op_id: OperatorId,
-//}
-//
-//impl<'op, 'op> std::ops::Deref for VolumeTaskContext<'op, 'op> {
-//    type Target = TaskContext<'op, 'op>;
-//
-//    fn deref(&self) -> &Self::Target {
-//        &self.inner
-//    }
-//}
-//
-//impl<'op, 'op> VolumeTaskContext<'op, 'op> {
-//    pub fn write_metadata(&self, metadata: VolumeMetaData) -> Result<(), Error> {
-//        let id = TaskId::new(self.current_op_id, &DatumRequest::Value);
-//        self.inner.storage.write_to_ram(id, metadata)
-//    }
-//
-//    pub fn alloc_brick<'a>(
-//        &'a self,
-//        pos: BrickPosition,
-//        num_voxels: usize,
-//    ) -> Result<WriteHandleUninit<'a, [MaybeUninit<f32>]>, Error> {
-//        let id = TaskId::new(self.current_op_id, &DatumRequest::Brick(pos));
-//        self.inner.storage.alloc_ram_slot_slice(id, num_voxels)
-//    }
-//}
-
+use super::ScalarOperator;
 //pub fn request_metadata<'req, 'op: 'req, 'op: 'op>(
 //    vol: &'op dyn VolumeOperator,
 //) -> Request<'req, 'op, ReadHandle<'req, VolumeMetaData>> {
@@ -110,15 +79,21 @@ pub struct VolumeOperator<'op> {
 
 impl<'op> VolumeOperator<'op> {
     pub fn new<
-        F: for<'tasks> Fn(
-                ScalarTaskContext<'tasks, VolumeMetaData>,
+        M: for<'tasks> Fn(
+                TaskContext<'tasks, (), VolumeMetaData>,
+                crate::operator::OutlivesMarker<'op, 'tasks>,
+            ) -> Task<'tasks>
+            + 'op,
+        B: for<'tasks> Fn(
+                TaskContext<'tasks, BrickPosition, f32>,
+                Vec<BrickPosition>,
                 crate::operator::OutlivesMarker<'op, 'tasks>,
             ) -> Task<'tasks>
             + 'op,
     >(
         base_id: OperatorId,
-        metadata: F,
-        bricks: ComputeFunction<'op, BrickPosition>,
+        metadata: M,
+        bricks: B,
     ) -> Self {
         Self {
             metadata: crate::operators::scalar(base_id.slot(0), metadata),
@@ -146,7 +121,7 @@ pub fn linear_rescale<'op>(
             }
             .into()
         },
-        Box::new(move |ctx, positions, _| {
+        move |ctx, positions, _| {
             async move {
                 let (factor, offset) = futures::join! {
                     ctx.submit(factor.request(())),
@@ -177,7 +152,7 @@ pub fn linear_rescale<'op>(
                 Ok(())
             }
             .into()
-        }),
+        },
     )
 }
 

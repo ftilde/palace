@@ -1,9 +1,8 @@
 use bytemuck::Pod;
 
 use crate::{
-    operator::{DataId, Operator, OperatorId},
+    operator::{Operator, OperatorId},
     task::{Task, TaskContext},
-    Error,
 };
 
 pub type ScalarOperator<'op, T> = Operator<'op, (), T>;
@@ -12,7 +11,7 @@ pub fn scalar<
     'op,
     T: Pod,
     F: for<'tasks> Fn(
-            ScalarTaskContext<'tasks, T>,
+            TaskContext<'tasks, (), T>,
             crate::operator::OutlivesMarker<'op, 'tasks>,
         ) -> Task<'tasks>
         + 'op,
@@ -22,12 +21,6 @@ pub fn scalar<
 ) -> ScalarOperator<'op, T> {
     Operator::new(id, move |ctx, d, m| {
         assert!(d.len() == 1);
-        let data_id = DataId::new(ctx.current_op(), &());
-        let ctx = ScalarTaskContext {
-            inner: ctx,
-            data_id,
-            marker: Default::default(),
-        };
         compute(ctx, m)
     })
 }
@@ -41,26 +34,6 @@ pub fn constant<'tasks, T: bytemuck::Pod>(val: &'tasks T) -> ScalarOperator<'tas
 impl<'tasks, T: bytemuck::Pod> From<&'tasks T> for ScalarOperator<'tasks, T> {
     fn from(value: &'tasks T) -> Self {
         constant(value)
-    }
-}
-
-pub struct ScalarTaskContext<'op, T> {
-    pub inner: TaskContext<'op>,
-    pub data_id: DataId,
-    pub marker: std::marker::PhantomData<T>,
-}
-
-impl<'op, T> std::ops::Deref for ScalarTaskContext<'op, T> {
-    type Target = TaskContext<'op>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T: bytemuck::Pod> ScalarTaskContext<'_, T> {
-    pub fn write(&self, value: T) -> Result<(), Error> {
-        self.inner.storage.write_to_ram(self.data_id, value)
     }
 }
 

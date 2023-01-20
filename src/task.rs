@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::Poll;
 
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
-use crate::storage::Storage;
+use crate::storage::{Storage, WriteHandleUninit};
 use crate::task_graph::{ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::JobId;
@@ -84,7 +85,7 @@ pub struct PollContext<'rt> {
 }
 
 #[derive(Copy, Clone)]
-pub struct TaskContext<'tasks> {
+pub struct OpaqueTaskContext<'tasks> {
     pub requests: &'tasks RequestQueue<'tasks>,
     pub storage: &'tasks Storage,
     pub hints: &'tasks TaskHints,
@@ -97,7 +98,7 @@ pub struct TaskContext<'tasks> {
 pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
-impl<'tasks> TaskContext<'tasks> {
+impl<'tasks> OpaqueTaskContext<'tasks> {
     pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, ()> {
         self.thread_pool.spawn(self.current_task, f)
     }
@@ -209,5 +210,48 @@ impl<'tasks> TaskContext<'tasks> {
                 }
             }
         })
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct TaskContext<'tasks, ItemDescriptor, Output: ?Sized> {
+    inner: OpaqueTaskContext<'tasks>,
+    _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
+}
+
+impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+    std::ops::Deref for TaskContext<'tasks, ItemDescriptor, Output>
+{
+    type Target = OpaqueTaskContext<'tasks>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<'tasks, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+    TaskContext<'tasks, ItemDescriptor, Output>
+{
+    pub(crate) fn new(inner: OpaqueTaskContext<'tasks>) -> Self {
+        Self {
+            inner,
+            _output_marker: Default::default(),
+        }
+    }
+
+    pub fn alloc_slot(
+        &self,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
+        let id = DataId::new(self.inner.current_op(), &item);
+        self.inner.storage.alloc_ram_slot_slice(id, size)
+    }
+}
+
+impl<'tasks, Output: bytemuck::AnyBitPattern> TaskContext<'tasks, (), Output> {
+    pub fn write(&self, value: Output) -> Result<(), Error> {
+        let data_id = DataId::new(self.current_op(), &());
+        self.inner.storage.write_to_ram(data_id, value)
     }
 }

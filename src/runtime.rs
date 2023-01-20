@@ -7,7 +7,7 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
     storage::Storage,
-    task::{DataRequest, RequestInfo, RequestType, Task, TaskContext, ThreadPoolJob},
+    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, ThreadPoolJob},
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
     Error,
@@ -132,8 +132,8 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self, current_task: TaskId) -> TaskContext<'tasks> {
-        TaskContext {
+    fn context(&self, current_task: TaskId) -> OpaqueTaskContext<'tasks> {
+        OpaqueTaskContext {
             requests: self.request_queue,
             storage: self.storage,
             hints: self.hints,
@@ -234,7 +234,7 @@ impl<'tasks, 'queue: 'tasks, 'op: 'queue> RunTime<'tasks, 'queue, 'op> {
     }
 
     /// Safety: The specified type must be the result of the operation
-    pub fn resolve<'call, R, F: FnOnce(TaskContext<'tasks>) -> Task<'call, R>>(
+    pub fn resolve<'call, R, F: FnOnce(OpaqueTaskContext<'tasks>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {

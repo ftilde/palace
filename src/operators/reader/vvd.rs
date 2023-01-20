@@ -86,7 +86,7 @@ impl VvdVolumeSourceState {
         VolumeOperator::new(
             OperatorId::new("VvdVolumeSourceState::operate").dependent_on(&raw),
             move |ctx, _| async move { ctx.write(self.metadata) }.into(),
-            Box::new(move |ctx, positions, _| {
+            move |ctx, positions, _| {
                 let raw = self.raw.operate(self.metadata.brick_size);
                 async move {
                     // TODO unordered dispatch
@@ -110,7 +110,7 @@ impl VvdVolumeSourceState {
                     Ok(())
                 }
                 .into()
-            }),
+            },
         )
     }
 }

@@ -1,10 +1,8 @@
-use std::{fs::File, mem::MaybeUninit, path::PathBuf};
+use std::{fs::File, path::PathBuf};
 
 use crate::{
     data::{to_linear, BrickPosition, VolumeMetaData, VoxelPosition},
-    operator::{DataId, Operator, OperatorId},
-    storage::WriteHandleUninit,
-    task::TaskContext,
+    operator::{Operator, OperatorId},
     Error,
 };
 
@@ -35,7 +33,7 @@ impl RawVolumeSourceState {
         Operator::new(
             OperatorId::new("RawVolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes()),
-            move |ctx: TaskContext, positions, _| {
+            move |ctx, positions, _| {
                 let m = VolumeMetaData {
                     dimensions: self.size,
                     brick_size,
@@ -54,11 +52,7 @@ impl RawVolumeSourceState {
 
                         let voxel_size = std::mem::size_of::<f32>();
 
-                        // Safety: We are zeroing all brick data in a first step.
-                        // TODO: We might want to lift this restriction in the future
-                        let id = DataId::new(ctx.current_op(), &pos);
-                        let mut brick_handle: WriteHandleUninit<[MaybeUninit<f32>]> =
-                            ctx.storage.alloc_ram_slot_slice(id, num_voxels)?;
+                        let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
                         ctx.submit(ctx.spawn_job(move || {
                             brick_data.iter_mut().for_each(|v| {
@@ -93,7 +87,7 @@ impl RawVolumeSourceState {
                         }))
                         .await;
 
-                        // At this point the thread pool job above has finished and has initialized all bytes
+                        // Safety: At this point the thread pool job above has finished and has initialized all bytes
                         // in the brick.
                         unsafe { brick_handle.initialized() };
                     }
