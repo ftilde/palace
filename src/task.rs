@@ -103,8 +103,7 @@ pub struct TaskContext<'cref, 'inv, ItemDescriptor, Output: ?Sized> {
     inner: OpaqueTaskContext<'cref, 'inv>,
     _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
 }
-
-impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>) -> Self {
@@ -112,23 +111,6 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPa
             inner,
             _output_marker: Default::default(),
         }
-    }
-
-    pub fn alloc_slot(
-        &self,
-        item: ItemDescriptor,
-        size: usize,
-    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
-        let id = DataId::new(self.current_op(), &item);
-        self.inner.storage.alloc_ram_slot(id, size)
-    }
-
-    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'inv, ()> {
-        self.inner.thread_pool.spawn(self.inner.current_task, f)
-    }
-
-    pub fn current_op(&self) -> OperatorId {
-        self.inner.current_task.operator()
     }
 
     pub fn submit<'req, V: 'req>(
@@ -166,6 +148,13 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPa
                 }
             }
         }
+    }
+    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'inv, ()> {
+        self.inner.thread_pool.spawn(self.inner.current_task, f)
+    }
+
+    pub fn current_op(&self) -> OperatorId {
+        self.inner.current_task.operator()
     }
 
     #[allow(unused)] //We will probably use this at some point
@@ -234,6 +223,19 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPa
                 }
             }
         })
+    }
+}
+
+impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+    TaskContext<'cref, 'inv, ItemDescriptor, Output>
+{
+    pub fn alloc_slot(
+        &self,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
+        let id = DataId::new(self.current_op(), &item);
+        self.inner.storage.alloc_ram_slot(id, size)
     }
 }
 
