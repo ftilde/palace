@@ -12,6 +12,7 @@ use crate::{
     },
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
+    threadpool::ThreadPool,
     Error,
 };
 
@@ -51,20 +52,20 @@ impl TaskIdManager {
     }
 }
 
-struct RequestBatch<'op> {
+struct RequestBatch<'inv> {
     items: BTreeSet<DataRequestItem>,
-    op: &'op dyn OpaqueOperator,
+    op: &'inv dyn OpaqueOperator,
     //batch_id: TaskId,
 }
 
 #[derive(Default)]
-struct RequestBatcher<'op> {
-    pending_batches: BTreeMap<OperatorId, RequestBatch<'op>>,
+struct RequestBatcher<'inv> {
+    pending_batches: BTreeMap<OperatorId, RequestBatch<'inv>>,
     task_id_manager: TaskIdManager,
 }
 
-impl<'op> RequestBatcher<'op> {
-    fn add(&mut self, request: DataRequest<'op>) -> Option<TaskId> {
+impl<'inv> RequestBatcher<'inv> {
+    fn add(&mut self, request: DataRequest<'inv>) -> Option<TaskId> {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
@@ -90,61 +91,108 @@ impl<'op> RequestBatcher<'op> {
         }
     }
 
-    fn get(&mut self, op: OperatorId) -> (&'op dyn OpaqueOperator, Vec<TypeErased>) {
+    fn get(&mut self, op: OperatorId) -> (&'inv dyn OpaqueOperator, Vec<TypeErased>) {
         let batch = self.pending_batches.remove(&op).unwrap();
         let items = batch.items.into_iter().map(|i| i.item).collect::<Vec<_>>();
         (batch.op, items)
     }
 }
 
-pub struct RunTime<'tasks, 'queue, 'op> {
-    waker: Waker,
-    task_graph: TaskGraph,
-    thread_pool_waiting: VecDeque<ThreadPoolJob>,
-    request_batcher: RequestBatcher<'tasks>,
-    storage: &'tasks Storage,
-    task_manager: TaskManager<'tasks>,
-    thread_spawner: &'tasks ThreadSpawner,
-    request_queue: &'queue RequestQueue<'op>,
-    hints: &'queue TaskHints,
-    statistics: Statistics,
+pub struct RunTime {
+    pub storage: Storage,
+    pub thread_pool: ThreadPool,
 }
 
-impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
-    pub fn new(
-        storage: &'tasks Storage,
-        task_manager: TaskManager<'tasks>,
-        thread_spawner: &'tasks ThreadSpawner,
-        request_queue: &'queue RequestQueue<'op>,
-        hints: &'queue TaskHints,
-    ) -> Self {
+impl RunTime {
+    pub fn new(storage_size: usize, num_threads: usize) -> Self {
         RunTime {
+            storage: Storage::new(storage_size),
+            thread_pool: ThreadPool::new(num_threads),
+        }
+    }
+
+    pub fn context_anchor(&mut self) -> ContextAnchor {
+        ContextAnchor {
+            data: ContextData::new(&self.storage),
+            thread_pool: &mut self.thread_pool,
+        }
+    }
+}
+
+/// An object that contains all data that will be later lent out to `TastContexts` via `Executor`.
+///
+/// A note on lifetime names:
+/// `'cref` refers to lifetimes that live at least as long as the context data (i.e., this anchor).
+/// This is also the lifetime of all `Tasks`, for example.
+///
+/// `'inv`, an invariant (!) lifetime (due to the use in a `RefCell` in `RequestQueue`), specifies
+/// the lifetime of `OpaqueOperator` references as handled during the evaluation of the operator
+/// network (used in `RequestQueue` and `RequestBatcher`).
+pub struct ContextAnchor<'cref, 'inv> {
+    data: ContextData<'cref, 'inv>,
+    thread_pool: &'cref mut ThreadPool,
+}
+
+impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
+    pub fn executor(&'cref mut self) -> Executor<'cref, 'inv> {
+        Executor {
+            data: &self.data,
+            task_manager: TaskManager::new(self.thread_pool),
             waker: dummy_waker(),
             task_graph: TaskGraph::new(),
             thread_pool_waiting: VecDeque::new(),
-            request_batcher: Default::default(),
-            storage,
-            task_manager,
-            thread_spawner,
-            request_queue,
-            hints,
             statistics: Statistics::new(),
+            request_batcher: Default::default(),
         }
     }
+}
+
+pub struct ContextData<'cref, 'inv> {
+    request_queue: RequestQueue<'inv>,
+    hints: TaskHints,
+    thread_spawner: ThreadSpawner,
+    pub storage: &'cref Storage,
+}
+
+impl<'cref> ContextData<'cref, '_> {
+    pub fn new(storage: &'cref Storage) -> Self {
+        let request_queue = RequestQueue::new();
+        let hints = TaskHints::new();
+        let thread_spawner = ThreadSpawner::new();
+        ContextData {
+            request_queue,
+            hints,
+            thread_spawner,
+            storage,
+        }
+    }
+}
+
+pub struct Executor<'cref, 'inv> {
+    pub data: &'cref ContextData<'cref, 'inv>,
+    task_manager: TaskManager<'cref>,
+    request_batcher: RequestBatcher<'inv>,
+    task_graph: TaskGraph,
+    thread_pool_waiting: VecDeque<ThreadPoolJob>,
+    statistics: Statistics,
+    waker: Waker,
+}
+
+impl<'cref, 'inv> Executor<'cref, 'inv> {
     pub fn statistics(&self) -> &Statistics {
         &self.statistics
     }
-    fn context(&self, current_task: TaskId) -> OpaqueTaskContext<'tasks> {
+    fn context(&self, current_task: TaskId) -> OpaqueTaskContext<'cref, 'inv> {
         OpaqueTaskContext {
-            requests: self.request_queue,
-            storage: self.storage,
-            hints: self.hints,
-            thread_pool: self.thread_spawner,
+            requests: &self.data.request_queue,
+            storage: &self.data.storage,
+            hints: &self.data.hints,
+            thread_pool: &self.data.thread_spawner,
             current_task,
         }
     }
 
-    fn construct_task(&mut self, id: TaskId) -> Task<'tasks> {
+    fn construct_task(&mut self, id: TaskId) -> Task<'cref> {
         let (op, batch) = self.request_batcher.get(id.operator());
         let context = self.context(id);
         //Safety: The argument batch is precisely for the returned operator, and thus of the right
@@ -163,7 +211,7 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
             for ready in ready {
                 let task_id = ready.id;
                 let resolved_deps = ready.resolved_deps;
-                let old_hints = self.hints.completed.replace(resolved_deps);
+                let old_hints = self.data.hints.completed.replace(resolved_deps);
                 // We require polled tasks to empty the resolved_deps before yielding
                 assert!(old_hints.is_empty());
 
@@ -179,11 +227,11 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
                 // The queue should always just contain the requests that are enqueued by polling
                 // the following task! This is important so that we know the calling tasks id for
                 // the generated requests.
-                assert!(self.request_queue.is_empty());
+                assert!(self.data.request_queue.is_empty());
 
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
-                        assert!(self.request_queue.is_empty());
+                        assert!(self.data.request_queue.is_empty());
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
@@ -195,7 +243,7 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
                         self.enqueue_requested(task_id);
                     }
                 };
-                for d in self.storage.newest_data() {
+                for d in self.data.storage.newest_data() {
                     self.task_graph.resolved_implied(d.into());
                 }
             }
@@ -203,7 +251,7 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
     }
 
     fn enqueue_requested(&mut self, from: TaskId) {
-        for req in self.request_queue.drain() {
+        for req in self.data.request_queue.drain() {
             let req_id = req.id();
             match req.task {
                 RequestType::Data(data_request) => {
@@ -236,7 +284,7 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
     }
 
     /// Safety: The specified type must be the result of the operation
-    pub fn resolve<'call, R, F: FnOnce(TaskContext<'tasks, (), ()>) -> Task<'call, R>>(
+    pub fn resolve<'call, R, F: FnOnce(TaskContext<'cref, 'inv, (), ()>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {
@@ -257,7 +305,7 @@ impl<'op, 'tasks: 'op, 'queue: 'tasks> RunTime<'tasks, 'queue, 'op> {
                 }
             };
             self.try_resolve_implied()?;
-            assert!(self.request_queue.is_empty());
+            assert!(self.data.request_queue.is_empty());
         }
     }
 }
@@ -304,20 +352,20 @@ impl TaskHints {
     }
 }
 
-pub struct RequestQueue<'op> {
-    buffer: RefCell<VecDeque<RequestInfo<'op>>>,
+pub struct RequestQueue<'inv> {
+    buffer: RefCell<VecDeque<RequestInfo<'inv>>>,
 }
 
-impl<'op> RequestQueue<'op> {
+impl<'inv> RequestQueue<'inv> {
     pub fn new() -> Self {
         Self {
             buffer: RefCell::new(VecDeque::new()),
         }
     }
-    pub fn push(&self, req: RequestInfo<'op>) {
+    pub fn push(&self, req: RequestInfo<'inv>) {
         self.buffer.borrow_mut().push_back(req)
     }
-    pub fn drain<'b>(&'b self) -> impl Iterator<Item = RequestInfo> + 'b {
+    pub fn drain<'b>(&'b self) -> impl Iterator<Item = RequestInfo<'inv>> + 'b {
         self.buffer
             .borrow_mut()
             .drain(..)

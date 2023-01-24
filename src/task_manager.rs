@@ -19,13 +19,13 @@ impl TaskData<'_> {
 
 pub struct TaskManager<'a> {
     managed_tasks: BTreeMap<TaskId, TaskData<'a>>,
-    thread_pool: ThreadPool,
+    thread_pool: &'a mut ThreadPool,
 }
 
 impl Drop for TaskManager<'_> {
     fn drop(&mut self) {
-        self.thread_pool.stop();
-        // First stop all workers of the thread pool
+        self.thread_pool.wait_idle();
+        // First wait for all workers of the thread pool to be able
         // THEN drop tasks
     }
 }
@@ -36,20 +36,11 @@ pub enum Error {
     WaitingOnThreads,
 }
 
-pub fn create_task_manager<'a>(num_workers: usize) -> (TaskManager<'a>, ThreadSpawner) {
-    (
-        TaskManager::new(num_workers),
-        ThreadSpawner {
-            job_counter: Cell::new(0),
-        },
-    )
-}
-
 impl<'a> TaskManager<'a> {
-    fn new(num_workers: usize) -> Self {
+    pub fn new(thread_pool: &'a mut ThreadPool) -> Self {
         Self {
             managed_tasks: BTreeMap::new(),
-            thread_pool: ThreadPool::new(num_workers),
+            thread_pool,
         }
     }
 
@@ -106,10 +97,7 @@ impl<'a> TaskManager<'a> {
         self.thread_pool.worker_available()
     }
 
-    pub fn spawn_job<'job>(&mut self, job: ThreadPoolJob) -> Result<(), Error>
-    where
-        'a: 'job,
-    {
+    pub fn spawn_job(&mut self, job: ThreadPoolJob) -> Result<(), Error> {
         let task_data = self
             .managed_tasks
             .get_mut(&job.waiting_id)
@@ -132,11 +120,19 @@ pub struct ThreadSpawner {
 }
 
 impl ThreadSpawner {
-    pub fn spawn<'req, 'op>(
+    pub fn new() -> Self {
+        Self {
+            job_counter: Cell::new(0),
+        }
+    }
+    pub fn spawn<'req, 'irrelevant>(
         &'req self,
         caller: TaskId,
         f: impl FnOnce() + Send + 'req,
-    ) -> Request<'req, 'op, ()> {
+    ) -> Request<'req, 'irrelevant, ()> {
+        // Note that the lifetime 'irrelevant is (unsurprisingly) irrelevant since it is only used
+        // in the data variant of Request/RequestType
+
         let job_num = self.job_counter.get() + 1;
         self.job_counter.set(job_num);
 

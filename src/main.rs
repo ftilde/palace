@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use operators::VvdVolumeSourceState;
+use runtime::RunTime;
 
-use crate::{data::VoxelPosition, operators::volume, storage::Storage};
+use crate::{data::VoxelPosition, operators::volume};
 
 mod array;
 mod data;
@@ -42,7 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let storage_size = 1 << 30; //One gigabyte
-    let storage = Storage::new(storage_size);
+    let thread_pool_size = 4;
+
+    let mut runtime = RunTime::new(storage_size, thread_pool_size);
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
     //let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
@@ -53,16 +56,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //    brick_size,
     //};
     //let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
-    eval_network(&vol_state, &args.factor, &storage)
+    eval_network(&mut runtime, &vol_state, &args.factor)
 }
 
 fn eval_network(
+    runtime: &mut RunTime,
     vol: &VvdVolumeSourceState,
     factor: &f32,
-    storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error>> {
     //TODO: We want to move the threadpool out of this function
-    let thread_pool_size = 4;
 
     let factor = factor.into();
     let vol = vol.operate();
@@ -74,25 +76,16 @@ fn eval_network(
     let mean = volume::mean(&scaled2);
     let mean_unscaled = volume::mean(&vol);
 
-    let request_queue = runtime::RequestQueue::new();
-    let hints = runtime::TaskHints::new();
-    let (thread_pool, thread_spawner) = task_manager::create_task_manager(thread_pool_size);
-
-    let mut rt = runtime::RunTime::new(
-        &storage,
-        thread_pool,
-        &thread_spawner,
-        &request_queue,
-        &hints,
-    );
+    let mut c = runtime.context_anchor();
+    let mut executor = c.executor();
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
-    let mean_val =
-        rt.resolve(|ctx| async move { Ok(*ctx.submit(mean_ref.request_scalar()).await) }.into())?;
+    let mean_val = executor
+        .resolve(|ctx| async move { Ok(*ctx.submit(mean_ref.request_scalar()).await) }.into())?;
 
-    let tasks_executed = rt.statistics().tasks_executed;
+    let tasks_executed = executor.statistics().tasks_executed;
     println!(
         "Computed scaled mean val: {} ({} tasks)",
         mean_val, tasks_executed
@@ -102,8 +95,8 @@ fn eval_network(
     let mean_unscaled_ref = &mean_unscaled;
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
-    let tasks_executed_prev = rt.statistics().tasks_executed;
-    let id = rt.resolve(|ctx| {
+    let tasks_executed_prev = executor.statistics().tasks_executed;
+    let id = executor.resolve(|ctx| {
         async move {
             let req = mean_unscaled_ref.request_scalar();
             let id = req.id().unwrap_data();
@@ -112,24 +105,24 @@ fn eval_network(
         }
         .into()
     })?;
-    let tasks_executed = rt.statistics().tasks_executed - tasks_executed_prev;
+    let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
     println!(
         "Computed unscaled mean val: {} ({} tasks)",
         mean_val_unscaled, tasks_executed
     );
 
-    storage.try_free(id).unwrap();
+    executor.data.storage.try_free(id).unwrap();
 
-    let tasks_executed_prev = rt.statistics().tasks_executed;
+    let tasks_executed_prev = executor.statistics().tasks_executed;
     let muv_ref = &mut mean_val_unscaled;
-    rt.resolve(|ctx| {
+    executor.resolve(|ctx| {
         async move {
             *muv_ref = *ctx.submit(mean_unscaled_ref.request_scalar()).await;
             Ok(())
         }
         .into()
     })?;
-    let tasks_executed = rt.statistics().tasks_executed - tasks_executed_prev;
+    let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
     println!(
         "Computed unscaled mean val again, after deletion: {} ({} tasks)",
         mean_val_unscaled, tasks_executed

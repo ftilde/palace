@@ -15,16 +15,16 @@ pub struct VolumeOperator<'op> {
 
 impl<'op> VolumeOperator<'op> {
     pub fn new<
-        M: for<'tasks> Fn(
-                TaskContext<'tasks, (), VolumeMetaData>,
-                crate::operator::OutlivesMarker<'op, 'tasks>,
-            ) -> Task<'tasks>
+        M: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, (), VolumeMetaData>,
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
             + 'op,
-        B: for<'tasks> Fn(
-                TaskContext<'tasks, BrickPosition, f32>,
+        B: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, BrickPosition, f32>,
                 Vec<BrickPosition>,
-                crate::operator::OutlivesMarker<'op, 'tasks>,
-            ) -> Task<'tasks>
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
             + 'op,
     >(
         base_id: OperatorId,

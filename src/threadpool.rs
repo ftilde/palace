@@ -10,7 +10,7 @@ pub type Job = Box<dyn FnOnce() + Send>;
 pub type WorkerId = usize;
 
 struct Worker {
-    thread: JoinHandle<()>,
+    _thread: JoinHandle<()>,
     job_queue: mpsc::SyncSender<(JobInfo, Job)>,
 }
 
@@ -44,7 +44,7 @@ impl ThreadPool {
                     let (task_sender, task_receiver) = mpsc::sync_channel::<(JobInfo, Job)>(0);
                     let finish_sender = finish_sender.clone();
                     Worker {
-                        thread: std::thread::Builder::new()
+                        _thread: std::thread::Builder::new()
                             .name(format!("{} {}", WORKER_THREAD_NAME_BASE, id))
                             .spawn(move || {
                                 while let Ok((task_id, task)) = task_receiver.recv() {
@@ -61,6 +61,7 @@ impl ThreadPool {
         }
     }
 
+    /*
     pub fn stop(&mut self) {
         let handles = self
             .workers
@@ -72,6 +73,14 @@ impl ThreadPool {
             .collect::<Vec<_>>();
         for handle in handles {
             handle.join().unwrap();
+        }
+    }
+    */
+
+    pub fn wait_idle(&mut self) {
+        while self.available.len() != self.workers.len() {
+            let (_info, worker_id) = self.finished.recv().unwrap();
+            self.available.push(worker_id);
         }
     }
 

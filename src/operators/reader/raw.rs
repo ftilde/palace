@@ -29,10 +29,10 @@ impl RawVolumeSourceState {
             size,
         })
     }
-    pub async fn load_raw_bricks<'tasks>(
+    pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
         brick_size: VoxelPosition,
-        ctx: TaskContext<'tasks, BrickPosition, f32>,
+        ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
         positions: Vec<BrickPosition>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {

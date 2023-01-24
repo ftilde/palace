@@ -68,21 +68,21 @@ impl TypeErased {
 // See https://stackoverflow.com/questions/75147315/rust-returning-this-value-requires-that-op-must-outlive-static-with-hrt
 pub type OutlivesMarker<'longer, 'shorter> = &'shorter &'longer ();
 pub type ComputeFunction<'op, ItemDescriptor, Output> = Box<
-    dyn for<'tasks> Fn(
-            TaskContext<'tasks, ItemDescriptor, Output>,
+    dyn for<'cref, 'inv> Fn(
+            TaskContext<'cref, 'inv, ItemDescriptor, Output>,
             Vec<ItemDescriptor>,
-            OutlivesMarker<'op, 'tasks>,
-        ) -> Task<'tasks>
+            OutlivesMarker<'op, 'inv>,
+        ) -> Task<'cref>
         + 'op,
 >;
 
 pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
-    unsafe fn compute<'tasks>(
-        &'tasks self,
-        context: OpaqueTaskContext<'tasks>,
+    unsafe fn compute<'cref, 'inv>(
+        &'inv self,
+        context: OpaqueTaskContext<'cref, 'inv>,
         items: Vec<TypeErased>,
-    ) -> Task<'tasks>;
+    ) -> Task<'cref>;
 }
 
 pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
@@ -113,11 +113,11 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
     pub fn new<
-        F: for<'tasks> Fn(
-                TaskContext<'tasks, ItemDescriptor, Output>,
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 Vec<ItemDescriptor>,
-                OutlivesMarker<'op, 'tasks>,
-            ) -> Task<'tasks>
+                OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
             + 'op,
     >(
         id: OperatorId,
@@ -171,11 +171,11 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern> O
     fn id(&self) -> OperatorId {
         self.id
     }
-    unsafe fn compute<'tasks>(
-        &'tasks self,
-        ctx: OpaqueTaskContext<'tasks>,
+    unsafe fn compute<'cref, 'inv>(
+        &'inv self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
         items: Vec<TypeErased>,
-    ) -> Task<'tasks> {
+    ) -> Task<'cref> {
         let items = items
             .into_iter()
             .map(|v| unsafe { v.unpack() })
