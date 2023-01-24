@@ -283,7 +283,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    /// Safety: The specified type must be the result of the operation
     pub fn resolve<'call, R, F: FnOnce(TaskContext<'cref, 'inv, (), ()>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
