@@ -91,7 +91,9 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
 }
 
 impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
-    pub fn request_scalar<'req, 't: 'req>(&'t self) -> Request<'req, 't, ReadHandle<'req, Output>> {
+    pub fn request_scalar<'req, 'inv: 'req>(
+        &'inv self,
+    ) -> Request<'req, 'inv, ReadHandle<'req, Output>> {
         let item = ();
         let id = DataId::new(self.id, &item);
 
@@ -129,10 +131,10 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
         }
     }
 
-    pub fn request<'req, 't: 'req>(
-        &'t self,
+    pub fn request<'req, 'inv: 'req>(
+        &'inv self,
         item: ItemDescriptor,
-    ) -> Request<'req, 't, ReadHandle<'req, [Output]>> {
+    ) -> Request<'req, 'inv, ReadHandle<'req, [Output]>> {
         let id = DataId::new(self.id, &item);
 
         Request {
@@ -145,11 +147,11 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
             _marker: Default::default(),
         }
     }
-    pub fn request_inplace<'req, 't: 'req>(
-        &'t self,
+    pub fn request_inplace<'req, 'inv: 'req>(
+        &'inv self,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 't, InplaceResult<'req, f32>> {
+    ) -> Request<'req, 'inv, InplaceResult<'req, f32>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
