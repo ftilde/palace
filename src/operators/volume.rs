@@ -71,7 +71,7 @@ pub fn linear_rescale<'op>(
                     {
                         Ok(mut rw) => {
                             let rw = &mut *rw;
-                            ctx.submit(ctx.spawn_job(|| {
+                            ctx.submit(ctx.spawn_compute(|| {
                                 for v in rw.iter_mut() {
                                     *v = factor * *v + offset;
                                 }
@@ -82,7 +82,7 @@ pub fn linear_rescale<'op>(
                             let mut w = w?;
                             let r = &*r;
                             let w_ref = &mut *w;
-                            ctx.submit(ctx.spawn_job(|| {
+                            ctx.submit(ctx.spawn_compute(|| {
                                 for (i, o) in r.iter().zip(w_ref.iter_mut()) {
                                     o.write(factor * *i + offset);
                                 }
@@ -117,7 +117,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                     tasks.push(async move {
                         let brick =
                             Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
-                        ctx.submit(ctx.spawn_job(|| {
+                        ctx.submit(ctx.spawn_compute(|| {
                             let voxels = brick.voxels().collect::<Vec<_>>();
                             voxels.iter().sum::<f32>()
                         }))
@@ -128,7 +128,9 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 for task in tasks {
                     sums.push(task.await);
                 }
-                let sum = ctx.submit(ctx.spawn_job(|| sums.iter().sum::<f32>())).await;
+                let sum = ctx
+                    .submit(ctx.spawn_compute(|| sums.iter().sum::<f32>()))
+                    .await;
 
                 let v = sum / vol.num_voxels() as f32;
 

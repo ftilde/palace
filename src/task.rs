@@ -9,7 +9,7 @@ use crate::runtime::{RequestQueue, TaskHints};
 use crate::storage::{Storage, WriteHandleUninit};
 use crate::task_graph::{ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
-use crate::threadpool::JobId;
+use crate::threadpool::{JobId, JobType};
 use crate::Error;
 use futures::stream::StreamExt;
 
@@ -49,14 +49,14 @@ pub struct DataRequest<'inv> {
 #[derive(From)]
 pub enum RequestType<'inv> {
     Data(DataRequest<'inv>),
-    ThreadPoolJob(ThreadPoolJob),
+    ThreadPoolJob(ThreadPoolJob, JobType),
 }
 
 impl RequestType<'_> {
     fn id(&self) -> RequestId {
         match self {
             RequestType::Data(d) => RequestId::Data(d.id),
-            RequestType::ThreadPoolJob(j) => RequestId::Job(j.id),
+            RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
         }
     }
 }
@@ -126,7 +126,7 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_) => {}
+                RequestType::ThreadPoolJob(_, _) => {}
             };
 
             let request_id = request.id();
@@ -151,11 +151,26 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
             }
         }
     }
-    pub fn spawn_job<'req, R: Send + 'static>(
+    /// Spawn a job on the io pool. This job is allowed to hold locks/do IO, but should not do
+    /// excessive computation.
+    pub fn spawn_io<'req, R: Send + 'static>(
         &'req self,
         f: impl FnOnce() -> R + Send + 'req,
     ) -> Request<'req, 'inv, R> {
-        self.inner.thread_pool.spawn(self.inner.current_task, f)
+        self.inner
+            .thread_pool
+            .spawn(JobType::Io, self.inner.current_task, f)
+    }
+
+    /// Spawn a job on the compute pool. This job is assumed to not block (i.e., do IO or hold
+    /// locks), but instead to fully utilize the compute capabilities of the core it is running on.
+    pub fn spawn_compute<'req, R: Send + 'static>(
+        &'req self,
+        f: impl FnOnce() -> R + Send + 'req,
+    ) -> Request<'req, 'inv, R> {
+        self.inner
+            .thread_pool
+            .spawn(JobType::Compute, self.inner.current_task, f)
     }
 
     pub fn current_op(&self) -> OperatorId {
@@ -194,7 +209,7 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
                             return None;
                         }
                     }
-                    RequestType::ThreadPoolJob(_) => {}
+                    RequestType::ThreadPoolJob(_, _) => {}
                 };
                 let id = req.type_.id();
                 self.inner.requests.push(RequestInfo {

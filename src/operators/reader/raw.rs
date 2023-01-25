@@ -54,7 +54,7 @@ impl RawVolumeSourceState {
 
             let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
             let brick_data = &mut *brick_handle;
-            ctx.submit(ctx.spawn_job(move || {
+            ctx.submit(ctx.spawn_io(move || {
                 brick_data.iter_mut().for_each(|v| {
                     v.write(0.0);
                 });

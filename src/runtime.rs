@@ -12,7 +12,7 @@ use crate::{
     },
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
-    threadpool::ThreadPool,
+    threadpool::{ComputeThreadPool, IoThreadPool, JobType},
     Error,
 };
 
@@ -100,21 +100,24 @@ impl<'inv> RequestBatcher<'inv> {
 
 pub struct RunTime {
     pub storage: Storage,
-    pub thread_pool: ThreadPool,
+    pub compute_thread_pool: ComputeThreadPool,
+    pub io_thread_pool: IoThreadPool,
 }
 
 impl RunTime {
-    pub fn new(storage_size: usize, num_threads: usize) -> Self {
+    pub fn new(storage_size: usize, num_compute_threads: usize) -> Self {
         RunTime {
             storage: Storage::new(storage_size),
-            thread_pool: ThreadPool::new(num_threads),
+            compute_thread_pool: ComputeThreadPool::new(num_compute_threads),
+            io_thread_pool: IoThreadPool::new(),
         }
     }
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
         ContextAnchor {
             data: ContextData::new(&self.storage),
-            thread_pool: &mut self.thread_pool,
+            compute_thread_pool: &mut self.compute_thread_pool,
+            io_thread_pool: &mut self.io_thread_pool,
         }
     }
 }
@@ -130,14 +133,15 @@ impl RunTime {
 /// network (used in `RequestQueue` and `RequestBatcher`).
 pub struct ContextAnchor<'cref, 'inv> {
     data: ContextData<'cref, 'inv>,
-    thread_pool: &'cref mut ThreadPool,
+    compute_thread_pool: &'cref mut ComputeThreadPool,
+    io_thread_pool: &'cref mut IoThreadPool,
 }
 
 impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
     pub fn executor(&'cref mut self) -> Executor<'cref, 'inv> {
         Executor {
             data: &self.data,
-            task_manager: TaskManager::new(self.thread_pool),
+            task_manager: TaskManager::new(self.compute_thread_pool, self.io_thread_pool),
             waker: dummy_waker(),
             task_graph: TaskGraph::new(),
             thread_pool_waiting: VecDeque::new(),
@@ -267,18 +271,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn enqueue_requested(&mut self, from: TaskId) {
         for req in self.data.request_queue.drain() {
             let req_id = req.id();
+            self.task_graph
+                .add_dependency(from, req_id, req.progress_indicator);
             match req.task {
                 RequestType::Data(data_request) => {
                     if let Some(new_batch_id) = self.request_batcher.add(data_request) {
                         self.task_graph.add_implied(new_batch_id);
                     }
-                    self.task_graph
-                        .add_dependency(from, req_id, req.progress_indicator);
                 }
-                RequestType::ThreadPoolJob(job) => {
+                RequestType::ThreadPoolJob(job, JobType::Compute) => {
+                    // Compute threads are limited, so we collect them first before submission
                     self.thread_pool_waiting.push_back(job);
-                    self.task_graph
-                        .add_dependency(from, req_id, req.progress_indicator);
+                }
+                RequestType::ThreadPoolJob(job, JobType::Io) => {
+                    // Io threads are created on demand, so we can spawn the job immediately
+                    self.task_manager.spawn_job(job, JobType::Io).unwrap();
                 }
             }
         }
@@ -291,9 +298,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
         // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
         // pull something from either collection if only either one is ready.
-        while self.task_manager.pool_worker_available() && !self.thread_pool_waiting.is_empty() {
+        while self.task_manager.compute_worker_available() && !self.thread_pool_waiting.is_empty() {
             let job = self.thread_pool_waiting.pop_front().unwrap();
-            self.task_manager.spawn_job(job).unwrap();
+            self.task_manager.spawn_job(job, JobType::Compute).unwrap();
         }
     }
 

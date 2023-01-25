@@ -3,7 +3,7 @@ use std::{cell::Cell, collections::BTreeMap};
 use crate::{
     task::{Request, Task, ThreadPoolJob},
     task_graph::TaskId,
-    threadpool::{JobId, ThreadPool},
+    threadpool::{ComputeThreadPool, IoThreadPool, JobId, JobType},
 };
 
 struct TaskData<'a> {
@@ -19,12 +19,14 @@ impl TaskData<'_> {
 
 pub struct TaskManager<'a> {
     managed_tasks: BTreeMap<TaskId, TaskData<'a>>,
-    thread_pool: &'a mut ThreadPool,
+    compute_thread_pool: &'a mut ComputeThreadPool,
+    io_thread_pool: &'a mut IoThreadPool,
 }
 
 impl Drop for TaskManager<'_> {
     fn drop(&mut self) {
-        self.thread_pool.wait_idle();
+        self.compute_thread_pool.wait_idle();
+        self.io_thread_pool.wait_idle();
         // First wait for all workers of the thread pool to be able
         // THEN drop tasks
     }
@@ -37,10 +39,14 @@ pub enum Error {
 }
 
 impl<'a> TaskManager<'a> {
-    pub fn new(thread_pool: &'a mut ThreadPool) -> Self {
+    pub fn new(
+        compute_thread_pool: &'a mut ComputeThreadPool,
+        io_thread_pool: &'a mut IoThreadPool,
+    ) -> Self {
         Self {
             managed_tasks: BTreeMap::new(),
-            thread_pool,
+            compute_thread_pool,
+            io_thread_pool,
         }
     }
 
@@ -81,7 +87,11 @@ impl<'a> TaskManager<'a> {
     }
 
     pub fn job_finished(&mut self) -> Option<JobId> {
-        match self.thread_pool.finished() {
+        let finished = self
+            .io_thread_pool
+            .finished()
+            .or_else(|| self.compute_thread_pool.finished());
+        match finished {
             Some(info) => {
                 self.managed_tasks
                     .get_mut(&info.caller)
@@ -93,24 +103,25 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    pub fn pool_worker_available(&self) -> bool {
-        self.thread_pool.worker_available()
+    pub fn compute_worker_available(&self) -> bool {
+        self.compute_thread_pool.worker_available()
     }
 
-    pub fn spawn_job(&mut self, job: ThreadPoolJob) -> Result<(), Error> {
+    pub fn spawn_job(&mut self, job: ThreadPoolJob, type_: JobType) -> Result<(), Error> {
         let task_data = self
             .managed_tasks
             .get_mut(&job.waiting_id)
             .ok_or(Error::NoSuchTask)?;
         task_data.waiting_on_threads += 1;
 
-        self.thread_pool.submit(
-            crate::threadpool::JobInfo {
-                caller: job.waiting_id,
-                job_id: job.id,
-            },
-            job.job,
-        );
+        let info = crate::threadpool::JobInfo {
+            caller: job.waiting_id,
+            job_id: job.id,
+        };
+        match type_ {
+            JobType::Compute => self.compute_thread_pool.submit(info, job.job),
+            JobType::Io => self.io_thread_pool.submit(info, job.job),
+        };
         Ok(())
     }
 }
@@ -127,6 +138,7 @@ impl ThreadSpawner {
     }
     pub fn spawn<'req, 'irrelevant, R: Send + 'static>(
         &'req self,
+        type_: JobType,
         caller: TaskId,
         f: impl FnOnce() -> R + Send + 'req,
     ) -> Request<'req, 'irrelevant, R> {
@@ -163,7 +175,7 @@ impl ThreadSpawner {
             job: f,
         };
         Request {
-            type_: crate::task::RequestType::ThreadPoolJob(job),
+            type_: crate::task::RequestType::ThreadPoolJob(job, type_),
             poll: Box::new(move |_ctx| match result_receiver.try_recv() {
                 Ok(res) => Some(res),
                 Err(oneshot::TryRecvError::Empty) => None,
