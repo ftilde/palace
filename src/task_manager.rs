@@ -138,12 +138,11 @@ impl ThreadSpawner {
 
         let id = JobId::new(job_num);
 
-        let result_box_send = std::sync::Arc::new(std::sync::Mutex::<Option<R>>::new(None));
-        let result_box_receive = result_box_send.clone();
+        let (result_sender, result_receiver) = oneshot::channel();
+
         let f = move || {
             let res = f();
-            let mut h = result_box_send.lock().unwrap();
-            *h = Some(res);
+            result_sender.send(res).unwrap();
         };
 
         let f: Box<dyn FnOnce() + Send + 'req> = Box::new(f);
@@ -153,8 +152,8 @@ impl ThreadSpawner {
         // specified lifetime. This means that we need to control how long the lifetime (within
         // a task!) is:
         //  1. Tasks cannot be removed from the TaskManager as long as jobs are running for it.
-        //  2. Tasks cannot return waiting on the job before it is done (see result_box above and
-        //     below)
+        //  2. Tasks cannot return waiting on the job before it is done (see
+        //     result_receiver/result_sender above and below)
         //  3. Tasks are not dropped before the threadpool is emptied
         let f = unsafe { std::mem::transmute(f) };
 
@@ -165,7 +164,13 @@ impl ThreadSpawner {
         };
         Request {
             type_: crate::task::RequestType::ThreadPoolJob(job),
-            poll: Box::new(move |_ctx| result_box_receive.lock().unwrap().take()),
+            poll: Box::new(move |_ctx| match result_receiver.try_recv() {
+                Ok(res) => Some(res),
+                Err(oneshot::TryRecvError::Empty) => None,
+                Err(oneshot::TryRecvError::Disconnected) => {
+                    panic!("Either polled twice or the compute thread was interrupted")
+                }
+            }),
             _marker: Default::default(),
         }
     }

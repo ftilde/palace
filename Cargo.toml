@@ -18,3 +18,4 @@ sxd-document = "0.3"
 ash = { version = "0.37.0" }
 futures = "0.3"
 good_memory_allocator = "0.1.7"
+oneshot = { version = "0.1.5", default-features = false }
