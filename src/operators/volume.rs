@@ -108,13 +108,16 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
             async move {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
+                // First query all input bricks
                 let mut stream = ctx.submit_unordered_with_data(
                     vol.brick_positions()
                         .map(|pos| (input.bricks.request(pos), pos)),
                 );
+
                 let mut tasks = Vec::new();
                 while let Some((brick_data, brick_pos)) = stream.next().await {
-                    tasks.push(async move {
+                    // Second, when any brick arrives, create a compute future...
+                    let mut task = Box::pin(async move {
                         let brick =
                             Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
                         ctx.submit(ctx.spawn_compute(|| {
@@ -123,14 +126,19 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                         }))
                         .await
                     });
+                    // ... which is immediately polled once to submit the compute task onto the
+                    // pool.
+                    match futures::poll!(task.as_mut()) {
+                        std::task::Poll::Ready(_) => panic!("Future cannot be ready since it has just submitted it's task to the runtime."),
+                        std::task::Poll::Pending => {},
+                    }
+                    tasks.push(task);
                 }
-                let mut sums = Vec::new();
+                // Third, collect the brick results into a global sum
+                let mut sum = 0.0;
                 for task in tasks {
-                    sums.push(task.await);
+                    sum += task.await;
                 }
-                let sum = ctx
-                    .submit(ctx.spawn_compute(|| sums.iter().sum::<f32>()))
-                    .await;
 
                 let v = sum / vol.num_voxels() as f32;
 
