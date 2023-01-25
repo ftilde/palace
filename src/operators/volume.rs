@@ -106,23 +106,29 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
             .dependent_on(&input.bricks),
         move |ctx, _| {
             async move {
-                let mut sum = 0.0;
-
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
                 let mut stream = ctx.submit_unordered_with_data(
                     vol.brick_positions()
                         .map(|pos| (input.bricks.request(pos), pos)),
                 );
+                let mut tasks = Vec::new();
                 while let Some((brick_data, brick_pos)) = stream.next().await {
-                    let brick = Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
-
-                    ctx.submit(ctx.spawn_job(|| {
-                        let voxels = brick.voxels().collect::<Vec<_>>();
-                        sum += voxels.iter().sum::<f32>();
-                    }))
-                    .await;
+                    tasks.push(async move {
+                        let brick =
+                            Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
+                        ctx.submit(ctx.spawn_job(|| {
+                            let voxels = brick.voxels().collect::<Vec<_>>();
+                            voxels.iter().sum::<f32>()
+                        }))
+                        .await
+                    });
                 }
+                let mut sums = Vec::new();
+                for task in tasks {
+                    sums.push(task.await);
+                }
+                let sum = ctx.submit(ctx.spawn_job(|| sums.iter().sum::<f32>())).await;
 
                 let v = sum / vol.num_voxels() as f32;
 

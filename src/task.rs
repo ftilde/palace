@@ -151,7 +151,10 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
             }
         }
     }
-    pub fn spawn_job<'req>(&'req self, f: impl FnOnce() + Send + 'req) -> Request<'req, 'inv, ()> {
+    pub fn spawn_job<'req, R: Send + 'static>(
+        &'req self,
+        f: impl FnOnce() -> R + Send + 'req,
+    ) -> Request<'req, 'inv, R> {
         self.inner.thread_pool.spawn(self.inner.current_task, f)
     }
 

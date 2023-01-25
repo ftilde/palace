@@ -125,11 +125,11 @@ impl ThreadSpawner {
             job_counter: Cell::new(0),
         }
     }
-    pub fn spawn<'req, 'irrelevant>(
+    pub fn spawn<'req, 'irrelevant, R: Send + 'static>(
         &'req self,
         caller: TaskId,
-        f: impl FnOnce() + Send + 'req,
-    ) -> Request<'req, 'irrelevant, ()> {
+        f: impl FnOnce() -> R + Send + 'req,
+    ) -> Request<'req, 'irrelevant, R> {
         // Note that the lifetime 'irrelevant is (unsurprisingly) irrelevant since it is only used
         // in the data variant of Request/RequestType
 
@@ -138,10 +138,12 @@ impl ThreadSpawner {
 
         let id = JobId::new(job_num);
 
-        let (drop_notifier, drop_checker) = std::sync::mpsc::sync_channel::<()>(0);
+        let result_box_send = std::sync::Arc::new(std::sync::Mutex::<Option<R>>::new(None));
+        let result_box_receive = result_box_send.clone();
         let f = move || {
-            f();
-            std::mem::drop(drop_notifier);
+            let res = f();
+            let mut h = result_box_send.lock().unwrap();
+            *h = Some(res);
         };
 
         let f: Box<dyn FnOnce() + Send + 'req> = Box::new(f);
@@ -151,9 +153,9 @@ impl ThreadSpawner {
         // specified lifetime. This means that we need to control how long the lifetime (within
         // a task!) is:
         //  1. Tasks cannot be removed from the TaskManager as long as jobs are running for it.
-        //  2. Tasks cannot return waiting on the job before it is done (see
-        //     drop_notifier/drop_checker above and below)
-        //  3. Tasks are not dropped before the threadpool is stopped
+        //  2. Tasks cannot return waiting on the job before it is done (see result_box above and
+        //     below)
+        //  3. Tasks are not dropped before the threadpool is emptied
         let f = unsafe { std::mem::transmute(f) };
 
         let job = ThreadPoolJob {
@@ -163,10 +165,7 @@ impl ThreadSpawner {
         };
         Request {
             type_: crate::task::RequestType::ThreadPoolJob(job),
-            poll: Box::new(move |_ctx| match drop_checker.try_recv() {
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(()),
-                _ => None,
-            }),
+            poll: Box::new(move |_ctx| result_box_receive.lock().unwrap().take()),
             _marker: Default::default(),
         }
     }
