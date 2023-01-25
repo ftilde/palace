@@ -63,6 +63,8 @@ pub fn linear_rescale<'op>(
                     ctx.submit(factor.request_scalar()),
                     ctx.submit(offset.request_scalar()),
                 };
+                let factor = *factor;
+                let offset = *offset;
 
                 for pos in positions {
                     match ctx
@@ -70,15 +72,24 @@ pub fn linear_rescale<'op>(
                         .await
                     {
                         Ok(mut rw) => {
-                            for v in rw.iter_mut() {
-                                *v = *factor * *v + *offset;
-                            }
+                            let rw = &mut *rw;
+                            ctx.submit(ctx.spawn_job(|| {
+                                for v in rw.iter_mut() {
+                                    *v = factor * *v + offset;
+                                }
+                            }))
+                            .await;
                         }
                         Err((r, w)) => {
                             let mut w = w?;
-                            for (i, o) in r.iter().zip(w.iter_mut()) {
-                                o.write(*factor * *i + *offset);
-                            }
+                            let r = &*r;
+                            let w_ref = &mut *w;
+                            ctx.submit(ctx.spawn_job(|| {
+                                for (i, o) in r.iter().zip(w_ref.iter_mut()) {
+                                    o.write(factor * *i + offset);
+                                }
+                            }))
+                            .await;
                             unsafe { w.initialized() };
                         }
                     }
