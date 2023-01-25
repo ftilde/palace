@@ -53,7 +53,7 @@ pub fn linear_rescale<'op>(
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
-                ctx.write(*m)
+                ctx.write(m)
             }
             .into()
         },
@@ -63,8 +63,6 @@ pub fn linear_rescale<'op>(
                     ctx.submit(factor.request_scalar()),
                     ctx.submit(offset.request_scalar()),
                 };
-                let factor = *factor;
-                let offset = *offset;
 
                 for pos in positions {
                     match ctx

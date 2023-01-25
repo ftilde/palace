@@ -91,9 +91,7 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
 }
 
 impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
-    pub fn request_scalar<'req, 'inv: 'req>(
-        &'inv self,
-    ) -> Request<'req, 'inv, ReadHandle<'req, Output>> {
+    pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
         let id = DataId::new(self.id, &item);
 
@@ -104,7 +102,7 @@ impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
                 item: TypeErased::pack(item),
             }),
             poll: Box::new(move |ctx| unsafe {
-                ctx.storage.read_ram(id).map(|v| v.map(|a| &a[0]))
+                ctx.storage.read_ram(id).map(|v| *v.map(|a| &a[0]))
             }),
             _marker: Default::default(),
         }
