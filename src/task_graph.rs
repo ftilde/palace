@@ -48,7 +48,7 @@ pub struct TaskGraph {
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
     ready: BTreeSet<TaskId>,
-    resolved_deps: BTreeMap<TaskId, Vec<RequestId>>,
+    resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
 }
 
 impl TaskGraph {
@@ -81,7 +81,7 @@ impl TaskGraph {
         for rev_dep in self.required_by.remove(&id).iter().flatten() {
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
-            self.resolved_deps.entry(*rev_dep).or_default().push(id);
+            self.resolved_deps.entry(*rev_dep).or_default().insert(id);
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
@@ -93,23 +93,19 @@ impl TaskGraph {
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
         self.ready.remove(&id);
+        self.resolved_deps.remove(&id);
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
     }
 
-    pub fn next_ready(&mut self) -> Vec<ReadyTask> {
+    pub fn next_ready(&mut self) -> Vec<TaskId> {
         self.ready
             .iter()
             .filter(|t| self.implied_tasks.contains(&t))
-            .map(|t| ReadyTask {
-                id: *t,
-                resolved_deps: self.resolved_deps.remove(t).unwrap_or_default(),
-            })
+            .map(|t| *t)
             .collect()
     }
-}
-
-pub struct ReadyTask {
-    pub id: TaskId,
-    pub resolved_deps: Vec<RequestId>,
+    pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut BTreeSet<RequestId>> {
+        self.resolved_deps.get_mut(&task)
+    }
 }

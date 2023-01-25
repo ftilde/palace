@@ -208,11 +208,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             if ready.is_empty() {
                 return Ok(());
             }
-            for ready in ready {
-                let task_id = ready.id;
-                let resolved_deps = ready.resolved_deps;
+            for task_id in ready {
+                let resolved_deps =
+                    if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
+                        let mut tmp = BTreeSet::new();
+                        std::mem::swap(&mut tmp, resolved_deps);
+                        tmp
+                    } else {
+                        BTreeSet::new()
+                    };
                 let old_hints = self.data.hints.completed.replace(resolved_deps);
-                // We require polled tasks to empty the resolved_deps before yielding
+                // Hints should only contain during the loop body and returned back to the task
+                // graph once the task was polled.
                 assert!(old_hints.is_empty());
 
                 // TODO: Try to clean up API here
@@ -232,6 +239,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
                         assert!(self.data.request_queue.is_empty());
+                        // Drain hints
+                        self.data.hints.completed.replace(BTreeSet::new());
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
@@ -240,6 +249,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         return e;
                     }
                     Poll::Pending => {
+                        // Return hints back to the task graph
+                        let old_hints = self.data.hints.completed.replace(BTreeSet::new());
+                        if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
+                            *resolved_deps = old_hints;
+                        }
                         self.enqueue_requested(task_id);
                     }
                 };
@@ -341,17 +355,19 @@ impl Statistics {
 }
 
 pub struct TaskHints {
-    completed: std::cell::Cell<Vec<RequestId>>,
+    pub completed: RefCell<BTreeSet<RequestId>>,
 }
 
 impl TaskHints {
     pub fn new() -> Self {
         TaskHints {
-            completed: std::cell::Cell::new(Vec::new()),
+            completed: RefCell::new(BTreeSet::new()),
         }
     }
-    pub fn drain_completed(&self) -> Vec<RequestId> {
-        self.completed.take()
+
+    pub fn noticed_completion(&self, id: RequestId) {
+        let mut completed = self.completed.borrow_mut();
+        completed.remove(&id);
     }
 }
 

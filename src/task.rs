@@ -118,7 +118,6 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
         mut request: Request<'req, 'inv, V>,
     ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
         async move {
-            let _ = self.inner.hints.drain_completed();
             match request.type_ {
                 RequestType::Data(_) => {
                     if let Some(res) = (request.poll)(PollContext {
@@ -130,6 +129,8 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
                 RequestType::ThreadPoolJob(_) => {}
             };
 
+            let request_id = request.id();
+
             self.inner.requests.push(RequestInfo {
                 task: request.type_,
                 progress_indicator: ProgressIndicator::WaitForComplete,
@@ -138,10 +139,11 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
             futures::pending!();
 
             loop {
-                let _ = self.inner.hints.drain_completed();
                 if let Some(data) = (request.poll)(PollContext {
                     storage: self.inner.storage,
                 }) {
+                    let mut completed = self.inner.hints.completed.borrow_mut();
+                    completed.remove(&request_id);
                     return std::future::ready(data).await;
                 } else {
                     futures::pending!();
@@ -201,7 +203,18 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
             .collect::<BTreeMap<_, _>>();
         let mut completed = VecDeque::new();
         futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(V, D)>> {
-            completed.extend(self.inner.hints.drain_completed());
+            {
+                let mut newly_completed = Vec::new();
+                for c in self.inner.hints.completed.borrow().iter() {
+                    if task_map.contains_key(&c) {
+                        newly_completed.push(*c);
+                    }
+                }
+                for c in newly_completed {
+                    self.inner.hints.noticed_completion(c);
+                    completed.push_back(c);
+                }
+            }
             if let Some(r) = initial_ready.pop() {
                 return Poll::Ready(Some(r));
             }
