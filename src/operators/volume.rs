@@ -117,8 +117,11 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 while let Some((brick_data, brick_pos)) = stream.next().await {
                     let brick = Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
 
-                    let voxels = brick.voxels().collect::<Vec<_>>();
-                    sum += voxels.iter().sum::<f32>();
+                    ctx.submit(ctx.spawn_job(|| {
+                        let voxels = brick.voxels().collect::<Vec<_>>();
+                        sum += voxels.iter().sum::<f32>();
+                    }))
+                    .await;
                 }
 
                 let v = sum / vol.num_voxels() as f32;
