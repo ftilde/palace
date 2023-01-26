@@ -76,8 +76,6 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                                         line_begin as usize..line_end as usize
                                     ));
 
-                                    RESULTS ARE WROOOOOOOOOOOOOOOOOOOONG
-
                                     let bf32 = to_linear(
                                         cgmath::vec3(line_begin, y, z),
                                         self.metadata.brick_size.0,
