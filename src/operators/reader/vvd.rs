@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     data::{SVec3, VolumeMetaData, VoxelPosition},
     operator::OperatorId,
-    operators::VolumeOperator,
+    operators::{volume::VolumeOperatorState, VolumeOperator},
     Error,
 };
 
@@ -36,6 +36,24 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
         }
     }
     None
+}
+
+impl VolumeOperatorState for VvdVolumeSourceState {
+    fn operate<'op>(&'op self) -> VolumeOperator<'op> {
+        VolumeOperator::new(
+            OperatorId::new("VvdVolumeSourceState::operate")
+                .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
+            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
+            move |ctx, positions, _| {
+                async move {
+                    self.raw
+                        .load_raw_bricks(self.metadata.brick_size, ctx, positions)
+                        .await
+                }
+                .into()
+            },
+        )
+    }
 }
 
 impl VvdVolumeSourceState {
@@ -79,21 +97,5 @@ impl VvdVolumeSourceState {
 
         let raw = RawVolumeSourceState::open(raw_path, size)?;
         Ok(VvdVolumeSourceState { raw, metadata })
-    }
-
-    pub fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        VolumeOperator::new(
-            OperatorId::new("VvdVolumeSourceState::operate")
-                .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
-            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, positions, _| {
-                async move {
-                    self.raw
-                        .load_raw_bricks(self.metadata.brick_size, ctx, positions)
-                        .await
-                }
-                .into()
-            },
-        )
     }
 }

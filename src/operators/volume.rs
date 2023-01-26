@@ -8,6 +8,10 @@ use crate::{
 
 use super::ScalarOperator;
 
+pub trait VolumeOperatorState {
+    fn operate<'a>(&'a self) -> VolumeOperator<'a>;
+}
+
 pub struct VolumeOperator<'op> {
     pub metadata: Operator<'op, (), VolumeMetaData>,
     pub bricks: Operator<'op, BrickPosition, f32>,

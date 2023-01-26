@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use operators::VvdVolumeSourceState;
+use operators::{Hdf5VolumeSourceState, VolumeOperatorState, VvdVolumeSourceState};
 use runtime::RunTime;
 
 use crate::{data::VoxelPosition, operators::volume};
@@ -50,24 +50,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
     //let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
 
-    let vol_state = VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?;
+    let extension = args
+        .vvd_vol
+        .extension()
+        .map(|v| v.to_string_lossy().to_string());
+    let vol_state: Box<dyn VolumeOperatorState> = match extension.as_deref() {
+        Some("vvd") => Box::new(VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?),
+        Some("h5") => Box::new(Hdf5VolumeSourceState::open(
+            args.vvd_vol,
+            "/volume".to_string(),
+        )?),
+        _ => {
+            return Err(format!(
+                "Unknown volume format for file {}",
+                args.vvd_vol.to_string_lossy()
+            )
+            .into())
+        }
+    };
+
     //let metadata = data::VolumeMetaData {
     //    dimensions: VoxelPosition((40, 40, 40).into()),
     //    brick_size,
     //};
     //let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
-    eval_network(&mut runtime, &vol_state, &args.factor)
+    eval_network(&mut runtime, &*vol_state, &args.factor)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
-    vol: &VvdVolumeSourceState,
+    vol: &dyn VolumeOperatorState,
     factor: &f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     //TODO: We want to move the threadpool out of this function
 
-    let factor = factor.into();
     let vol = vol.operate();
+    let factor = factor.into();
 
     let offset = (&0.0).into();
     let scaled1 = volume::linear_rescale(&vol, &factor, &offset);
