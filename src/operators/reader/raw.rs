@@ -56,7 +56,7 @@ impl RawVolumeSourceState {
             let brick_data = &mut *brick_handle;
             ctx.submit(ctx.spawn_io(move || {
                 brick_data.iter_mut().for_each(|v| {
-                    v.write(0.0);
+                    v.write(f32::NAN);
                 });
 
                 for z in 0..brick_dim.z {

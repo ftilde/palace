@@ -58,7 +58,7 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                         let brick_dim = self.metadata.brick_dim(pos);
                         ctx.submit(ctx.spawn_io(|| {
                             brick_data.iter_mut().for_each(|v| {
-                                v.write(0.0);
+                                v.write(f32::NAN);
                             });
 
                             let vals = self

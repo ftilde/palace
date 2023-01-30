@@ -12,7 +12,7 @@ where
 pub fn to_linear(pos: SVec3, dim: SVec3) -> usize {
     let pos = pos.cast::<usize>().unwrap();
     let dim = dim.cast::<usize>().unwrap();
-    (pos.z * dim.y + pos.y) * dim.y + pos.x
+    (pos.z * dim.y + pos.y) * dim.x + pos.x
 }
 
 pub type SVec3 = cgmath::Vector3<u32>;
