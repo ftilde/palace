@@ -49,7 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = RunTime::new(storage_size, thread_pool_size);
 
     let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
-    //let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
 
     let extension = args
         .vvd_vol
@@ -70,11 +69,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    //let metadata = data::VolumeMetaData {
-    //    dimensions: VoxelPosition((40, 40, 40).into()),
-    //    brick_size,
-    //};
-    //let vol_state = RawVolumeSourceState::open(PathBuf::from("some_path"), metadata).unwrap();
     eval_network(&mut runtime, &*vol_state, &args.factor)
 }
 
@@ -83,8 +77,6 @@ fn eval_network(
     vol: &dyn VolumeOperatorState,
     factor: &f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    //TODO: We want to move the threadpool out of this function
-
     let vol = vol.operate();
     let factor = factor.into();
     let offset = (&0.0).into();
