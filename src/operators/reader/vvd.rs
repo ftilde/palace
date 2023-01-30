@@ -4,7 +4,7 @@ use sxd_xpath::evaluate_xpath;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    data::{SVec3, VolumeMetaData, VoxelPosition},
+    data::{LocalVoxelPosition, VolumeMetaData, VoxelPosition},
     operator::OperatorId,
     operators::{volume::VolumeOperatorState, VolumeOperator},
     Error,
@@ -57,18 +57,18 @@ impl VolumeOperatorState for VvdVolumeSourceState {
 }
 
 impl VvdVolumeSourceState {
-    pub fn open(path: &Path, brick_size: VoxelPosition) -> Result<Self, Error> {
+    pub fn open(path: &Path, brick_size: LocalVoxelPosition) -> Result<Self, Error> {
         let content = std::fs::read_to_string(path)?;
         let package = parser::parse(&content)?;
         let document = package.as_document();
 
-        let x = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@x")?.number() as _;
-        let y = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@y")?.number() as _;
-        let z = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@z")?.number() as _;
+        let x = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@x")?.number() as u32;
+        let y = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@y")?.number() as u32;
+        let z = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@z")?.number() as u32;
         let format =
             evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@format")?.string();
 
-        let size = VoxelPosition(SVec3::new(x, y, z));
+        let size = VoxelPosition::from([z.into(), y.into(), x.into()]);
 
         if format != "float" {
             return Err(format!(

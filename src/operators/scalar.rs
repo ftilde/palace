@@ -1,4 +1,4 @@
-use bytemuck::Pod;
+use bytemuck::AnyBitPattern;
 
 use crate::{
     operator::{Operator, OperatorId},
@@ -9,7 +9,7 @@ pub type ScalarOperator<'op, T> = Operator<'op, (), T>;
 
 pub fn scalar<
     'op,
-    T: Pod,
+    T: AnyBitPattern,
     F: for<'cref, 'inv> Fn(
             TaskContext<'cref, 'inv, (), T>,
             crate::operator::OutlivesMarker<'op, 'inv>,

@@ -1,8 +1,9 @@
-fn integer_division_rounded_up( a: u64, b: u64 ) -> u64 {
-    (a + b - 1) / b
-}
+use crate::{
+    data::{hmul, BrickCoordinate, GlobalVoxelCoordinate, LocalVoxelCoordinate, Vector},
+    util::div_round_up,
+};
 
-trait Array : Sized {
+trait Array: Sized {
     fn size(&self) -> u64;
     fn brick_size(&self) -> u32;
     fn brick_count(&self) -> u32;
@@ -14,33 +15,30 @@ trait Array : Sized {
         ArrayAsVolume { array: self }
     }
 }
-trait Image : Sized {
-    fn dims(&self) -> cgmath::Vector2<u32>;
-    fn brick_dims(&self) -> cgmath::Vector2<u32>;
-    fn dims_in_bricks(&self) -> cgmath::Vector2<u32> {
+trait Image: Sized {
+    fn dims(&self) -> Vector<2, GlobalVoxelCoordinate>;
+    fn brick_dims(&self) -> Vector<2, LocalVoxelCoordinate>;
+    fn dims_in_bricks(&self) -> Vector<2, BrickCoordinate> {
         let dims = self.dims();
         let brick_dims = self.brick_dims();
-        dims.zip(brick_dims, |a: u32, b:u32| integer_division_rounded_up(a as u64, b as u64) as u32)
+        dims.zip(brick_dims, |a, b| div_round_up(a.raw, b.raw).into())
     }
 
     fn size(&self) -> u64 {
-        let dims = Image::dims(self);
-        (dims.x * dims.y) as u64
+        hmul(self.dims()) as u64
     }
     fn brick_size(&self) -> u32 {
-        let brick_dims = Image::brick_dims(self);
-        brick_dims.x * brick_dims.y
+        hmul(self.brick_dims()) as u32
     }
     fn brick_count(&self) -> u32 {
-        let dims_in_bricks = Image::dims_in_bricks(self);
-        dims_in_bricks.x * dims_in_bricks.y
+        hmul(self.dims_in_bricks()) as u32
     }
 
     fn pixel_to_brick(&self, pixel: cgmath::Vector2<u32>) -> cgmath::Vector2<u32> {
-        pixel.zip(self.brick_dims(), |a: u32, b:u32| a / b)
+        pixel.zip(self.brick_dims(), |a: u32, b: u32| a / b)
     }
     fn brick_to_pixel_begin(&self, brick: cgmath::Vector2<u32>) -> cgmath::Vector2<u32> {
-        brick.zip(self.brick_dims(), |a: u32, b:u32| a * b)
+        brick.zip(self.brick_dims(), |a: u32, b: u32| a * b)
     }
     fn brick_to_pixel_end(&self, brick: cgmath::Vector2<u32>) -> cgmath::Vector2<u32> {
         self.brick_to_pixel_begin(brick + cgmath::Vector2::<u32>::new(1, 1))
@@ -53,13 +51,15 @@ trait Image : Sized {
         ImageAsVolume { image: self }
     }
 }
-trait Volume : Sized {
+trait Volume: Sized {
     fn dims(&self) -> cgmath::Vector3<u32>;
     fn brick_dims(&self) -> cgmath::Vector3<u32>;
     fn dims_in_bricks(&self) -> cgmath::Vector3<u32> {
         let dims = self.dims();
         let brick_dims = self.brick_dims();
-        dims.zip(brick_dims, |a: u32, b:u32| integer_division_rounded_up(a as u64, b as u64) as u32)
+        dims.zip(brick_dims, |a: u32, b: u32| {
+            integer_division_rounded_up(a as u64, b as u64) as u32
+        })
     }
 
     fn size(&self) -> u64 {
@@ -76,10 +76,10 @@ trait Volume : Sized {
     }
 
     fn voxel_to_brick(&self, voxel: cgmath::Vector3<u32>) -> cgmath::Vector3<u32> {
-        voxel.zip(self.brick_dims(), |a: u32, b:u32| a / b)
+        voxel.zip(self.brick_dims(), |a: u32, b: u32| a / b)
     }
     fn brick_to_voxel_begin(&self, brick: cgmath::Vector3<u32>) -> cgmath::Vector3<u32> {
-        brick.zip(self.brick_dims(), |a: u32, b:u32| a * b)
+        brick.zip(self.brick_dims(), |a: u32, b: u32| a * b)
     }
     fn brick_to_voxel_end(&self, brick: cgmath::Vector3<u32>) -> cgmath::Vector3<u32> {
         self.brick_to_voxel_begin(brick + cgmath::Vector3::<u32>::new(1, 1, 1))
@@ -90,11 +90,9 @@ trait Volume : Sized {
     }
 }
 
-
-
 struct ArrayMetaData {
     size: u64,
-    brick_size: u32
+    brick_size: u32,
 }
 impl Array for ArrayMetaData {
     fn size(&self) -> u64 {
@@ -110,7 +108,7 @@ impl Array for ArrayMetaData {
 
 struct ImageMetaData {
     dims: cgmath::Vector2<u32>,
-    brick_dims: cgmath::Vector2<u32>
+    brick_dims: cgmath::Vector2<u32>,
 }
 impl Image for ImageMetaData {
     fn dims(&self) -> cgmath::Vector2<u32> {
@@ -123,7 +121,7 @@ impl Image for ImageMetaData {
 
 struct VolumeMetaData {
     dims: cgmath::Vector3<u32>,
-    brick_dims: cgmath::Vector3<u32>
+    brick_dims: cgmath::Vector3<u32>,
 }
 impl Volume for VolumeMetaData {
     fn dims(&self) -> cgmath::Vector3<u32> {
@@ -134,9 +132,8 @@ impl Volume for VolumeMetaData {
     }
 }
 
-
 struct ArrayAsImage<'a, T: Array> {
-    array: &'a T
+    array: &'a T,
 }
 impl<'a, T: Array> Image for ArrayAsImage<'a, T> {
     fn dims(&self) -> cgmath::Vector2<u32> {
@@ -149,7 +146,7 @@ impl<'a, T: Array> Image for ArrayAsImage<'a, T> {
     }
 }
 struct ArrayAsVolume<'a, T: Array> {
-    array: &'a T
+    array: &'a T,
 }
 impl<'a, T: Array> Volume for ArrayAsVolume<'a, T> {
     fn dims(&self) -> cgmath::Vector3<u32> {
@@ -162,7 +159,7 @@ impl<'a, T: Array> Volume for ArrayAsVolume<'a, T> {
     }
 }
 struct ImageAsArray<'a, T: Image> {
-    image: &'a T
+    image: &'a T,
 }
 impl<'a, T: Image> Array for ImageAsArray<'a, T> {
     fn size(&self) -> u64 {
@@ -176,7 +173,7 @@ impl<'a, T: Image> Array for ImageAsArray<'a, T> {
     }
 }
 struct ImageAsVolume<'a, T: Image> {
-    image: &'a T
+    image: &'a T,
 }
 impl<'a, T: Image> Volume for ImageAsVolume<'a, T> {
     fn dims(&self) -> cgmath::Vector3<u32> {
@@ -190,7 +187,7 @@ impl<'a, T: Image> Volume for ImageAsVolume<'a, T> {
 }
 
 struct VolumeAsArray<'a, T: Volume> {
-    volume: &'a T
+    volume: &'a T,
 }
 impl<'a, T: Volume> Array for VolumeAsArray<'a, T> {
     fn size(&self) -> u64 {

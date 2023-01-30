@@ -103,7 +103,7 @@ pub struct TaskContext<'cref, 'inv, ItemDescriptor, Output: ?Sized> {
     inner: OpaqueTaskContext<'cref, 'inv>,
     _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
 }
-impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>) -> Self {
@@ -257,7 +257,7 @@ impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: bytemuck::AnyBitPattern + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot(

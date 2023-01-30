@@ -1,7 +1,7 @@
 use std::{fs::File, path::PathBuf};
 
 use crate::{
-    data::{to_linear, BrickPosition, VolumeMetaData, VoxelPosition},
+    data::{to_linear, BrickPosition, LocalVoxelPosition, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
     task::TaskContext,
     Error,
@@ -19,7 +19,7 @@ impl RawVolumeSourceState {
         let file = File::open(&path)?;
         let mmap = unsafe { memmap::Mmap::map(&file)? };
 
-        let byte_size = crate::data::hmul(size.0) as usize * std::mem::size_of::<f32>();
+        let byte_size = crate::data::hmul(size) * std::mem::size_of::<f32>();
         assert_eq!(file.metadata()?.len(), byte_size as u64);
 
         Ok(Self {
@@ -31,7 +31,7 @@ impl RawVolumeSourceState {
     }
     pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
-        brick_size: VoxelPosition,
+        brick_size: LocalVoxelPosition,
         ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
         positions: Vec<BrickPosition>,
     ) -> Result<(), Error> {
@@ -41,14 +41,14 @@ impl RawVolumeSourceState {
         };
         for pos in positions {
             let begin = m.brick_begin(pos);
-            if !(begin.0.x < m.dimensions.0.x
-                && begin.0.y < m.dimensions.0.y
-                && begin.0.z < m.dimensions.0.z)
+            if !(begin.x() < m.dimensions.x()
+                && begin.y() < m.dimensions.y()
+                && begin.z() < m.dimensions.z())
             {
                 return Err("Brick position is outside of volume".into());
             }
-            let brick_dim = m.brick_dim(pos).0;
-            let num_voxels = crate::data::hmul(m.brick_size.0) as usize;
+            let brick_dim = m.brick_dim(pos);
+            let num_voxels = crate::data::hmul(m.brick_size);
 
             let voxel_size = std::mem::size_of::<f32>();
 
@@ -59,15 +59,15 @@ impl RawVolumeSourceState {
                     v.write(f32::NAN);
                 });
 
-                for z in 0..brick_dim.z {
-                    for y in 0..brick_dim.y {
-                        let bu8 =
-                            voxel_size * to_linear(begin.0 + cgmath::vec3(0, y, z), m.dimensions.0);
-                        let eu8 = voxel_size
-                            * to_linear(begin.0 + cgmath::vec3(brick_dim.x, y, z), m.dimensions.0);
+                for z in 0..brick_dim.z().raw {
+                    for y in 0..brick_dim.y().raw {
+                        let pb: LocalVoxelPosition = [z.into(), y.into(), 0.into()].into();
+                        let pe: LocalVoxelPosition = [z.into(), y.into(), brick_dim.x()].into();
+                        let bu8 = voxel_size * to_linear(begin + pb, m.dimensions);
+                        let eu8 = voxel_size * to_linear(begin + pe, m.dimensions);
 
-                        let bf32 = to_linear(cgmath::vec3(0, y, z), m.brick_size.0);
-                        let ef32 = to_linear(cgmath::vec3(brick_dim.x, y, z), m.brick_size.0);
+                        let bf32 = to_linear(pb, m.brick_size);
+                        let ef32 = to_linear(pe, m.brick_size);
 
                         let in_ = &self.mmap[bu8..eu8];
                         let out = &mut brick_data[bf32..ef32];
@@ -88,7 +88,10 @@ impl RawVolumeSourceState {
     }
 
     #[allow(unused)] // We probably will use it directly at some point
-    pub fn operate<'op>(&'op self, brick_size: VoxelPosition) -> Operator<'op, BrickPosition, f32> {
+    pub fn operate<'op>(
+        &'op self,
+        brick_size: LocalVoxelPosition,
+    ) -> Operator<'op, BrickPosition, f32> {
         Operator::new(
             OperatorId::new("RawVolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes()),

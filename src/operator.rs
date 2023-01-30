@@ -39,8 +39,11 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct DataId(Id);
 impl DataId {
-    pub fn new(op: OperatorId, descriptor: &impl bytemuck::NoUninit) -> Self {
-        let hash = bytemuck::bytes_of(descriptor);
+    pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
+        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(0).build();
+        descriptor.hash(&mut hasher);
+        let digest = hasher.digest128();
+        let hash = bytemuck::bytes_of(&digest);
         let data_id = Id::from_data(hash);
 
         DataId(Id::combine(&[op.inner(), data_id]))
@@ -109,7 +112,7 @@ impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
     }
 }
 
-impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
+impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: AnyBitPattern>
     Operator<'op, ItemDescriptor, Output>
 {
     pub fn new<
@@ -165,7 +168,7 @@ impl<'op, ItemDescriptor: bytemuck::NoUninit + 'static, Output: AnyBitPattern>
     }
 }
 
-impl<'op, ItemDescriptor: bytemuck::NoUninit, Output: bytemuck::AnyBitPattern> OpaqueOperator
+impl<'op, ItemDescriptor: std::hash::Hash, Output: bytemuck::AnyBitPattern> OpaqueOperator
     for Operator<'op, ItemDescriptor, Output>
 {
     fn id(&self) -> OperatorId {

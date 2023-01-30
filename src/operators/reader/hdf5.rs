@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use crate::{
-    data::{to_linear, VolumeMetaData, VoxelPosition},
+    data::{
+        to_linear, Coordinate, CoordinateType, LocalVoxelCoordinate, LocalVoxelPosition, Vector,
+        VolumeMetaData, VoxelPosition,
+    },
     operator::OperatorId,
     operators::volume::{VolumeOperator, VolumeOperatorState},
     Error,
@@ -14,19 +17,19 @@ pub struct Hdf5VolumeSourceState {
     volume_location: String,
 }
 
-impl TryFrom<Vec<hdf5::Ix>> for VoxelPosition {
+impl<C: CoordinateType> TryFrom<Vec<hdf5::Ix>> for Vector<3, Coordinate<C>> {
     type Error = crate::Error;
 
     fn try_from(value: Vec<hdf5::Ix>) -> Result<Self, Self::Error> {
         match *value {
-            [z, y, x] => Ok(VoxelPosition((x as u32, y as u32, z as u32).into())),
+            [z, y, x] => Ok([(z as u32).into(), (y as u32).into(), (x as u32).into()].into()),
             _ => Err("Invalid number of dimensions".into()),
         }
     }
 }
 
 fn to_hdf5(pos: VoxelPosition) -> [usize; 3] {
-    [pos.0.z as _, pos.0.y as _, pos.0.x as _]
+    [pos.z().raw as _, pos.y().raw as _, pos.x().raw as _]
 }
 
 fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hyperslab {
@@ -51,7 +54,7 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
 
                         let selection = to_hdf5_hyperslab(begin, end);
 
-                        let num_voxels = crate::data::hmul(self.metadata.brick_size.0) as usize;
+                        let num_voxels = crate::data::hmul(self.metadata.brick_size);
 
                         let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
@@ -66,23 +69,25 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                                 .read_slice::<f32, _, ndarray::Ix3>(selection)
                                 .unwrap();
 
-                            for z in 0..brick_dim.0.z {
-                                for y in 0..brick_dim.0.y {
-                                    let line_begin = 0;
-                                    let line_end = brick_dim.0.x;
+                            for z in 0..brick_dim.z().raw {
+                                for y in 0..brick_dim.y().raw {
+                                    let z: LocalVoxelCoordinate = z.into();
+                                    let y: LocalVoxelCoordinate = y.into();
+                                    let line_begin: LocalVoxelCoordinate = 0.into();
+                                    let line_end = brick_dim.x();
                                     let in_ = vals.slice(ndarray::s!(
-                                        z as usize,
-                                        y as usize,
-                                        line_begin as usize..line_end as usize
+                                        z.raw as usize,
+                                        y.raw as usize,
+                                        line_begin.raw as usize..line_end.raw as usize
                                     ));
 
                                     let bf32 = to_linear(
-                                        cgmath::vec3(line_begin, y, z),
-                                        self.metadata.brick_size.0,
+                                        [z, y, line_begin].into(),
+                                        self.metadata.brick_size,
                                     );
                                     let ef32 = to_linear(
-                                        cgmath::vec3(line_end, y, z),
-                                        self.metadata.brick_size.0,
+                                        [z, y, line_end].into(),
+                                        self.metadata.brick_size,
                                     );
 
                                     let out = &mut brick_data[bf32..ef32];
@@ -111,7 +116,8 @@ impl Hdf5VolumeSourceState {
         let file = hdf5::File::open(&path)?;
         let vol = file.dataset(&volume_location)?;
         let dimensions: VoxelPosition = vol.shape().try_into()?;
-        let brick_size: VoxelPosition = vol.chunk().unwrap_or_else(|| vol.shape()).try_into()?;
+        let brick_size: LocalVoxelPosition =
+            vol.chunk().unwrap_or_else(|| vol.shape()).try_into()?;
 
         let dtype = vol.dtype()?;
         if !dtype.is::<f32>() {

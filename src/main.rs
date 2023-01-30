@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use data::LocalVoxelPosition;
 use operators::{Hdf5VolumeSourceState, VolumeOperatorState, VvdVolumeSourceState};
 use runtime::RunTime;
 
-use crate::{data::VoxelPosition, operators::volume};
+use crate::operators::volume;
 
-mod array;
+//mod array; //NO_PUSH_main Generalize using const N
 mod data;
 mod id;
 mod operator;
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runtime = RunTime::new(storage_size, thread_pool_size);
 
-    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
+    let brick_size = LocalVoxelPosition::fill(32.into());
 
     let extension = args
         .vvd_vol
@@ -81,7 +82,7 @@ fn eval_network(
     let factor = factor.into();
     let offset = (&0.0).into();
 
-    let rechunked = volume::rechunk(&vol, VoxelPosition((32, 32, 32).into()));
+    let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(32.into()));
 
     let scaled1 = volume::linear_rescale(&rechunked, &factor, &offset);
     let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);

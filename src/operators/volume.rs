@@ -1,7 +1,10 @@
 use futures::stream::StreamExt;
 
 use crate::{
-    data::{to_linear, Brick, BrickPosition, VolumeMetaData, VoxelPosition},
+    data::{
+        to_linear, Brick, BrickPosition, GlobalVoxelCoordinate, LocalVoxelCoordinate,
+        LocalVoxelPosition, VolumeMetaData, VoxelPosition,
+    },
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
 };
@@ -155,7 +158,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
 
 pub fn rechunk<'op>(
     input: &'op VolumeOperator<'_>,
-    brick_size: VoxelPosition,
+    brick_size: LocalVoxelPosition,
 ) -> VolumeOperator<'op> {
     VolumeOperator::new(
         OperatorId::new("volume_rechunk")
@@ -184,9 +187,9 @@ pub fn rechunk<'op>(
                     let out_end = m_out.brick_end(pos);
 
                     let in_begin_brick = m_in.brick_pos(out_begin);
-                    let in_end_brick = m_in.brick_pos(VoxelPosition(out_end.map(|v| v - 1)));
+                    let in_end_brick = m_in.brick_pos(out_end.map(|v| v - 1.into()));
 
-                    let num_voxels = crate::data::hmul(m_out.brick_size.0) as usize;
+                    let num_voxels = crate::data::hmul(m_out.brick_size);
                     let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                     let out_data = &mut *brick_handle;
                     out_data.iter_mut().for_each(|v| {
@@ -195,11 +198,12 @@ pub fn rechunk<'op>(
 
                     let mut stream = ctx.submit_unordered_with_data(
                         itertools::iproduct! {
-                            in_begin_brick.x..=in_end_brick.x,
-                            in_begin_brick.y..=in_end_brick.y,
-                            in_begin_brick.z..=in_end_brick.z
+                            in_begin_brick.z().raw..=in_end_brick.z().raw,
+                            in_begin_brick.y().raw..=in_end_brick.y().raw,
+                            in_begin_brick.x().raw..=in_end_brick.x().raw
                         }
-                        .map(|(x, y, z)| BrickPosition(cgmath::vec3(x, y, z)))
+                        .map(|(z, y, x)| BrickPosition::from([z.into(), y.into(), x.into()]))
+                        //NO_PUSH_main: simplify this via T: from in from impl
                         .map(|pos| (input.bricks.request(pos), pos)),
                     );
                     while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
@@ -208,18 +212,23 @@ pub fn rechunk<'op>(
                             let in_begin = m_in.brick_begin(in_brick_pos);
                             let in_end = m_in.brick_end(in_brick_pos);
 
-                            let overlap_begin = in_begin.zip(*out_begin, |i, o| i.max(o));
-                            let overlap_end = in_end.zip(*out_end, |i, o| i.min(o));
+                            let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
+                            let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
 
-                            for z in overlap_begin.z..overlap_end.z {
-                                for y in overlap_begin.y..overlap_end.y {
-                                    for x in overlap_begin.x..overlap_end.x {
-                                        let p = VoxelPosition((x, y, z).into());
-                                        let p_in = p.zip(*in_begin, |a, b| a - b);
-                                        let p_in_lin = to_linear(p_in, *m_in.brick_size) as usize;
-                                        let p_out = p.zip(*out_begin, |a, b| a - b);
-                                        let p_out_lin =
-                                            to_linear(p_out, *m_out.brick_size) as usize;
+                            for z in overlap_begin.z().raw..overlap_end.z().raw {
+                                for y in overlap_begin.y().raw..overlap_end.y().raw {
+                                    for x in overlap_begin.x().raw..overlap_end.x().raw {
+                                        let z = GlobalVoxelCoordinate::from(z);
+                                        let y = GlobalVoxelCoordinate::from(y);
+                                        let x = GlobalVoxelCoordinate::from(x);
+
+                                        let p = VoxelPosition::from([z, y, x]);
+                                        let p_in =
+                                            (p - in_begin).map(LocalVoxelCoordinate::interpret_as);
+                                        let p_in_lin = to_linear(p_in, m_in.brick_size);
+                                        let p_out =
+                                            (p - out_begin).map(LocalVoxelCoordinate::interpret_as);
+                                        let p_out_lin = to_linear(p_out, m_out.brick_size);
                                         out_data[p_out_lin].write(in_data[p_in_lin]);
                                     }
                                 }
