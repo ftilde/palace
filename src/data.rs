@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use bytemuck::{Pod, Zeroable};
 
 pub fn hmul<S>(s: cgmath::Vector3<S>) -> S
@@ -15,15 +17,31 @@ pub fn to_linear(pos: SVec3, dim: SVec3) -> usize {
 
 pub type SVec3 = cgmath::Vector3<u32>;
 
-#[derive(Copy, Clone, Hash)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct VoxelPosition(pub SVec3);
-#[derive(Copy, Clone, Hash)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct BrickPosition(pub SVec3);
 
 unsafe impl Zeroable for VoxelPosition {}
 unsafe impl Pod for VoxelPosition {}
 unsafe impl Zeroable for BrickPosition {}
 unsafe impl Pod for BrickPosition {}
+
+impl Deref for VoxelPosition {
+    type Target = SVec3;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for BrickPosition {
+    type Target = SVec3;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Zeroable, Pod)]
@@ -43,9 +61,9 @@ impl VolumeMetaData {
                 .zip(self.brick_size.0, crate::util::div_round_up),
         )
     }
-    //pub fn brick_pos(&self, pos: VoxelPosition) -> BrickPosition {
-    //    BrickPosition(pos.0.zip(self.brick_size.0, |a, b| a / b))
-    //}
+    pub fn brick_pos(&self, pos: VoxelPosition) -> BrickPosition {
+        BrickPosition(pos.0.zip(self.brick_size.0, |a, b| a / b))
+    }
     pub fn brick_begin(&self, pos: BrickPosition) -> VoxelPosition {
         VoxelPosition(pos.0.zip(self.brick_size.0, |a, b| a * b))
     }

@@ -1,7 +1,7 @@
 use futures::stream::StreamExt;
 
 use crate::{
-    data::{Brick, BrickPosition, VolumeMetaData},
+    data::{to_linear, Brick, BrickPosition, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
 };
@@ -147,6 +147,92 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 let v = sum / vol.num_voxels() as f32;
 
                 ctx.write(v)
+            }
+            .into()
+        },
+    )
+}
+
+pub fn rechunk<'op>(
+    input: &'op VolumeOperator<'_>,
+    brick_size: VoxelPosition,
+) -> VolumeOperator<'op> {
+    VolumeOperator::new(
+        OperatorId::new("volume_rechunk")
+            .dependent_on(&input.metadata)
+            .dependent_on(&input.bricks),
+        move |ctx, _| {
+            async move {
+                let req = input.metadata.request_scalar();
+                let mut m = ctx.submit(req).await;
+                m.brick_size = brick_size;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, _| {
+            // TODO: optimize case where input.brick_size == output.brick_size
+            async move {
+                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let m_out = {
+                    let mut m_out = m_in;
+                    m_out.brick_size = brick_size;
+                    m_out
+                };
+                for pos in positions {
+                    let out_begin = m_out.brick_begin(pos);
+                    let out_end = m_out.brick_end(pos);
+
+                    let in_begin_brick = m_in.brick_pos(out_begin);
+                    let in_end_brick = m_in.brick_pos(VoxelPosition(out_end.map(|v| v - 1)));
+
+                    let num_voxels = crate::data::hmul(m_out.brick_size.0) as usize;
+                    let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
+                    let out_data = &mut *brick_handle;
+                    out_data.iter_mut().for_each(|v| {
+                        v.write(f32::NAN);
+                    });
+
+                    let mut stream = ctx.submit_unordered_with_data(
+                        itertools::iproduct! {
+                            in_begin_brick.x..=in_end_brick.x,
+                            in_begin_brick.y..=in_end_brick.y,
+                            in_begin_brick.z..=in_end_brick.z
+                        }
+                        .map(|(x, y, z)| BrickPosition(cgmath::vec3(x, y, z)))
+                        .map(|pos| (input.bricks.request(pos), pos)),
+                    );
+                    while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
+                        let in_data = &*in_data_handle;
+                        ctx.submit(ctx.spawn_compute(|| {
+                            let in_begin = m_in.brick_begin(in_brick_pos);
+                            let in_end = m_in.brick_end(in_brick_pos);
+
+                            let overlap_begin = in_begin.zip(*out_begin, |i, o| i.max(o));
+                            let overlap_end = in_end.zip(*out_end, |i, o| i.min(o));
+
+                            for z in overlap_begin.z..overlap_end.z {
+                                for y in overlap_begin.y..overlap_end.y {
+                                    for x in overlap_begin.x..overlap_end.x {
+                                        let p = VoxelPosition((x, y, z).into());
+                                        let p_in = p.zip(*in_begin, |a, b| a - b);
+                                        let p_in_lin = to_linear(p_in, *m_in.brick_size) as usize;
+                                        let p_out = p.zip(*out_begin, |a, b| a - b);
+                                        let p_out_lin =
+                                            to_linear(p_out, *m_out.brick_size) as usize;
+                                        out_data[p_out_lin].write(in_data[p_in_lin]);
+                                    }
+                                }
+                            }
+                        }))
+                        .await;
+                    }
+
+                    // Safety: We have queried and then copied the data of all overlapping input
+                    // bricks.
+                    unsafe { brick_handle.initialized() };
+                }
+                Ok(())
             }
             .into()
         },

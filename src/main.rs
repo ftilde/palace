@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runtime = RunTime::new(storage_size, thread_pool_size);
 
-    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 23));
+    let brick_size = VoxelPosition(cgmath::vec3(32, 32, 32));
     //let brick_size = VoxelPosition(cgmath::vec3(64, 64, 64));
 
     let extension = args
@@ -86,13 +86,15 @@ fn eval_network(
 
     let vol = vol.operate();
     let factor = factor.into();
-
     let offset = (&0.0).into();
-    let scaled1 = volume::linear_rescale(&vol, &factor, &offset);
+
+    let rechunked = volume::rechunk(&vol, VoxelPosition((32, 32, 32).into()));
+
+    let scaled1 = volume::linear_rescale(&rechunked, &factor, &offset);
     let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
 
     let mean = volume::mean(&scaled2);
-    let mean_unscaled = volume::mean(&vol);
+    let mean_unscaled = volume::mean(&rechunked);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
