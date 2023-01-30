@@ -1,5 +1,3 @@
-use bytemuck::AnyBitPattern;
-
 use crate::{
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
@@ -9,7 +7,7 @@ pub type ScalarOperator<'op, T> = Operator<'op, (), T>;
 
 pub fn scalar<
     'op,
-    T: AnyBitPattern,
+    T: Copy,
     F: for<'cref, 'inv> Fn(
             TaskContext<'cref, 'inv, (), T>,
             crate::operator::OutlivesMarker<'op, 'inv>,

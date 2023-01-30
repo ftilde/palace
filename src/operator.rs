@@ -1,5 +1,3 @@
-use bytemuck::AnyBitPattern;
-
 use crate::{
     id::Id,
     storage::{InplaceResult, ReadHandle},
@@ -93,7 +91,7 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     compute: ComputeFunction<'op, ItemDescriptor, Output>,
 }
 
-impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
+impl<'op, Output: Copy> Operator<'op, (), Output> {
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
         let id = DataId::new(self.id, &item);
@@ -112,7 +110,7 @@ impl<'op, Output: AnyBitPattern> Operator<'op, (), Output> {
     }
 }
 
-impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: AnyBitPattern>
+impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     Operator<'op, ItemDescriptor, Output>
 {
     pub fn new<
@@ -168,7 +166,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: AnyBitPattern>
     }
 }
 
-impl<'op, ItemDescriptor: std::hash::Hash, Output: bytemuck::AnyBitPattern> OpaqueOperator
+impl<'op, ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
     for Operator<'op, ItemDescriptor, Output>
 {
     fn id(&self) -> OperatorId {

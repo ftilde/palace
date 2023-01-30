@@ -257,7 +257,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: bytemuck::AnyBitPattern + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot(
@@ -270,7 +270,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: bytemuck::AnyBitPatte
     }
 }
 
-impl<'cref, 'inv, Output: bytemuck::AnyBitPattern> TaskContext<'cref, 'inv, (), Output> {
+impl<'cref, 'inv, Output: Copy> TaskContext<'cref, 'inv, (), Output> {
     pub fn write(&self, value: Output) -> Result<(), Error> {
         let mut slot = self.alloc_slot((), 1)?;
         slot[0].write(value);

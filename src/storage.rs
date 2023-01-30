@@ -6,8 +6,6 @@ use std::{
     pin::Pin,
 };
 
-use bytemuck::AnyBitPattern;
-
 use crate::{operator::DataId, util::num_elms_in_array, Error};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -225,7 +223,7 @@ impl Storage {
         Ok(data)
     }
 
-    pub fn alloc_ram_slot<T: AnyBitPattern>(
+    pub fn alloc_ram_slot<T: Copy>(
         &self,
         key: DataId,
         size: usize,
@@ -241,10 +239,7 @@ impl Storage {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read_ram<'a, T: AnyBitPattern>(
-        &'a self,
-        key: DataId,
-    ) -> Option<ReadHandle<'a, [T]>> {
+    pub unsafe fn read_ram<'a, T: Copy>(&'a self, key: DataId) -> Option<ReadHandle<'a, [T]>> {
         let t_ref = {
             let index = self.index.borrow();
             let entry = index.get(&key)?;
@@ -264,7 +259,7 @@ impl Storage {
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace<'a, T: AnyBitPattern>(
+    pub unsafe fn try_update_inplace<'a, T: Copy>(
         &'a self,
         old_key: DataId,
         new_key: DataId,

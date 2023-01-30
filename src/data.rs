@@ -1,7 +1,5 @@
 use std::ops::{Add, Div, Mul, Sub};
 
-use bytemuck::{AnyBitPattern, Zeroable};
-
 pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> usize {
     s.into_iter().map(|v| v.raw as usize).product()
 }
@@ -32,9 +30,6 @@ pub struct Coordinate<T: CoordinateType> {
     pub raw: u32,
     type_: std::marker::PhantomData<T>,
 }
-// Derive macro seems broken somehow
-unsafe impl<T: CoordinateType> Zeroable for Coordinate<T> {}
-unsafe impl<T: CoordinateType + 'static> AnyBitPattern for Coordinate<T> {}
 
 impl<T: CoordinateType> Coordinate<T> {
     pub fn interpret_as<U: CoordinateType>(v: Coordinate<U>) -> Self {
@@ -88,10 +83,6 @@ pub type BrickCoordinate = Coordinate<BrickCoordinateType>;
 #[repr(C)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Vector<const N: usize, T>([T; N]);
-
-// Derive macro seems broken somehow
-unsafe impl<const N: usize, T: Zeroable> Zeroable for Vector<N, T> {}
-unsafe impl<const N: usize, T: AnyBitPattern> AnyBitPattern for Vector<N, T> {}
 
 impl<const N: usize, T> From<[T; N]> for Vector<N, T> {
     fn from(value: [T; N]) -> Self {
@@ -179,7 +170,7 @@ pub type VoxelPosition = Vector<3, GlobalVoxelCoordinate>;
 pub type BrickPosition = Vector<3, BrickCoordinate>;
 
 #[repr(C)]
-#[derive(Copy, Clone, AnyBitPattern)]
+#[derive(Copy, Clone)]
 pub struct VolumeMetaData {
     pub dimensions: VoxelPosition,
     pub brick_size: LocalVoxelPosition,
