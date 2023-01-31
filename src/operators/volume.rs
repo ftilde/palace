@@ -1,7 +1,8 @@
 use futures::stream::StreamExt;
 
 use crate::{
-    data::{slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition, VolumeMetaData},
+    array::VolumeMetaData,
+    data::{slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
 };
@@ -198,8 +199,7 @@ pub fn rechunk<'op>(
                             in_begin_brick.y().raw..=in_end_brick.y().raw,
                             in_begin_brick.x().raw..=in_end_brick.x().raw
                         }
-                        .map(|(z, y, x)| BrickPosition::from([z.into(), y.into(), x.into()]))
-                        //NO_PUSH_main: simplify this via T: from in from impl
+                        .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                         .map(|pos| (input.bricks.request(pos), pos)),
                     );
                     while let Some((in_data_handle, in_brick_pos)) = stream.next().await {

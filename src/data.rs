@@ -1,5 +1,7 @@
 use std::ops::{Add, Div, Mul, Sub};
 
+use crate::array::ChunkMemInfo;
+
 pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> usize {
     s.into_iter().map(|v| v.raw as usize).product()
 }
@@ -85,11 +87,11 @@ pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
 #[repr(C)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub struct Vector<const N: usize, T>([T; N]);
+pub struct Vector<const N: usize, T>(pub [T; N]);
 
-impl<const N: usize, T> From<[T; N]> for Vector<N, T> {
-    fn from(value: [T; N]) -> Self {
-        Vector(value)
+impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
+    fn from(value: [I; N]) -> Self {
+        Vector(std::array::from_fn(|i| value[i].into()))
     }
 }
 
@@ -116,6 +118,14 @@ impl<T: Copy> Vector<3, T> {
         self.0[1]
     }
     pub fn z(&self) -> T {
+        self.0[0]
+    }
+}
+impl<T: Copy> Vector<2, T> {
+    pub fn x(&self) -> T {
+        self.0[1]
+    }
+    pub fn y(&self) -> T {
         self.0[0]
     }
 }
@@ -171,75 +181,6 @@ impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
 pub type LocalVoxelPosition = Vector<3, LocalVoxelCoordinate>;
 pub type VoxelPosition = Vector<3, GlobalVoxelCoordinate>;
 pub type BrickPosition = Vector<3, ChunkCoordinate>;
-
-pub struct ChunkMemInfo<const N: usize> {
-    pub mem_dimensions: Vector<N, LocalVoxelCoordinate>,
-    pub logical_dimensions: Vector<N, LocalVoxelCoordinate>,
-}
-impl<const N: usize> ChunkMemInfo<N> {
-    pub fn is_contiguous(&self) -> bool {
-        for i in 1..N {
-            if self.mem_dimensions.0[i] != self.logical_dimensions.0[i] {
-                return false;
-            }
-        }
-        true
-    }
-    pub fn mem_size(&self) -> usize {
-        hmul(self.mem_dimensions)
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct ArrayMetaData<const N: usize> {
-    pub dimensions: Vector<N, GlobalVoxelCoordinate>,
-    pub chunk_size: Vector<N, LocalVoxelCoordinate>,
-}
-
-impl<const N: usize> ArrayMetaData<N> {
-    pub fn num_voxels(&self) -> usize {
-        hmul(self.dimensions)
-    }
-    pub fn dimension_in_bricks(&self) -> Vector<N, ChunkCoordinate> {
-        self.dimensions.zip(self.chunk_size, |a, b| {
-            crate::util::div_round_up(a.raw, b.raw).into()
-        })
-    }
-    pub fn chunk_pos(&self, pos: Vector<N, GlobalVoxelCoordinate>) -> Vector<N, ChunkCoordinate> {
-        pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
-    }
-    pub fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
-        pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
-    }
-    pub fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
-        let next_pos = pos + Vector::fill(1.into());
-        let raw_end = self.chunk_begin(next_pos);
-        raw_end.zip(self.dimensions, std::cmp::min)
-    }
-    pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkMemInfo<N> {
-        ChunkMemInfo {
-            mem_dimensions: self.chunk_size,
-            logical_dimensions: self.logical_chunk_dim(pos),
-        }
-    }
-    fn logical_chunk_dim(
-        &self,
-        pos: Vector<N, ChunkCoordinate>,
-    ) -> Vector<N, LocalVoxelCoordinate> {
-        (self.chunk_end(pos) - self.chunk_begin(pos)).map(LocalVoxelCoordinate::interpret_as)
-    }
-}
-
-impl ArrayMetaData<3> {
-    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
-        let bp = self.dimension_in_bricks();
-        itertools::iproduct! { 0..bp.z().raw, 0..bp.y().raw, 0..bp.x().raw }
-            .map(|(z, y, x)| [z.into(), y.into(), x.into()].into())
-    }
-}
-
-pub type VolumeMetaData = ArrayMetaData<3>;
 
 fn dimension_order_stride<T: CoordinateType>(
     mem_size: Vector<3, Coordinate<T>>,

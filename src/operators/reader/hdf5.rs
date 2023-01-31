@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    data::{Coordinate, CoordinateType, LocalVoxelPosition, Vector, VolumeMetaData, VoxelPosition},
+    array::VolumeMetaData,
+    data::{Coordinate, CoordinateType, LocalVoxelPosition, Vector, VoxelPosition},
     operator::OperatorId,
     operators::volume::{VolumeOperator, VolumeOperatorState},
     Error,
@@ -19,7 +20,7 @@ impl<C: CoordinateType> TryFrom<Vec<hdf5::Ix>> for Vector<3, Coordinate<C>> {
 
     fn try_from(value: Vec<hdf5::Ix>) -> Result<Self, Self::Error> {
         match *value {
-            [z, y, x] => Ok([(z as u32).into(), (y as u32).into(), (x as u32).into()].into()),
+            [z, y, x] => Ok([(z as u32), (y as u32), (x as u32)].into()),
             _ => Err("Invalid number of dimensions".into()),
         }
     }

@@ -1,7 +1,8 @@
 use std::{fs::File, path::PathBuf};
 
 use crate::{
-    data::{BrickPosition, LocalVoxelPosition, VolumeMetaData, VoxelPosition},
+    array::VolumeMetaData,
+    data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     operator::{Operator, OperatorId},
     task::TaskContext,
     Error,

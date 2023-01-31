@@ -7,7 +7,7 @@ use runtime::RunTime;
 
 use crate::operators::volume;
 
-//mod array; //NO_PUSH_main Generalize using const N
+mod array;
 mod data;
 mod id;
 mod operator;

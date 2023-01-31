@@ -4,7 +4,8 @@ use sxd_xpath::evaluate_xpath;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    data::{LocalVoxelPosition, VolumeMetaData, VoxelPosition},
+    array::VolumeMetaData,
+    data::{LocalVoxelPosition, VoxelPosition},
     operator::OperatorId,
     operators::{volume::VolumeOperatorState, VolumeOperator},
     Error,
@@ -68,7 +69,7 @@ impl VvdVolumeSourceState {
         let format =
             evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@format")?.string();
 
-        let size = VoxelPosition::from([z.into(), y.into(), x.into()]);
+        let size = VoxelPosition::from([z, y, x]);
 
         if format != "float" {
             return Err(format!(
