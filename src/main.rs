@@ -38,6 +38,30 @@ struct CliArgs {
     with_vulkan: bool,
 }
 
+fn open_volume(
+    path: PathBuf,
+    brick_size_hint: LocalVoxelPosition,
+) -> Result<Box<dyn VolumeOperatorState>, Box<dyn std::error::Error>> {
+    let Some(file) = path.file_name() else {
+        return Err("No file name in path".into());
+    };
+    let file = file.to_string_lossy();
+    let segments = file.split('.').collect::<Vec<_>>();
+
+    Ok(match segments[..] {
+        [.., "vvd"] => Box::new(VvdVolumeSourceState::open(&path, brick_size_hint)?),
+        [.., "nii"] | [.., "nii", "gz"] => Box::new(NiftiVolumeSourceState::open_single(path)?),
+        [.., "hdr"] => {
+            let data = path.with_extension("img");
+            Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
+        }
+        [.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
+        _ => {
+            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
+        }
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
@@ -56,25 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .vvd_vol
         .extension()
         .map(|v| v.to_string_lossy().to_string());
-    let vol_state: Box<dyn VolumeOperatorState> = match extension.as_deref() {
-        Some("vvd") => Box::new(VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?),
-        Some("nii" | "nii.gz") => Box::new(NiftiVolumeSourceState::open_single(args.vvd_vol)?),
-        Some("hdr" | "hdr.gz") => {
-            let data = args.vvd_vol.with_extension("img");
-            Box::new(NiftiVolumeSourceState::open_separate(args.vvd_vol, data)?)
-        }
-        Some("h5") => Box::new(Hdf5VolumeSourceState::open(
-            args.vvd_vol,
-            "/volume".to_string(),
-        )?),
-        _ => {
-            return Err(format!(
-                "Unknown volume format for file {}",
-                args.vvd_vol.to_string_lossy()
-            )
-            .into())
-        }
-    };
+    let vol_state = open_volume(args.vvd_vol, brick_size)?;
 
     eval_network(&mut runtime, &*vol_state, &args.factor)
 }
