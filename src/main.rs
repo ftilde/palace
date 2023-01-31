@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use data::LocalVoxelPosition;
-use operators::{Hdf5VolumeSourceState, VolumeOperatorState, VvdVolumeSourceState};
+use operators::{
+    Hdf5VolumeSourceState, NiftiVolumeSourceState, VolumeOperatorState, VvdVolumeSourceState,
+};
 use runtime::RunTime;
 
 use crate::operators::volume;
@@ -56,6 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| v.to_string_lossy().to_string());
     let vol_state: Box<dyn VolumeOperatorState> = match extension.as_deref() {
         Some("vvd") => Box::new(VvdVolumeSourceState::open(&args.vvd_vol, brick_size)?),
+        Some("nii" | "nii.gz") => Box::new(NiftiVolumeSourceState::open_single(args.vvd_vol)?),
+        Some("hdr" | "hdr.gz") => {
+            let data = args.vvd_vol.with_extension("img");
+            Box::new(NiftiVolumeSourceState::open_separate(args.vvd_vol, data)?)
+        }
         Some("h5") => Box::new(Hdf5VolumeSourceState::open(
             args.vvd_vol,
             "/volume".to_string(),

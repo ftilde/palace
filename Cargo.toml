@@ -24,3 +24,4 @@ oneshot = { version = "0.1.5", default-features = false }
 hdf5 = "0.8.1"
 ndarray = "0.15.6"
 xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
+nifti = { version = "0.15.0", features = ["ndarray_volumes"] }
