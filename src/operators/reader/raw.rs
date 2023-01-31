@@ -41,7 +41,8 @@ impl RawVolumeSourceState {
             chunk_size: brick_size,
         };
         for pos in positions {
-            let begin = m.chunk_begin(pos);
+            let chunk_info = m.chunk_info(pos);
+            let begin = chunk_info.begin;
             if !(begin.x() < m.dimensions.x()
                 && begin.y() < m.dimensions.y()
                 && begin.z() < m.dimensions.z())
@@ -65,9 +66,9 @@ impl RawVolumeSourceState {
                     v.write(f32::NAN);
                 });
 
-                let mut out_chunk = crate::data::chunk_mut(brick_data, m.chunk_info(pos));
-                let begin = m.chunk_begin(pos);
-                let end = m.chunk_end(pos);
+                let mut out_chunk = crate::data::chunk_mut(brick_data, &chunk_info);
+                let begin = chunk_info.begin();
+                let end = chunk_info.end();
                 let in_chunk = in_.slice(ndarray::s!(
                     begin.z().raw as usize..end.z().raw as usize,
                     begin.y().raw as usize..end.y().raw as usize,

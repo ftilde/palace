@@ -1,6 +1,6 @@
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::array::ChunkMemInfo;
+use crate::array::ChunkInfo;
 
 pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> usize {
     s.into_iter().map(|v| v.raw as usize).product()
@@ -225,7 +225,7 @@ pub fn slice_range<T: CoordinateType>(
     ]
 }
 
-pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo<3>) -> ndarray::ArrayView3<'a, T> {
+pub fn chunk<'a, T>(data: &'a [T], brick_info: &ChunkInfo<3>) -> ndarray::ArrayView3<'a, T> {
     if brick_info.is_contiguous() {
         ndarray::ArrayView3::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
     } else {
@@ -239,7 +239,7 @@ pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo<3>) -> ndarray::Arra
 
 pub fn chunk_mut<'a, T>(
     data: &'a mut [T],
-    brick_info: ChunkMemInfo<3>,
+    brick_info: &ChunkInfo<3>,
 ) -> ndarray::ArrayViewMut3<'a, T> {
     if brick_info.is_contiguous() {
         ndarray::ArrayViewMut3::from_shape(contiguous_shape(brick_info.logical_dimensions), data)

@@ -122,8 +122,9 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 let mut tasks = Vec::new();
                 while let Some((brick_data, brick_pos)) = stream.next().await {
                     // Second, when any brick arrives, create a compute future...
+                    let chunk_info = vol.chunk_info(brick_pos);
                     let mut task = Box::pin(async move {
-                        let brick = crate::data::chunk(&brick_data, vol.chunk_info(brick_pos));
+                        let brick = crate::data::chunk(&brick_data, &chunk_info);
                         ctx.submit(ctx.spawn_compute(|| {
                             brick.iter().sum::<f32>()
                         }))
@@ -143,7 +144,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                     sum += task.await;
                 }
 
-                let v = sum / vol.num_voxels() as f32;
+                let v = sum / vol.num_elements() as f32;
 
                 ctx.write(v)
             }
@@ -179,19 +180,19 @@ pub fn rechunk<'op>(
                     m_out
                 };
                 for pos in positions {
-                    let out_begin = m_out.chunk_begin(pos);
-                    let out_end = m_out.chunk_end(pos);
+                    let out_info = m_out.chunk_info(pos);
+                    let out_begin = out_info.begin();
+                    let out_end = out_info.end();
 
                     let in_begin_brick = m_in.chunk_pos(out_begin);
                     let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1.into()));
 
-                    let out_info = m_out.chunk_info(pos);
-                    let mut brick_handle = ctx.alloc_slot(pos, out_info.mem_size())?;
+                    let mut brick_handle = ctx.alloc_slot(pos, out_info.mem_elements())?;
                     let out_data = &mut *brick_handle;
                     out_data.iter_mut().for_each(|v| {
                         v.write(f32::NAN);
                     });
-                    let mut out_chunk = crate::data::chunk_mut(out_data, out_info);
+                    let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
 
                     let mut stream = ctx.submit_unordered_with_data(
                         itertools::iproduct! {
@@ -204,22 +205,22 @@ pub fn rechunk<'op>(
                     );
                     while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
                         let in_data = &*in_data_handle;
-                        let in_chunk = crate::data::chunk(in_data, m_in.chunk_info(in_brick_pos));
+                        let in_info = m_in.chunk_info(in_brick_pos);
+
+                        let in_chunk = crate::data::chunk(in_data, &in_info);
                         ctx.submit(ctx.spawn_compute(|| {
-                            let in_begin = m_in.chunk_begin(in_brick_pos);
-                            let in_end = m_in.chunk_end(in_brick_pos);
+                            let in_begin = in_info.begin();
+                            let in_end = in_info.end();
 
                             let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
                             let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
                             let overlap_size = (overlap_end - overlap_begin)
                                 .map(LocalVoxelCoordinate::interpret_as);
 
-                            let in_chunk_begin =
-                                (overlap_begin - in_begin).map(LocalVoxelCoordinate::interpret_as);
+                            let in_chunk_begin = in_info.in_chunk(overlap_begin);
                             let in_chunk_end = in_chunk_begin + overlap_size;
 
-                            let out_chunk_begin =
-                                (overlap_begin - out_begin).map(LocalVoxelCoordinate::interpret_as);
+                            let out_chunk_begin = out_info.in_chunk(overlap_begin);
                             let out_chunk_end = out_chunk_begin + overlap_size;
 
                             let mut o =

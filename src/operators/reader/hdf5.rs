@@ -47,10 +47,9 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
             move |ctx, positions, _| {
                 async move {
                     for pos in positions {
-                        let begin = self.metadata.chunk_begin(pos);
-                        let end = self.metadata.chunk_end(pos);
+                        let chunk = self.metadata.chunk_info(pos);
 
-                        let selection = to_hdf5_hyperslab(begin, end);
+                        let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());
 
                         let num_voxels = crate::data::hmul(self.metadata.chunk_size);
 
@@ -61,8 +60,8 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                                 v.write(f32::NAN);
                             });
 
-                            let mut out_chunk =
-                                crate::data::chunk_mut(brick_data, self.metadata.chunk_info(pos));
+                            let out_info = self.metadata.chunk_info(pos);
+                            let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
                             let in_chunk = self
                                 .dataset
                                 .read_slice::<f32, _, ndarray::Ix3>(selection)

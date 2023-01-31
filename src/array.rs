@@ -1,10 +1,11 @@
 use crate::data::{hmul, ChunkCoordinate, GlobalVoxelCoordinate, LocalVoxelCoordinate, Vector};
 
-pub struct ChunkMemInfo<const N: usize> {
+pub struct ChunkInfo<const N: usize> {
     pub mem_dimensions: Vector<N, LocalVoxelCoordinate>,
     pub logical_dimensions: Vector<N, LocalVoxelCoordinate>,
+    pub begin: Vector<N, GlobalVoxelCoordinate>,
 }
-impl<const N: usize> ChunkMemInfo<N> {
+impl<const N: usize> ChunkInfo<N> {
     pub fn is_contiguous(&self) -> bool {
         for i in 1..N {
             if self.mem_dimensions.0[i] != self.logical_dimensions.0[i] {
@@ -13,8 +14,22 @@ impl<const N: usize> ChunkMemInfo<N> {
         }
         true
     }
-    pub fn mem_size(&self) -> usize {
+    pub fn mem_elements(&self) -> usize {
         hmul(self.mem_dimensions)
+    }
+
+    pub fn in_chunk(
+        &self,
+        pos: Vector<N, GlobalVoxelCoordinate>,
+    ) -> Vector<N, LocalVoxelCoordinate> {
+        (pos - self.begin).map(LocalVoxelCoordinate::interpret_as)
+    }
+
+    pub fn begin(&self) -> Vector<N, GlobalVoxelCoordinate> {
+        self.begin
+    }
+    pub fn end(&self) -> Vector<N, GlobalVoxelCoordinate> {
+        self.begin + self.logical_dimensions
     }
 }
 
@@ -26,7 +41,7 @@ pub struct ArrayMetaData<const N: usize> {
 }
 
 impl<const N: usize> ArrayMetaData<N> {
-    pub fn num_voxels(&self) -> usize {
+    pub fn num_elements(&self) -> usize {
         hmul(self.dimensions)
     }
     pub fn dimension_in_bricks(&self) -> Vector<N, ChunkCoordinate> {
@@ -37,25 +52,23 @@ impl<const N: usize> ArrayMetaData<N> {
     pub fn chunk_pos(&self, pos: Vector<N, GlobalVoxelCoordinate>) -> Vector<N, ChunkCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
     }
-    pub fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+    fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
-    pub fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+    fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
         let next_pos = pos + Vector::fill(1.into());
         let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
     }
-    pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkMemInfo<N> {
-        ChunkMemInfo {
+    pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkInfo<N> {
+        let begin = self.chunk_begin(pos);
+        let end = self.chunk_end(pos);
+        let logical_dim = (end - begin).map(LocalVoxelCoordinate::interpret_as);
+        ChunkInfo {
             mem_dimensions: self.chunk_size,
-            logical_dimensions: self.logical_chunk_dim(pos),
+            logical_dimensions: logical_dim,
+            begin,
         }
-    }
-    fn logical_chunk_dim(
-        &self,
-        pos: Vector<N, ChunkCoordinate>,
-    ) -> Vector<N, LocalVoxelCoordinate> {
-        (self.chunk_end(pos) - self.chunk_begin(pos)).map(LocalVoxelCoordinate::interpret_as)
     }
 }
 
