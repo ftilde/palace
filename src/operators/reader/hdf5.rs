@@ -46,12 +46,12 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
             move |ctx, positions, _| {
                 async move {
                     for pos in positions {
-                        let begin = self.metadata.brick_begin(pos);
-                        let end = self.metadata.brick_end(pos);
+                        let begin = self.metadata.chunk_begin(pos);
+                        let end = self.metadata.chunk_end(pos);
 
                         let selection = to_hdf5_hyperslab(begin, end);
 
-                        let num_voxels = crate::data::hmul(self.metadata.brick_size);
+                        let num_voxels = crate::data::hmul(self.metadata.chunk_size);
 
                         let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
@@ -61,7 +61,7 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                             });
 
                             let mut out_chunk =
-                                crate::data::chunk_mut(brick_data, self.metadata.brick_info(pos));
+                                crate::data::chunk_mut(brick_data, self.metadata.chunk_info(pos));
                             let in_chunk = self
                                 .dataset
                                 .read_slice::<f32, _, ndarray::Ix3>(selection)
@@ -97,7 +97,7 @@ impl Hdf5VolumeSourceState {
 
         let metadata = VolumeMetaData {
             dimensions,
-            brick_size,
+            chunk_size: brick_size,
         };
 
         Ok(Hdf5VolumeSourceState {

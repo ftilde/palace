@@ -122,7 +122,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 while let Some((brick_data, brick_pos)) = stream.next().await {
                     // Second, when any brick arrives, create a compute future...
                     let mut task = Box::pin(async move {
-                        let brick = crate::data::chunk(&brick_data, vol.brick_info(brick_pos));
+                        let brick = crate::data::chunk(&brick_data, vol.chunk_info(brick_pos));
                         ctx.submit(ctx.spawn_compute(|| {
                             brick.iter().sum::<f32>()
                         }))
@@ -163,7 +163,7 @@ pub fn rechunk<'op>(
             async move {
                 let req = input.metadata.request_scalar();
                 let mut m = ctx.submit(req).await;
-                m.brick_size = brick_size;
+                m.chunk_size = brick_size;
                 ctx.write(m)
             }
             .into()
@@ -174,23 +174,23 @@ pub fn rechunk<'op>(
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
                 let m_out = {
                     let mut m_out = m_in;
-                    m_out.brick_size = brick_size;
+                    m_out.chunk_size = brick_size;
                     m_out
                 };
                 for pos in positions {
-                    let out_begin = m_out.brick_begin(pos);
-                    let out_end = m_out.brick_end(pos);
+                    let out_begin = m_out.chunk_begin(pos);
+                    let out_end = m_out.chunk_end(pos);
 
-                    let in_begin_brick = m_in.brick_pos(out_begin);
-                    let in_end_brick = m_in.brick_pos(out_end.map(|v| v - 1.into()));
+                    let in_begin_brick = m_in.chunk_pos(out_begin);
+                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1.into()));
 
-                    let num_voxels = crate::data::hmul(m_out.brick_size);
-                    let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
+                    let out_info = m_out.chunk_info(pos);
+                    let mut brick_handle = ctx.alloc_slot(pos, out_info.mem_size())?;
                     let out_data = &mut *brick_handle;
                     out_data.iter_mut().for_each(|v| {
                         v.write(f32::NAN);
                     });
-                    let mut out_chunk = crate::data::chunk_mut(out_data, m_out.brick_info(pos));
+                    let mut out_chunk = crate::data::chunk_mut(out_data, out_info);
 
                     let mut stream = ctx.submit_unordered_with_data(
                         itertools::iproduct! {
@@ -204,10 +204,10 @@ pub fn rechunk<'op>(
                     );
                     while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
                         let in_data = &*in_data_handle;
-                        let in_chunk = crate::data::chunk(in_data, m_in.brick_info(in_brick_pos));
+                        let in_chunk = crate::data::chunk(in_data, m_in.chunk_info(in_brick_pos));
                         ctx.submit(ctx.spawn_compute(|| {
-                            let in_begin = m_in.brick_begin(in_brick_pos);
-                            let in_end = m_in.brick_end(in_brick_pos);
+                            let in_begin = m_in.chunk_begin(in_brick_pos);
+                            let in_end = m_in.chunk_end(in_brick_pos);
 
                             let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
                             let overlap_end = in_end.zip(out_end, |i, o| i.min(o));

@@ -47,7 +47,7 @@ impl VolumeOperatorState for VvdVolumeSourceState {
             move |ctx, positions, _| {
                 async move {
                     self.raw
-                        .load_raw_bricks(self.metadata.brick_size, ctx, positions)
+                        .load_raw_bricks(self.metadata.chunk_size, ctx, positions)
                         .await
                 }
                 .into()
@@ -92,7 +92,7 @@ impl VvdVolumeSourceState {
 
         let metadata = VolumeMetaData {
             dimensions: size,
-            brick_size,
+            chunk_size: brick_size,
         };
 
         let raw = RawVolumeSourceState::open(raw_path, size)?;

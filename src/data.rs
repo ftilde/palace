@@ -24,8 +24,8 @@ impl CoordinateType for LocalVoxelCoordinateType {}
 pub struct GlobalVoxelCoordinateType;
 impl CoordinateType for GlobalVoxelCoordinateType {}
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BrickCoordinateType;
-impl CoordinateType for BrickCoordinateType {}
+pub struct ChunkCoordinateType;
+impl CoordinateType for ChunkCoordinateType {}
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -81,7 +81,7 @@ impl<T: CoordinateType> Div for Coordinate<T> {
 
 pub type LocalVoxelCoordinate = Coordinate<LocalVoxelCoordinateType>;
 pub type GlobalVoxelCoordinate = Coordinate<GlobalVoxelCoordinateType>;
-pub type BrickCoordinate = Coordinate<BrickCoordinateType>;
+pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
 #[repr(C)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -170,61 +170,76 @@ impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
 
 pub type LocalVoxelPosition = Vector<3, LocalVoxelCoordinate>;
 pub type VoxelPosition = Vector<3, GlobalVoxelCoordinate>;
-pub type BrickPosition = Vector<3, BrickCoordinate>;
+pub type BrickPosition = Vector<3, ChunkCoordinate>;
 
-pub struct ChunkMemInfo {
-    pub mem_size: LocalVoxelPosition,
-    pub logical_size: LocalVoxelPosition,
+pub struct ChunkMemInfo<const N: usize> {
+    pub mem_dimensions: Vector<N, LocalVoxelCoordinate>,
+    pub logical_dimensions: Vector<N, LocalVoxelCoordinate>,
 }
-impl ChunkMemInfo {
+impl<const N: usize> ChunkMemInfo<N> {
     pub fn is_contiguous(&self) -> bool {
-        self.mem_size.x() == self.logical_size.x() && self.mem_size.y() == self.logical_size.y()
+        for i in 1..N {
+            if self.mem_dimensions.0[i] != self.logical_dimensions.0[i] {
+                return false;
+            }
+        }
+        true
+    }
+    pub fn mem_size(&self) -> usize {
+        hmul(self.mem_dimensions)
     }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct VolumeMetaData {
-    pub dimensions: VoxelPosition,
-    pub brick_size: LocalVoxelPosition,
+pub struct ArrayMetaData<const N: usize> {
+    pub dimensions: Vector<N, GlobalVoxelCoordinate>,
+    pub chunk_size: Vector<N, LocalVoxelCoordinate>,
 }
 
-impl VolumeMetaData {
+impl<const N: usize> ArrayMetaData<N> {
     pub fn num_voxels(&self) -> usize {
         hmul(self.dimensions)
     }
-    pub fn dimension_in_bricks(&self) -> BrickPosition {
-        self.dimensions.zip(self.brick_size, |a, b| {
+    pub fn dimension_in_bricks(&self) -> Vector<N, ChunkCoordinate> {
+        self.dimensions.zip(self.chunk_size, |a, b| {
             crate::util::div_round_up(a.raw, b.raw).into()
         })
     }
-    pub fn brick_pos(&self, pos: VoxelPosition) -> BrickPosition {
-        pos.zip(self.brick_size, |a, b| (a.raw / b.raw).into())
+    pub fn chunk_pos(&self, pos: Vector<N, GlobalVoxelCoordinate>) -> Vector<N, ChunkCoordinate> {
+        pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
     }
-    pub fn brick_begin(&self, pos: BrickPosition) -> VoxelPosition {
-        pos.zip(self.brick_size, |a, b| (a.raw * b.raw).into())
+    pub fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+        pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
-    pub fn brick_info(&self, pos: BrickPosition) -> ChunkMemInfo {
-        ChunkMemInfo {
-            mem_size: self.brick_size,
-            logical_size: self.brick_dim(pos),
-        }
-    }
-    pub fn brick_end(&self, pos: BrickPosition) -> VoxelPosition {
-        let next_pos = pos + BrickPosition::fill(1.into());
-        let raw_end = self.brick_begin(next_pos);
+    pub fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+        let next_pos = pos + Vector::fill(1.into());
+        let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
     }
-    pub fn brick_dim(&self, pos: BrickPosition) -> LocalVoxelPosition {
-        (self.brick_end(pos) - self.brick_begin(pos)).map(LocalVoxelCoordinate::interpret_as)
+    pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkMemInfo<N> {
+        ChunkMemInfo {
+            mem_dimensions: self.chunk_size,
+            logical_dimensions: self.logical_chunk_dim(pos),
+        }
     }
+    fn logical_chunk_dim(
+        &self,
+        pos: Vector<N, ChunkCoordinate>,
+    ) -> Vector<N, LocalVoxelCoordinate> {
+        (self.chunk_end(pos) - self.chunk_begin(pos)).map(LocalVoxelCoordinate::interpret_as)
+    }
+}
 
-    pub fn brick_positions(&self) -> impl Iterator<Item = BrickPosition> {
+impl ArrayMetaData<3> {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
         let bp = self.dimension_in_bricks();
         itertools::iproduct! { 0..bp.z().raw, 0..bp.y().raw, 0..bp.x().raw }
             .map(|(z, y, x)| [z.into(), y.into(), x.into()].into())
     }
 }
+
+pub type VolumeMetaData = ArrayMetaData<3>;
 
 fn dimension_order_stride<T: CoordinateType>(
     mem_size: Vector<3, Coordinate<T>>,
@@ -269,12 +284,12 @@ pub fn slice_range<T: CoordinateType>(
     ]
 }
 
-pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo) -> ndarray::ArrayView3<'a, T> {
+pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo<3>) -> ndarray::ArrayView3<'a, T> {
     if brick_info.is_contiguous() {
-        ndarray::ArrayView3::from_shape(contiguous_shape(brick_info.logical_size), data)
+        ndarray::ArrayView3::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
     } else {
         ndarray::ArrayView3::from_shape(
-            stride_shape(brick_info.logical_size, brick_info.mem_size),
+            stride_shape(brick_info.logical_dimensions, brick_info.mem_dimensions),
             data,
         )
     }
@@ -283,13 +298,13 @@ pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo) -> ndarray::ArrayVi
 
 pub fn chunk_mut<'a, T>(
     data: &'a mut [T],
-    brick_info: ChunkMemInfo,
+    brick_info: ChunkMemInfo<3>,
 ) -> ndarray::ArrayViewMut3<'a, T> {
     if brick_info.is_contiguous() {
-        ndarray::ArrayViewMut3::from_shape(contiguous_shape(brick_info.logical_size), data)
+        ndarray::ArrayViewMut3::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
     } else {
         ndarray::ArrayViewMut3::from_shape(
-            stride_shape(brick_info.logical_size, brick_info.mem_size),
+            stride_shape(brick_info.logical_dimensions, brick_info.mem_dimensions),
             data,
         )
     }
