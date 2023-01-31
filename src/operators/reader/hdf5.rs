@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    data::{
-        to_linear, Coordinate, CoordinateType, LocalVoxelCoordinate, LocalVoxelPosition, Vector,
-        VolumeMetaData, VoxelPosition,
-    },
+    data::{Coordinate, CoordinateType, LocalVoxelPosition, Vector, VolumeMetaData, VoxelPosition},
     operator::OperatorId,
     operators::volume::{VolumeOperator, VolumeOperatorState},
     Error,
@@ -58,44 +55,18 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
 
                         let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
-                        let brick_dim = self.metadata.brick_dim(pos);
                         ctx.submit(ctx.spawn_io(|| {
                             brick_data.iter_mut().for_each(|v| {
                                 v.write(f32::NAN);
                             });
 
-                            let vals = self
+                            let mut out_chunk =
+                                crate::data::chunk_mut(brick_data, self.metadata.brick_info(pos));
+                            let in_chunk = self
                                 .dataset
                                 .read_slice::<f32, _, ndarray::Ix3>(selection)
                                 .unwrap();
-
-                            for z in 0..brick_dim.z().raw {
-                                for y in 0..brick_dim.y().raw {
-                                    let z: LocalVoxelCoordinate = z.into();
-                                    let y: LocalVoxelCoordinate = y.into();
-                                    let line_begin: LocalVoxelCoordinate = 0.into();
-                                    let line_end = brick_dim.x();
-                                    let in_ = vals.slice(ndarray::s!(
-                                        z.raw as usize,
-                                        y.raw as usize,
-                                        line_begin.raw as usize..line_end.raw as usize
-                                    ));
-
-                                    let bf32 = to_linear(
-                                        [z, y, line_begin].into(),
-                                        self.metadata.brick_size,
-                                    );
-                                    let ef32 = to_linear(
-                                        [z, y, line_end].into(),
-                                        self.metadata.brick_size,
-                                    );
-
-                                    let out = &mut brick_data[bf32..ef32];
-                                    for (in_, out) in in_.iter().zip(out.iter_mut()) {
-                                        out.write(*in_);
-                                    }
-                                }
-                            }
+                            ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
                         }))
                         .await;
 

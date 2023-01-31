@@ -1,10 +1,7 @@
 use futures::stream::StreamExt;
 
 use crate::{
-    data::{
-        to_linear, Brick, BrickPosition, GlobalVoxelCoordinate, LocalVoxelCoordinate,
-        LocalVoxelPosition, VolumeMetaData, VoxelPosition,
-    },
+    data::{slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition, VolumeMetaData},
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
 };
@@ -125,11 +122,9 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 while let Some((brick_data, brick_pos)) = stream.next().await {
                     // Second, when any brick arrives, create a compute future...
                     let mut task = Box::pin(async move {
-                        let brick =
-                            Brick::new(&*brick_data, vol.brick_dim(brick_pos), vol.brick_size);
+                        let brick = crate::data::chunk(&brick_data, vol.brick_info(brick_pos));
                         ctx.submit(ctx.spawn_compute(|| {
-                            let voxels = brick.voxels().collect::<Vec<_>>();
-                            voxels.iter().sum::<f32>()
+                            brick.iter().sum::<f32>()
                         }))
                         .await
                     });
@@ -195,6 +190,7 @@ pub fn rechunk<'op>(
                     out_data.iter_mut().for_each(|v| {
                         v.write(f32::NAN);
                     });
+                    let mut out_chunk = crate::data::chunk_mut(out_data, m_out.brick_info(pos));
 
                     let mut stream = ctx.submit_unordered_with_data(
                         itertools::iproduct! {
@@ -208,31 +204,29 @@ pub fn rechunk<'op>(
                     );
                     while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
                         let in_data = &*in_data_handle;
+                        let in_chunk = crate::data::chunk(in_data, m_in.brick_info(in_brick_pos));
                         ctx.submit(ctx.spawn_compute(|| {
                             let in_begin = m_in.brick_begin(in_brick_pos);
                             let in_end = m_in.brick_end(in_brick_pos);
 
                             let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
                             let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                            let overlap_size = (overlap_end - overlap_begin)
+                                .map(LocalVoxelCoordinate::interpret_as);
 
-                            for z in overlap_begin.z().raw..overlap_end.z().raw {
-                                for y in overlap_begin.y().raw..overlap_end.y().raw {
-                                    for x in overlap_begin.x().raw..overlap_end.x().raw {
-                                        let z = GlobalVoxelCoordinate::from(z);
-                                        let y = GlobalVoxelCoordinate::from(y);
-                                        let x = GlobalVoxelCoordinate::from(x);
+                            let in_chunk_begin =
+                                (overlap_begin - in_begin).map(LocalVoxelCoordinate::interpret_as);
+                            let in_chunk_end = in_chunk_begin + overlap_size;
 
-                                        let p = VoxelPosition::from([z, y, x]);
-                                        let p_in =
-                                            (p - in_begin).map(LocalVoxelCoordinate::interpret_as);
-                                        let p_in_lin = to_linear(p_in, m_in.brick_size);
-                                        let p_out =
-                                            (p - out_begin).map(LocalVoxelCoordinate::interpret_as);
-                                        let p_out_lin = to_linear(p_out, m_out.brick_size);
-                                        out_data[p_out_lin].write(in_data[p_in_lin]);
-                                    }
-                                }
-                            }
+                            let out_chunk_begin =
+                                (overlap_begin - out_begin).map(LocalVoxelCoordinate::interpret_as);
+                            let out_chunk_end = out_chunk_begin + overlap_size;
+
+                            let mut o =
+                                out_chunk.slice_mut(slice_range(out_chunk_begin, out_chunk_end));
+                            let i = in_chunk.slice(slice_range(in_chunk_begin, in_chunk_end));
+
+                            ndarray::azip!((o in &mut o, i in &i) { o.write(*i); });
                         }))
                         .await;
                     }

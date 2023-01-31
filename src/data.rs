@@ -4,13 +4,16 @@ pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> u
     s.into_iter().map(|v| v.raw as usize).product()
 }
 
-pub fn to_linear<T: CoordinateType>(
-    pos: Vector<3, Coordinate<T>>,
-    dim: Vector<3, Coordinate<T>>,
-) -> usize {
-    (pos.z().raw as usize * dim.y().raw as usize + pos.y().raw as usize) * dim.x().raw as usize
-        + pos.x().raw as usize
-}
+//pub fn to_linear<const N: usize, T: CoordinateType>(
+//    pos: Vector<N, Coordinate<T>>,
+//    dim: Vector<N, Coordinate<T>>,
+//) -> usize {
+//    let mut out = pos.0[0].raw as usize;
+//    for i in 1..N {
+//        out = out * dim.0[i].raw as usize + pos.0[i].raw as usize;
+//    }
+//    out
+//}
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
@@ -169,6 +172,16 @@ pub type LocalVoxelPosition = Vector<3, LocalVoxelCoordinate>;
 pub type VoxelPosition = Vector<3, GlobalVoxelCoordinate>;
 pub type BrickPosition = Vector<3, BrickCoordinate>;
 
+pub struct ChunkMemInfo {
+    pub mem_size: LocalVoxelPosition,
+    pub logical_size: LocalVoxelPosition,
+}
+impl ChunkMemInfo {
+    pub fn is_contiguous(&self) -> bool {
+        self.mem_size.x() == self.logical_size.x() && self.mem_size.y() == self.logical_size.y()
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct VolumeMetaData {
@@ -191,6 +204,12 @@ impl VolumeMetaData {
     pub fn brick_begin(&self, pos: BrickPosition) -> VoxelPosition {
         pos.zip(self.brick_size, |a, b| (a.raw * b.raw).into())
     }
+    pub fn brick_info(&self, pos: BrickPosition) -> ChunkMemInfo {
+        ChunkMemInfo {
+            mem_size: self.brick_size,
+            logical_size: self.brick_dim(pos),
+        }
+    }
     pub fn brick_end(&self, pos: BrickPosition) -> VoxelPosition {
         let next_pos = pos + BrickPosition::fill(1.into());
         let raw_end = self.brick_begin(next_pos);
@@ -207,23 +226,103 @@ impl VolumeMetaData {
     }
 }
 
-pub struct Brick<'a> {
-    size: LocalVoxelPosition,
-    mem_size: LocalVoxelPosition,
-    data: &'a [f32],
+fn dimension_order_stride<T: CoordinateType>(
+    mem_size: Vector<3, Coordinate<T>>,
+) -> (usize, usize, usize) {
+    (
+        mem_size.x().raw as usize * mem_size.y().raw as usize,
+        mem_size.x().raw as usize,
+        1,
+    )
+}
+pub fn contiguous_shape<T: CoordinateType>(
+    size: Vector<3, Coordinate<T>>,
+) -> ndarray::Shape<ndarray::Ix3> {
+    ndarray::ShapeBuilder::into_shape((
+        size.z().raw as usize,
+        size.y().raw as usize,
+        size.x().raw as usize,
+    ))
+}
+pub fn stride_shape<T: CoordinateType>(
+    size: Vector<3, Coordinate<T>>,
+    mem_size: Vector<3, Coordinate<T>>,
+) -> ndarray::StrideShape<ndarray::Ix3> {
+    use ndarray::ShapeBuilder;
+    let stride = dimension_order_stride(mem_size);
+    let size = (
+        size.z().raw as usize,
+        size.y().raw as usize,
+        size.x().raw as usize,
+    );
+    size.strides(stride)
 }
 
-impl<'a> Brick<'a> {
-    pub fn new(data: &'a [f32], size: LocalVoxelPosition, mem_size: LocalVoxelPosition) -> Self {
-        Self {
-            data,
-            size,
-            mem_size,
-        }
-    }
-    pub fn voxels(&'a self) -> impl Iterator<Item = f32> + 'a {
-        itertools::iproduct! { 0..self.size.z().raw, 0..self.size.y().raw, 0..self.size.x().raw }
-            .map(|(z, y, x)| to_linear([z.into(), y.into(), x.into()].into(), self.mem_size))
-            .map(|i| self.data[i])
-    }
+pub fn slice_range<T: CoordinateType>(
+    begin: Vector<3, Coordinate<T>>,
+    end: Vector<3, Coordinate<T>>,
+) -> ndarray::SliceInfo<[ndarray::SliceInfoElem; 3], ndarray::Ix3, ndarray::Ix3> {
+    ndarray::s![
+        begin.z().raw as usize..end.z().raw as usize,
+        begin.y().raw as usize..end.y().raw as usize,
+        begin.x().raw as usize..end.x().raw as usize,
+    ]
 }
+
+pub fn chunk<'a, T>(data: &'a [T], brick_info: ChunkMemInfo) -> ndarray::ArrayView3<'a, T> {
+    if brick_info.is_contiguous() {
+        ndarray::ArrayView3::from_shape(contiguous_shape(brick_info.logical_size), data)
+    } else {
+        ndarray::ArrayView3::from_shape(
+            stride_shape(brick_info.logical_size, brick_info.mem_size),
+            data,
+        )
+    }
+    .unwrap()
+}
+
+pub fn chunk_mut<'a, T>(
+    data: &'a mut [T],
+    brick_info: ChunkMemInfo,
+) -> ndarray::ArrayViewMut3<'a, T> {
+    if brick_info.is_contiguous() {
+        ndarray::ArrayViewMut3::from_shape(contiguous_shape(brick_info.logical_size), data)
+    } else {
+        ndarray::ArrayViewMut3::from_shape(
+            stride_shape(brick_info.logical_size, brick_info.mem_size),
+            data,
+        )
+    }
+    .unwrap()
+}
+
+//pub struct Brick<'a, T> {
+//    size: LocalVoxelPosition,
+//    mem_size: LocalVoxelPosition,
+//    data: &'a [T],
+//}
+//
+//impl<'a, T: Copy> Brick<'a, T> {
+//    pub fn new(data: &'a [T], size: LocalVoxelPosition, mem_size: LocalVoxelPosition) -> Self {
+//        Self {
+//            data,
+//            size,
+//            mem_size,
+//        }
+//    }
+//    pub fn row(&'a self, index: Vector<2, LocalVoxelCoordinate>) -> &'a [T] {
+//        let begin = to_linear(index, [self.mem_size.z(), self.mem_size.y()].into())
+//            * self.mem_size.x().raw as usize;
+//        let end = begin + self.mem_size.x().raw as usize;
+//        &self.data[begin..end]
+//    }
+//    pub fn rows(&'a self) -> impl Iterator<Item = &'a [T]> + 'a {
+//        itertools::iproduct! { 0..self.size.z().raw, 0..self.size.y().raw }
+//            .map(|(z, y)| self.row([z.into(), y.into()].into()))
+//    }
+//    pub fn voxels(&'a self) -> impl Iterator<Item = T> + 'a {
+//        itertools::iproduct! { 0..self.size.z().raw, 0..self.size.y().raw, 0..self.size.x().raw }
+//            .map(|(z, y, x)| to_linear([z.into(), y.into(), x.into()].into(), self.mem_size))
+//            .map(|i| self.data[i])
+//    }
+//}

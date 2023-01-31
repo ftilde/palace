@@ -1,7 +1,7 @@
 use std::{fs::File, path::PathBuf};
 
 use crate::{
-    data::{to_linear, BrickPosition, LocalVoxelPosition, VolumeMetaData, VoxelPosition},
+    data::{BrickPosition, LocalVoxelPosition, VolumeMetaData, VoxelPosition},
     operator::{Operator, OperatorId},
     task::TaskContext,
     Error,
@@ -47,36 +47,33 @@ impl RawVolumeSourceState {
             {
                 return Err("Brick position is outside of volume".into());
             }
-            let brick_dim = m.brick_dim(pos);
             let num_voxels = crate::data::hmul(m.brick_size);
-
-            let voxel_size = std::mem::size_of::<f32>();
 
             let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
             let brick_data = &mut *brick_handle;
+
+            let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
+            let in_ = ndarray::ArrayView3::from_shape(
+                crate::data::stride_shape(m.dimensions, m.dimensions),
+                in_,
+            )
+            .unwrap();
+
             ctx.submit(ctx.spawn_io(move || {
                 brick_data.iter_mut().for_each(|v| {
                     v.write(f32::NAN);
                 });
 
-                for z in 0..brick_dim.z().raw {
-                    for y in 0..brick_dim.y().raw {
-                        let pb: LocalVoxelPosition = [z.into(), y.into(), 0.into()].into();
-                        let pe: LocalVoxelPosition = [z.into(), y.into(), brick_dim.x()].into();
-                        let bu8 = voxel_size * to_linear(begin + pb, m.dimensions);
-                        let eu8 = voxel_size * to_linear(begin + pe, m.dimensions);
+                let mut out_chunk = crate::data::chunk_mut(brick_data, m.brick_info(pos));
+                let begin = m.brick_begin(pos);
+                let end = m.brick_end(pos);
+                let in_chunk = in_.slice(ndarray::s!(
+                    begin.z().raw as usize..end.z().raw as usize,
+                    begin.y().raw as usize..end.y().raw as usize,
+                    begin.x().raw as usize..end.x().raw as usize,
+                ));
 
-                        let bf32 = to_linear(pb, m.brick_size);
-                        let ef32 = to_linear(pe, m.brick_size);
-
-                        let in_ = &self.mmap[bu8..eu8];
-                        let out = &mut brick_data[bf32..ef32];
-                        let in_slice: &[f32] = bytemuck::cast_slice(in_);
-                        for (in_, out) in in_slice.iter().zip(out.iter_mut()) {
-                            out.write(*in_);
-                        }
-                    }
-                }
+                ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
             }))
             .await;
 
