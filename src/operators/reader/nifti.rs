@@ -21,32 +21,40 @@ pub struct NiftiVolumeSourceState {
     header: NiftiHeader,
 }
 
+fn check_type(header: &NiftiHeader) -> Result<(), Error> {
+    match header.data_type()? {
+        nifti::NiftiType::Float32 => {}
+        o => return Err(format!("Unsupported data type {:?}", o).into()),
+    }
+    Ok(())
+}
+
+fn read_metadata(header: &NiftiHeader) -> Result<VolumeMetaData, Error> {
+    let dimensions = match *header.dim()? {
+        [x, y, z] => VoxelPosition::from([(z as u32), (y as u32), (x as u32)]),
+        _ => return Err("Invalid number of dimensions".into()),
+    };
+
+    let chunk_size = [
+        1.into(),
+        LocalVoxelCoordinate::interpret_as(dimensions.y()),
+        LocalVoxelCoordinate::interpret_as(dimensions.x()),
+    ]
+    .into();
+
+    let metadata = VolumeMetaData {
+        dimensions,
+        chunk_size,
+    };
+    Ok(metadata)
+}
+
 impl NiftiVolumeSourceState {
     pub fn open_single(path: PathBuf) -> Result<Self, Error> {
         let obj = nifti::ReaderStreamedOptions::new().read_file(&path)?;
         let header = obj.header();
-
-        let dimensions = match *header.dim()? {
-            [z, y, x] => VoxelPosition::from([(z as u32), (y as u32), (x as u32)]),
-            _ => return Err("Invalid number of dimensions".into()),
-        };
-
-        let chunk_size = [
-            1.into(),
-            LocalVoxelCoordinate::interpret_as(dimensions.y()),
-            LocalVoxelCoordinate::interpret_as(dimensions.x()),
-        ]
-        .into();
-
-        let metadata = VolumeMetaData {
-            dimensions,
-            chunk_size,
-        };
-
-        match header.data_type()? {
-            nifti::NiftiType::Float32 => {}
-            o => return Err(format!("Unsupported data type {:?}", o).into()),
-        }
+        check_type(header)?;
+        let metadata = read_metadata(header)?;
 
         Ok(NiftiVolumeSourceState {
             metadata,
@@ -57,28 +65,8 @@ impl NiftiVolumeSourceState {
     pub fn open_separate(header_path: PathBuf, data: PathBuf) -> Result<Self, Error> {
         let obj = nifti::ReaderStreamedOptions::new().read_file_pair(&header_path, &data)?;
         let header = obj.header();
-
-        let dimensions = match *header.dim()? {
-            [z, y, x] => VoxelPosition::from([(z as u32), (y as u32), (x as u32)]),
-            _ => return Err("Invalid number of dimensions".into()),
-        };
-
-        let chunk_size = [
-            1.into(),
-            LocalVoxelCoordinate::interpret_as(dimensions.y()),
-            LocalVoxelCoordinate::interpret_as(dimensions.x()),
-        ]
-        .into();
-
-        let metadata = VolumeMetaData {
-            dimensions,
-            chunk_size,
-        };
-
-        match header.data_type()? {
-            nifti::NiftiType::Float32 => {}
-            o => return Err(format!("Unsupported data type {:?}", o).into()),
-        }
+        check_type(header)?;
+        let metadata = read_metadata(header)?;
 
         Ok(NiftiVolumeSourceState {
             metadata,
@@ -128,6 +116,10 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                         ctx.submit(ctx.spawn_io(|| {
                             // Skip unwanted slices
                             while vol.slices_read() != z {
+                                // TODO: This is not ideal (to put it midly) since we do a lot of
+                                // work while reading these slices. We could (1.) look into maybe
+                                // add a seek function to the nifti crate or (2.) somehow encourage
+                                // a more "complete" of slices in a single task.
                                 let _ = vol.read_slice();
                             }
                             let in_chunk = vol.read_slice().unwrap().into_ndarray::<f32>().unwrap();

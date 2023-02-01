@@ -76,10 +76,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = LocalVoxelPosition::fill(32.into());
 
-    let extension = args
-        .vvd_vol
-        .extension()
-        .map(|v| v.to_string_lossy().to_string());
     let vol_state = open_volume(args.vvd_vol, brick_size)?;
 
     eval_network(&mut runtime, &*vol_state, &args.factor)
