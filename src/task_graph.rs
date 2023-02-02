@@ -47,7 +47,7 @@ pub struct TaskGraph {
     implied_tasks: BTreeSet<TaskId>,
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
-    ready: BTreeSet<TaskId>,
+    implied_ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
 }
 
@@ -67,14 +67,14 @@ impl TaskGraph {
             .entry(wants)
             .or_default()
             .insert(wanted, progress_indicator);
-        self.ready.remove(&wants);
+        self.implied_ready.remove(&wants);
     }
 
     pub fn add_implied(&mut self, id: TaskId) {
         let inserted = self.implied_tasks.insert(id);
         self.waits_on.insert(id, BTreeMap::new());
         assert!(inserted, "Tried to insert task twice");
-        self.ready.insert(id);
+        self.implied_ready.insert(id);
     }
 
     pub fn resolved_implied(&mut self, id: RequestId) {
@@ -85,26 +85,31 @@ impl TaskGraph {
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
-                self.ready.insert(*rev_dep);
+                if self.implied_tasks.contains(rev_dep) {
+                    self.implied_ready.insert(*rev_dep);
+                }
             }
         }
     }
 
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
-        self.ready.remove(&id);
+        self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
     }
 
-    pub fn next_ready(&mut self) -> Vec<TaskId> {
-        self.ready
-            .iter()
-            .filter(|t| self.implied_tasks.contains(&t))
-            .map(|t| *t)
-            .collect()
+    pub fn next_implied_ready(&mut self) -> BTreeSet<TaskId> {
+        let mut ready = BTreeSet::new();
+        std::mem::swap(&mut self.implied_ready, &mut ready);
+        ready
     }
+
+    pub fn has_open_tasks(&self) -> bool {
+        !self.implied_tasks.is_empty()
+    }
+
     pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut BTreeSet<RequestId>> {
         self.resolved_deps.get_mut(&task)
     }

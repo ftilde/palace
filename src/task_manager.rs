@@ -3,7 +3,7 @@ use std::{cell::Cell, collections::BTreeMap};
 use crate::{
     task::{Request, Task, ThreadPoolJob},
     task_graph::TaskId,
-    threadpool::{ComputeThreadPool, IoThreadPool, JobId, JobType},
+    threadpool::{ComputeThreadPool, IoThreadPool, JobId, JobInfo, JobType},
 };
 
 struct TaskData<'a> {
@@ -21,6 +21,7 @@ pub struct TaskManager<'a> {
     managed_tasks: BTreeMap<TaskId, TaskData<'a>>,
     compute_thread_pool: &'a mut ComputeThreadPool,
     io_thread_pool: &'a mut IoThreadPool,
+    async_result_receiver: &'a mut std::sync::mpsc::Receiver<JobInfo>,
 }
 
 impl Drop for TaskManager<'_> {
@@ -42,11 +43,13 @@ impl<'a> TaskManager<'a> {
     pub fn new(
         compute_thread_pool: &'a mut ComputeThreadPool,
         io_thread_pool: &'a mut IoThreadPool,
+        async_result_receiver: &'a mut std::sync::mpsc::Receiver<JobInfo>,
     ) -> Self {
         Self {
             managed_tasks: BTreeMap::new(),
             compute_thread_pool,
             io_thread_pool,
+            async_result_receiver,
         }
     }
 
@@ -86,24 +89,29 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    pub fn job_finished(&mut self) -> Option<JobId> {
-        let finished = self
-            .io_thread_pool
-            .finished()
-            .or_else(|| self.compute_thread_pool.finished());
-        match finished {
-            Some(info) => {
-                self.managed_tasks
-                    .get_mut(&info.caller)
-                    .unwrap()
-                    .waiting_on_threads -= 1;
-                Some(info.job_id)
-            }
-            None => None,
+    pub fn wait_for_jobs(&mut self) -> Vec<JobId> {
+        let info = self.async_result_receiver.recv().unwrap();
+        let mut result = Vec::new();
+
+        let mut job_done = |info: JobInfo| {
+            self.managed_tasks
+                .get_mut(&info.caller)
+                .unwrap()
+                .waiting_on_threads -= 1;
+            info.job_id
+        };
+
+        result.push(job_done(info));
+
+        // Try to empty the queue after waiting for the first event to arrive
+        for info in self.async_result_receiver.try_iter() {
+            result.push(job_done(info));
         }
+
+        result
     }
 
-    pub fn compute_worker_available(&self) -> bool {
+    pub fn compute_worker_available(&mut self) -> bool {
         self.compute_thread_pool.worker_available()
     }
 

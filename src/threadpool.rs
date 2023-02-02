@@ -21,16 +21,18 @@ impl Worker {
     fn new(
         thread_name_prefix: &str,
         id: usize,
-        finish_sender: mpsc::SyncSender<(JobInfo, usize)>,
+        finish_sender: mpsc::Sender<WorkerId>,
+        result_sender: mpsc::Sender<JobInfo>,
     ) -> Worker {
         let (task_sender, task_receiver) = mpsc::sync_channel::<(JobInfo, Job)>(0);
         Worker {
             _thread: std::thread::Builder::new()
                 .name(format!("{} {}", thread_name_prefix, id))
                 .spawn(move || {
-                    while let Ok((task_id, task)) = task_receiver.recv() {
+                    while let Ok((job_info, task)) = task_receiver.recv() {
                         task();
-                        let _ = finish_sender.send((task_id, id));
+                        let _ = result_sender.send(job_info);
+                        let _ = finish_sender.send(id);
                     }
                 })
                 .unwrap(),
@@ -56,21 +58,23 @@ pub struct JobInfo {
 struct ThreadPool {
     workers: Vec<Worker>,
     available: Vec<WorkerId>,
-    finished: mpsc::Receiver<(JobInfo, WorkerId)>,
-    finish_sender: mpsc::SyncSender<(JobInfo, usize)>,
+    finished: mpsc::Receiver<WorkerId>,
+    finished_sender: mpsc::Sender<WorkerId>,
+    result_sender: mpsc::Sender<JobInfo>,
     name: &'static str,
 }
 
 impl ThreadPool {
-    fn new(name: &'static str, num_workers: usize) -> Self {
-        let (finish_sender, finish_receiver) = mpsc::sync_channel(num_workers);
+    fn new(name: &'static str, result_sender: mpsc::Sender<JobInfo>, num_workers: usize) -> Self {
+        let (finished_sender, finish_receiver) = mpsc::channel();
         ThreadPool {
             available: (0..num_workers).collect(),
             workers: (0..num_workers)
-                .map(|id| Worker::new(name, id, finish_sender.clone()))
+                .map(|id| Worker::new(name, id, finished_sender.clone(), result_sender.clone()))
                 .collect(),
             finished: finish_receiver,
-            finish_sender,
+            finished_sender,
+            result_sender,
             name,
         }
     }
@@ -79,30 +83,24 @@ impl ThreadPool {
         let current_size = self.workers.len();
         for id in current_size..current_size + num_workers {
             self.available.push(id);
-            self.workers
-                .push(Worker::new(self.name, id, self.finish_sender.clone()));
+            self.workers.push(Worker::new(
+                self.name,
+                id,
+                self.finished_sender.clone(),
+                self.result_sender.clone(),
+            ));
         }
     }
 
     fn wait_idle(&mut self) {
         while self.available.len() != self.workers.len() {
-            let (_info, worker_id) = self.finished.recv().unwrap();
+            let worker_id = self.finished.recv().unwrap();
             self.available.push(worker_id);
         }
     }
 
-    fn finished(&mut self) -> Option<JobInfo> {
-        match self.finished.try_recv() {
-            Ok((info, worker_id)) => {
-                self.available.push(worker_id);
-                Some(info)
-            }
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => panic!("Thread terminated"),
-        }
-    }
-
-    fn worker_available(&self) -> bool {
+    fn worker_available(&mut self) -> bool {
+        self.available.extend(self.finished.try_iter());
         !self.available.is_empty()
     }
 
@@ -115,19 +113,19 @@ impl ThreadPool {
 pub struct ComputeThreadPool(ThreadPool);
 
 impl ComputeThreadPool {
-    pub fn new(num_compute_workers: usize) -> Self {
-        Self(ThreadPool::new("compute", num_compute_workers))
+    pub fn new(result_sender: mpsc::Sender<JobInfo>, num_compute_workers: usize) -> Self {
+        Self(ThreadPool::new(
+            "compute",
+            result_sender,
+            num_compute_workers,
+        ))
     }
 
     pub fn wait_idle(&mut self) {
         self.0.wait_idle()
     }
 
-    pub fn finished(&mut self) -> Option<JobInfo> {
-        self.0.finished()
-    }
-
-    pub fn worker_available(&self) -> bool {
+    pub fn worker_available(&mut self) -> bool {
         self.0.worker_available()
     }
 
@@ -139,16 +137,12 @@ impl ComputeThreadPool {
 pub struct IoThreadPool(ThreadPool);
 
 impl IoThreadPool {
-    pub fn new() -> Self {
-        Self(ThreadPool::new("io", 4))
+    pub fn new(result_sender: mpsc::Sender<JobInfo>) -> Self {
+        Self(ThreadPool::new("io", result_sender, 4))
     }
 
     pub fn wait_idle(&mut self) {
         self.0.wait_idle()
-    }
-
-    pub fn finished(&mut self) -> Option<JobInfo> {
-        self.0.finished()
     }
 
     pub fn submit(&mut self, info: JobInfo, job: Job) {

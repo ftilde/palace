@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, VecDeque},
+    sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
@@ -12,7 +13,7 @@ use crate::{
     },
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
-    threadpool::{ComputeThreadPool, IoThreadPool, JobType},
+    threadpool::{ComputeThreadPool, IoThreadPool, JobInfo, JobType},
     Error,
 };
 
@@ -102,14 +103,20 @@ pub struct RunTime {
     pub storage: Storage,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
+    pub async_result_receiver: mpsc::Receiver<JobInfo>,
 }
 
 impl RunTime {
     pub fn new(storage_size: usize, num_compute_threads: usize) -> Self {
+        let (async_result_sender, async_result_receiver) = mpsc::channel();
         RunTime {
             storage: Storage::new(storage_size),
-            compute_thread_pool: ComputeThreadPool::new(num_compute_threads),
-            io_thread_pool: IoThreadPool::new(),
+            compute_thread_pool: ComputeThreadPool::new(
+                async_result_sender.clone(),
+                num_compute_threads,
+            ),
+            io_thread_pool: IoThreadPool::new(async_result_sender),
+            async_result_receiver,
         }
     }
 
@@ -118,6 +125,7 @@ impl RunTime {
             data: ContextData::new(&self.storage),
             compute_thread_pool: &mut self.compute_thread_pool,
             io_thread_pool: &mut self.io_thread_pool,
+            async_result_receiver: &mut self.async_result_receiver,
         }
     }
 }
@@ -135,13 +143,18 @@ pub struct ContextAnchor<'cref, 'inv> {
     data: ContextData<'cref, 'inv>,
     compute_thread_pool: &'cref mut ComputeThreadPool,
     io_thread_pool: &'cref mut IoThreadPool,
+    pub async_result_receiver: &'cref mut mpsc::Receiver<JobInfo>,
 }
 
 impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
     pub fn executor(&'cref mut self) -> Executor<'cref, 'inv> {
         Executor {
             data: &self.data,
-            task_manager: TaskManager::new(self.compute_thread_pool, self.io_thread_pool),
+            task_manager: TaskManager::new(
+                self.compute_thread_pool,
+                self.io_thread_pool,
+                self.async_result_receiver,
+            ),
             waker: dummy_waker(),
             task_graph: TaskGraph::new(),
             thread_pool_waiting: VecDeque::new(),
@@ -206,12 +219,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
         loop {
-            self.handle_thread_pool();
+            self.feed_thread_pool();
 
-            let ready = self.task_graph.next_ready();
+            let ready = self.task_graph.next_implied_ready();
             if ready.is_empty() {
+                if self.task_graph.has_open_tasks() {
+                    self.wait_for_async_results();
+                    continue;
+                }
+
                 return Ok(());
             }
+
             for task_id in ready {
                 let resolved_deps =
                     if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
@@ -291,14 +310,16 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn handle_thread_pool(&mut self) {
-        while let Some(task) = self.task_manager.job_finished() {
-            self.task_graph.resolved_implied(task.into());
+    fn wait_for_async_results(&mut self) {
+        for job_id in self.task_manager.wait_for_jobs() {
+            self.task_graph.resolved_implied(job_id.into());
         }
+    }
 
+    fn feed_thread_pool(&mut self) {
         // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
         // pull something from either collection if only either one is ready.
-        while self.task_manager.compute_worker_available() && !self.thread_pool_waiting.is_empty() {
+        while !self.thread_pool_waiting.is_empty() && self.task_manager.compute_worker_available() {
             let job = self.thread_pool_waiting.pop_front().unwrap();
             self.task_manager.spawn_job(job, JobType::Compute).unwrap();
         }
