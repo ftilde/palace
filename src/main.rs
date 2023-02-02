@@ -34,6 +34,14 @@ struct CliArgs {
     #[arg(short, long, default_value = "1.0")]
     factor: f32,
 
+    /// Size of the memory pool that will be allocated in gigabytes.
+    #[arg(short, long, default_value = "8")]
+    mem_size: usize,
+
+    /// Force a specific size for the compute task pool [default: number of cores]
+    #[arg(short, long)]
+    compute_pool_size: Option<usize>,
+
     #[arg(long, default_value = "false")]
     with_vulkan: bool,
 }
@@ -69,8 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _vulkan_manager = vulkan::VulkanManager::new();
     }
 
-    let storage_size = 1 << 30; //One gigabyte
-    let thread_pool_size = 4;
+    let storage_size = args.mem_size << 30; //in gigabyte
+    let thread_pool_size = args.compute_pool_size.unwrap_or(num_cpus::get());
 
     let mut runtime = RunTime::new(storage_size, thread_pool_size);
 
