@@ -113,35 +113,37 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
             async move {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
-                // First query all input bricks
-                let mut stream = ctx.submit_unordered_with_data(
-                    vol.brick_positions()
-                        .map(|pos| (input.bricks.request(pos), pos)),
-                );
+                let to_request = vol.brick_positions().collect::<Vec<_>>();
+                let batch_size = 64;
 
-                let mut tasks = Vec::new();
-                while let Some((brick_data, brick_pos)) = stream.next().await {
-                    // Second, when any brick arrives, create a compute future...
-                    let chunk_info = vol.chunk_info(brick_pos);
-                    let mut task = Box::pin(async move {
-                        let brick = crate::data::chunk(&brick_data, &chunk_info);
-                        ctx.submit(ctx.spawn_compute(|| {
-                            brick.iter().sum::<f32>()
-                        }))
-                        .await
-                    });
-                    // ... which is immediately polled once to submit the compute task onto the
-                    // pool.
-                    match futures::poll!(task.as_mut()) {
-                        std::task::Poll::Ready(_) => panic!("Future cannot be ready since it has just submitted it's task to the runtime."),
-                        std::task::Poll::Pending => {},
-                    }
-                    tasks.push(task);
-                }
-                // Third, collect the brick results into a global sum
                 let mut sum = 0.0;
-                for task in tasks {
-                    sum += task.await;
+                for chunk in to_request.chunks(batch_size) {
+                    let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos|
+                            (input.bricks.request(*pos), *pos)));
+
+                    let mut tasks = Vec::new();
+                    while let Some((brick_data, brick_pos)) = stream.next().await {
+                        // Second, when any brick arrives, create a compute future...
+                        let chunk_info = vol.chunk_info(brick_pos);
+                        let mut task = Box::pin(async move {
+                            let brick = crate::data::chunk(&brick_data, &chunk_info);
+                            ctx.submit(ctx.spawn_compute(|| {
+                                brick.iter().sum::<f32>()
+                            }))
+                            .await
+                        });
+                        // ... which is immediately polled once to submit the compute task onto the
+                        // pool.
+                        match futures::poll!(task.as_mut()) {
+                            std::task::Poll::Ready(_) => panic!("Future cannot be ready since it has just submitted it's task to the runtime."),
+                            std::task::Poll::Pending => {},
+                        }
+                        tasks.push(task);
+                    }
+                    // Third, collect the brick results into a global sum
+                    for task in tasks {
+                        sum += task.await;
+                    }
                 }
 
                 let v = sum / vol.num_elements() as f32;
