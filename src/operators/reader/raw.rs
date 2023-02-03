@@ -1,5 +1,7 @@
 use std::{fs::File, path::PathBuf};
 
+use futures::StreamExt;
+
 use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
@@ -40,49 +42,60 @@ impl RawVolumeSourceState {
             dimensions: self.size,
             chunk_size: brick_size,
         };
+        let mut handles = Vec::with_capacity(positions.len());
         for pos in positions {
-            let chunk_info = m.chunk_info(pos);
-            let begin = chunk_info.begin;
-            if !(begin.x() < m.dimensions.x()
-                && begin.y() < m.dimensions.y()
-                && begin.z() < m.dimensions.z())
-            {
-                return Err("Brick position is outside of volume".into());
-            }
             let num_voxels = crate::data::hmul(m.chunk_size);
 
-            let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
-            let brick_data = &mut *brick_handle;
+            let brick_handle = ctx.alloc_slot(pos, num_voxels)?;
+            handles.push((pos, brick_handle));
+        }
 
-            let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
-            let in_ = ndarray::ArrayView3::from_shape(
-                crate::data::stride_shape(m.dimensions, m.dimensions),
-                in_,
-            )
-            .unwrap();
+        {
+            let handle_data = handles.iter_mut().map(|(pos, h)| (pos, &mut **h));
 
-            ctx.submit(ctx.spawn_io(move || {
-                brick_data.iter_mut().for_each(|v| {
-                    v.write(f32::NAN);
-                });
+            let iter = handle_data.into_iter().map(|(pos, brick_data)| {
+                ctx.spawn_io(move || {
+                    let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
+                    let in_ = ndarray::ArrayView3::from_shape(
+                        crate::data::stride_shape(m.dimensions, m.dimensions),
+                        in_,
+                    )
+                    .unwrap();
 
-                let mut out_chunk = crate::data::chunk_mut(brick_data, &chunk_info);
-                let begin = chunk_info.begin();
-                let end = chunk_info.end();
-                let in_chunk = in_.slice(ndarray::s!(
-                    begin.z().raw as usize..end.z().raw as usize,
-                    begin.y().raw as usize..end.y().raw as usize,
-                    begin.x().raw as usize..end.x().raw as usize,
-                ));
+                    brick_data.iter_mut().for_each(|v| {
+                        v.write(f32::NAN);
+                    });
 
-                ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
-            }))
-            .await;
+                    let chunk_info = m.chunk_info(*pos);
+                    //if !(begin.x() < m.dimensions.x()
+                    //    && begin.y() < m.dimensions.y()
+                    //    && begin.z() < m.dimensions.z())
+                    //{
+                    //    return Err("Brick position is outside of volume".into());
+                    //}
 
+                    let mut out_chunk = crate::data::chunk_mut(brick_data, &chunk_info);
+                    let begin = chunk_info.begin();
+                    let end = chunk_info.end();
+                    let in_chunk = in_.slice(ndarray::s!(
+                        begin.z().raw as usize..end.z().raw as usize,
+                        begin.y().raw as usize..end.y().raw as usize,
+                        begin.x().raw as usize..end.x().raw as usize,
+                    ));
+
+                    ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
+                })
+            });
+            let mut stream = ctx.submit_unordered(iter);
+            while let Some(_) = stream.next().await {}
+        }
+
+        for (_, handle) in handles {
             // Safety: At this point the thread pool job above has finished and has initialized all bytes
             // in the brick.
-            unsafe { brick_handle.initialized() };
+            unsafe { handle.initialized() };
         }
+
         Ok(())
     }
 
