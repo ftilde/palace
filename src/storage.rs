@@ -170,13 +170,13 @@ pub type InplaceResult<'a, T> = Result<
 >;
 
 impl Storage {
-    pub fn new(size: usize) -> Self {
-        let allocator = Allocator::new(size);
-        Self {
+    pub fn new(size: usize) -> Result<Self, Error> {
+        let allocator = Allocator::new(size)?;
+        Ok(Self {
             index: RefCell::new(BTreeMap::new()),
             new_data: RefCell::new(BTreeSet::new()),
             allocator,
-        }
+        })
     }
 
     pub fn try_free(&self, key: DataId) -> Result<(), ()> {
@@ -308,7 +308,7 @@ struct Allocator {
 }
 
 impl Allocator {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Result<Self, Error> {
         let alignment = 4096;
         let storage_layout = Layout::from_size_align(size, alignment).unwrap();
 
@@ -316,6 +316,9 @@ impl Allocator {
 
         // Safety: size is > 0
         let buffer = unsafe { std::alloc::alloc(storage_layout) };
+        if buffer.is_null() {
+            return Err("Failed to allocate memory buffer. Is it too large?".into());
+        }
 
         let mut alloc = Box::pin(good_memory_allocator::Allocator::empty());
 
@@ -325,11 +328,11 @@ impl Allocator {
 
         let alloc = RefCell::new(alloc);
 
-        Self {
+        Ok(Self {
             buffer,
             alloc,
             storage_layout,
-        }
+        })
     }
 
     pub fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {

@@ -107,17 +107,17 @@ pub struct RunTime {
 }
 
 impl RunTime {
-    pub fn new(storage_size: usize, num_compute_threads: usize) -> Self {
+    pub fn new(storage_size: usize, num_compute_threads: usize) -> Result<Self, Error> {
         let (async_result_sender, async_result_receiver) = mpsc::channel();
-        RunTime {
-            storage: Storage::new(storage_size),
+        Ok(RunTime {
+            storage: Storage::new(storage_size)?,
             compute_thread_pool: ComputeThreadPool::new(
                 async_result_sender.clone(),
                 num_compute_threads,
             ),
             io_thread_pool: IoThreadPool::new(async_result_sender),
             async_result_receiver,
-        }
+        })
     }
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
