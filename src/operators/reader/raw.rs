@@ -36,33 +36,41 @@ impl RawVolumeSourceState {
         &self,
         brick_size: LocalVoxelPosition,
         ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
-        positions: Vec<BrickPosition>,
+        mut positions: Vec<BrickPosition>,
     ) -> Result<(), Error> {
+        let num_workers = 8;
+        let batch_size = crate::util::div_round_up(positions.len(), num_workers);
+
         let m = VolumeMetaData {
             dimensions: self.size,
             chunk_size: brick_size,
         };
-        let mut handles = Vec::with_capacity(positions.len());
-        for pos in positions {
+        let dim_in_bricks = m.dimension_in_bricks();
+        positions.sort_by_key(|v| crate::data::to_linear(*v, dim_in_bricks));
+        let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
+        let in_ = ndarray::ArrayView3::from_shape(
+            crate::data::stride_shape(m.dimensions, m.dimensions),
+            in_,
+        )
+        .unwrap();
+        let batches = itertools::Itertools::chunks(positions.into_iter(), batch_size);
+        let work = batches.into_iter().map(|positions| {
             let num_voxels = crate::data::hmul(m.chunk_size);
 
-            let brick_handle = ctx.alloc_slot(pos, num_voxels)?;
-            handles.push((pos, brick_handle));
-        }
-
-        {
-            let handle_data = handles.iter_mut().map(|(pos, h)| (pos, &mut **h));
-
-            let iter = handle_data.into_iter().map(|(pos, brick_data)| {
-                ctx.spawn_io(move || {
-                    let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
-                    let in_ = ndarray::ArrayView3::from_shape(
-                        crate::data::stride_shape(m.dimensions, m.dimensions),
-                        in_,
+            let mut brick_handles = positions
+                .into_iter()
+                .map(|pos| {
+                    (
+                        pos,
+                        ctx.alloc_slot(pos, num_voxels)
+                            .unwrap()
+                            .into_thread_handle(),
                     )
-                    .unwrap();
-
-                    brick_data.iter_mut().for_each(|v| {
+                })
+                .collect::<Vec<_>>();
+            ctx.spawn_io(move || {
+                for (pos, ref mut brick_handle) in &mut brick_handles {
+                    brick_handle.iter_mut().for_each(|v| {
                         v.write(f32::NAN);
                     });
 
@@ -74,7 +82,7 @@ impl RawVolumeSourceState {
                     //    return Err("Brick position is outside of volume".into());
                     //}
 
-                    let mut out_chunk = crate::data::chunk_mut(brick_data, &chunk_info);
+                    let mut out_chunk = crate::data::chunk_mut(brick_handle, &chunk_info);
                     let begin = chunk_info.begin();
                     let end = chunk_info.end();
                     let in_chunk = in_.slice(ndarray::s!(
@@ -84,16 +92,19 @@ impl RawVolumeSourceState {
                     ));
 
                     ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
-                })
-            });
-            let mut stream = ctx.submit_unordered(iter);
-            while let Some(_) = stream.next().await {}
-        }
+                }
+                brick_handles
+            })
+        });
 
-        for (_, handle) in handles {
-            // Safety: At this point the thread pool job above has finished and has initialized all bytes
-            // in the brick.
-            unsafe { handle.initialized() };
+        let stream = ctx.submit_unordered(work);
+
+        futures::pin_mut!(stream);
+        while let Some(handles) = stream.next().await {
+            for (_, handle) in handles {
+                let handle = handle.into_main_handle(ctx.storage());
+                unsafe { handle.initialized() };
+            }
         }
 
         Ok(())

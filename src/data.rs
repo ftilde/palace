@@ -6,16 +6,16 @@ pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> u
     s.into_iter().map(|v| v.raw as usize).product()
 }
 
-//pub fn to_linear<const N: usize, T: CoordinateType>(
-//    pos: Vector<N, Coordinate<T>>,
-//    dim: Vector<N, Coordinate<T>>,
-//) -> usize {
-//    let mut out = pos.0[0].raw as usize;
-//    for i in 1..N {
-//        out = out * dim.0[i].raw as usize + pos.0[i].raw as usize;
-//    }
-//    out
-//}
+pub fn to_linear<const N: usize, T: CoordinateType>(
+    pos: Vector<N, Coordinate<T>>,
+    dim: Vector<N, Coordinate<T>>,
+) -> usize {
+    let mut out = pos.0[0].raw as usize;
+    for i in 1..N {
+        out = out * dim.0[i].raw as usize + pos.0[i].raw as usize;
+    }
+    out
+}
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 

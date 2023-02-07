@@ -1,5 +1,10 @@
-pub fn div_round_up(v1: u32, v2: u32) -> u32 {
-    (v1 + v2 - 1) / v2
+pub fn div_round_up<
+    U: Copy + std::ops::Add<Output = U> + std::ops::Div<Output = U> + std::ops::Sub<Output = U>,
+>(
+    v1: U,
+    v2: U,
+) -> U {
+    (v1 + v2 - (v2 / v2)) / v2
 }
 
 // Compute the size of an element in an array, i.e. including the padding to the next element.
