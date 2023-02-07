@@ -144,7 +144,7 @@ impl ThreadSpawner {
             job_counter: Cell::new(0),
         }
     }
-    pub fn spawn<'req, 'irrelevant, R: Send + 'static>(
+    pub fn spawn<'req, 'irrelevant, R: Send + 'req>(
         &'req self,
         type_: JobType,
         caller: TaskId,

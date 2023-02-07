@@ -2,6 +2,7 @@ use crate::{
     id::Id,
     storage::{InplaceResult, ReadHandle},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
+    Error,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -150,7 +151,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         &'inv self,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 'inv, InplaceResult<'req, f32>> {
+    ) -> Request<'req, 'inv, Result<InplaceResult<'req, f32>, Error>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 

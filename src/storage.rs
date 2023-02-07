@@ -55,6 +55,17 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
         std::mem::forget(self);
         ret
     }
+
+    pub fn into_thread_handle(self) -> ThreadReadHandle<'a, T>
+    where
+        T: Send,
+    {
+        ThreadReadHandle {
+            id: self.id,
+            data: self.data,
+            panic_handle: Default::default(),
+        }
+    }
 }
 impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
     type Target = T;
@@ -71,6 +82,29 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
             .get_mut(&self.id)
             .unwrap()
             .num_readers -= 1;
+    }
+}
+
+pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
+    id: DataId,
+    data: &'a T,
+    panic_handle: ThreadHandleDropPanic,
+}
+impl<T: ?Sized + Send> std::ops::Deref for ThreadReadHandle<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
+    pub fn into_main_handle(self, storage: &'a Storage) -> ReadHandle<'a, T> {
+        self.panic_handle.dismiss();
+        ReadHandle {
+            storage,
+            id: self.id,
+            data: self.data,
+        }
     }
 }
 
@@ -120,7 +154,65 @@ impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
     }
 }
 
+#[derive(Default)]
+struct ThreadHandleDropPanic;
+impl Drop for ThreadHandleDropPanic {
+    fn drop(&mut self) {
+        panic!("ThreadHandles must be returned to main thread before being dropped!");
+    }
+}
+impl ThreadHandleDropPanic {
+    fn dismiss(self) {
+        std::mem::forget(self);
+    }
+}
+pub struct ThreadMarkerInitialized;
+pub struct ThreadMarkerUninitialized;
+pub struct ThreadWriteHandle<'a, T: ?Sized + Send, D: Send> {
+    id: DataId,
+    data: &'a mut T,
+    _marker: D,
+    _panic_handle: ThreadHandleDropPanic,
+}
+impl<T: ?Sized + Send, D: Send> std::ops::Deref for ThreadWriteHandle<'_, T, D> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+impl<T: ?Sized + Send, D: Send> std::ops::DerefMut for ThreadWriteHandle<'_, T, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerInitialized> {
+    pub fn into_main_handle(self, storage: &'a Storage) -> WriteHandleInit<'a, T> {
+        self._panic_handle.dismiss();
+        WriteHandle {
+            drop_handler: DropMarkInitialized {
+                storage,
+                id: self.id,
+            },
+            data: self.data,
+        }
+    }
+}
+impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerUninitialized> {
+    pub fn into_main_handle(self, storage: &'a Storage) -> WriteHandleUninit<'a, T> {
+        self._panic_handle.dismiss();
+        WriteHandle {
+            drop_handler: DropError {
+                storage,
+                id: self.id,
+            },
+            data: self.data,
+        }
+    }
+}
+
 pub type WriteHandleUninit<'a, T> = WriteHandle<'a, T, DropError<'a>>;
+pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerUninitialized>;
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
         WriteHandle {
@@ -131,26 +223,88 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized(self) -> WriteHandleInit<'a, T> {
         let WriteHandle { data, drop_handler } = self;
-        let ret = WriteHandle {
-            drop_handler: DropMarkInitialized {
-                id: drop_handler.id,
-                storage: drop_handler.storage,
-            },
-            data,
-        };
 
+        let id = drop_handler.id;
+        let storage = drop_handler.storage;
         // Avoid running destructor which would panic
         std::mem::forget(drop_handler);
 
-        ret
+        WriteHandle {
+            drop_handler: DropMarkInitialized { id, storage },
+            data,
+        }
+    }
+    pub fn into_thread_handle(self) -> ThreadWriteHandleUninit<'a, T>
+    where
+        T: Send,
+    {
+        let id = self.drop_handler.id;
+        std::mem::forget(self.drop_handler);
+        ThreadWriteHandle {
+            id,
+            data: self.data,
+            _marker: ThreadMarkerUninitialized,
+            _panic_handle: Default::default(),
+        }
     }
 }
 pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
+pub type ThreadWriteHandleInit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerInitialized>;
 impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
     pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
         WriteHandle {
             drop_handler: DropMarkInitialized { id, storage },
             data,
+        }
+    }
+    pub fn into_thread_handle(self) -> ThreadWriteHandleInit<'a, T>
+    where
+        T: Send,
+    {
+        let id = self.drop_handler.id;
+        std::mem::forget(self.drop_handler);
+        ThreadWriteHandle {
+            id,
+            data: self.data,
+            _marker: ThreadMarkerInitialized,
+            _panic_handle: Default::default(),
+        }
+    }
+}
+
+pub enum InplaceResult<'a, T> {
+    Inplace(WriteHandleInit<'a, [T]>),
+    New(ReadHandle<'a, [T]>, WriteHandleUninit<'a, [MaybeUninit<T>]>),
+}
+
+impl<'a, T: Send> InplaceResult<'a, T> {
+    pub fn into_thread_handle(self) -> ThreadInplaceResult<'a, T> {
+        match self {
+            InplaceResult::Inplace(rw) => ThreadInplaceResult::Inplace(rw.into_thread_handle()),
+            InplaceResult::New(r, w) => {
+                ThreadInplaceResult::New(r.into_thread_handle(), w.into_thread_handle())
+            }
+        }
+    }
+}
+
+pub enum ThreadInplaceResult<'a, T: Send> {
+    Inplace(ThreadWriteHandleInit<'a, [T]>),
+    New(
+        ThreadReadHandle<'a, [T]>,
+        ThreadWriteHandleUninit<'a, [MaybeUninit<T>]>,
+    ),
+}
+
+impl<'a, T: Send> ThreadInplaceResult<'a, T> {
+    pub fn into_main_handle(self, storage: &'a Storage) -> InplaceResult<'a, T> {
+        match self {
+            ThreadInplaceResult::Inplace(rw) => {
+                InplaceResult::Inplace(rw.into_main_handle(storage))
+            }
+            ThreadInplaceResult::New(r, w) => {
+                InplaceResult::New(r.into_main_handle(storage), w.into_main_handle(storage))
+            }
         }
     }
 }
@@ -160,14 +314,6 @@ pub struct Storage {
     new_data: RefCell<BTreeSet<DataId>>,
     allocator: Allocator,
 }
-
-pub type InplaceResult<'a, T> = Result<
-    WriteHandleInit<'a, [T]>,
-    (
-        ReadHandle<'a, [T]>,
-        Result<WriteHandleUninit<'a, [MaybeUninit<T>]>, Error>,
-    ),
->;
 
 impl Storage {
     pub fn new(size: usize) -> Result<Self, Error> {
@@ -263,7 +409,7 @@ impl Storage {
         &'a self,
         old_key: DataId,
         new_key: DataId,
-    ) -> Option<InplaceResult<'a, T>> {
+    ) -> Option<Result<InplaceResult<'a, T>, Error>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;
         assert!(entry.state.initialized());
@@ -274,7 +420,7 @@ impl Storage {
         let t_ptr = ptr.cast::<T>();
 
         let in_place_possible = entry.safe_to_delete();
-        Some(if in_place_possible {
+        Some(Ok(if in_place_possible {
             let mut entry = index.remove(&old_key).unwrap();
             entry.state = StorageEntryState::Initializing;
 
@@ -286,7 +432,7 @@ impl Storage {
             // no readers. In other words: safe_to_delete also implies no other references.
             let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
 
-            Ok(WriteHandleInit::new(self, new_key, t_ref))
+            InplaceResult::Inplace(WriteHandleInit::new(self, new_key, t_ref))
         } else {
             std::mem::drop(index); // Release borrow for alloc
 
@@ -294,10 +440,13 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = self.alloc_ram_slot(new_key, num_elements);
+            let w = match self.alloc_ram_slot(new_key, num_elements) {
+                Ok(w) => w,
+                Err(e) => return Some(Err(e)),
+            };
             let r = ReadHandle::new(self, old_key, t_ref);
-            Err((r, w))
-        })
+            InplaceResult::New(r, w)
+        }))
     }
 }
 

@@ -38,7 +38,7 @@ impl RequestInfo<'_> {
     }
 }
 
-type ResultPoll<'a, V> = Box<dyn FnMut(PollContext<'a>) -> Option<V>>;
+type ResultPoll<'a, V> = Box<dyn FnMut(PollContext<'a>) -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
     pub id: DataId,
@@ -153,7 +153,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     }
     /// Spawn a job on the io pool. This job is allowed to hold locks/do IO, but should not do
     /// excessive computation.
-    pub fn spawn_io<'req, R: Send + 'static>(
+    pub fn spawn_io<'req, R: Send + 'req>(
         &'req self,
         f: impl FnOnce() -> R + Send + 'req,
     ) -> Request<'req, 'inv, R> {
@@ -164,7 +164,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
 
     /// Spawn a job on the compute pool. This job is assumed to not block (i.e., do IO or hold
     /// locks), but instead to fully utilize the compute capabilities of the core it is running on.
-    pub fn spawn_compute<'req, R: Send + 'static>(
+    pub fn spawn_compute<'req, R: Send + 'req>(
         &'req self,
         f: impl FnOnce() -> R + Send + 'req,
     ) -> Request<'req, 'inv, R> {
@@ -254,6 +254,13 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                 }
             }
         })
+    }
+
+    // TODO: We may not want to expose the storage directly in the future. Currently this is used
+    // for the into_main_handle methods of Thread*Handle (see storage.rs), but we could change them
+    // to take a context argument instead.
+    pub fn storage(&self) -> &Storage {
+        &self.inner.storage
     }
 }
 
