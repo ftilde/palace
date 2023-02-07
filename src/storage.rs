@@ -60,11 +60,15 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
     where
         T: Send,
     {
-        ThreadReadHandle {
+        let ret = ThreadReadHandle {
             id: self.id,
             data: self.data,
             panic_handle: Default::default(),
-        }
+        };
+        //Avoid running destructor
+        std::mem::forget(self);
+
+        ret
     }
 }
 impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
