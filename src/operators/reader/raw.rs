@@ -48,11 +48,8 @@ impl RawVolumeSourceState {
         let dim_in_bricks = m.dimension_in_bricks();
         positions.sort_by_key(|v| crate::data::to_linear(*v, dim_in_bricks));
         let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
-        let in_ = ndarray::ArrayView3::from_shape(
-            crate::data::stride_shape(m.dimensions, m.dimensions),
-            in_,
-        )
-        .unwrap();
+        let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
+            .unwrap();
         let batches = itertools::Itertools::chunks(positions.into_iter(), batch_size);
         let work = batches.into_iter().map(|positions| {
             let num_voxels = crate::data::hmul(m.chunk_size);
