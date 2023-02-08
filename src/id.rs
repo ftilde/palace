@@ -16,6 +16,13 @@ impl Id {
         let sha = Sha1::from(data);
         Self(digest_to_u128(sha.digest().bytes()))
     }
+    pub fn hash(data: &impl std::hash::Hash) -> Self {
+        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(0).build();
+        data.hash(&mut hasher);
+        let digest = hasher.digest128();
+        let hash = bytemuck::bytes_of(&digest);
+        crate::id::Id::from_data(hash)
+    }
     pub fn combine(ids: &[Id]) -> Self {
         let mut sha = Sha1::new();
         for id in ids {

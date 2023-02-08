@@ -1,3 +1,4 @@
+pub mod rasterize_function;
 mod reader;
 mod scalar;
 pub mod volume;

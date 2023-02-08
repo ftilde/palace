@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use clap::Parser;
-use data::LocalVoxelPosition;
+use clap::{Parser, Subcommand};
+use data::{LocalVoxelPosition, VoxelPosition};
 use operators::{
     Hdf5VolumeSourceState, NiftiVolumeSourceState, VolumeOperatorState, VvdVolumeSourceState,
 };
@@ -26,10 +26,28 @@ mod vulkan;
 // TODO look into thiserror/anyhow
 type Error = Box<(dyn std::error::Error + 'static)>;
 
+#[derive(Parser, Clone)]
+struct SyntheticArgs {
+    #[arg()]
+    size: u32,
+}
+
+#[derive(Parser, Clone)]
+struct FileArgs {
+    #[arg()]
+    vol: PathBuf,
+}
+
+#[derive(Subcommand, Clone)]
+enum Input {
+    File(FileArgs),
+    Synthetic(SyntheticArgs),
+}
+
 #[derive(Parser)]
 struct CliArgs {
-    #[arg()]
-    vvd_vol: PathBuf,
+    #[command(subcommand)]
+    input: Input,
 
     #[arg(short, long, default_value = "1.0")]
     factor: f32,
@@ -82,9 +100,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runtime = RunTime::new(storage_size, thread_pool_size)?;
 
-    let brick_size = LocalVoxelPosition::fill(32.into());
+    let brick_size = LocalVoxelPosition::fill(64.into());
 
-    let vol_state = open_volume(args.vvd_vol, brick_size)?;
+    let vol_state = match args.input {
+        Input::File(path) => open_volume(path.vol, brick_size)?,
+        Input::Synthetic(args) => Box::new(operators::rasterize_function::normalized(
+            VoxelPosition::fill(args.size.into()),
+            brick_size,
+            |pos| {
+                if pos.x() > 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            },
+        )),
+    };
 
     eval_network(&mut runtime, &*vol_state, &args.factor)
 }

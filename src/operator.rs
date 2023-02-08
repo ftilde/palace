@@ -39,11 +39,7 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
 pub struct DataId(Id);
 impl DataId {
     pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
-        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(0).build();
-        descriptor.hash(&mut hasher);
-        let digest = hasher.digest128();
-        let hash = bytemuck::bytes_of(&digest);
-        let data_id = Id::from_data(hash);
+        let data_id = Id::hash(descriptor);
 
         DataId(Id::combine(&[op.inner(), data_id]))
     }

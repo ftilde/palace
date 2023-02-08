@@ -34,7 +34,7 @@ impl<const N: usize> ChunkInfo<N> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 pub struct ArrayMetaData<const N: usize> {
     pub dimensions: Vector<N, GlobalVoxelCoordinate>,
     pub chunk_size: Vector<N, LocalVoxelCoordinate>,
