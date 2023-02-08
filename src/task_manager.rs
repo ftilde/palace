@@ -111,7 +111,10 @@ impl<'a> TaskManager<'a> {
         result
     }
 
-    pub fn compute_worker_available(&mut self) -> bool {
+    pub fn collect_finished_compute_workers(&mut self) {
+        self.compute_thread_pool.collect_finished();
+    }
+    pub fn compute_worker_available(&self) -> bool {
         self.compute_thread_pool.worker_available()
     }
 
@@ -154,6 +157,15 @@ impl ThreadSpawner {
         // in the data variant of Request/RequestType
 
         let job_num = self.job_counter.get() + 1;
+
+        // TODO Probably remove at some point, but for now to ease debugging: Compute jobs get an
+        // even id, io jobs an odd.
+        let job_num = match (type_, job_num % 2) {
+            (JobType::Compute, 0) => job_num,
+            (JobType::Compute, _) => job_num + 1,
+            (JobType::Io, 1) => job_num,
+            (JobType::Io, _) => job_num + 1,
+        };
         self.job_counter.set(job_num);
 
         let id = JobId::new(job_num);

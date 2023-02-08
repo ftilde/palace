@@ -311,7 +311,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn wait_for_async_results(&mut self) {
-        for job_id in self.task_manager.wait_for_jobs() {
+        let jobs = self.task_manager.wait_for_jobs();
+        for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
         }
     }
@@ -319,6 +320,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn feed_thread_pool(&mut self) {
         // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
         // pull something from either collection if only either one is ready.
+        self.task_manager.collect_finished_compute_workers();
         while !self.thread_pool_waiting.is_empty() && self.task_manager.compute_worker_available() {
             let job = self.thread_pool_waiting.pop_front().unwrap();
             self.task_manager.spawn_job(job, JobType::Compute).unwrap();

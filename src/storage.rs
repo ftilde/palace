@@ -80,12 +80,10 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
 }
 impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     fn drop(&mut self) {
-        self.storage
-            .index
-            .borrow_mut()
-            .get_mut(&self.id)
-            .unwrap()
-            .num_readers -= 1;
+        let mut index = self.storage.index.borrow_mut();
+        let readers = &mut index.get_mut(&self.id).unwrap().num_readers;
+
+        *readers = readers.checked_sub(1).unwrap();
     }
 }
 

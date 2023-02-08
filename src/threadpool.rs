@@ -7,6 +7,7 @@ pub type Job = Box<dyn FnOnce() + Send>;
 
 pub type WorkerId = usize;
 
+#[derive(Copy, Clone)]
 pub enum JobType {
     Compute,
     Io,
@@ -31,8 +32,8 @@ impl Worker {
                 .spawn(move || {
                     while let Ok((job_info, task)) = task_receiver.recv() {
                         task();
-                        let _ = result_sender.send(job_info);
                         let _ = finish_sender.send(id);
+                        let _ = result_sender.send(job_info);
                     }
                 })
                 .unwrap(),
@@ -99,8 +100,10 @@ impl ThreadPool {
         }
     }
 
-    fn worker_available(&mut self) -> bool {
+    fn collect_finished(&mut self) {
         self.available.extend(self.finished.try_iter());
+    }
+    fn worker_available(&self) -> bool {
         !self.available.is_empty()
     }
 
@@ -125,7 +128,10 @@ impl ComputeThreadPool {
         self.0.wait_idle()
     }
 
-    pub fn worker_available(&mut self) -> bool {
+    pub fn collect_finished(&mut self) {
+        self.0.collect_finished();
+    }
+    pub fn worker_available(&self) -> bool {
         self.0.worker_available()
     }
 
@@ -146,6 +152,7 @@ impl IoThreadPool {
     }
 
     pub fn submit(&mut self, info: JobInfo, job: Job) {
+        self.0.collect_finished();
         if !self.0.worker_available() {
             let current_size = self.0.workers.len();
             self.0.expand_pool(current_size);
