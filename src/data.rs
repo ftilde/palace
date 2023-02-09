@@ -252,6 +252,18 @@ pub fn chunk_mut<'a, T>(
     .unwrap()
 }
 
+pub fn init_non_full<const N: usize, T: Clone>(
+    data: &mut [std::mem::MaybeUninit<T>],
+    chunk_info: &ChunkInfo<N>,
+    val: T,
+) {
+    if chunk_info.mem_dimensions != chunk_info.logical_dimensions {
+        for v in data.iter_mut() {
+            v.write(val.clone());
+        }
+    }
+}
+
 //pub struct Brick<'a, T> {
 //    size: LocalVoxelPosition,
 //    mem_size: LocalVoxelPosition,

@@ -67,11 +67,10 @@ impl RawVolumeSourceState {
                 .collect::<Vec<_>>();
             ctx.spawn_io(move || {
                 for (pos, ref mut brick_handle) in &mut brick_handles {
-                    brick_handle.iter_mut().for_each(|v| {
-                        v.write(f32::NAN);
-                    });
-
                     let chunk_info = m.chunk_info(*pos);
+
+                    crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
+
                     //if !(begin.x() < m.dimensions.x()
                     //    && begin.y() < m.dimensions.y()
                     //    && begin.z() < m.dimensions.z())

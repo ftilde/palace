@@ -61,9 +61,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
         let brick_handle = ctx.alloc_slot(pos, chunk.mem_elements()).unwrap();
         let mut brick_handle = brick_handle.into_thread_handle();
         ctx.spawn_compute(move || {
-            brick_handle.iter_mut().for_each(|v| {
-                v.write(f32::NAN);
-            });
+            crate::data::init_non_full(&mut brick_handle, &chunk, f32::NAN);
 
             let chunk_info = metadata.chunk_info(pos);
 

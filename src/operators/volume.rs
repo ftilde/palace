@@ -198,9 +198,7 @@ pub fn rechunk<'op>(
 
                     let mut brick_handle = ctx.alloc_slot(pos, out_info.mem_elements())?;
                     let out_data = &mut *brick_handle;
-                    out_data.iter_mut().for_each(|v| {
-                        v.write(f32::NAN);
-                    });
+                    crate::data::init_non_full(out_data, &out_info, f32::NAN);
                     let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
 
                     let mut stream = ctx.submit_unordered_with_data(

@@ -56,9 +56,7 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
                         let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
                         ctx.submit(ctx.spawn_io(|| {
-                            brick_data.iter_mut().for_each(|v| {
-                                v.write(f32::NAN);
-                            });
+                            crate::data::init_non_full(brick_data, &chunk, f32::NAN);
 
                             let out_info = self.metadata.chunk_info(pos);
                             let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
