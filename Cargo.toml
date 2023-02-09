@@ -26,4 +26,4 @@ ndarray = "0.15.6"
 xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
 nifti = { version = "0.15.0", features = ["ndarray_volumes"] }
 num_cpus = "1.15.0"
-spmc = "0.3"
+work-queue = "0.1.3"

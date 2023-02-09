@@ -122,16 +122,27 @@ impl ComputeWorker {
     fn new(
         thread_name_prefix: &str,
         id: usize,
-        job_receiver: spmc::Receiver<(JobInfo, Job)>,
+        mut job_receiver: work_queue::LocalQueue<(JobInfo, Job)>,
         result_sender: mpsc::Sender<JobInfo>,
     ) -> ComputeWorker {
         ComputeWorker {
             _thread: std::thread::Builder::new()
                 .name(format!("{} {}", thread_name_prefix, id))
                 .spawn(move || {
-                    while let Ok((job_info, task)) = job_receiver.recv() {
+                    let initial_sleep_amount = std::time::Duration::from_micros(1);
+                    let max_sleep_amount = std::time::Duration::from_millis(10);
+                    let mut sleep_amount = initial_sleep_amount;
+                    loop {
+                        let (job_info, task) = loop {
+                            if let Some(t) = job_receiver.pop() {
+                                break t;
+                            }
+                            std::thread::sleep(sleep_amount);
+                            sleep_amount = (2 * sleep_amount).min(max_sleep_amount);
+                        };
                         task();
                         let _ = result_sender.send(job_info);
+                        sleep_amount = initial_sleep_amount;
                     }
                 })
                 .unwrap(),
@@ -141,22 +152,25 @@ impl ComputeWorker {
 
 pub struct ComputeThreadPool {
     _workers: Vec<ComputeWorker>,
-    job_sender: spmc::Sender<(JobInfo, Job)>,
+    job_sender: work_queue::Queue<(JobInfo, Job)>,
 }
 
 impl ComputeThreadPool {
     pub fn new(result_sender: mpsc::Sender<JobInfo>, num_workers: usize) -> Self {
-        let (job_sender, job_receiver) = spmc::channel();
+        let num_local_items = 16;
+        let job_sender = work_queue::Queue::new(num_workers, num_local_items);
         let name = "compute";
         ComputeThreadPool {
-            _workers: (0..num_workers)
-                .map(|id| ComputeWorker::new(name, id, job_receiver.clone(), result_sender.clone()))
+            _workers: job_sender
+                .local_queues()
+                .enumerate()
+                .map(|(id, receiver)| ComputeWorker::new(name, id, receiver, result_sender.clone()))
                 .collect(),
             job_sender,
         }
     }
 
     pub fn submit(&mut self, info: JobInfo, job: Job) {
-        self.job_sender.send((info, job)).unwrap();
+        self.job_sender.push((info, job));
     }
 }
