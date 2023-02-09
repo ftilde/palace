@@ -9,27 +9,43 @@ use std::{
 use crate::{operator::DataId, util::num_elms_in_array, Error};
 
 #[derive(Debug, Eq, PartialEq)]
+enum AccessState {
+    ReadBy(usize),
+    UnRead(LRUIndex),
+}
+
+#[derive(Debug, Eq, PartialEq)]
 enum StorageEntryState {
     Initializing,
-    Initialized,
+    Initialized(AccessState),
 }
 
 impl StorageEntryState {
     fn initialized(&self) -> bool {
-        matches!(self, StorageEntryState::Initialized)
+        matches!(self, StorageEntryState::Initialized(_))
+    }
+
+    fn lru_index(&self) -> Option<LRUIndex> {
+        if let StorageEntryState::Initialized(AccessState::UnRead(id)) = self {
+            Some(*id)
+        } else {
+            None
+        }
     }
 }
 
 struct StorageEntry {
     state: StorageEntryState,
-    num_readers: usize,
     data: *mut u8,
     size: usize,
 }
 
 impl StorageEntry {
     fn safe_to_delete(&self) -> bool {
-        self.num_readers == 0 && matches!(self.state, StorageEntryState::Initialized)
+        matches!(
+            self.state,
+            StorageEntryState::Initialized(AccessState::UnRead(_))
+        )
     }
 }
 
@@ -40,7 +56,17 @@ pub struct ReadHandle<'a, T: ?Sized> {
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
     fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
-        storage.index.borrow_mut().get_mut(&id).unwrap().num_readers += 1;
+        let mut index = storage.index.borrow_mut();
+        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().state else {
+            panic!("Trying to read uninitialized value");
+        };
+        *access_state = match *access_state {
+            AccessState::ReadBy(n) => AccessState::ReadBy(n + 1),
+            AccessState::UnRead(id) => {
+                storage.lru_manager.borrow_mut().remove(id);
+                AccessState::ReadBy(1)
+            }
+        };
 
         Self { storage, id, data }
     }
@@ -81,9 +107,21 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
 impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
-        let readers = &mut index.get_mut(&self.id).unwrap().num_readers;
 
-        *readers = readers.checked_sub(1).unwrap();
+        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().state else {
+            panic!("Trying to read uninitialized value");
+        };
+
+        *access_state = match *access_state {
+            AccessState::ReadBy(1) => {
+                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+                AccessState::UnRead(lru_id)
+            }
+            AccessState::ReadBy(n) => AccessState::ReadBy(n - 1),
+            AccessState::UnRead(_id) => {
+                panic!("Invalid state");
+            }
+        };
     }
 }
 
@@ -311,10 +349,50 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
     }
 }
 
+type LRUIndex = u64;
+
+struct LRUManager {
+    list: BTreeMap<LRUIndex, DataId>,
+    current: LRUIndex,
+}
+
+impl LRUManager {
+    fn new() -> Self {
+        LRUManager {
+            list: BTreeMap::new(),
+            current: 0,
+        }
+    }
+
+    fn remove(&mut self, old: LRUIndex) {
+        self.list.remove(&old).unwrap();
+    }
+
+    #[must_use]
+    fn add(&mut self, data: DataId) -> LRUIndex {
+        let new = self
+            .current
+            .checked_add(1)
+            .expect("Looks like we need to handle wrapping here...");
+        self.current = new;
+
+        self.list.insert(new, data);
+
+        new
+    }
+
+    fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = DataId> + 'a {
+        std::iter::from_fn(move || {
+            return self.list.pop_first().map(|(_, d)| d);
+        })
+    }
+}
+
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, StorageEntry>>,
     new_data: RefCell<BTreeSet<DataId>>,
     allocator: Allocator,
+    lru_manager: RefCell<LRUManager>,
 }
 
 impl Storage {
@@ -324,13 +402,38 @@ impl Storage {
             index: RefCell::new(BTreeMap::new()),
             new_data: RefCell::new(BTreeSet::new()),
             allocator,
+            lru_manager: RefCell::new(LRUManager::new()),
         })
+    }
+
+    pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) {
+        let mut lru = self.lru_manager.borrow_mut();
+        let mut index = self.index.borrow_mut();
+        let mut collected = 0;
+        for key in lru.drain_lru().into_iter() {
+            let entry = index.remove(&key).unwrap();
+            // Safety: all data ptrs in the index have been allocated with the allocator.
+            // Deallocation only happens exactly here where the entry is also removed from the
+            // index.
+            unsafe { self.allocator.dealloc(entry.data) };
+            self.new_data.borrow_mut().remove(&key);
+
+            collected += entry.size;
+            let Some(rest) = goal_in_bytes.checked_sub(entry.size) else {
+                break;
+            };
+            goal_in_bytes = rest;
+        }
+        println!("Garbage collect: {}B", collected);
     }
 
     pub fn try_free(&self, key: DataId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
         if index.get(&key).unwrap().safe_to_delete() {
             let entry = index.remove(&key).unwrap();
+            if let Some(lru_index) = entry.state.lru_index() {
+                self.lru_manager.borrow_mut().remove(lru_index);
+            }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
@@ -345,8 +448,9 @@ impl Storage {
         self.new_data.borrow_mut().insert(key);
         let mut binding = self.index.borrow_mut();
         let state = &mut binding.get_mut(&key).unwrap().state;
-        assert_ne!(*state, StorageEntryState::Initialized);
-        *state = StorageEntryState::Initialized;
+        assert!(!state.initialized());
+        let lru_id = self.lru_manager.borrow_mut().add(key);
+        *state = StorageEntryState::Initialized(AccessState::UnRead(lru_id));
     }
     pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataId> {
         let mut place_holder = BTreeSet::new();
@@ -356,11 +460,17 @@ impl Storage {
     }
 
     fn alloc(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
-        let data = self.allocator.alloc(layout)?;
+        let data = match self.allocator.alloc(layout) {
+            Ok(d) => d,
+            Err(_e) => {
+                let garbage_collect_goal = 1 << 30; //One gigabyte for now maybe???
+                self.try_garbage_collect(garbage_collect_goal);
+                self.allocator.alloc(layout)?
+            }
+        };
 
         let entry = StorageEntry {
             state: StorageEntryState::Initializing,
-            num_readers: 0,
             data,
             size: layout.size(),
         };
@@ -424,6 +534,9 @@ impl Storage {
         let in_place_possible = entry.safe_to_delete();
         Some(Ok(if in_place_possible {
             let mut entry = index.remove(&old_key).unwrap();
+            if let Some(lru_index) = entry.state.lru_index() {
+                self.lru_manager.borrow_mut().remove(lru_index);
+            }
             entry.state = StorageEntryState::Initializing;
 
             let prev = index.insert(new_key, entry);
