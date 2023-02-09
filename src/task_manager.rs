@@ -26,10 +26,14 @@ pub struct TaskManager<'a> {
 
 impl Drop for TaskManager<'_> {
     fn drop(&mut self) {
-        self.compute_thread_pool.wait_idle();
-        self.io_thread_pool.wait_idle();
-        // First wait for all workers of the thread pool to be able
-        // THEN drop tasks
+        while self
+            .managed_tasks
+            .values()
+            .any(|d| d.waiting_on_threads > 0)
+        {
+            let _ = self.wait_for_jobs();
+        }
+        // First wait for all relevant jobs on the thread pool finish THEN drop tasks
     }
 }
 
@@ -111,13 +115,6 @@ impl<'a> TaskManager<'a> {
         result
     }
 
-    pub fn collect_finished_compute_workers(&mut self) {
-        self.compute_thread_pool.collect_finished();
-    }
-    pub fn compute_worker_available(&self) -> bool {
-        self.compute_thread_pool.worker_available()
-    }
-
     pub fn spawn_job(&mut self, job: ThreadPoolJob, type_: JobType) -> Result<(), Error> {
         let task_data = self
             .managed_tasks
@@ -186,7 +183,7 @@ impl ThreadSpawner {
         //  1. Tasks cannot be removed from the TaskManager as long as jobs are running for it.
         //  2. Tasks cannot return waiting on the job before it is done (see
         //     result_receiver/result_sender above and below)
-        //  3. Tasks are not dropped before the threadpool is emptied
+        //  3. Tasks are not dropped as long as they are waiting on jobs
         let f = unsafe { std::mem::transmute(f) };
 
         let job = ThreadPoolJob {

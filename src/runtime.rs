@@ -8,12 +8,10 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
     storage::Storage,
-    task::{
-        DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext, ThreadPoolJob,
-    },
+    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext},
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
-    threadpool::{ComputeThreadPool, IoThreadPool, JobInfo, JobType},
+    threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     Error,
 };
 
@@ -157,7 +155,6 @@ impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
             ),
             waker: dummy_waker(),
             task_graph: TaskGraph::new(),
-            thread_pool_waiting: VecDeque::new(),
             statistics: Statistics::new(),
             request_batcher: Default::default(),
         }
@@ -190,7 +187,6 @@ pub struct Executor<'cref, 'inv> {
     task_manager: TaskManager<'cref>,
     request_batcher: RequestBatcher<'inv>,
     task_graph: TaskGraph,
-    thread_pool_waiting: VecDeque<ThreadPoolJob>,
     statistics: Statistics,
     waker: Waker,
 }
@@ -219,8 +215,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
         loop {
-            self.feed_thread_pool();
-
             let ready = self.task_graph.next_implied_ready();
             if ready.is_empty() {
                 if self.task_graph.has_open_tasks() {
@@ -298,13 +292,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         self.task_graph.add_implied(new_batch_id);
                     }
                 }
-                RequestType::ThreadPoolJob(job, JobType::Compute) => {
-                    // Compute threads are limited, so we collect them first before submission
-                    self.thread_pool_waiting.push_back(job);
-                }
-                RequestType::ThreadPoolJob(job, JobType::Io) => {
+                RequestType::ThreadPoolJob(job, type_) => {
                     // Io threads are created on demand, so we can spawn the job immediately
-                    self.task_manager.spawn_job(job, JobType::Io).unwrap();
+                    self.task_manager.spawn_job(job, type_).unwrap();
                 }
             }
         }
@@ -314,16 +304,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let jobs = self.task_manager.wait_for_jobs();
         for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
-        }
-    }
-
-    fn feed_thread_pool(&mut self) {
-        // Kind of ugly with the checks and unwraps, but I think this is the easiest way to not
-        // pull something from either collection if only either one is ready.
-        self.task_manager.collect_finished_compute_workers();
-        while !self.thread_pool_waiting.is_empty() && self.task_manager.compute_worker_available() {
-            let job = self.thread_pool_waiting.pop_front().unwrap();
-            self.task_manager.spawn_job(job, JobType::Compute).unwrap();
         }
     }
 

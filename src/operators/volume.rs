@@ -121,7 +121,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
                 let to_request = vol.brick_positions().collect::<Vec<_>>();
-                let batch_size = 64;
+                let batch_size = 128;
 
                 let mut sum = 0.0;
                 for chunk in to_request.chunks(batch_size) {
