@@ -257,7 +257,7 @@ pub fn init_non_full<const N: usize, T: Clone>(
     chunk_info: &ChunkInfo<N>,
     val: T,
 ) {
-    if chunk_info.mem_dimensions != chunk_info.logical_dimensions {
+    if !chunk_info.is_full() {
         for v in data.iter_mut() {
             v.write(val.clone());
         }

@@ -14,6 +14,9 @@ impl<const N: usize> ChunkInfo<N> {
         }
         true
     }
+    pub fn is_full(&self) -> bool {
+        self.mem_dimensions == self.logical_dimensions
+    }
     pub fn mem_elements(&self) -> usize {
         hmul(self.mem_dimensions)
     }

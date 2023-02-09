@@ -121,7 +121,7 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
                 let to_request = vol.brick_positions().collect::<Vec<_>>();
-                let batch_size = 128;
+                let batch_size = 1024;
 
                 let mut sum = 0.0;
                 for chunk in to_request.chunks(batch_size) {
@@ -129,16 +129,21 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                             (input.bricks.request(*pos), *pos)));
 
                     let mut tasks = Vec::new();
-                    while let Some((brick_data, brick_pos)) = stream.next().await {
+                    while let Some((brick_handle, brick_pos)) = stream.next().await {
                         // Second, when any brick arrives, create a compute future...
                         let chunk_info = vol.chunk_info(brick_pos);
-                        let mut task = Box::pin(async move {
-                            let brick = crate::data::chunk(&brick_data, &chunk_info);
-                            ctx.submit(ctx.spawn_compute(|| {
-                                brick.iter().sum::<f32>()
+                        let brick_handle = brick_handle.into_thread_handle();
+                        let mut task = Box::pin(
+                            ctx.submit(ctx.spawn_compute(move || {
+                                let sum = if chunk_info.is_full() {
+                                    brick_handle.iter().sum::<f32>()
+                                } else {
+                                    let brick = crate::data::chunk(&brick_handle, &chunk_info);
+                                    brick.iter().sum::<f32>()
+                                };
+                                (brick_handle, sum)
                             }))
-                            .await
-                        });
+                        );
                         // ... which is immediately polled once to submit the compute task onto the
                         // pool.
                         match futures::poll!(task.as_mut()) {
@@ -149,7 +154,9 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                     }
                     // Third, collect the brick results into a global sum
                     for task in tasks {
-                        sum += task.await;
+                        let (handle, part_sum) = task.await;
+                        sum += part_sum;
+                        handle.into_main_handle(ctx.storage());
                     }
                 }
 
