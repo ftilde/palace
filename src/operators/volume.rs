@@ -5,7 +5,7 @@ use crate::{
     data::{slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
     operator::{Operator, OperatorId},
     storage::{InplaceResult, ThreadInplaceResult},
-    task::{Task, TaskContext},
+    task::{RequestStream, Task, TaskContext},
 };
 
 use super::ScalarOperator;
@@ -72,30 +72,36 @@ pub fn linear_rescale<'op>(
 
                 let requests = positions
                     .into_iter()
-                    .map(|pos| (input.bricks.request_inplace(pos, ctx.current_op())));
+                    .map(|pos| (input.bricks.request_inplace(pos, ctx.current_op()), ()));
 
-                let stream = ctx.submit_unordered(requests).then(|brick_handle| {
-                    let mut brick_handle = brick_handle.unwrap().into_thread_handle();
-                    ctx.submit(ctx.spawn_compute(move || {
-                        match &mut brick_handle {
-                            ThreadInplaceResult::Inplace(ref mut rw) => {
-                                for v in rw.iter_mut() {
-                                    *v = factor * *v + offset;
+                let stream = ctx.submit_unordered_with_data(requests).then_req(
+                    ctx.into(),
+                    |brick_handle, _| {
+                        let mut brick_handle = brick_handle.unwrap().into_thread_handle();
+                        (
+                            ctx.spawn_compute(move || {
+                                match &mut brick_handle {
+                                    ThreadInplaceResult::Inplace(ref mut rw) => {
+                                        for v in rw.iter_mut() {
+                                            *v = factor * *v + offset;
+                                        }
+                                    }
+                                    ThreadInplaceResult::New(r, ref mut w) => {
+                                        for (i, o) in r.iter().zip(w.iter_mut()) {
+                                            o.write(factor * *i + offset);
+                                        }
+                                    }
                                 }
-                            }
-                            ThreadInplaceResult::New(r, ref mut w) => {
-                                for (i, o) in r.iter().zip(w.iter_mut()) {
-                                    o.write(factor * *i + offset);
-                                }
-                            }
-                        }
-                        brick_handle
-                    }))
-                });
+                                brick_handle
+                            }),
+                            (),
+                        )
+                    },
+                );
 
                 futures::pin_mut!(stream);
                 // Drive the stream until completion
-                while let Some(brick_handle) = stream.next().await {
+                while let Some((brick_handle, ())) = stream.next().await {
                     let brick_handle = brick_handle.into_main_handle(ctx.storage());
                     if let InplaceResult::New(_, w) = brick_handle {
                         // Safety: We have written all values in the above closure executed on

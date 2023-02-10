@@ -12,6 +12,7 @@ use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::Error;
 use futures::stream::StreamExt;
+use futures::Stream;
 
 use derive_more::{Constructor, Deref, DerefMut, From};
 
@@ -93,6 +94,201 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub current_task: TaskId,
 }
 
+pub trait RequestStream<'req, 'inv, V1, D1, V2, D2, F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2)>
+{
+    fn then_req(
+        self,
+        ctx: OpaqueTaskContext<'req, 'inv>,
+        f: F,
+    ) -> Box<RequestThen<'req, 'inv, V2, D2, F, Self>>
+    where
+        Self: Sized;
+}
+
+impl<
+        'req,
+        'inv,
+        V1,
+        D1,
+        V2,
+        D2,
+        F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2),
+        S: Stream<Item = (V1, D1)>,
+    > RequestStream<'req, 'inv, V1, D1, V2, D2, F> for S
+{
+    fn then_req(
+        self,
+        ctx: OpaqueTaskContext<'req, 'inv>,
+        f: F,
+    ) -> Box<RequestThen<'req, 'inv, V2, D2, F, Self>>
+    where
+        Self: Sized,
+    {
+        Box::new(RequestThen {
+            inner: self,
+            then: RequestStreamSource::empty(ctx),
+            f,
+        })
+    }
+}
+
+pub struct RequestThen<'req, 'inv, V2, D2, F, I> {
+    inner: I,
+    then: Box<RequestStreamSource<'req, 'inv, V2, D2>>,
+    f: F,
+}
+
+impl<
+        'req,
+        'inv,
+        V1,
+        D1,
+        V2,
+        D2,
+        I: Stream<Item = (V1, D1)> + std::marker::Unpin,
+        F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2),
+    > futures::Stream for Box<RequestThen<'req, 'inv, V2, D2, F, I>>
+{
+    type Item = (V2, D2);
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        ctx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let input_empty = loop {
+            match self.inner.poll_next_unpin(ctx) {
+                Poll::Ready(Some((v, d))) => {
+                    let to_push = (self.f)(v, d);
+                    self.then.push_request(to_push);
+                }
+                Poll::Ready(None) => {
+                    break true;
+                }
+                Poll::Pending => {
+                    break false;
+                }
+            }
+        };
+        match self.then.poll_next_unpin(ctx) {
+            // If there are currently no further items in the `then` stream, but we still have
+            // unprocessed items in the `inner` stream, we are not done, yet!
+            Poll::Ready(None) if !input_empty => Poll::Pending,
+            o => o,
+        }
+    }
+}
+
+struct RequestStreamSource<'req, 'inv, V, D> {
+    task_map: BTreeMap<RequestId, (ResultPoll<'req, V>, D)>,
+    ready: VecDeque<(V, D)>,
+    task_context: OpaqueTaskContext<'req, 'inv>,
+}
+
+impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
+    fn empty(task_context: OpaqueTaskContext<'req, 'inv>) -> Box<Self> {
+        Box::new(Self {
+            task_map: BTreeMap::new(),
+            ready: VecDeque::new(),
+            task_context,
+        })
+    }
+    fn unordered(
+        task_context: OpaqueTaskContext<'req, 'inv>,
+        requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
+    ) -> Box<Self> {
+        let mut ready = VecDeque::new();
+        let task_map = requests
+            .into_iter()
+            .filter_map(|(mut req, data)| {
+                match req.type_ {
+                    RequestType::Data(_) => {
+                        if let Some(r) = (req.poll)(PollContext {
+                            storage: task_context.storage,
+                        }) {
+                            ready.push_back((r, data));
+                            return None;
+                        }
+                    }
+                    RequestType::ThreadPoolJob(_, _) => {}
+                }
+                let id = req.type_.id();
+                task_context.requests.push(RequestInfo {
+                    task: req.type_,
+                    progress_indicator: ProgressIndicator::PartialPossible,
+                });
+                Some((id, (req.poll, data)))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Box::new(Self {
+            task_map,
+            ready,
+            task_context,
+        })
+    }
+
+    pub fn push_request(&mut self, (mut req, data): (Request<'req, 'inv, V>, D)) {
+        match req.type_ {
+            RequestType::Data(_) => {
+                if let Some(r) = (req.poll)(PollContext {
+                    storage: self.task_context.storage,
+                }) {
+                    self.ready.push_back((r, data));
+                    return;
+                }
+            }
+            RequestType::ThreadPoolJob(_, _) => {}
+        }
+        let id = req.type_.id();
+        self.task_context.requests.push(RequestInfo {
+            task: req.type_,
+            progress_indicator: ProgressIndicator::PartialPossible,
+        });
+        self.task_map.insert(id, (req.poll, data));
+    }
+
+    //pub fn then(self) -> Then
+}
+
+impl<'req, 'inv, V, D> futures::Stream for Box<RequestStreamSource<'req, 'inv, V, D>> {
+    type Item = (V, D);
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let s = self.get_mut();
+        {
+            let mut newly_completed = Vec::new();
+            for c in s.task_context.hints.completed.borrow().iter() {
+                if s.task_map.contains_key(&c) {
+                    newly_completed.push(*c);
+                }
+            }
+            // TODO maybe try to merge these loops. Problem: borrow of completed and usage in
+            // noticed_completion
+            for c in newly_completed {
+                s.task_context.hints.noticed_completion(c);
+
+                let (mut result_poll, data) = s.task_map.remove(&c).unwrap();
+                let v = result_poll(PollContext {
+                    storage: s.task_context.storage,
+                })
+                .expect("Task should have been ready!");
+                s.ready.push_back((v, data));
+            }
+        }
+        if let Some(r) = s.ready.pop_front() {
+            return Poll::Ready(Some(r));
+        }
+        if s.task_map.is_empty() {
+            Poll::Ready(None)
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
 // Workaround for a compiler bug(?)
 // See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999
 pub trait WeUseThisLifetime<'a> {}
@@ -102,6 +298,13 @@ impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 pub struct TaskContext<'cref, 'inv, ItemDescriptor, Output: ?Sized> {
     inner: OpaqueTaskContext<'cref, 'inv>,
     _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
+}
+impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
+    for TaskContext<'cref, 'inv, ItemDescriptor, Output>
+{
+    fn into(self) -> OpaqueTaskContext<'cref, 'inv> {
+        self.inner
+    }
 }
 impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
@@ -142,8 +345,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                 if let Some(data) = (request.poll)(PollContext {
                     storage: self.inner.storage,
                 }) {
-                    let mut completed = self.inner.hints.completed.borrow_mut();
-                    completed.remove(&request_id);
+                    self.inner.hints.noticed_completion(request_id);
                     return std::future::ready(data).await;
                 } else {
                     futures::pending!();
@@ -196,64 +398,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     where
         'inv: 'req,
     {
-        let mut initial_ready = Vec::new();
-        let mut task_map = requests
-            .into_iter()
-            .filter_map(|(mut req, data)| {
-                match req.type_ {
-                    RequestType::Data(_) => {
-                        if let Some(r) = (req.poll)(PollContext {
-                            storage: self.inner.storage,
-                        }) {
-                            initial_ready.push((r, data));
-                            return None;
-                        }
-                    }
-                    RequestType::ThreadPoolJob(_, _) => {}
-                };
-                let id = req.type_.id();
-                self.inner.requests.push(RequestInfo {
-                    task: req.type_,
-                    progress_indicator: ProgressIndicator::PartialPossible,
-                });
-                Some((id, (req.poll, data)))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let mut completed = VecDeque::new();
-        futures::stream::poll_fn(move |_f_ctx| -> Poll<Option<(V, D)>> {
-            {
-                let mut newly_completed = Vec::new();
-                for c in self.inner.hints.completed.borrow().iter() {
-                    if task_map.contains_key(&c) {
-                        newly_completed.push(*c);
-                    }
-                }
-                for c in newly_completed {
-                    self.inner.hints.noticed_completion(c);
-                    completed.push_back(c);
-                }
-            }
-            if let Some(r) = initial_ready.pop() {
-                return Poll::Ready(Some(r));
-            }
-            if task_map.is_empty() {
-                return Poll::Ready(None);
-            }
-
-            loop {
-                let Some(completed_id) = completed.pop_front() else {
-                        return Poll::Pending;
-                    };
-                let Some((mut result_poll, data)) = task_map.remove(&completed_id) else { continue };
-
-                match result_poll(PollContext {
-                    storage: self.inner.storage,
-                }) {
-                    Some(v) => return Poll::Ready(Some((v, data))),
-                    None => panic!("Task should have been ready!"),
-                }
-            }
-        })
+        RequestStreamSource::unordered(self.inner, requests)
     }
 
     // TODO: We may not want to expose the storage directly in the future. Currently this is used
