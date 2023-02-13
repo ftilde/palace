@@ -102,6 +102,12 @@ impl<const N: usize, T: Copy> Vector<N, T> {
     pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Vector<N, U> {
         Vector(std::array::from_fn(|i| f(self.0[i])))
     }
+    pub fn fold<U>(self, mut state: U, mut f: impl FnMut(U, T) -> U) -> U {
+        for v in self.0 {
+            state = f(state, v);
+        }
+        state
+    }
     pub fn zip<U: Copy, V>(
         self,
         other: Vector<N, U>,
