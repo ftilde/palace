@@ -13,6 +13,7 @@ use crate::threadpool::{JobId, JobType};
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
+use pin_project::pin_project;
 
 use derive_more::{Constructor, Deref, DerefMut, From};
 
@@ -94,60 +95,68 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub current_task: TaskId,
 }
 
-pub trait RequestStream<'req, 'inv, V1, D1, V2, D2, F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2)>
-{
-    fn then_req(
+pub trait RequestStream<'req, 'inv, V> {
+    // TODO: Possibly change once impl trait ist stable
+    fn then_req<V2: 'req, F: Fn(V) -> Request<'req, 'inv, V2> + 'req>(
         self,
         ctx: OpaqueTaskContext<'req, 'inv>,
         f: F,
-    ) -> Box<RequestThen<'req, 'inv, V2, D2, F, Self>>
+    ) -> Box<dyn Stream<Item = V2> + std::marker::Unpin + 'req>
+    where
+        Self: Sized;
+
+    fn then_req_with_data<V2, D2, F: Fn(V) -> (Request<'req, 'inv, V2>, D2)>(
+        self,
+        ctx: OpaqueTaskContext<'req, 'inv>,
+        f: F,
+    ) -> RequestThenWithData<'req, 'inv, V2, D2, futures::stream::Map<Self, F>>
     where
         Self: Sized;
 }
 
-impl<
-        'req,
-        'inv,
-        V1,
-        D1,
-        V2,
-        D2,
-        F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2),
-        S: Stream<Item = (V1, D1)>,
-    > RequestStream<'req, 'inv, V1, D1, V2, D2, F> for S
+impl<'req, 'inv, V, S: Stream<Item = V> + std::marker::Unpin + 'req> RequestStream<'req, 'inv, V>
+    for S
 {
-    fn then_req(
+    fn then_req<V2: 'req, F: Fn(V) -> Request<'req, 'inv, V2> + 'req>(
         self,
         ctx: OpaqueTaskContext<'req, 'inv>,
         f: F,
-    ) -> Box<RequestThen<'req, 'inv, V2, D2, F, Self>>
+    ) -> Box<dyn Stream<Item = V2> + std::marker::Unpin + 'req>
     where
         Self: Sized,
     {
-        Box::new(RequestThen {
-            inner: self,
+        Box::new(
+            RequestThenWithData {
+                inner: self.map(move |i| (f(i), ())),
+                then: RequestStreamSource::empty(ctx),
+            }
+            .map(|(v, ())| v),
+        )
+    }
+    fn then_req_with_data<V2, D2, F: Fn(V) -> (Request<'req, 'inv, V2>, D2)>(
+        self,
+        ctx: OpaqueTaskContext<'req, 'inv>,
+        f: F,
+    ) -> RequestThenWithData<'req, 'inv, V2, D2, futures::stream::Map<Self, F>>
+    where
+        Self: Sized,
+    {
+        RequestThenWithData {
+            inner: self.map(f),
             then: RequestStreamSource::empty(ctx),
-            f,
-        })
+        }
     }
 }
 
-pub struct RequestThen<'req, 'inv, V2, D2, F, I> {
+#[pin_project]
+pub struct RequestThenWithData<'req, 'inv, V2, D2, I> {
     inner: I,
+    #[pin]
     then: Box<RequestStreamSource<'req, 'inv, V2, D2>>,
-    f: F,
 }
 
-impl<
-        'req,
-        'inv,
-        V1,
-        D1,
-        V2,
-        D2,
-        I: Stream<Item = (V1, D1)> + std::marker::Unpin,
-        F: Fn(V1, D1) -> (Request<'req, 'inv, V2>, D2),
-    > futures::Stream for Box<RequestThen<'req, 'inv, V2, D2, F, I>>
+impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::marker::Unpin>
+    futures::Stream for RequestThenWithData<'req, 'inv, V2, D2, I>
 {
     type Item = (V2, D2);
 
@@ -157,9 +166,8 @@ impl<
     ) -> Poll<Option<Self::Item>> {
         let input_empty = loop {
             match self.inner.poll_next_unpin(ctx) {
-                Poll::Ready(Some((v, d))) => {
-                    let to_push = (self.f)(v, d);
-                    self.then.push_request(to_push);
+                Poll::Ready(Some(v)) => {
+                    self.then.push_request(v);
                 }
                 Poll::Ready(None) => {
                     break true;
@@ -246,8 +254,6 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
         });
         self.task_map.insert(id, (req.poll, data));
     }
-
-    //pub fn then(self) -> Then
 }
 
 impl<'req, 'inv, V, D> futures::Stream for Box<RequestStreamSource<'req, 'inv, V, D>> {

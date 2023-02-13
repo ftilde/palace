@@ -29,3 +29,4 @@ xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
 nifti = { version = "0.15.0", features = ["ndarray_volumes"] }
 num_cpus = "1.15.0"
 work-queue = "0.1.3"
+pin-project = "1.0"

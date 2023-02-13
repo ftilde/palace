@@ -61,35 +61,32 @@ pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'sta
 {
     let requests = positions
         .into_iter()
-        .map(|pos| (input.request_inplace(pos, ctx.current_op()), ()));
+        .map(|pos| input.request_inplace(pos, ctx.current_op()));
 
-    let stream =
-        ctx.submit_unordered_with_data(requests)
-            .then_req(ctx.into(), |brick_handle, _| {
-                let mut brick_handle = brick_handle.unwrap().into_thread_handle();
-                (
-                    ctx.spawn_compute(move || {
-                        match &mut brick_handle {
-                            ThreadInplaceResult::Inplace(ref mut rw) => {
-                                for v in rw.iter_mut() {
-                                    *v = f(*v);
-                                }
-                            }
-                            ThreadInplaceResult::New(r, ref mut w) => {
-                                for (i, o) in r.iter().zip(w.iter_mut()) {
-                                    o.write(f(*i));
-                                }
-                            }
+    let stream = ctx
+        .submit_unordered(requests)
+        .then_req(ctx.into(), |brick_handle| {
+            let mut brick_handle = brick_handle.unwrap().into_thread_handle();
+            ctx.spawn_compute(move || {
+                match &mut brick_handle {
+                    ThreadInplaceResult::Inplace(ref mut rw) => {
+                        for v in rw.iter_mut() {
+                            *v = f(*v);
                         }
-                        brick_handle
-                    }),
-                    (),
-                )
-            });
+                    }
+                    ThreadInplaceResult::New(r, ref mut w) => {
+                        for (i, o) in r.iter().zip(w.iter_mut()) {
+                            o.write(f(*i));
+                        }
+                    }
+                }
+                brick_handle
+            })
+        });
 
     futures::pin_mut!(stream);
     // Drive the stream until completion
-    while let Some((brick_handle, ())) = stream.next().await {
+    while let Some(brick_handle) = stream.next().await {
         let brick_handle = brick_handle.into_main_handle(ctx.storage());
         if let InplaceResult::New(_, w) = brick_handle {
             // Safety: We have written all values in the above closure executed on
@@ -173,24 +170,21 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
                         .submit_unordered_with_data(
                             chunk.iter().map(|pos| (input.bricks.request(*pos), *pos)),
                         )
-                        .then_req(ctx.into(), |brick_handle, brick_pos| {
+                        .then_req(ctx.into(), |(brick_handle, brick_pos)| {
                             let chunk_info = vol.chunk_info(brick_pos);
                             let brick_handle = brick_handle.into_thread_handle();
-                            (
-                                ctx.spawn_compute(move || {
-                                    let sum = if chunk_info.is_full() {
-                                        brick_handle.iter().sum::<f32>()
-                                    } else {
-                                        let brick = crate::data::chunk(&brick_handle, &chunk_info);
-                                        brick.iter().sum::<f32>()
-                                    };
-                                    (brick_handle, sum)
-                                }),
-                                (),
-                            )
+                            ctx.spawn_compute(move || {
+                                let sum = if chunk_info.is_full() {
+                                    brick_handle.iter().sum::<f32>()
+                                } else {
+                                    let brick = crate::data::chunk(&brick_handle, &chunk_info);
+                                    brick.iter().sum::<f32>()
+                                };
+                                (brick_handle, sum)
+                            })
                         });
 
-                    while let Some(((brick_handle, part_sum), ())) = stream.next().await {
+                    while let Some((brick_handle, part_sum)) = stream.next().await {
                         sum += part_sum;
                         brick_handle.into_main_handle(ctx.storage());
                     }
