@@ -169,38 +169,30 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
 
                 let mut sum = 0.0;
                 for chunk in to_request.chunks(batch_size) {
-                    let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos|
-                            (input.bricks.request(*pos), *pos)));
+                    let mut stream = ctx
+                        .submit_unordered_with_data(
+                            chunk.iter().map(|pos| (input.bricks.request(*pos), *pos)),
+                        )
+                        .then_req(ctx.into(), |brick_handle, brick_pos| {
+                            let chunk_info = vol.chunk_info(brick_pos);
+                            let brick_handle = brick_handle.into_thread_handle();
+                            (
+                                ctx.spawn_compute(move || {
+                                    let sum = if chunk_info.is_full() {
+                                        brick_handle.iter().sum::<f32>()
+                                    } else {
+                                        let brick = crate::data::chunk(&brick_handle, &chunk_info);
+                                        brick.iter().sum::<f32>()
+                                    };
+                                    (brick_handle, sum)
+                                }),
+                                (),
+                            )
+                        });
 
-                    let mut tasks = Vec::new();
-                    while let Some((brick_handle, brick_pos)) = stream.next().await {
-                        // Second, when any brick arrives, create a compute future...
-                        let chunk_info = vol.chunk_info(brick_pos);
-                        let brick_handle = brick_handle.into_thread_handle();
-                        let mut task = Box::pin(
-                            ctx.submit(ctx.spawn_compute(move || {
-                                let sum = if chunk_info.is_full() {
-                                    brick_handle.iter().sum::<f32>()
-                                } else {
-                                    let brick = crate::data::chunk(&brick_handle, &chunk_info);
-                                    brick.iter().sum::<f32>()
-                                };
-                                (brick_handle, sum)
-                            }))
-                        );
-                        // ... which is immediately polled once to submit the compute task onto the
-                        // pool.
-                        match futures::poll!(task.as_mut()) {
-                            std::task::Poll::Ready(_) => panic!("Future cannot be ready since it has just submitted it's task to the runtime."),
-                            std::task::Poll::Pending => {},
-                        }
-                        tasks.push(task);
-                    }
-                    // Third, collect the brick results into a global sum
-                    for task in tasks {
-                        let (handle, part_sum) = task.await;
+                    while let Some(((brick_handle, part_sum), ())) = stream.next().await {
                         sum += part_sum;
-                        handle.into_main_handle(ctx.storage());
+                        brick_handle.into_main_handle(ctx.storage());
                     }
                 }
 
