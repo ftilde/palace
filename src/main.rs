@@ -129,7 +129,8 @@ fn eval_network(
     let factor = factor.into();
     let offset = (&0.0).into();
 
-    let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(32.into()));
+    //let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(32.into()));
+    let rechunked = vol;
 
     let mapped = volume::map(&rechunked, |v| v.min(0.5));
 
