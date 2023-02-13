@@ -85,6 +85,9 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync> VolumeOperatorState for Voxel
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
         VolumeOperator::new(
             OperatorId::new("ImplicitFunctionRasterizer::operate")
+                //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
+                //creates a `|_| var` closure based on a parameter `var`. All of those would have the
+                //same type!
                 .dependent_on(crate::id::func_id::<F>())
                 .dependent_on(Id::hash(&self.metadata)),
             move |ctx, _| async move { ctx.write(self.metadata) }.into(),
