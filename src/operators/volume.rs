@@ -53,7 +53,7 @@ impl Into<Id> for &VolumeOperator<'_> {
 
 pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'static>(
     ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
-    input: &'op VolumeOperator<'_>,
+    input: &'op Operator<'_, BrickPosition, f32>,
     positions: Vec<BrickPosition>,
     f: F,
 ) where
@@ -61,7 +61,7 @@ pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'sta
 {
     let requests = positions
         .into_iter()
-        .map(|pos| (input.bricks.request_inplace(pos, ctx.current_op()), ()));
+        .map(|pos| (input.request_inplace(pos, ctx.current_op()), ()));
 
     let stream =
         ctx.submit_unordered_with_data(requests)
@@ -99,6 +99,30 @@ pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'sta
     }
 }
 
+pub fn map<'op>(input: &'op VolumeOperator<'_>, f: fn(f32) -> f32) -> VolumeOperator<'op> {
+    VolumeOperator::new(
+        OperatorId::new("volume_scale")
+            .dependent_on(input)
+            .dependent_on(Id::hash(&f)),
+        move |ctx, _| {
+            async move {
+                let req = input.metadata.request_scalar();
+                let m = ctx.submit(req).await;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, _| {
+            async move {
+                map_values(ctx, &input.bricks, positions, f).await;
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
 pub fn linear_rescale<'op>(
     input: &'op VolumeOperator<'_>,
     factor: &'op ScalarOperator<'_, f32>,
@@ -124,7 +148,7 @@ pub fn linear_rescale<'op>(
                     ctx.submit(offset.request_scalar()),
                 };
 
-                map_values(ctx, input, positions, move |i| i * factor + offset).await;
+                map_values(ctx, &input.bricks, positions, move |i| i * factor + offset).await;
 
                 Ok(())
             }

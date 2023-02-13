@@ -107,12 +107,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::Synthetic(args) => Box::new(operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
             brick_size,
-            |pos| {
-                if pos.x() > 0.5 {
-                    1.0
-                } else {
-                    0.0
-                }
+            |v| {
+                let r2 = v
+                    .map(|v| v - 0.5)
+                    .map(|v| v * v)
+                    .fold(0.0f32, std::ops::Add::add);
+                r2.sqrt()
             },
         )),
     };
@@ -131,11 +131,13 @@ fn eval_network(
 
     let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(32.into()));
 
-    let scaled1 = volume::linear_rescale(&rechunked, &factor, &offset);
+    let mapped = volume::map(&rechunked, |v| v.min(0.5));
+
+    let scaled1 = volume::linear_rescale(&mapped, &factor, &offset);
     let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
 
     let mean = volume::mean(&scaled2);
-    let mean_unscaled = volume::mean(&rechunked);
+    let mean_unscaled = volume::mean(&mapped);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
