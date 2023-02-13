@@ -21,6 +21,7 @@ mod task_graph;
 mod task_manager;
 mod threadpool;
 mod util;
+#[allow(unused)]
 mod vulkan;
 
 // TODO look into thiserror/anyhow
