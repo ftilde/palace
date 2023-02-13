@@ -3,6 +3,7 @@ use futures::stream::StreamExt;
 use crate::{
     array::VolumeMetaData,
     data::{slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
+    id::Id,
     operator::{Operator, OperatorId},
     storage::{InplaceResult, ThreadInplaceResult},
     task::{RequestStream, Task, TaskContext},
@@ -44,6 +45,60 @@ impl<'op> VolumeOperator<'op> {
     }
 }
 
+impl Into<Id> for &VolumeOperator<'_> {
+    fn into(self) -> Id {
+        Id::combine(&[(&self.metadata).into(), (&self.bricks).into()])
+    }
+}
+
+pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'static>(
+    ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
+    input: &'op VolumeOperator<'_>,
+    positions: Vec<BrickPosition>,
+    f: F,
+) where
+    'op: 'inv,
+{
+    let requests = positions
+        .into_iter()
+        .map(|pos| (input.bricks.request_inplace(pos, ctx.current_op()), ()));
+
+    let stream =
+        ctx.submit_unordered_with_data(requests)
+            .then_req(ctx.into(), |brick_handle, _| {
+                let mut brick_handle = brick_handle.unwrap().into_thread_handle();
+                (
+                    ctx.spawn_compute(move || {
+                        match &mut brick_handle {
+                            ThreadInplaceResult::Inplace(ref mut rw) => {
+                                for v in rw.iter_mut() {
+                                    *v = f(*v);
+                                }
+                            }
+                            ThreadInplaceResult::New(r, ref mut w) => {
+                                for (i, o) in r.iter().zip(w.iter_mut()) {
+                                    o.write(f(*i));
+                                }
+                            }
+                        }
+                        brick_handle
+                    }),
+                    (),
+                )
+            });
+
+    futures::pin_mut!(stream);
+    // Drive the stream until completion
+    while let Some((brick_handle, ())) = stream.next().await {
+        let brick_handle = brick_handle.into_main_handle(ctx.storage());
+        if let InplaceResult::New(_, w) = brick_handle {
+            // Safety: We have written all values in the above closure executed on
+            // the thread pool.
+            unsafe { w.initialized() };
+        };
+    }
+}
+
 pub fn linear_rescale<'op>(
     input: &'op VolumeOperator<'_>,
     factor: &'op ScalarOperator<'_, f32>,
@@ -51,8 +106,7 @@ pub fn linear_rescale<'op>(
 ) -> VolumeOperator<'op> {
     VolumeOperator::new(
         OperatorId::new("volume_scale")
-            .dependent_on(&input.metadata)
-            .dependent_on(&input.bricks)
+            .dependent_on(input)
             .dependent_on(factor)
             .dependent_on(offset),
         move |ctx, _| {
@@ -70,45 +124,7 @@ pub fn linear_rescale<'op>(
                     ctx.submit(offset.request_scalar()),
                 };
 
-                let requests = positions
-                    .into_iter()
-                    .map(|pos| (input.bricks.request_inplace(pos, ctx.current_op()), ()));
-
-                let stream = ctx.submit_unordered_with_data(requests).then_req(
-                    ctx.into(),
-                    |brick_handle, _| {
-                        let mut brick_handle = brick_handle.unwrap().into_thread_handle();
-                        (
-                            ctx.spawn_compute(move || {
-                                match &mut brick_handle {
-                                    ThreadInplaceResult::Inplace(ref mut rw) => {
-                                        for v in rw.iter_mut() {
-                                            *v = factor * *v + offset;
-                                        }
-                                    }
-                                    ThreadInplaceResult::New(r, ref mut w) => {
-                                        for (i, o) in r.iter().zip(w.iter_mut()) {
-                                            o.write(factor * *i + offset);
-                                        }
-                                    }
-                                }
-                                brick_handle
-                            }),
-                            (),
-                        )
-                    },
-                );
-
-                futures::pin_mut!(stream);
-                // Drive the stream until completion
-                while let Some((brick_handle, ())) = stream.next().await {
-                    let brick_handle = brick_handle.into_main_handle(ctx.storage());
-                    if let InplaceResult::New(_, w) = brick_handle {
-                        // Safety: We have written all values in the above closure executed on
-                        // the thread pool.
-                        unsafe { w.initialized() };
-                    };
-                }
+                map_values(ctx, input, positions, move |i| i * factor + offset).await;
 
                 Ok(())
             }
@@ -119,9 +135,7 @@ pub fn linear_rescale<'op>(
 
 pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
     crate::operators::scalar(
-        OperatorId::new("volume_mean")
-            .dependent_on(&input.metadata)
-            .dependent_on(&input.bricks),
+        OperatorId::new("volume_mean").dependent_on(input),
         move |ctx, _| {
             async move {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
@@ -180,9 +194,7 @@ pub fn rechunk<'op>(
     brick_size: LocalVoxelPosition,
 ) -> VolumeOperator<'op> {
     VolumeOperator::new(
-        OperatorId::new("volume_rechunk")
-            .dependent_on(&input.metadata)
-            .dependent_on(&input.bricks),
+        OperatorId::new("volume_rechunk").dependent_on(input),
         move |ctx, _| {
             async move {
                 let req = input.metadata.request_scalar();
