@@ -259,14 +259,13 @@ impl<'req, 'inv, V, D> futures::Stream for Box<RequestStreamSource<'req, 'inv, V
     ) -> Poll<Option<Self::Item>> {
         let s = self.get_mut();
         {
+            // TODO Try to remove double loop with BtreeSet::drain_filter once it's stable.
             let mut newly_completed = Vec::new();
             for c in s.task_context.hints.completed.borrow().iter() {
                 if s.task_map.contains_key(&c) {
                     newly_completed.push(*c);
                 }
             }
-            // TODO maybe try to merge these loops. Problem: borrow of completed and usage in
-            // noticed_completion
             for c in newly_completed {
                 s.task_context.hints.noticed_completion(c);
 
