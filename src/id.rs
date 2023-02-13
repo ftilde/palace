@@ -37,3 +37,11 @@ impl From<&[u8]> for Id {
         Self::from_data(value)
     }
 }
+
+pub fn func_id<F: 'static>() -> Id {
+    // TODO: One problem with this during development: The id of a closure may not change between
+    // compilations, which may result in confusion when old values are reported when loaded from a
+    // persistent cache even though the closure code was changed in the meantime.
+    let id = std::any::TypeId::of::<F>();
+    Id::hash(&id)
+}

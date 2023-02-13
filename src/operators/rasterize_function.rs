@@ -16,14 +16,6 @@ pub struct VoxelPosRasterizer<F> {
     metadata: VolumeMetaData,
 }
 
-fn func_id<F: 'static>() -> Id {
-    // TODO: One problem with this during development: The id of a closure may not change between
-    // compilations, which may result in confusion when old values are reported when loaded from a
-    // persistent cache even though the closure code was changed in the meantime.
-    let id = std::any::TypeId::of::<F>();
-    Id::hash(&id)
-}
-
 pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
@@ -93,7 +85,7 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync> VolumeOperatorState for Voxel
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
         VolumeOperator::new(
             OperatorId::new("ImplicitFunctionRasterizer::operate")
-                .dependent_on(func_id::<F>())
+                .dependent_on(crate::id::func_id::<F>())
                 .dependent_on(Id::hash(&self.metadata)),
             move |ctx, _| async move { ctx.write(self.metadata) }.into(),
             move |ctx, positions, _| {
