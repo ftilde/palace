@@ -6,18 +6,18 @@ use crate::{
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct OperatorId(Id);
+pub struct OperatorId(Id, &'static str);
 impl OperatorId {
     pub fn new(name: &'static str) -> Self {
         let id = Id::from_data(name.as_bytes());
-        OperatorId(id)
+        OperatorId(id, name)
     }
     pub fn dependent_on(self, id: impl Into<Id>) -> Self {
-        OperatorId(Id::combine(&[self.0, id.into()]))
+        OperatorId(Id::combine(&[self.0, id.into()]), self.1)
     }
     pub fn slot(&self, slot_number: usize) -> Self {
         let id = Id::combine(&[self.0, Id::from_data(bytemuck::bytes_of(&slot_number))]);
-        OperatorId(id)
+        OperatorId(id, self.1)
     }
     pub fn inner(&self) -> Id {
         self.0
@@ -36,18 +36,12 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct DataId(Id);
+pub struct DataId(pub Id);
 impl DataId {
     pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
         let data_id = Id::hash(descriptor);
 
         DataId(Id::combine(&[op.inner(), data_id]))
-    }
-}
-
-impl From<Id> for OperatorId {
-    fn from(inner: Id) -> Self {
-        Self(inner)
     }
 }
 
