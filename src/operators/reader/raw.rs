@@ -38,19 +38,44 @@ impl RawVolumeSourceState {
         ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
         mut positions: Vec<BrickPosition>,
     ) -> Result<(), Error> {
-        let num_workers = 8;
-        let batch_size = crate::util::div_round_up(positions.len(), num_workers);
-
         let m = VolumeMetaData {
             dimensions: self.size,
             chunk_size: brick_size,
         };
         let dim_in_bricks = m.dimension_in_bricks();
+
         positions.sort_by_key(|v| crate::data::to_linear(*v, dim_in_bricks));
+
+        let max_lin_len = 4096; //expected page size
+
+        let chunk_size_x = m.chunk_size.x().raw;
+
+        let mut batches = Vec::new();
+        let mut current_batch: Vec<BrickPosition> = Vec::new();
+        let mut current_pos = 0;
+        for pos in positions {
+            current_pos += chunk_size_x;
+            if current_pos < max_lin_len {
+                if let Some(end) = current_batch.last() {
+                    let mut next = *end;
+                    next.0[2] = next.0[2] + 1;
+                    if next == pos {
+                        current_batch.push(pos);
+                        current_pos = 0;
+                        continue;
+                    }
+                }
+            }
+            batches.push(std::mem::take(&mut current_batch));
+            current_batch.push(pos);
+        }
+        if !current_batch.is_empty() {
+            batches.push(current_batch);
+        }
+
         let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
         let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
             .unwrap();
-        let batches = itertools::Itertools::chunks(positions.into_iter(), batch_size);
         let work = batches.into_iter().map(|positions| {
             let num_voxels = crate::data::hmul(m.chunk_size);
 
@@ -66,29 +91,59 @@ impl RawVolumeSourceState {
                 })
                 .collect::<Vec<_>>();
             ctx.spawn_io(move || {
+                if brick_handles.is_empty() {
+                    return brick_handles;
+                }
                 for (pos, ref mut brick_handle) in &mut brick_handles {
                     let chunk_info = m.chunk_info(*pos);
-
                     crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
-
-                    //if !(begin.x() < m.dimensions.x()
-                    //    && begin.y() < m.dimensions.y()
-                    //    && begin.z() < m.dimensions.z())
-                    //{
-                    //    return Err("Brick position is outside of volume".into());
-                    //}
-
-                    let mut out_chunk = crate::data::chunk_mut(brick_handle, &chunk_info);
-                    let begin = chunk_info.begin();
-                    let end = chunk_info.end();
-                    let in_chunk = in_.slice(ndarray::s!(
-                        begin.z().raw as usize..end.z().raw as usize,
-                        begin.y().raw as usize..end.y().raw as usize,
-                        begin.x().raw as usize..end.x().raw as usize,
-                    ));
-
-                    ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
                 }
+
+                let first = brick_handles.first().unwrap();
+                let first_info = m.chunk_info(first.0);
+                let global_begin = first_info.begin;
+
+                let last = brick_handles.last().unwrap();
+                let last_info = m.chunk_info(last.0);
+                let global_end = last_info.end();
+
+                //if !(begin.x() < m.dimensions.x()
+                //    && begin.y() < m.dimensions.y()
+                //    && begin.z() < m.dimensions.z())
+                //{
+                //    return Err("Brick position is outside of volume".into());
+                //}
+
+                let strip_size_z = first_info.logical_dimensions.z();
+                let strip_size_y = first_info.logical_dimensions.y();
+                for z in 0..strip_size_z.raw {
+                    for y in 0..strip_size_y.raw {
+                        let line_begin_brick =
+                            crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
+
+                        let global_line = in_.slice(ndarray::s!(
+                            (global_begin.z().raw + z) as usize,
+                            (global_begin.y().raw + y) as usize,
+                            global_begin.x().raw as usize..global_end.x().raw as usize,
+                        ));
+                        let global_line = global_line.as_slice().unwrap();
+
+                        let mut local_i = 0usize;
+                        let mut bricks = brick_handles
+                            .iter_mut()
+                            .map(|(_, handle)| &mut handle[line_begin_brick..]);
+                        let mut current_brick = bricks.next().unwrap();
+                        for iv in global_line {
+                            if local_i == brick_size.x().raw as usize {
+                                local_i = 0;
+                                current_brick = bricks.next().unwrap();
+                            }
+                            current_brick[local_i].write(*iv);
+                            local_i += 1;
+                        }
+                    }
+                }
+
                 brick_handles
             })
         });

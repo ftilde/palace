@@ -59,6 +59,13 @@ impl<T: CoordinateType> Add for Coordinate<T> {
         (self.raw + rhs.raw).into()
     }
 }
+impl<T: CoordinateType> Add<u32> for Coordinate<T> {
+    type Output = Coordinate<T>;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        (self.raw + rhs).into()
+    }
+}
 impl<T: CoordinateType> Sub for Coordinate<T> {
     type Output = Coordinate<T>;
 
@@ -78,6 +85,13 @@ impl<T: CoordinateType> Div for Coordinate<T> {
 
     fn div(self, rhs: Self) -> Self::Output {
         (self.raw / rhs.raw).into()
+    }
+}
+
+impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
+    type Output = GlobalVoxelCoordinate;
+    fn add(self, rhs: LocalVoxelCoordinate) -> Self::Output {
+        (self.raw + rhs.raw).into()
     }
 }
 
@@ -174,13 +188,6 @@ impl<const N: usize, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<
     type Output = Vector<N, O>;
     fn div(self, rhs: Vector<N, U>) -> Self::Output {
         self.zip(rhs, Div::div)
-    }
-}
-
-impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
-    type Output = GlobalVoxelCoordinate;
-    fn add(self, rhs: LocalVoxelCoordinate) -> Self::Output {
-        (self.raw + rhs.raw).into()
     }
 }
 

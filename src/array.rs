@@ -59,7 +59,7 @@ impl<const N: usize> ArrayMetaData<N> {
         pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
     fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
-        let next_pos = pos + Vector::fill(1.into());
+        let next_pos = pos + Vector::fill(1);
         let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
     }
