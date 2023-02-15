@@ -159,7 +159,6 @@ impl<'req, 'inv, V, S: Stream<Item = V> + std::marker::Unpin + 'req> RequestStre
 #[pin_project]
 pub struct RequestThenWithData<'req, 'inv, V2, D2, I> {
     inner: I,
-    #[pin]
     then: RequestStreamSource<'req, 'inv, V2, D2>,
 }
 
