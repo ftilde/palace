@@ -160,7 +160,7 @@ impl<'req, 'inv, V, S: Stream<Item = V> + std::marker::Unpin + 'req> RequestStre
 pub struct RequestThenWithData<'req, 'inv, V2, D2, I> {
     inner: I,
     #[pin]
-    then: Box<RequestStreamSource<'req, 'inv, V2, D2>>,
+    then: RequestStreamSource<'req, 'inv, V2, D2>,
 }
 
 impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::marker::Unpin>
@@ -194,6 +194,7 @@ impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::
     }
 }
 
+#[pin_project]
 struct RequestStreamSource<'req, 'inv, V, D> {
     task_map: BTreeMap<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
     ready: VecDeque<(V, D)>,
@@ -201,23 +202,23 @@ struct RequestStreamSource<'req, 'inv, V, D> {
 }
 
 impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
-    fn empty(task_context: OpaqueTaskContext<'req, 'inv>) -> Box<Self> {
-        Box::new(Self {
+    fn empty(task_context: OpaqueTaskContext<'req, 'inv>) -> Self {
+        Self {
             task_map: BTreeMap::new(),
             ready: VecDeque::new(),
             task_context,
-        })
+        }
     }
-    //TODO don't box here, use pin_project
+
     fn unordered(
         task_context: OpaqueTaskContext<'req, 'inv>,
         requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
-    ) -> Box<Self> {
-        let mut ret = Box::new(Self {
+    ) -> Self {
+        let mut ret = Self {
             task_map: Default::default(),
             ready: Default::default(),
             task_context,
-        });
+        };
         for r in requests {
             ret.push_request(r);
         }
@@ -246,7 +247,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
     }
 }
 
-impl<'req, 'inv, V, D> futures::Stream for Box<RequestStreamSource<'req, 'inv, V, D>> {
+impl<'req, 'inv, V, D> futures::Stream for RequestStreamSource<'req, 'inv, V, D> {
     type Item = (V, D);
 
     fn poll_next(
