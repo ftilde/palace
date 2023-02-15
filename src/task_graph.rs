@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use derive_more::From;
 
 use crate::{
+    id::Id,
     operator::{DataId, OperatorId},
     threadpool::JobId,
 };
@@ -11,13 +12,18 @@ use crate::{
 pub enum RequestId {
     Data(DataId),
     Job(JobId),
+    Group(GroupId),
 }
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct GroupId(pub Id);
 
 impl RequestId {
     pub fn unwrap_data(&self) -> DataId {
         match self {
             RequestId::Data(d) => *d,
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
+            RequestId::Group(_) => panic!("Tried to unwrap DataId from RequestId::Group"),
         }
     }
 }
@@ -49,6 +55,7 @@ pub struct TaskGraph {
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
     implied_ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
+    in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
 }
 
 impl TaskGraph {
@@ -70,6 +77,11 @@ impl TaskGraph {
         self.implied_ready.remove(&wants);
     }
 
+    pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
+        let entry = self.in_groups.entry(in_).or_default();
+        entry.insert(group);
+    }
+
     pub fn add_implied(&mut self, id: TaskId) {
         let inserted = self.implied_tasks.insert(id);
         self.waits_on.insert(id, BTreeMap::new());
@@ -77,11 +89,21 @@ impl TaskGraph {
         self.implied_ready.insert(id);
     }
 
+    pub fn already_requested(&self, rid: RequestId) -> bool {
+        self.required_by.contains_key(&rid)
+    }
+
     pub fn resolved_implied(&mut self, id: RequestId) {
         for rev_dep in self.required_by.remove(&id).iter().flatten() {
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
-            self.resolved_deps.entry(*rev_dep).or_default().insert(id);
+            let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
+            resolved_deps.insert(id);
+            if let Some(groups) = self.in_groups.remove(&id) {
+                for group in groups {
+                    resolved_deps.insert(group.into());
+                }
+            }
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
@@ -97,7 +119,7 @@ impl TaskGraph {
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
         let deps = self.waits_on.remove(&id).unwrap();
-        assert!(deps.is_empty());
+        assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
     }
 
     pub fn next_implied_ready(&mut self) -> BTreeSet<TaskId> {

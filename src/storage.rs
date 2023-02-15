@@ -501,7 +501,9 @@ impl Storage {
         let t_ref = {
             let index = self.index.borrow();
             let entry = index.get(&key)?;
-            assert!(entry.state.initialized());
+            if !entry.state.initialized() {
+                return None;
+            }
 
             let ptr = entry.data;
             let t_ptr = ptr.cast::<T>();

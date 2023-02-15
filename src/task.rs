@@ -4,10 +4,11 @@ use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::Poll;
 
+use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
 use crate::storage::{Storage, WriteHandleUninit};
-use crate::task_graph::{ProgressIndicator, RequestId, TaskId};
+use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::Error;
@@ -48,17 +49,24 @@ pub struct DataRequest<'inv> {
     pub item: TypeErased,
 }
 
+pub struct RequestGroup<'inv> {
+    pub id: GroupId,
+    pub all: Vec<RequestType<'inv>>,
+}
+
 #[derive(From)]
 pub enum RequestType<'inv> {
     Data(DataRequest<'inv>),
     ThreadPoolJob(ThreadPoolJob, JobType),
+    Group(RequestGroup<'inv>),
 }
 
 impl RequestType<'_> {
-    fn id(&self) -> RequestId {
+    pub fn id(&self) -> RequestId {
         match self {
             RequestType::Data(d) => RequestId::Data(d.id),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
+            RequestType::Group(g) => RequestId::Group(g.id),
         }
     }
 }
@@ -75,7 +83,7 @@ pub struct Request<'req, 'inv, V> {
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
-impl<V> Request<'_, '_, V> {
+impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
     pub fn id(&self) -> RequestId {
         self.type_.id()
     }
@@ -187,7 +195,7 @@ impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::
 }
 
 struct RequestStreamSource<'req, 'inv, V, D> {
-    task_map: BTreeMap<RequestId, (ResultPoll<'req, V>, D)>,
+    task_map: BTreeMap<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
     ready: VecDeque<(V, D)>,
     task_context: OpaqueTaskContext<'req, 'inv>,
 }
@@ -200,44 +208,25 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             task_context,
         })
     }
+    //TODO don't box here, use pin_project
     fn unordered(
         task_context: OpaqueTaskContext<'req, 'inv>,
         requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
     ) -> Box<Self> {
-        let mut ready = VecDeque::new();
-        let task_map = requests
-            .into_iter()
-            .filter_map(|(mut req, data)| {
-                match req.type_ {
-                    RequestType::Data(_) => {
-                        if let Some(r) = (req.poll)(PollContext {
-                            storage: task_context.storage,
-                        }) {
-                            ready.push_back((r, data));
-                            return None;
-                        }
-                    }
-                    RequestType::ThreadPoolJob(_, _) => {}
-                }
-                let id = req.type_.id();
-                task_context.requests.push(RequestInfo {
-                    task: req.type_,
-                    progress_indicator: ProgressIndicator::PartialPossible,
-                });
-                Some((id, (req.poll, data)))
-            })
-            .collect::<BTreeMap<_, _>>();
-
-        Box::new(Self {
-            task_map,
-            ready,
+        let mut ret = Box::new(Self {
+            task_map: Default::default(),
+            ready: Default::default(),
             task_context,
-        })
+        });
+        for r in requests {
+            ret.push_request(r);
+        }
+        ret
     }
 
     pub fn push_request(&mut self, (mut req, data): (Request<'req, 'inv, V>, D)) {
         match req.type_ {
-            RequestType::Data(_) => {
+            RequestType::Data(_) | RequestType::Group(_) => {
                 if let Some(r) = (req.poll)(PollContext {
                     storage: self.task_context.storage,
                 }) {
@@ -248,11 +237,12 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             RequestType::ThreadPoolJob(_, _) => {}
         }
         let id = req.type_.id();
+        let entry = self.task_map.entry(id).or_default();
         self.task_context.requests.push(RequestInfo {
             task: req.type_,
             progress_indicator: ProgressIndicator::PartialPossible,
         });
-        self.task_map.insert(id, (req.poll, data));
+        entry.push((req.poll, data));
     }
 }
 
@@ -273,14 +263,24 @@ impl<'req, 'inv, V, D> futures::Stream for Box<RequestStreamSource<'req, 'inv, V
                 }
             }
             for c in newly_completed {
-                s.task_context.hints.noticed_completion(c);
-
-                let (mut result_poll, data) = s.task_map.remove(&c).unwrap();
-                let v = result_poll(PollContext {
-                    storage: s.task_context.storage,
-                })
-                .expect("Task should have been ready!");
-                s.ready.push_back((v, data));
+                let t = s.task_map.get_mut(&c).unwrap();
+                *t = std::mem::take(t)
+                    .into_iter()
+                    .filter_map(|(mut result_poll, data)| {
+                        if let Some(v) = result_poll(PollContext {
+                            storage: s.task_context.storage,
+                        }) {
+                            s.task_context.hints.noticed_completion(c);
+                            s.ready.push_back((v, data));
+                            None
+                        } else {
+                            Some((result_poll, data))
+                        }
+                    })
+                    .collect();
+                if t.is_empty() {
+                    s.task_map.remove(&c);
+                }
             }
         }
         if let Some(r) = s.ready.pop_front() {
@@ -327,7 +327,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
         async move {
             match request.type_ {
-                RequestType::Data(_) => {
+                RequestType::Data(_) | RequestType::Group(_) => {
                     if let Some(res) = (request.poll)(PollContext {
                         storage: self.inner.storage,
                     }) {
@@ -339,9 +339,15 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
 
             let request_id = request.id();
 
+            let progress_indicator = if let RequestType::Group(_) = request.type_ {
+                ProgressIndicator::PartialPossible
+            } else {
+                ProgressIndicator::WaitForComplete
+            };
+
             self.inner.requests.push(RequestInfo {
                 task: request.type_,
-                progress_indicator: ProgressIndicator::WaitForComplete,
+                progress_indicator,
             });
 
             futures::pending!();
@@ -406,6 +412,70 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
         RequestStreamSource::unordered(self.inner, requests)
     }
 
+    pub fn group<'req, V: 'req>(
+        &'req self,
+        r: impl IntoIterator<Item = Request<'req, 'inv, V>>,
+    ) -> Request<'req, 'inv, Vec<V>> {
+        let r = r.into_iter();
+        let l = r.size_hint().0;
+        let mut types = Vec::with_capacity(l);
+        let mut polls = Vec::with_capacity(l);
+        let mut ids: Vec<Id> = Vec::with_capacity(l);
+        let mut done = Vec::with_capacity(l);
+
+        for (i, mut r) in r.into_iter().enumerate() {
+            match r.id() {
+                RequestId::Data(d) => ids.push(d.0),
+                RequestId::Job(i) => ids.push(Id::hash(&i)),
+                RequestId::Group(g) => ids.push(g.0),
+            }
+            match r.type_ {
+                RequestType::Data(_) | RequestType::Group(_) => {
+                    if let Some(v) = (r.poll)(PollContext {
+                        storage: self.storage(),
+                    }) {
+                        done.push(MaybeUninit::new(v));
+                        continue;
+                    }
+                }
+                RequestType::ThreadPoolJob(_, _) => {}
+            }
+            done.push(MaybeUninit::uninit());
+            polls.push((i, r.poll));
+            types.push(r.type_);
+        }
+        let id = Id::combine(&ids[..]);
+        Request {
+            type_: RequestType::Group(RequestGroup {
+                id: GroupId(id),
+                all: types,
+            }),
+            poll: Box::new(move |ctx| {
+                // TODO: possibly add some kind of information which ones are ready?
+                polls.retain_mut(|(i, poll)| match poll(ctx) {
+                    Some(v) => {
+                        done[*i].write(v);
+                        false
+                    }
+                    None => true,
+                });
+                if polls.is_empty() {
+                    let ret = std::mem::take(&mut done);
+                    // TODO: The following "should" basically be a noop. Maybe this can be
+                    // optimized, but maybe the compiler already does a good job for this.
+                    let ret = ret
+                        .into_iter()
+                        .map(|v| unsafe { v.assume_init() })
+                        .collect();
+                    Some(ret)
+                } else {
+                    None
+                }
+            }),
+            _marker: Default::default(),
+        }
+    }
+
     // TODO: We may not want to expose the storage directly in the future. Currently this is used
     // for the into_main_handle methods of Thread*Handle (see storage.rs), but we could change them
     // to take a context argument instead.
@@ -418,10 +488,10 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot(
-        &self,
+        &'cref self,
         item: ItemDescriptor,
         size: usize,
-    ) -> Result<WriteHandleUninit<[MaybeUninit<Output>]>, Error> {
+    ) -> Result<WriteHandleUninit<'cref, [MaybeUninit<Output>]>, Error> {
         let id = DataId::new(self.current_op(), &item);
         self.inner.storage.alloc_ram_slot(id, size)
     }

@@ -127,19 +127,18 @@ fn eval_network(
     factor: &f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
-    let factor = factor.into();
-    let offset = (&0.0).into();
 
-    //let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(32.into()));
-    let rechunked = vol;
+    let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(48.into()));
 
     let mapped = volume::map(&rechunked, |v| v.min(0.5));
 
+    let factor = factor.into();
+    let offset = (&0.0).into();
     let scaled1 = volume::linear_rescale(&mapped, &factor, &offset);
     let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
 
     let mean = volume::mean(&scaled2);
-    let mean_unscaled = volume::mean(&mapped);
+    let mean_unscaled = volume::mean(&rechunked);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();

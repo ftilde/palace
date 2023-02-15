@@ -281,22 +281,40 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn enqueue_requested(&mut self, from: TaskId) {
-        for req in self.data.request_queue.drain() {
-            let req_id = req.id();
-            self.task_graph
-                .add_dependency(from, req_id, req.progress_indicator);
-            match req.task {
-                RequestType::Data(data_request) => {
+    fn enqueue(&mut self, from: TaskId, req: RequestInfo<'inv>) {
+        let req_id = req.id();
+        let already_requested = self.task_graph.already_requested(req_id);
+        self.task_graph
+            .add_dependency(from, req_id, req.progress_indicator);
+        match req.task {
+            RequestType::Data(data_request) => {
+                if !already_requested {
                     if let Some(new_batch_id) = self.request_batcher.add(data_request) {
                         self.task_graph.add_implied(new_batch_id);
                     }
                 }
-                RequestType::ThreadPoolJob(job, type_) => {
-                    // Io threads are created on demand, so we can spawn the job immediately
-                    self.task_manager.spawn_job(job, type_).unwrap();
+            }
+            RequestType::ThreadPoolJob(job, type_) => {
+                self.task_manager.spawn_job(job, type_).unwrap();
+            }
+            RequestType::Group(group) => {
+                for v in group.all {
+                    self.task_graph.in_group(v.id(), group.id);
+                    self.enqueue(
+                        from,
+                        RequestInfo {
+                            task: v,
+                            progress_indicator:
+                                crate::task_graph::ProgressIndicator::PartialPossible,
+                        },
+                    );
                 }
             }
+        }
+    }
+    fn enqueue_requested(&mut self, from: TaskId) {
+        for req in self.data.request_queue.drain() {
+            self.enqueue(from, req);
         }
     }
 

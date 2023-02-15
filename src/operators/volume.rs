@@ -223,7 +223,8 @@ pub fn rechunk<'op>(
                     m_out.chunk_size = brick_size;
                     m_out
                 };
-                for pos in positions {
+
+                let requests = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
@@ -231,52 +232,80 @@ pub fn rechunk<'op>(
                     let in_begin_brick = m_in.chunk_pos(out_begin);
                     let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1.into()));
 
-                    let mut brick_handle = ctx.alloc_slot(pos, out_info.mem_elements())?;
-                    let out_data = &mut *brick_handle;
-                    crate::data::init_non_full(out_data, &out_info, f32::NAN);
-                    let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
-
-                    let mut stream = ctx.submit_unordered_with_data(
-                        itertools::iproduct! {
-                            in_begin_brick.z().raw..=in_end_brick.z().raw,
-                            in_begin_brick.y().raw..=in_end_brick.y().raw,
-                            in_begin_brick.x().raw..=in_end_brick.x().raw
-                        }
-                        .map(|(z, y, x)| BrickPosition::from([z, y, x]))
-                        .map(|pos| (input.bricks.request(pos), pos)),
-                    );
-                    while let Some((in_data_handle, in_brick_pos)) = stream.next().await {
-                        let in_data = &*in_data_handle;
-                        let in_info = m_in.chunk_info(in_brick_pos);
-
-                        let in_chunk = crate::data::chunk(in_data, &in_info);
-                        ctx.submit(ctx.spawn_compute(|| {
-                            let in_begin = in_info.begin();
-                            let in_end = in_info.end();
-
-                            let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
-                            let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
-                            let overlap_size = (overlap_end - overlap_begin)
-                                .map(LocalVoxelCoordinate::interpret_as);
-
-                            let in_chunk_begin = in_info.in_chunk(overlap_begin);
-                            let in_chunk_end = in_chunk_begin + overlap_size;
-
-                            let out_chunk_begin = out_info.in_chunk(overlap_begin);
-                            let out_chunk_end = out_chunk_begin + overlap_size;
-
-                            let mut o =
-                                out_chunk.slice_mut(slice_range(out_chunk_begin, out_chunk_end));
-                            let i = in_chunk.slice(slice_range(in_chunk_begin, in_chunk_end));
-
-                            ndarray::azip!((o in &mut o, i in &i) { o.write(*i); });
-                        }))
-                        .await;
+                    let in_brick_positions = itertools::iproduct! {
+                        in_begin_brick.z().raw..=in_end_brick.z().raw,
+                        in_begin_brick.y().raw..=in_end_brick.y().raw,
+                        in_begin_brick.x().raw..=in_end_brick.x().raw
                     }
+                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
+                    .collect::<Vec<_>>();
+                    let intersecting_bricks = ctx.group(
+                        in_brick_positions
+                            .iter()
+                            .map(|pos| input.bricks.request(*pos)),
+                    );
 
-                    // Safety: We have queried and then copied the data of all overlapping input
-                    // bricks.
+                    (intersecting_bricks, (pos, in_brick_positions))
+                });
+
+                let mut stream = ctx.submit_unordered_with_data(requests).then_req(
+                    ctx.into(),
+                    |(intersecting_bricks, (pos, in_brick_positions))| {
+                        let out_info = m_out.chunk_info(pos);
+                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements()).unwrap();
+                        let mut brick_handle = brick_handle.into_thread_handle();
+                        let intersecting_bricks = intersecting_bricks
+                            .into_iter()
+                            .map(|v| v.into_thread_handle())
+                            .collect::<Vec<_>>();
+
+                        ctx.spawn_compute(move || {
+                            let out_data = &mut *brick_handle;
+                            let out_begin = out_info.begin();
+                            let out_end = out_info.end();
+
+                            crate::data::init_non_full(out_data, &out_info, f32::NAN);
+
+                            let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
+                            for (in_data_handle, in_brick_pos) in intersecting_bricks
+                                .iter()
+                                .zip(in_brick_positions.into_iter())
+                            {
+                                let in_data = &*in_data_handle;
+                                let in_info = m_in.chunk_info(in_brick_pos);
+                                let in_chunk = crate::data::chunk(in_data, &in_info);
+
+                                let in_begin = in_info.begin();
+                                let in_end = in_info.end();
+
+                                let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
+                                let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                                let overlap_size = (overlap_end - overlap_begin)
+                                    .map(LocalVoxelCoordinate::interpret_as);
+
+                                let in_chunk_begin = in_info.in_chunk(overlap_begin);
+                                let in_chunk_end = in_chunk_begin + overlap_size;
+
+                                let out_chunk_begin = out_info.in_chunk(overlap_begin);
+                                let out_chunk_end = out_chunk_begin + overlap_size;
+
+                                let mut o = out_chunk
+                                    .slice_mut(slice_range(out_chunk_begin, out_chunk_end));
+                                let i = in_chunk.slice(slice_range(in_chunk_begin, in_chunk_end));
+
+                                ndarray::azip!((o in &mut o, i in &i) { assert!(!i.is_nan()); o.write(*i); });
+                            }
+                            (brick_handle, intersecting_bricks)
+                        })
+                    },
+                );
+
+                while let Some((brick_handle, intersecting_bricks)) = stream.next().await {
+                    let brick_handle = brick_handle.into_main_handle(ctx.storage());
                     unsafe { brick_handle.initialized() };
+                    for i in intersecting_bricks {
+                        i.into_main_handle(ctx.storage());
+                    }
                 }
                 Ok(())
             }

@@ -13,7 +13,7 @@ pub enum JobType {
     Io,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct JobId(usize);
 
 impl JobId {
