@@ -107,17 +107,12 @@ impl RawVolumeSourceState {
                 let last_info = m.chunk_info(last.0);
                 let global_end = last_info.end();
 
-                //if !(begin.x() < m.dimensions.x()
-                //    && begin.y() < m.dimensions.y()
-                //    && begin.z() < m.dimensions.z())
-                //{
-                //    return Err("Brick position is outside of volume".into());
-                //}
-
                 let strip_size_z = first_info.logical_dimensions.z();
                 let strip_size_y = first_info.logical_dimensions.y();
                 for z in 0..strip_size_z.raw {
                     for y in 0..strip_size_y.raw {
+                        // Note: This assumes that all bricks have the same memory size! This may
+                        // change in the future
                         let line_begin_brick =
                             crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
 
@@ -128,18 +123,16 @@ impl RawVolumeSourceState {
                         ));
                         let global_line = global_line.as_slice().unwrap();
 
-                        let mut local_i = 0usize;
-                        let mut bricks = brick_handles
+                        let bricks = brick_handles
                             .iter_mut()
                             .map(|(_, handle)| &mut handle[line_begin_brick..]);
-                        let mut current_brick = bricks.next().unwrap();
-                        for iv in global_line {
-                            if local_i == brick_size.x().raw as usize {
-                                local_i = 0;
-                                current_brick = bricks.next().unwrap();
+                        let mut global_brick_begin = 0;
+                        for brick_line in bricks {
+                            let global_line_brick = &global_line[global_brick_begin..];
+                            for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
+                                o.write(*i);
                             }
-                            current_brick[local_i].write(*iv);
-                            local_i += 1;
+                            global_brick_begin += brick_size.x().raw as usize;
                         }
                     }
                 }
