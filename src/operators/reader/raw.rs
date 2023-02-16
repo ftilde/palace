@@ -54,6 +54,13 @@ impl RawVolumeSourceState {
         let mut current_batch: Vec<BrickPosition> = Vec::new();
         let mut current_pos = 0;
         for pos in positions {
+            if !(pos.x() < dim_in_bricks.x()
+                && pos.y() < dim_in_bricks.y()
+                && pos.z() < dim_in_bricks.z())
+            {
+                return Err(format!("Brick position {:?} is outside of volume", pos).into());
+            }
+
             current_pos += chunk_size_x;
             if current_pos < max_lin_len {
                 if let Some(end) = current_batch.last() {

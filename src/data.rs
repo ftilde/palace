@@ -19,18 +19,18 @@ pub fn to_linear<const N: usize, T: CoordinateType>(
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct LocalVoxelCoordinateType;
 impl CoordinateType for LocalVoxelCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct GlobalVoxelCoordinateType;
 impl CoordinateType for GlobalVoxelCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ChunkCoordinateType;
 impl CoordinateType for ChunkCoordinateType {}
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Coordinate<T: CoordinateType> {
     pub raw: u32,
     type_: std::marker::PhantomData<T>,
@@ -100,7 +100,7 @@ pub type GlobalVoxelCoordinate = Coordinate<GlobalVoxelCoordinateType>;
 pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct Vector<const N: usize, T>(pub [T; N]);
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
