@@ -48,7 +48,7 @@ impl RawVolumeSourceState {
 
         let max_lin_len = 4096; //expected page size
 
-        let chunk_size_x = m.chunk_size.x().raw;
+        let chunk_mem_size_x = m.chunk_size.x().raw as usize * std::mem::size_of::<f32>();
 
         let mut batches = Vec::new();
         let mut current_batch: Vec<BrickPosition> = Vec::new();
@@ -61,7 +61,7 @@ impl RawVolumeSourceState {
                 return Err(format!("Brick position {:?} is outside of volume", pos).into());
             }
 
-            current_pos += chunk_size_x;
+            current_pos += chunk_mem_size_x;
             if current_pos < max_lin_len {
                 if let Some(end) = current_batch.last() {
                     let mut next = *end;
