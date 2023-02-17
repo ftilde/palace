@@ -1,4 +1,7 @@
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    mem::MaybeUninit,
+    ops::{Add, Div, Mul, Sub},
+};
 
 use crate::array::ChunkInfo;
 
@@ -110,11 +113,18 @@ impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
 }
 
 impl<const N: usize, T: Copy> Vector<N, T> {
+    pub fn dim() -> usize {
+        N
+    }
     pub fn fill(val: T) -> Self {
         Vector([val; N])
     }
     pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Vector<N, U> {
         Vector(std::array::from_fn(|i| f(self.0[i])))
+    }
+    pub fn map_element(mut self, i: usize, f: impl FnOnce(T) -> T) -> Vector<N, T> {
+        self.0[i] = f(self.0[i]);
+        self
     }
     pub fn fold<U>(self, mut state: U, mut f: impl FnMut(U, T) -> U) -> U {
         for v in self.0 {
@@ -128,6 +138,13 @@ impl<const N: usize, T: Copy> Vector<N, T> {
         mut f: impl FnMut(T, U) -> V,
     ) -> Vector<N, V> {
         Vector(std::array::from_fn(|i| f(self.0[i], other.0[i])))
+    }
+    pub fn zip_enumerate<U: Copy, V>(
+        self,
+        other: Vector<N, U>,
+        mut f: impl FnMut(usize, T, U) -> V,
+    ) -> Vector<N, V> {
+        Vector(std::array::from_fn(|i| f(i, self.0[i], other.0[i])))
     }
 }
 impl<T: Copy> Vector<3, T> {
@@ -275,6 +292,21 @@ pub fn init_non_full<const N: usize, T: Clone>(
             v.write(val.clone());
         }
     }
+}
+
+// Unstable function copied from stdlib:
+// https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#method.slice_assume_init_mut
+pub unsafe fn slice_assume_init_mut<T>(slice: &mut [MaybeUninit<T>]) -> &mut [T] {
+    // SAFETY: similar to safety notes for `slice_get_ref`, but we have a
+    // mutable reference which is also guaranteed to be valid for writes.
+    unsafe { &mut *(slice as *mut [MaybeUninit<T>] as *mut [T]) }
+}
+
+pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
+    for v in data.iter_mut() {
+        v.write(val.clone());
+    }
+    unsafe { slice_assume_init_mut(data) }
 }
 
 //pub struct Brick<'a, T> {

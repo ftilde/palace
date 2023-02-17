@@ -130,7 +130,8 @@ fn eval_network(
 
     let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(48.into()));
 
-    let mapped = volume::map(&rechunked, |v| v.min(0.5));
+    let convolved = volume::convolution_1d::<0>(&rechunked, &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
+    let mapped = volume::map(&convolved, |v| v.min(0.5));
 
     let factor = factor.into();
     let offset = (&0.0).into();
