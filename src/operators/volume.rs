@@ -417,7 +417,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
                                 let end_ext = (end_i_global - begin_o_global).min(extent);
 
                                 for offset in begin_ext..=end_ext {
-                                    let kernel_buf_index = (offset + extent) as usize;
+                                    let kernel_buf_index = (extent - offset) as usize;
                                     let kernel_val = kernel[kernel_buf_index];
 
                                     let begin_i_local = (begin_o_global + offset) - begin_i_global;
