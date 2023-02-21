@@ -1,9 +1,11 @@
 use futures::stream::StreamExt;
+use ndarray::Axis;
 
 use crate::{
     array::VolumeMetaData,
     data::{
-        slice_range, to_linear, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition, Vector,
+        chunk, chunk_mut, slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition,
+        Vector,
     },
     id::Id,
     operator::{Operator, OperatorId},
@@ -387,6 +389,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
                             let out_end = out_info.end();
 
                             let out_data = crate::data::fill_uninit(out_data, 0.0);
+                            let mut out_chunk = chunk_mut(out_data, &out_info);
 
                             for (in_data_handle, in_brick_pos) in intersecting_bricks
                                 .iter()
@@ -394,6 +397,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
                             {
                                 let in_data = &*in_data_handle;
                                 let in_info = m_in.chunk_info(in_brick_pos);
+                                let in_chunk = chunk(in_data, &in_info);
 
                                 // Logical dimensions should be equal except possibly in DIM (if we
                                 // are at the border)
@@ -425,52 +429,43 @@ pub fn convolution_1d<'op, const DIM: usize>(
 
                                     let iter_i_begin = Vector::<3, i32>::fill(0)
                                         .map_element(DIM, |a| a.max(begin_i_local))
-                                        .map(|v| v as u32);
+                                        .map(|v| v as usize);
                                     let iter_i_end = in_info
                                         .logical_dimensions
                                         .map(|v| v.raw as i32)
                                         .map_element(DIM, |a| a.min(end_i_local))
-                                        .map(|v| v as u32);
+                                        .map(|v| v as usize);
 
                                     let begin_o_local = (begin_i_global - offset) - begin_o_global;
                                     let end_o_local = (end_i_global - offset) - begin_o_global;
 
                                     let iter_o_begin = Vector::<3, i32>::fill(0)
                                         .map_element(DIM, |a| a.max(begin_o_local))
-                                        .map(|v| v as u32);
+                                        .map(|v| v as usize);
                                     let iter_o_end = out_info
                                         .logical_dimensions
                                         .map(|v| v.raw as i32)
                                         .map_element(DIM, |a| a.min(end_o_local))
-                                        .map(|v| v as u32);
+                                        .map(|v| v as usize);
 
                                     assert!(iter_i_end - iter_i_begin == iter_o_end - iter_o_begin);
 
-                                    for (zi, zo) in (iter_i_begin.z()..iter_i_end.z())
-                                        .zip(iter_o_begin.z()..iter_o_end.z())
-                                    {
-                                        for (yi, yo) in (iter_i_begin.y()..iter_i_end.y())
-                                            .zip(iter_o_begin.y()..iter_o_end.y())
-                                        {
-                                            for (xi, xo) in (iter_i_begin.x()..iter_i_end.x())
-                                                .zip(iter_o_begin.x()..iter_o_end.x())
-                                            {
-                                                //TODO: There is still some optimization potential
-                                                //here. Get pointers (slices) in y loop first and
-                                                //index linearly here
-                                                let ii = to_linear(
-                                                    [zi, yi, xi].into(),
-                                                    in_info.mem_dimensions,
-                                                );
-                                                let io = to_linear(
-                                                    [zo, yo, xo].into(),
-                                                    in_info.mem_dimensions,
-                                                );
+                                    let in_chunk_active =
+                                        in_chunk.slice(slice_range(iter_i_begin, iter_i_end));
+                                    let in_lines = in_chunk_active.lanes(Axis(2));
 
-                                                let o = &mut out_data[io];
-                                                let v = kernel_val * in_data[ii];
-                                                *o += v;
-                                            }
+                                    let mut out_chunk_active =
+                                        out_chunk.slice_mut(slice_range(iter_o_begin, iter_o_end));
+                                    let out_lines = out_chunk_active.lanes_mut(Axis(2));
+
+                                    for (mut ol, il) in
+                                        out_lines.into_iter().zip(in_lines.into_iter())
+                                    {
+                                        let ol = ol.as_slice_mut().unwrap();
+                                        let il = il.as_slice().unwrap();
+                                        for (o, i) in ol.iter_mut().zip(il.iter()) {
+                                            let v = kernel_val * i;
+                                            *o += v;
                                         }
                                     }
                                 }

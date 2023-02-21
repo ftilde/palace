@@ -137,8 +137,8 @@ fn eval_network(
     let scaled1 = volume::linear_rescale(&mapped, &factor, &offset);
     let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
 
-    let mean = volume::mean(&scaled2);
-    let mean_unscaled = volume::mean(&rechunked);
+    let mean = volume::mean(&convolved);
+    let mean_unscaled = volume::mean(&convolved);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();

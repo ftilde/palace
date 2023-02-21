@@ -55,6 +55,16 @@ impl<T: CoordinateType> From<u32> for Coordinate<T> {
         }
     }
 }
+impl<T: CoordinateType> Into<u32> for Coordinate<T> {
+    fn into(self) -> u32 {
+        self.raw
+    }
+}
+impl<T: CoordinateType> Into<usize> for Coordinate<T> {
+    fn into(self) -> usize {
+        self.raw as usize
+    }
+}
 
 macro_rules! impl_coordinate_ops {
     ($rhs_ty:ty, $rhs_access:expr) => {
@@ -147,6 +157,9 @@ impl<const N: usize, T: Copy> Vector<N, T> {
         mut f: impl FnMut(usize, T, U) -> V,
     ) -> Vector<N, V> {
         Vector(std::array::from_fn(|i| f(i, self.0[i], other.0[i])))
+    }
+    pub fn into_elem<U: From<T>>(self) -> Vector<N, U> {
+        self.map(|v| v.into())
     }
 }
 impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
@@ -263,14 +276,14 @@ pub fn stride_shape<T: CoordinateType>(
     size.strides(stride)
 }
 
-pub fn slice_range<T: CoordinateType>(
-    begin: Vector<3, Coordinate<T>>,
-    end: Vector<3, Coordinate<T>>,
+pub fn slice_range<T: Into<usize> + Copy>(
+    begin: Vector<3, T>,
+    end: Vector<3, T>,
 ) -> ndarray::SliceInfo<[ndarray::SliceInfoElem; 3], ndarray::Ix3, ndarray::Ix3> {
     ndarray::s![
-        begin.z().raw as usize..end.z().raw as usize,
-        begin.y().raw as usize..end.y().raw as usize,
-        begin.x().raw as usize..end.x().raw as usize,
+        begin.z().into()..end.z().into(),
+        begin.y().into()..end.y().into(),
+        begin.x().into()..end.x().into(),
     ]
 }
 
