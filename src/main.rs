@@ -97,9 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let storage_size = args.mem_size << 30; //in gigabyte
-    let thread_pool_size = args.compute_pool_size.unwrap_or(num_cpus::get());
 
-    let mut runtime = RunTime::new(storage_size, thread_pool_size)?;
+    let mut runtime = RunTime::new(storage_size, args.compute_pool_size)?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 

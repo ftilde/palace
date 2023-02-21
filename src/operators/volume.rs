@@ -232,7 +232,7 @@ pub fn rechunk<'op>(
                     let out_end = out_info.end();
 
                     let in_begin_brick = m_in.chunk_pos(out_begin);
-                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1.into()));
+                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
 
                     let in_brick_positions = itertools::iproduct! {
                         in_begin_brick.z().raw..=in_end_brick.z().raw,
@@ -352,7 +352,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
                         .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions.0[DIM]));
 
                     let in_begin_brick = m_in.chunk_pos(in_begin);
-                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1.into()));
+                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
 
                     let in_brick_positions = itertools::iproduct! {
                         in_begin_brick.z().raw..=in_end_brick.z().raw,
@@ -455,6 +455,9 @@ pub fn convolution_1d<'op, const DIM: usize>(
                                             for (xi, xo) in (iter_i_begin.x()..iter_i_end.x())
                                                 .zip(iter_o_begin.x()..iter_o_end.x())
                                             {
+                                                //TODO: There is still some optimization potential
+                                                //here. Get pointers (slices) in y loop first and
+                                                //index linearly here
                                                 let ii = to_linear(
                                                     [zi, yi, xi].into(),
                                                     in_info.mem_dimensions,
@@ -464,7 +467,9 @@ pub fn convolution_1d<'op, const DIM: usize>(
                                                     in_info.mem_dimensions,
                                                 );
 
-                                                out_data[io] += kernel_val * in_data[ii];
+                                                let o = &mut out_data[io];
+                                                let v = kernel_val * in_data[ii];
+                                                *o += v;
                                             }
                                         }
                                     }
@@ -487,4 +492,110 @@ pub fn convolution_1d<'op, const DIM: usize>(
             .into()
         },
     )
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{data::VoxelPosition, runtime::RunTime};
+
+    fn compare_convolution_1d<const DIM: usize>(
+        input: &dyn VolumeOperatorState,
+        size: VoxelPosition,
+        kernel: &[f32],
+        fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
+    ) {
+        let mut runtime = RunTime::new(1 << 30, Some(1)).unwrap();
+
+        let input = input.operate();
+
+        let output = convolution_1d::<DIM>(&input, kernel);
+
+        let full_vol = rechunk(&output, size.local());
+        let full_vol = &full_vol;
+
+        let mut c = runtime.context_anchor();
+        let mut executor = c.executor();
+
+        executor
+            .resolve(|ctx| {
+                async move {
+                    let pos = BrickPosition::from([0, 0, 0]);
+                    let m = ctx.submit(full_vol.metadata.request_scalar()).await;
+                    let info = m.chunk_info(pos);
+                    let vol = ctx.submit(full_vol.bricks.request(pos)).await;
+                    let vol = crate::data::chunk(&vol, &info);
+
+                    let mut comp = vec![0.0; info.mem_elements()];
+                    let mut comp = crate::data::chunk_mut(&mut comp, &info);
+                    fill_expected(&mut comp);
+                    assert_eq!(vol, comp);
+                    Ok(())
+                }
+                .into()
+            })
+            .unwrap();
+    }
+
+    fn center_point_vol(
+        size: VoxelPosition,
+        brick_size: LocalVoxelPosition,
+    ) -> (impl VolumeOperatorState, VoxelPosition) {
+        let center = size.map(|v| v / 2u32);
+
+        let point_vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v == center {
+                1.0
+            } else {
+                0.0
+            }
+        });
+
+        (point_vol, center)
+    }
+
+    fn test_convolution_1d_generic<const DIM: usize>() {
+        // Small
+        let size = VoxelPosition::fill(5.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let (point_vol, center) = center_point_vol(size, brick_size);
+        compare_convolution_1d::<DIM>(&point_vol, size, &[1.0, -1.0, 2.0], |comp| {
+            comp[center.map_element(DIM, |v| v - 1u32).as_index()] = 1.0;
+            comp[center.map_element(DIM, |v| v).as_index()] = -1.0;
+            comp[center.map_element(DIM, |v| v + 1u32).as_index()] = 2.0;
+        });
+
+        // Larger
+        let size = VoxelPosition::fill(25.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let (point_vol, center) = center_point_vol(size, brick_size);
+        let kernel_size = 11;
+        let extent = kernel_size / 2;
+        let mut kernel = vec![0.0; kernel_size];
+        kernel[0] = -1.0;
+        kernel[1] = -2.0;
+        kernel[kernel_size - 1] = 1.0;
+        kernel[kernel_size - 2] = 2.0;
+        compare_convolution_1d::<DIM>(&point_vol, size, &kernel, |comp| {
+            comp[center.map_element(DIM, |v| v - extent).as_index()] = -1.0;
+            comp[center.map_element(DIM, |v| v - extent + 1u32).as_index()] = -2.0;
+            comp[center.map_element(DIM, |v| v + extent).as_index()] = 1.0;
+            comp[center.map_element(DIM, |v| v + extent - 1u32).as_index()] = 2.0;
+        });
+    }
+
+    #[test]
+    fn test_convolution_1d_x() {
+        test_convolution_1d_generic::<2>();
+    }
+    #[test]
+    fn test_convolution_1d_y() {
+        test_convolution_1d_generic::<1>();
+    }
+    #[test]
+    fn test_convolution_1d_z() {
+        test_convolution_1d_generic::<0>();
+    }
 }

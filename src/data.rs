@@ -55,41 +55,43 @@ impl<T: CoordinateType> From<u32> for Coordinate<T> {
         }
     }
 }
-impl<T: CoordinateType> Add for Coordinate<T> {
-    type Output = Coordinate<T>;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        (self.raw + rhs.raw).into()
-    }
-}
-impl<T: CoordinateType> Add<u32> for Coordinate<T> {
-    type Output = Coordinate<T>;
+macro_rules! impl_coordinate_ops {
+    ($rhs_ty:ty, $rhs_access:expr) => {
+        impl<T: CoordinateType> Add<$rhs_ty> for Coordinate<T> {
+            type Output = Coordinate<T>;
 
-    fn add(self, rhs: u32) -> Self::Output {
-        (self.raw + rhs).into()
-    }
-}
-impl<T: CoordinateType> Sub for Coordinate<T> {
-    type Output = Coordinate<T>;
+            fn add(self, rhs: $rhs_ty) -> Self::Output {
+                (self.raw + $rhs_access(rhs)).into()
+            }
+        }
+        impl<T: CoordinateType> Sub<$rhs_ty> for Coordinate<T> {
+            type Output = Coordinate<T>;
 
-    fn sub(self, rhs: Self) -> Self::Output {
-        (self.raw - rhs.raw).into()
-    }
-}
-impl<T: CoordinateType> Mul for Coordinate<T> {
-    type Output = Coordinate<T>;
+            fn sub(self, rhs: $rhs_ty) -> Self::Output {
+                (self.raw - $rhs_access(rhs)).into()
+            }
+        }
+        impl<T: CoordinateType> Mul<$rhs_ty> for Coordinate<T> {
+            type Output = Coordinate<T>;
 
-    fn mul(self, rhs: Self) -> Self::Output {
-        (self.raw * rhs.raw).into()
-    }
-}
-impl<T: CoordinateType> Div for Coordinate<T> {
-    type Output = Coordinate<T>;
+            fn mul(self, rhs: $rhs_ty) -> Self::Output {
+                (self.raw * $rhs_access(rhs)).into()
+            }
+        }
+        impl<T: CoordinateType> Div<$rhs_ty> for Coordinate<T> {
+            type Output = Coordinate<T>;
 
-    fn div(self, rhs: Self) -> Self::Output {
-        (self.raw / rhs.raw).into()
-    }
+            fn div(self, rhs: $rhs_ty) -> Self::Output {
+                (self.raw / $rhs_access(rhs)).into()
+            }
+        }
+    };
 }
+
+impl_coordinate_ops!(usize, |rhs| rhs as u32);
+impl_coordinate_ops!(u32, |rhs| rhs);
+impl_coordinate_ops!(Self, |rhs: Self| rhs.raw);
 
 impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
     type Output = GlobalVoxelCoordinate;
@@ -147,6 +149,23 @@ impl<const N: usize, T: Copy> Vector<N, T> {
         Vector(std::array::from_fn(|i| f(i, self.0[i], other.0[i])))
     }
 }
+impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
+    pub fn as_index(self) -> [usize; N] {
+        self.map(|v| v.raw as usize).0
+    }
+}
+
+impl<const N: usize> Vector<N, GlobalVoxelCoordinate> {
+    pub fn local(self) -> Vector<N, LocalVoxelCoordinate> {
+        self.map(LocalVoxelCoordinate::interpret_as)
+    }
+}
+impl<const N: usize> Vector<N, LocalVoxelCoordinate> {
+    pub fn global(self) -> Vector<N, GlobalVoxelCoordinate> {
+        self.map(GlobalVoxelCoordinate::interpret_as)
+    }
+}
+
 impl<T: Copy> Vector<3, T> {
     pub fn x(&self) -> T {
         self.0[2]
