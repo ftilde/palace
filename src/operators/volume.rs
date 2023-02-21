@@ -1,5 +1,4 @@
 use futures::stream::StreamExt;
-use ndarray::Axis;
 
 use crate::{
     array::VolumeMetaData,
@@ -452,11 +451,11 @@ pub fn convolution_1d<'op, const DIM: usize>(
 
                                     let in_chunk_active =
                                         in_chunk.slice(slice_range(iter_i_begin, iter_i_end));
-                                    let in_lines = in_chunk_active.lanes(Axis(2));
+                                    let in_lines = in_chunk_active.rows();
 
                                     let mut out_chunk_active =
                                         out_chunk.slice_mut(slice_range(iter_o_begin, iter_o_end));
-                                    let out_lines = out_chunk_active.lanes_mut(Axis(2));
+                                    let out_lines = out_chunk_active.rows_mut();
 
                                     for (mut ol, il) in
                                         out_lines.into_iter().zip(in_lines.into_iter())
