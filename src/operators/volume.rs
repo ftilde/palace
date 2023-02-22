@@ -529,24 +529,32 @@ pub fn convolution_1d<'op, const DIM: usize>(
     .into()
 }
 
+pub fn separable_convolution<'op>(
+    v: VolumeOperator<'op>,
+    kernels: [&'op [f32]; 3],
+) -> VolumeOperator<'op> {
+    let v = convolution_1d::<2>(v, kernels[2]);
+    let v = convolution_1d::<1>(v, kernels[1]);
+    let v = convolution_1d::<0>(v, kernels[0]);
+    v
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{data::VoxelPosition, runtime::RunTime};
+    use crate::{
+        data::{GlobalVoxelCoordinate, VoxelPosition},
+        runtime::RunTime,
+    };
 
-    fn compare_convolution_1d<const DIM: usize>(
-        input: &dyn VolumeOperatorState,
+    fn compare_volume(
+        vol: VolumeOperator,
         size: VoxelPosition,
-        kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {
         let mut runtime = RunTime::new(1 << 30, Some(1)).unwrap();
 
-        let input = input.operate();
-
-        let output = convolution_1d::<DIM>(input, kernel);
-
-        let full_vol = rechunk(output, size.local());
+        let full_vol = rechunk(vol, size.local());
         let full_vol = &full_vol;
 
         let mut c = runtime.context_anchor();
@@ -570,6 +578,17 @@ mod test {
                 .into()
             })
             .unwrap();
+    }
+
+    fn compare_convolution_1d<const DIM: usize>(
+        input: &dyn VolumeOperatorState,
+        size: VoxelPosition,
+        kernel: &[f32],
+        fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
+    ) {
+        let input = input.operate();
+        let output = convolution_1d::<DIM>(input, kernel);
+        compare_volume(output, size, fill_expected);
     }
 
     fn center_point_vol(
@@ -602,11 +621,11 @@ mod test {
         });
 
         // Larger
-        let size = VoxelPosition::fill(25.into());
+        let size = VoxelPosition::fill(13.into());
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let (point_vol, center) = center_point_vol(size, brick_size);
-        let kernel_size = 11;
+        let kernel_size = 7;
         let extent = kernel_size / 2;
         let mut kernel = vec![0.0; kernel_size];
         kernel[0] = -1.0;
@@ -632,5 +651,33 @@ mod test {
     #[test]
     fn test_convolution_1d_z() {
         test_convolution_1d_generic::<0>();
+    }
+
+    #[test]
+    fn test_separable_convolution() {
+        let size = VoxelPosition::fill(5.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let (point_vol, center) = center_point_vol(size, brick_size);
+
+        let output = separable_convolution(
+            point_vol.operate(),
+            [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]],
+        );
+        compare_volume(output, size, |comp| {
+            for dz in -1..=1 {
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let offset = Vector::new([dz, dy, dx]);
+                        let l1_dist = offset.map(i32::abs).fold(0, std::ops::Add::add);
+                        let expected_val = 1 << l1_dist;
+                        comp[(center.try_into_elem::<i32>().unwrap() + offset)
+                            .try_into_elem::<GlobalVoxelCoordinate>()
+                            .unwrap()
+                            .as_index()] = expected_val as f32;
+                    }
+                }
+            }
+        });
     }
 }

@@ -129,8 +129,11 @@ fn eval_network(
 
     let rechunked = volume::rechunk(vol, LocalVoxelPosition::fill(48.into()));
 
-    let convolved =
-        volume::convolution_1d::<0>(rechunked.clone(), &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
+    let smoothing_kernel = &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0];
+    let convolved = volume::separable_convolution(
+        rechunked.clone(),
+        [smoothing_kernel, smoothing_kernel, smoothing_kernel],
+    );
     let mapped = volume::map(convolved, |v| v.min(0.5));
 
     let scaled1 = volume::linear_rescale(mapped, factor.into(), 0.0.into());

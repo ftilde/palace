@@ -60,6 +60,23 @@ impl<T: CoordinateType> Into<u32> for Coordinate<T> {
         self.raw
     }
 }
+impl<T: CoordinateType> TryInto<i32> for Coordinate<T> {
+    type Error = <u32 as TryInto<i32>>::Error;
+
+    fn try_into(self) -> Result<i32, Self::Error> {
+        self.raw.try_into()
+    }
+}
+impl<T: CoordinateType> TryFrom<i32> for Coordinate<T> {
+    type Error = <u32 as TryInto<i32>>::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Ok(Coordinate {
+            raw: value.try_into()?,
+            type_: Default::default(),
+        })
+    }
+}
 impl<T: CoordinateType> Into<usize> for Coordinate<T> {
     fn into(self) -> usize {
         self.raw as usize
@@ -125,6 +142,9 @@ impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
 }
 
 impl<const N: usize, T: Copy> Vector<N, T> {
+    pub fn new(inner: [T; N]) -> Self {
+        Vector(inner)
+    }
     pub fn dim() -> usize {
         N
     }
@@ -160,6 +180,18 @@ impl<const N: usize, T: Copy> Vector<N, T> {
     }
     pub fn into_elem<U: From<T>>(self) -> Vector<N, U> {
         self.map(|v| v.into())
+    }
+    pub fn try_into_elem<U>(self) -> Result<Vector<N, U>, T::Error>
+    where
+        T: TryInto<U>,
+    {
+        // Safety: Standard way to initialize an MaybeUninit array
+        let mut out: [MaybeUninit<U>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        for i in 0..N {
+            out[i].write(T::try_into(self.0[i])?);
+        }
+        // Safety: We have just initialized all values in the loop above
+        Ok(Vector(out.map(|v| unsafe { v.assume_init() })))
     }
 }
 impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
