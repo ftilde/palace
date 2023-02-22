@@ -44,8 +44,8 @@ impl VolumeOperatorState for VvdVolumeSourceState {
         VolumeOperator::new(
             OperatorId::new("VvdVolumeSourceState::operate")
                 .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
-            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, positions, _| {
+            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
+            move |ctx, positions, _, _| {
                 async move {
                     self.raw
                         .load_raw_bricks(self.metadata.chunk_size, ctx, positions)

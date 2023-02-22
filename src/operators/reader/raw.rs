@@ -169,7 +169,7 @@ impl RawVolumeSourceState {
         Operator::new(
             OperatorId::new("RawVolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes()),
-            move |ctx, positions, _| {
+            move |ctx, positions, _, _| {
                 async move { self.load_raw_bricks(brick_size, ctx, positions).await }.into()
             },
         )

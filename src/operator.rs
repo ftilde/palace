@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     id::Id,
     storage::{InplaceResult, ReadHandle},
@@ -53,16 +55,20 @@ impl TypeErased {
     pub unsafe fn unpack<T>(self) -> T {
         *Box::from_raw(self.0 as *mut T)
     }
+    pub unsafe fn unpack_ref<T>(&self) -> &T {
+        &*(self.0 as *mut T)
+    }
 }
 
 // Workaround because to limit the lifetime of allowed values in HRTBs. For example, we cannot
 // write for<'a: 'b> or restrict 'a in a where clause.
 // See https://stackoverflow.com/questions/75147315/rust-returning-this-value-requires-that-op-must-outlive-static-with-hrt
 pub type OutlivesMarker<'longer, 'shorter> = &'shorter &'longer ();
-pub type ComputeFunction<'op, ItemDescriptor, Output> = Box<
+pub type ComputeFunction<'op, ItemDescriptor, Output> = Rc<
     dyn for<'cref, 'inv> Fn(
             TaskContext<'cref, 'inv, ItemDescriptor, Output>,
             Vec<ItemDescriptor>,
+            &'inv TypeErased,
             OutlivesMarker<'op, 'inv>,
         ) -> Task<'cref>
         + 'op,
@@ -77,8 +83,10 @@ pub trait OpaqueOperator {
     ) -> Task<'cref>;
 }
 
+#[derive(Clone)]
 pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     id: OperatorId,
+    state: Rc<TypeErased>,
     compute: ComputeFunction<'op, ItemDescriptor, Output>,
 }
 
@@ -108,6 +116,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 Vec<ItemDescriptor>,
+                &'inv (),
                 OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
             + 'op,
@@ -115,9 +124,32 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         id: OperatorId,
         compute: F,
     ) -> Self {
+        Self::with_state(id, (), compute)
+    }
+
+    pub fn with_state<
+        S: 'op,
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
+                Vec<ItemDescriptor>,
+                &'inv S,
+                OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+    >(
+        id: OperatorId,
+        state: S,
+        compute: F,
+    ) -> Self {
         Self {
             id,
-            compute: Box::new(compute),
+            state: Rc::new(TypeErased::pack(state)),
+            compute: Rc::new(move |ctx, items, state, marker| {
+                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
+                // then packed and then unpacked again here to `S: 'op`.
+                let state = unsafe { state.unpack_ref() };
+                compute(ctx, items, state, marker)
+            }),
         }
     }
 
@@ -173,6 +205,6 @@ impl<'op, ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
             .map(|v| unsafe { v.unpack() })
             .collect::<Vec<_>>();
         let ctx = TaskContext::new(ctx);
-        (self.compute)(ctx, items, &&())
+        (self.compute)(ctx, items, &self.state, &&())
     }
 }

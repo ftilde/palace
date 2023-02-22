@@ -43,8 +43,8 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
             OperatorId::new("Hdf5VolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes())
                 .dependent_on(self.volume_location.as_bytes()),
-            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, positions, _| {
+            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
+            move |ctx, positions, _, _| {
                 async move {
                     for pos in positions {
                         let chunk = self.metadata.chunk_info(pos);

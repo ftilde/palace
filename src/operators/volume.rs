@@ -18,6 +18,7 @@ pub trait VolumeOperatorState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a>;
 }
 
+#[derive(Clone)]
 pub struct VolumeOperator<'op> {
     pub metadata: Operator<'op, (), VolumeMetaData>,
     pub bricks: Operator<'op, BrickPosition, f32>,
@@ -27,12 +28,14 @@ impl<'op> VolumeOperator<'op> {
     pub fn new<
         M: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, (), VolumeMetaData>,
+                &'inv (),
                 crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
             + 'op,
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, BrickPosition, f32>,
                 Vec<BrickPosition>,
+                &'inv (),
                 crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
             + 'op,
@@ -41,9 +44,35 @@ impl<'op> VolumeOperator<'op> {
         metadata: M,
         bricks: B,
     ) -> Self {
+        Self::with_state(base_id, (), (), metadata, bricks)
+    }
+
+    pub fn with_state<
+        SM: 'op,
+        SB: 'op,
+        M: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, (), VolumeMetaData>,
+                &'inv SM,
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+        B: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, BrickPosition, f32>,
+                Vec<BrickPosition>,
+                &'inv SB,
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+    >(
+        base_id: OperatorId,
+        state_metadata: SM,
+        state_bricks: SB,
+        metadata: M,
+        bricks: B,
+    ) -> Self {
         Self {
-            metadata: crate::operators::scalar(base_id.slot(0), metadata),
-            bricks: Operator::new(base_id.slot(1), bricks),
+            metadata: crate::operators::scalar(base_id.slot(0), state_metadata, metadata),
+            bricks: Operator::with_state(base_id.slot(1), state_bricks, bricks),
         }
     }
 }
@@ -99,12 +128,14 @@ pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'sta
     }
 }
 
-pub fn map<'op>(input: &'op VolumeOperator<'_>, f: fn(f32) -> f32) -> VolumeOperator<'op> {
-    VolumeOperator::new(
+pub fn map<'op>(input: VolumeOperator<'op>, f: fn(f32) -> f32) -> VolumeOperator<'op> {
+    VolumeOperator::with_state(
         OperatorId::new("volume_scale")
-            .dependent_on(input)
+            .dependent_on(&input)
             .dependent_on(Id::hash(&f)),
-        move |ctx, _| {
+        input.clone(),
+        input,
+        move |ctx, input, _| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -112,7 +143,7 @@ pub fn map<'op>(input: &'op VolumeOperator<'_>, f: fn(f32) -> f32) -> VolumeOper
             }
             .into()
         },
-        move |ctx, positions, _| {
+        move |ctx, positions, input, _| {
             async move {
                 map_values(ctx, &input.bricks, positions, f).await;
 
@@ -124,16 +155,18 @@ pub fn map<'op>(input: &'op VolumeOperator<'_>, f: fn(f32) -> f32) -> VolumeOper
 }
 
 pub fn linear_rescale<'op>(
-    input: &'op VolumeOperator<'_>,
-    factor: &'op ScalarOperator<'_, f32>,
-    offset: &'op ScalarOperator<'_, f32>,
+    input: VolumeOperator<'op>,
+    factor: ScalarOperator<'op, f32>,
+    offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
-    VolumeOperator::new(
+    VolumeOperator::with_state(
         OperatorId::new("volume_scale")
-            .dependent_on(input)
-            .dependent_on(factor)
-            .dependent_on(offset),
-        move |ctx, _| {
+            .dependent_on(&input)
+            .dependent_on(&factor)
+            .dependent_on(&offset),
+        input.clone(),
+        (input.clone(), factor, offset),
+        move |ctx, input, _| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -141,7 +174,7 @@ pub fn linear_rescale<'op>(
             }
             .into()
         },
-        move |ctx, positions, _| {
+        move |ctx, positions, (input, factor, offset), _| {
             async move {
                 let (factor, offset) = futures::join! {
                     ctx.submit(factor.request_scalar()),
@@ -157,10 +190,11 @@ pub fn linear_rescale<'op>(
     )
 }
 
-pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
+pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     crate::operators::scalar(
-        OperatorId::new("volume_mean").dependent_on(input),
-        move |ctx, _| {
+        OperatorId::new("volume_mean").dependent_on(&input),
+        input,
+        move |ctx, input, _| {
             async move {
                 let vol = ctx.submit(input.metadata.request_scalar()).await;
 
@@ -203,12 +237,16 @@ pub fn mean<'op>(input: &'op VolumeOperator<'_>) -> ScalarOperator<'op, f32> {
 }
 
 pub fn rechunk<'op>(
-    input: &'op VolumeOperator<'_>,
+    input: VolumeOperator<'op>,
     brick_size: LocalVoxelPosition,
 ) -> VolumeOperator<'op> {
-    VolumeOperator::new(
-        OperatorId::new("volume_rechunk").dependent_on(input),
-        move |ctx, _| {
+    VolumeOperator::with_state(
+        OperatorId::new("volume_rechunk")
+            .dependent_on(&input)
+            .dependent_on(Id::hash(&brick_size)),
+        input.clone(),
+        input,
+        move |ctx, input, _| {
             async move {
                 let req = input.metadata.request_scalar();
                 let mut m = ctx.submit(req).await;
@@ -217,7 +255,7 @@ pub fn rechunk<'op>(
             }
             .into()
         },
-        move |ctx, positions, _| {
+        move |ctx, positions, input, _| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
@@ -320,15 +358,17 @@ pub fn rechunk<'op>(
 /// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
 /// only supported (and thus always applied) border handling routine.
 pub fn convolution_1d<'op, const DIM: usize>(
-    input: &'op VolumeOperator<'_>,
+    input: VolumeOperator<'op>,
     kernel: &'op [f32],
 ) -> VolumeOperator<'op> {
     let kernel_size = kernel.len() as u32;
     assert!(kernel_size % 2 == 1, "Kernel size must be odd");
     let extent = kernel_size / 2;
-    VolumeOperator::new(
-        OperatorId::new("volume_rechunk").dependent_on(input),
-        move |ctx, _| {
+    VolumeOperator::with_state(
+        OperatorId::new("convolution_1d").dependent_on(&input),
+        input.clone(),
+        input,
+        move |ctx, input, _| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -336,7 +376,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
             }
             .into()
         },
-        move |ctx, positions, _| {
+        move |ctx, positions, input, _| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
@@ -486,6 +526,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
             .into()
         },
     )
+    .into()
 }
 
 #[cfg(test)]
@@ -503,9 +544,9 @@ mod test {
 
         let input = input.operate();
 
-        let output = convolution_1d::<DIM>(&input, kernel);
+        let output = convolution_1d::<DIM>(input, kernel);
 
-        let full_vol = rechunk(&output, size.local());
+        let full_vol = rechunk(output, size.local());
         let full_vol = &full_vol;
 
         let mut c = runtime.context_anchor();

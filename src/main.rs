@@ -117,28 +117,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
     };
 
-    eval_network(&mut runtime, &*vol_state, &args.factor)
+    eval_network(&mut runtime, &*vol_state, args.factor)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
     vol: &dyn VolumeOperatorState,
-    factor: &f32,
+    factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let rechunked = volume::rechunk(&vol, LocalVoxelPosition::fill(48.into()));
+    let rechunked = volume::rechunk(vol, LocalVoxelPosition::fill(48.into()));
 
-    let convolved = volume::convolution_1d::<0>(&rechunked, &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
-    let mapped = volume::map(&convolved, |v| v.min(0.5));
+    let convolved =
+        volume::convolution_1d::<0>(rechunked.clone(), &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
+    let mapped = volume::map(convolved, |v| v.min(0.5));
 
-    let factor = factor.into();
-    let offset = (&0.0).into();
-    let scaled1 = volume::linear_rescale(&mapped, &factor, &offset);
-    let scaled2 = volume::linear_rescale(&scaled1, &factor, &offset);
+    let scaled1 = volume::linear_rescale(mapped, factor.into(), 0.0.into());
+    let scaled2 = volume::linear_rescale(scaled1, factor.into(), 0.0.into());
 
-    let mean = volume::mean(&scaled2);
-    let mean_unscaled = volume::mean(&rechunked);
+    let mean = volume::mean(scaled2);
+    let mean_unscaled = volume::mean(rechunked);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();

@@ -91,8 +91,8 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                         .dependent_on(data.to_string_lossy().as_bytes())
                 }
             },
-            move |ctx, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, mut positions, _| {
+            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
+            move |ctx, mut positions, _, _| {
                 positions.sort_by_key(|p| p.z());
                 async move {
                     let obj = match &self.type_ {
