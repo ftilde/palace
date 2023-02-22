@@ -12,6 +12,7 @@ use crate::{
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
+    vulkan::{DeviceContext, VulkanManager},
     Error,
 };
 
@@ -99,6 +100,7 @@ impl<'inv> RequestBatcher<'inv> {
 
 pub struct RunTime {
     pub storage: Storage,
+    pub vulkan: Option<VulkanManager>,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
@@ -116,12 +118,24 @@ impl RunTime {
             ),
             io_thread_pool: IoThreadPool::new(async_result_sender),
             async_result_receiver,
+            vulkan: None,
         })
+    }
+
+    pub fn with_vulkan(mut self) -> Result<Self, Error> {
+        self.vulkan = Some(VulkanManager::new()?);
+        Ok(self)
     }
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
         ContextAnchor {
-            data: ContextData::new(&self.storage),
+            data: ContextData::new(
+                &self.storage,
+                self.vulkan
+                    .as_ref()
+                    .map(|v| v.device_contexts())
+                    .unwrap_or(&[]),
+            ),
             compute_thread_pool: &mut self.compute_thread_pool,
             io_thread_pool: &mut self.io_thread_pool,
             async_result_receiver: &mut self.async_result_receiver,
@@ -167,10 +181,11 @@ pub struct ContextData<'cref, 'inv> {
     hints: TaskHints,
     thread_spawner: ThreadSpawner,
     pub storage: &'cref Storage,
+    device_contexts: &'cref [DeviceContext],
 }
 
 impl<'cref> ContextData<'cref, '_> {
-    pub fn new(storage: &'cref Storage) -> Self {
+    pub fn new(storage: &'cref Storage, device_contexts: &'cref [DeviceContext]) -> Self {
         let request_queue = RequestQueue::new();
         let hints = TaskHints::new();
         let thread_spawner = ThreadSpawner::new();
@@ -179,6 +194,7 @@ impl<'cref> ContextData<'cref, '_> {
             hints,
             thread_spawner,
             storage,
+            device_contexts,
         }
     }
 }
@@ -202,6 +218,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             storage: &self.data.storage,
             hints: &self.data.hints,
             thread_pool: &self.data.thread_spawner,
+            device_contexts: self.data.device_contexts,
             current_task,
         }
     }

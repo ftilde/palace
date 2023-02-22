@@ -11,6 +11,7 @@ use crate::storage::{Storage, WriteHandleUninit};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
+use crate::vulkan::DeviceContext;
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
@@ -100,6 +101,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub storage: &'cref Storage,
     pub hints: &'cref TaskHints,
     pub thread_pool: &'cref ThreadSpawner,
+    pub device_contexts: &'cref [DeviceContext],
     pub current_task: TaskId,
 }
 

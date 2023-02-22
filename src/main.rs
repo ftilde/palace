@@ -21,7 +21,6 @@ mod task_graph;
 mod task_manager;
 mod threadpool;
 mod util;
-#[allow(unused)]
 mod vulkan;
 
 // TODO look into thiserror/anyhow
@@ -61,7 +60,7 @@ struct CliArgs {
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
 
-    #[arg(long, default_value = "false")]
+    #[arg(long, default_value = "true")]
     with_vulkan: bool,
 }
 
@@ -92,13 +91,12 @@ fn open_volume(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
-    if args.with_vulkan {
-        let _vulkan_manager = vulkan::VulkanManager::new();
-    }
-
     let storage_size = args.mem_size << 30; //in gigabyte
 
     let mut runtime = RunTime::new(storage_size, args.compute_pool_size)?;
+    if args.with_vulkan {
+        runtime = runtime.with_vulkan()?;
+    }
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
