@@ -4,7 +4,10 @@ use ash::vk::{self, BufferUsageFlags};
 use crevice::std140::{AsStd140, Std140};
 use futures::StreamExt;
 
-use crate::{operator::OperatorId, vulkan::VulkanState};
+use crate::{
+    operator::OperatorId,
+    vulkan::{DeviceContext, VulkanState},
+};
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
@@ -56,14 +59,14 @@ struct Shader {
 }
 
 impl Shader {
-    fn from_compiled(device: &ash::Device, code: &[u32]) -> Self {
+    fn from_compiled(device: &DeviceContext, code: &[u32]) -> Self {
         let info = vk::ShaderModuleCreateInfo::builder().code(&code);
 
-        let module = unsafe { device.create_shader_module(&info, None) }.unwrap();
+        let module = unsafe { device.device.create_shader_module(&info, None) }.unwrap();
 
         Self { module }
     }
-    fn from_source(device: &ash::Device, source: &str) -> Self {
+    fn from_source(device: &DeviceContext, source: &str) -> Self {
         use spirv_compiler::*;
 
         let mut compiler = CompilerBuilder::new()
@@ -78,8 +81,82 @@ impl Shader {
 }
 
 impl VulkanState for Shader {
-    fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         unsafe { context.device.destroy_shader_module(self.module, None) };
+    }
+}
+
+struct ComputePipeline {
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+impl ComputePipeline {
+    fn new(
+        device: &DeviceContext,
+        shader: &str,
+        descriptor_set_bindings: &[vk::DescriptorSetLayoutBinding],
+    ) -> Self {
+        let mut shader = Shader::from_source(device, shader);
+
+        let dsl_info =
+            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_bindings);
+        let descriptor_set_layout =
+            unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
+        let dsls = &[descriptor_set_layout];
+
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(dsls);
+
+        let pipeline_layout = unsafe {
+            device
+                .device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+        }
+        .unwrap();
+
+        let pipeline_info = vk::PipelineShaderStageCreateInfo::builder()
+            .module(shader.module)
+            .name(cstr::cstr!("main"))
+            .stage(vk::ShaderStageFlags::COMPUTE);
+
+        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+            .stage(*pipeline_info)
+            .layout(pipeline_layout);
+
+        let pipelines = unsafe {
+            device.device.create_compute_pipelines(
+                vk::PipelineCache::null(),
+                &[*pipeline_info],
+                None,
+            )
+        }
+        .unwrap();
+
+        // Safety: Pipeline has been created now. Shader module is not referenced anymore.
+        unsafe { shader.deinitialize(device) };
+
+        let pipeline = pipelines[0];
+
+        Self {
+            pipeline,
+            pipeline_layout,
+            descriptor_set_layout,
+        }
+    }
+}
+
+impl VulkanState for ComputePipeline {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        unsafe {
+            context
+                .device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            context.device.destroy_pipeline(self.pipeline, None);
+            context
+                .device
+                .destroy_pipeline_layout(self.pipeline_layout, None)
+        };
     }
 }
 
@@ -131,8 +208,30 @@ pub fn linear_rescale<'op>(
                     .unwrap()
                     .copy_from_slice(config.as_std140().as_bytes());
 
-                let shader = device.request_state("linear_rescale_gpu_shader", || {
-                    Shader::from_source(&device.device, SHADER)
+                let pipeline = device.request_state("linear_rescale_gpu_pipeline", || {
+                    // TODO: It would be nice to derive these automagically from the shader.
+                    // https://crates.io/crates/spirv-tools may be useful for this.
+                    let bindings = [
+                        vk::DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .build(),
+                        vk::DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .build(),
+                        vk::DescriptorSetLayoutBinding::builder()
+                            .binding(2)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .build(),
+                    ];
+                    ComputePipeline::new(device, SHADER, &bindings)
                 });
 
                 // ----------------------------------------------------------------------------
@@ -161,70 +260,9 @@ pub fn linear_rescale<'op>(
                 .unwrap();
 
                 // ----------------------------------------------------------------------------
-                // Descriptor Set Layout
-                // ----------------------------------------------------------------------------
-                let bindings = [
-                    vk::DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                        .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .build(),
-                    vk::DescriptorSetLayoutBinding::builder()
-                        .binding(1)
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .build(),
-                    vk::DescriptorSetLayoutBinding::builder()
-                        .binding(2)
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .build(),
-                ];
-
-                let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-                let dsl =
-                    unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
-
-                // ----------------------------------------------------------------------------
-                // Pipeline Layout
-                // ----------------------------------------------------------------------------
-                let dsls = &[dsl];
-                let pipeline_layout_info =
-                    vk::PipelineLayoutCreateInfo::builder().set_layouts(dsls);
-
-                let pipeline_layout = unsafe {
-                    device
-                        .device
-                        .create_pipeline_layout(&pipeline_layout_info, None)
-                }
-                .unwrap();
-
-                let pipeline_info = vk::PipelineShaderStageCreateInfo::builder()
-                    .module(shader.module)
-                    .name(cstr::cstr!("main"))
-                    .stage(vk::ShaderStageFlags::COMPUTE);
-
-                let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                    .stage(*pipeline_info)
-                    .layout(pipeline_layout);
-
-                let pipelines = unsafe {
-                    device.device.create_compute_pipelines(
-                        vk::PipelineCache::null(),
-                        &[*pipeline_info],
-                        None,
-                    )
-                }
-                .unwrap();
-                let pipeline = pipelines[0];
-
-                // ----------------------------------------------------------------------------
                 // Descriptor Sets
                 // ----------------------------------------------------------------------------
-                let layouts = vec![dsl.clone(); positions.len()];
+                let layouts = vec![pipeline.descriptor_set_layout; positions.len()];
                 let ds_info = vk::DescriptorSetAllocateInfo::builder()
                     .descriptor_pool(descriptor_pool)
                     .set_layouts(&layouts);
@@ -313,12 +351,12 @@ pub fn linear_rescale<'op>(
                         device.device.cmd_bind_pipeline(
                             cmd,
                             vk::PipelineBindPoint::COMPUTE,
-                            pipeline,
+                            pipeline.pipeline,
                         );
                         device.device.cmd_bind_descriptor_sets(
                             cmd,
                             vk::PipelineBindPoint::COMPUTE,
-                            pipeline_layout,
+                            pipeline.pipeline_layout,
                             0,
                             &[compute_descriptor_sets[i]],
                             &[],
@@ -360,9 +398,6 @@ pub fn linear_rescale<'op>(
                 }
                 device.allocator().deallocate(gpu_config);
 
-                unsafe { device.device.destroy_pipeline(pipeline, None) };
-                unsafe { device.device.destroy_pipeline_layout(pipeline_layout, None) };
-                unsafe { device.device.destroy_descriptor_set_layout(dsl, None) };
                 unsafe { device.device.destroy_descriptor_pool(descriptor_pool, None) };
 
                 Ok(())

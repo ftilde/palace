@@ -462,7 +462,7 @@ impl DeviceContext {
 impl Drop for DeviceContext {
     fn drop(&mut self) {
         for mut vulkan_state in self.vulkan_states.drain() {
-            vulkan_state.deinitialize(self);
+            unsafe { vulkan_state.deinitialize(self) };
         }
 
         self.allocator.deinitialize();
@@ -479,7 +479,7 @@ impl Drop for DeviceContext {
 }
 
 pub trait VulkanState: Any {
-    fn deinitialize(&mut self, context: &DeviceContext);
+    unsafe fn deinitialize(&mut self, context: &DeviceContext);
 }
 
 impl dyn VulkanState {
