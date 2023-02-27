@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use data::{LocalVoxelPosition, VoxelPosition};
 use operators::{
-    Hdf5VolumeSourceState, NiftiVolumeSourceState, VolumeOperatorState, VvdVolumeSourceState,
+    reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
+    volume::VolumeOperatorState,
 };
 use runtime::RunTime;
 
-use crate::operators::volume;
+use crate::operators::{volume, volume_gpu};
 
 mod array;
 mod data;
@@ -136,6 +137,7 @@ fn eval_network(
 
     let scaled1 = volume::linear_rescale(mapped, factor.into(), 0.0.into());
     let scaled2 = volume::linear_rescale(scaled1, factor.into(), 0.0.into());
+    let scaled2 = volume_gpu::linear_rescale(scaled2, (-1.0).into(), 0.0.into());
 
     let mean = volume::mean(scaled2);
     let mean_unscaled = volume::mean(rechunked);

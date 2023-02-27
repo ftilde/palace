@@ -12,7 +12,7 @@ use crate::{
     task::{RequestStream, Task, TaskContext},
 };
 
-use super::ScalarOperator;
+use super::scalar::ScalarOperator;
 
 pub trait VolumeOperatorState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a>;
@@ -71,7 +71,7 @@ impl<'op> VolumeOperator<'op> {
         bricks: B,
     ) -> Self {
         Self {
-            metadata: crate::operators::scalar(base_id.slot(0), state_metadata, metadata),
+            metadata: crate::operators::scalar::scalar(base_id.slot(0), state_metadata, metadata),
             bricks: Operator::with_state(base_id.slot(1), state_bricks, bricks),
         }
     }
@@ -191,7 +191,7 @@ pub fn linear_rescale<'op>(
 }
 
 pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
-    crate::operators::scalar(
+    crate::operators::scalar::scalar(
         OperatorId::new("volume_mean").dependent_on(&input),
         input,
         move |ctx, input, _| {

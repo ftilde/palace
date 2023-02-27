@@ -2,6 +2,8 @@ use crate::id::Id;
 use crate::Error;
 use ash::extensions::ext::DebugUtils;
 use ash::vk;
+use gpu_allocator::vulkan::AllocationScheme;
+use gpu_allocator::MemoryLocation;
 use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -11,11 +13,15 @@ use std::ffi::{c_char, CStr};
 
 #[derive(Default)]
 struct Cache {
-    values: RefCell<BTreeMap<Id, UnsafeCell<Box<dyn Any>>>>,
+    values: RefCell<BTreeMap<Id, UnsafeCell<Box<dyn VulkanState>>>>,
 }
 
 impl Cache {
-    fn get<'a, V: 'static, F: FnOnce() -> V>(&'a self, key: &'static str, generate: F) -> &'a V {
+    fn get<'a, V: VulkanState, F: FnOnce() -> V>(
+        &'a self,
+        key: &'static str,
+        generate: F,
+    ) -> &'a V {
         let t_id = crate::id::func_id::<V>();
         let key = Id::combine(&[Id::from_data(key.as_bytes()), t_id]);
 
@@ -29,7 +35,7 @@ impl Cache {
         unsafe { (*raw.get()).downcast_ref().unwrap() }
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = Box<dyn Any>> {
+    fn drain(&mut self) -> impl Iterator<Item = Box<dyn VulkanState>> {
         std::mem::take(self.values.get_mut())
             .into_values()
             .map(|v| v.into_inner())
@@ -184,14 +190,92 @@ impl VulkanManager {
 impl Drop for VulkanManager {
     fn drop(&mut self) {
         unsafe {
-            for device_context in &mut self.device_contexts {
-                device_context.deinitialize();
+            for device_context in self.device_contexts.drain(..) {
+                std::mem::drop(device_context);
             }
 
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+pub struct Allocation {
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub buffer: vk::Buffer,
+}
+
+pub struct Allocator {
+    allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
+    device: ash::Device,
+}
+
+impl Allocator {
+    pub fn new(
+        instance: ash::Instance,
+        device: ash::Device,
+        physical_device: vk::PhysicalDevice,
+    ) -> Self {
+        let allocator = RefCell::new(Some(
+            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance,
+                device: device.clone(),
+                physical_device,
+                debug_settings: Default::default(),
+                buffer_device_address: false, // TODO: check the BufferDeviceAddressFeatures struct.
+            })
+            .unwrap(),
+        ));
+        Self { allocator, device }
+    }
+    pub fn allocate(
+        &self,
+        size: usize,
+        use_flags: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> Allocation {
+        // Setup vulkan info
+        let vk_info = vk::BufferCreateInfo::builder()
+            .size(size as u64)
+            .usage(use_flags);
+
+        let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
+        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        let allocation = allocator
+            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                name: "some allocation",
+                requirements,
+                location,     // TODO: Try to choose something more specific
+                linear: true, // Buffers are always linear
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            })
+            .unwrap();
+
+        // Bind memory to the buffer
+        unsafe {
+            self.device
+                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
+
+        Allocation { allocation, buffer }
+    }
+
+    pub fn deallocate(&self, allocation: Allocation) {
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        allocator.free(allocation.allocation).unwrap();
+        unsafe { self.device.destroy_buffer(allocation.buffer, None) };
+    }
+
+    pub fn deinitialize(&mut self) {
+        let mut a = self.allocator.borrow_mut();
+        let mut tmp = None;
+        std::mem::swap(&mut *a, &mut tmp);
     }
 }
 
@@ -209,6 +293,7 @@ pub struct DeviceContext {
     command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
 
     vulkan_states: Cache,
+    allocator: Allocator,
 }
 
 impl DeviceContext {
@@ -251,6 +336,8 @@ impl DeviceContext {
 
             let vulkan_states = Cache::default();
 
+            let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
+
             Ok(DeviceContext {
                 physical_device,
                 physical_device_memory_properties,
@@ -264,16 +351,21 @@ impl DeviceContext {
                 command_buffers,
 
                 vulkan_states,
+                allocator,
             })
         }
+    }
+
+    pub fn allocator(&self) -> &Allocator {
+        &self.allocator
     }
 
     pub fn request_state<'a, T: VulkanState + 'static>(
         &'a self,
         identifier: &'static str,
-        init: impl FnOnce(&DeviceContext) -> T,
+        init: impl FnOnce() -> T + 'a,
     ) -> &'a T {
-        self.vulkan_states.get(identifier, || init(self))
+        self.vulkan_states.get(identifier, || init())
     }
 
     pub fn find_memory_type_index(
@@ -337,6 +429,7 @@ impl DeviceContext {
     }
     pub fn submit_command_buffer(&self, command_buffer: vk::CommandBuffer) -> vk::Fence {
         unsafe {
+            self.device.end_command_buffer(command_buffer).unwrap();
             for (other, fence) in self.command_buffers.borrow().iter() {
                 if command_buffer == *other {
                     let submits = [vk::SubmitInfo::builder()
@@ -362,14 +455,19 @@ impl DeviceContext {
             panic!("Tried to submit unknown command buffer.");
         }
     }
+}
 
-    pub fn deinitialize(&mut self) {
+impl Drop for DeviceContext {
+    fn drop(&mut self) {
+        for mut vulkan_state in self.vulkan_states.drain() {
+            vulkan_state.deinitialize(self);
+        }
+
+        self.allocator.deinitialize();
+
         unsafe {
-            for mut vulkan_state in self.vulkan_states.drain() {
-                vulkan_state
-                    .downcast_mut::<Box<dyn VulkanState>>()
-                    .unwrap()
-                    .deinitialize(self);
+            for (_buf, fence) in self.command_buffers.get_mut().drain(..) {
+                self.device.destroy_fence(fence, None);
             }
 
             self.device.destroy_command_pool(self.command_pool, None);
@@ -378,6 +476,18 @@ impl DeviceContext {
     }
 }
 
-pub trait VulkanState {
+pub trait VulkanState: Any {
     fn deinitialize(&mut self, context: &DeviceContext);
+}
+
+impl dyn VulkanState {
+    // This is required as long as trait upcasting is still unstable:
+    // https://github.com/rust-lang/rust/issues/65991
+    fn downcast_ref<T: VulkanState>(&self) -> Option<&T> {
+        if self.type_id() == std::any::TypeId::of::<T>() {
+            Some(unsafe { &*(self as *const Self as *const T) })
+        } else {
+            None
+        }
+    }
 }

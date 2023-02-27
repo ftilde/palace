@@ -1,8 +1,5 @@
 pub mod rasterize_function;
-mod reader;
-mod scalar;
+pub mod reader;
+pub mod scalar;
 pub mod volume;
-
-pub use reader::*;
-pub use scalar::*;
-pub use volume::*;
+pub mod volume_gpu;

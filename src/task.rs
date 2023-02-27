@@ -484,6 +484,10 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     pub fn storage(&self) -> &Storage {
         &self.inner.storage
     }
+
+    pub fn vulkan_device(&self) -> &DeviceContext {
+        self.inner.device_contexts.first().unwrap()
+    }
 }
 
 impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>

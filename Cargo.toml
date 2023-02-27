@@ -31,3 +31,6 @@ nifti = { version = "0.15.0", features = ["ndarray_volumes"] }
 num_cpus = "1.15.0"
 work-queue = "0.1.3"
 pin-project = "1.0"
+gpu-allocator = "0.22.0"
+cstr = "0.2.11"
+spirv-compiler = "0.2"

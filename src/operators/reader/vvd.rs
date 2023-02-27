@@ -7,7 +7,7 @@ use crate::{
     array::VolumeMetaData,
     data::{LocalVoxelPosition, VoxelPosition},
     operator::OperatorId,
-    operators::{volume::VolumeOperatorState, VolumeOperator},
+    operators::volume::{VolumeOperator, VolumeOperatorState},
     Error,
 };
 
