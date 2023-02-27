@@ -1,13 +1,14 @@
+use std::alloc::Layout;
+
 use ash::vk::{self, BufferUsageFlags};
-use bytemuck::NoUninit;
+use crevice::std140::{AsStd140, Std140};
 use futures::StreamExt;
 
 use crate::{operator::OperatorId, vulkan::VulkanState};
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone, AsStd140)]
 struct Config {
     offset: f32,
     scale: f32,
@@ -18,16 +19,16 @@ const SHADER: &'static str = r#"
 
 layout (local_size_x = 256) in;
 
-layout(binding = 0) uniform Config{
+layout(std140, binding = 0) uniform Config{
     float offset;
     float scale;
 } config;
 
-layout(binding = 1) readonly buffer  InputBuffer{
+layout(std430, binding = 1) readonly buffer InputBuffer{
     float values[];
 } sourceData;
 
-layout(binding = 2) buffer  OutputBuffer{
+layout(std430, binding = 2) buffer OutputBuffer{
     float values[];
 } outputData;
 
@@ -45,6 +46,10 @@ void main()
 }
 
 "#;
+
+fn layout_std140<T: AsStd140>() -> Layout {
+    unsafe { Layout::from_size_align_unchecked(T::std140_size_static(), T::Output::ALIGNMENT) }
+}
 
 struct Shader {
     module: vk::ShaderModule,
@@ -111,7 +116,7 @@ pub fn linear_rescale<'op>(
                 let device = ctx.vulkan_device();
 
                 let mut gpu_config = device.allocator().allocate(
-                    std::mem::size_of::<Config>(),
+                    layout_std140::<Config>(),
                     BufferUsageFlags::TRANSFER_SRC | BufferUsageFlags::UNIFORM_BUFFER,
                     gpu_allocator::MemoryLocation::CpuToGpu,
                 );
@@ -124,7 +129,7 @@ pub fn linear_rescale<'op>(
                     .allocation
                     .mapped_slice_mut()
                     .unwrap()
-                    .copy_from_slice(bytemuck::bytes_of(&config));
+                    .copy_from_slice(config.as_std140().as_bytes());
 
                 let shader = device.request_state("linear_rescale_gpu_shader", || {
                     Shader::from_source(&device.device, SHADER)
@@ -240,16 +245,16 @@ pub fn linear_rescale<'op>(
                 while let Some((brick, (i, pos))) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
-                    let brick_size_mem = brick_info.mem_elements() * std::mem::size_of::<f32>();
+                    let brick_layout = Layout::array::<f32>(brick_info.mem_elements()).unwrap();
 
                     let mut gpu_brick_in = device.allocator().allocate(
-                        brick_size_mem,
+                        brick_layout,
                         BufferUsageFlags::TRANSFER_SRC | BufferUsageFlags::STORAGE_BUFFER,
                         gpu_allocator::MemoryLocation::CpuToGpu,
                     );
 
                     let gpu_brick_out = device.allocator().allocate(
-                        brick_size_mem,
+                        brick_layout,
                         BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER,
                         gpu_allocator::MemoryLocation::GpuToCpu,
                     );

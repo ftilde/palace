@@ -4,6 +4,7 @@ use ash::extensions::ext::DebugUtils;
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 use gpu_allocator::MemoryLocation;
+use std::alloc::Layout;
 use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -231,17 +232,18 @@ impl Allocator {
     }
     pub fn allocate(
         &self,
-        size: usize,
+        layout: Layout,
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
     ) -> Allocation {
         // Setup vulkan info
         let vk_info = vk::BufferCreateInfo::builder()
-            .size(size as u64)
+            .size(layout.size() as u64)
             .usage(use_flags);
 
         let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
-        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        let mut requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        requirements.alignment = requirements.alignment.max(layout.align() as u64);
 
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
