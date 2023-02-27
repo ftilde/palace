@@ -1233,6 +1233,7 @@ dependencies = [
  "hdf5",
  "itertools",
  "memmap",
+ "mint",
  "ndarray",
  "nifti",
  "num_cpus",

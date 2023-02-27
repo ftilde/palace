@@ -178,7 +178,10 @@ impl<const N: usize, T: Copy> Vector<N, T> {
     ) -> Vector<N, V> {
         Vector(std::array::from_fn(|i| f(i, self.0[i], other.0[i])))
     }
-    pub fn into_elem<U: From<T>>(self) -> Vector<N, U> {
+    pub fn into_elem<U>(self) -> Vector<N, U>
+    where
+        T: Into<U>,
+    {
         self.map(|v| v.into())
     }
     pub fn try_into_elem<U>(self) -> Result<Vector<N, U>, T::Error>
@@ -269,6 +272,16 @@ impl<const N: usize, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<
     type Output = Vector<N, O>;
     fn div(self, rhs: Vector<N, U>) -> Self::Output {
         self.zip(rhs, Div::div)
+    }
+}
+
+impl<T: Copy> Into<mint::Vector3<T>> for Vector<3, T> {
+    fn into(self) -> mint::Vector3<T> {
+        mint::Vector3 {
+            x: self.x(),
+            y: self.y(),
+            z: self.z(),
+        }
     }
 }
 

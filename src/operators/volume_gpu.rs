@@ -17,6 +17,11 @@ struct Config {
     scale: f32,
 }
 
+#[derive(Copy, Clone, AsStd140)]
+struct PushConstants {
+    chunk_pos: mint::Vector3<u32>,
+}
+
 const SHADER: &'static str = r#"
 #version 450
 
@@ -35,6 +40,10 @@ layout(std430, binding = 2) buffer OutputBuffer{
     float values[];
 } outputData;
 
+layout(std140, push_constant) uniform PushConstants
+{
+	uvec3 chunk_pos;
+} constants;
 
 void main()
 {
@@ -44,7 +53,7 @@ void main()
     //if(gID < matrixCount)
     //{
         // do math
-        outputData.values[gID] =  config.scale*sourceData.values[gID] + config.offset;
+        outputData.values[gID] = config.scale*sourceData.values[gID] + config.offset;
     //}
 }
 
@@ -97,6 +106,7 @@ impl ComputePipeline {
         device: &DeviceContext,
         shader: &str,
         descriptor_set_bindings: &[vk::DescriptorSetLayoutBinding],
+        push_constant_ranges: &[vk::PushConstantRange],
     ) -> Self {
         let mut shader = Shader::from_source(device, shader);
 
@@ -106,7 +116,9 @@ impl ComputePipeline {
             unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
         let dsls = &[descriptor_set_layout];
 
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(dsls);
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+            .set_layouts(dsls)
+            .push_constant_ranges(push_constant_ranges);
 
         let pipeline_layout = unsafe {
             device
@@ -174,6 +186,21 @@ impl ComputePipeline {
             0,
             &[descriptor_set],
             &[],
+        );
+    }
+
+    unsafe fn push_constant<T: AsStd140>(
+        &self,
+        device: &DeviceContext,
+        cmd: vk::CommandBuffer,
+        val: T,
+    ) {
+        device.device.cmd_push_constants(
+            cmd,
+            self.pipeline_layout,
+            vk::ShaderStageFlags::COMPUTE,
+            0,
+            val.as_std140().as_bytes(),
         );
     }
 }
@@ -263,7 +290,12 @@ pub fn linear_rescale<'op>(
                             .stage_flags(vk::ShaderStageFlags::COMPUTE)
                             .build(),
                     ];
-                    ComputePipeline::new(device, SHADER, &bindings)
+                    let push_constants = [vk::PushConstantRange::builder()
+                        .size(PushConstants::std140_size_static() as _)
+                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                        .build()];
+
+                    ComputePipeline::new(device, SHADER, &bindings, &push_constants)
                 });
 
                 // ----------------------------------------------------------------------------
@@ -374,6 +406,13 @@ pub fn linear_rescale<'op>(
 
                     unsafe {
                         pipeline.bind(device, cmd, ds);
+                        pipeline.push_constant(
+                            device,
+                            cmd,
+                            PushConstants {
+                                chunk_pos: pos.into_elem::<u32>().into(),
+                            },
+                        );
                         device
                             .device
                             .cmd_dispatch(cmd, num_wgs.try_into().unwrap(), 1, 1);
