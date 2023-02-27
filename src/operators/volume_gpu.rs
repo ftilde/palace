@@ -144,6 +144,38 @@ impl ComputePipeline {
             descriptor_set_layout,
         }
     }
+
+    fn alloc_descriptor_sets(
+        &self,
+        device: &DeviceContext,
+        pool: vk::DescriptorPool,
+        num: usize,
+    ) -> Vec<vk::DescriptorSet> {
+        let layouts = vec![self.descriptor_set_layout; num];
+        let ds_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(&layouts);
+        unsafe { device.device.allocate_descriptor_sets(&ds_info) }.unwrap()
+    }
+
+    unsafe fn bind(
+        &self,
+        device: &DeviceContext,
+        cmd: vk::CommandBuffer,
+        descriptor_set: vk::DescriptorSet,
+    ) {
+        device
+            .device
+            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+        device.device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            self.pipeline_layout,
+            0,
+            &[descriptor_set],
+            &[],
+        );
+    }
 }
 
 impl VulkanState for ComputePipeline {
@@ -259,28 +291,21 @@ pub fn linear_rescale<'op>(
                 }
                 .unwrap();
 
-                // ----------------------------------------------------------------------------
-                // Descriptor Sets
-                // ----------------------------------------------------------------------------
-                let layouts = vec![pipeline.descriptor_set_layout; positions.len()];
-                let ds_info = vk::DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(descriptor_pool)
-                    .set_layouts(&layouts);
                 let compute_descriptor_sets =
-                    unsafe { device.device.allocate_descriptor_sets(&ds_info) }.unwrap();
+                    pipeline.alloc_descriptor_sets(&device, descriptor_pool, positions.len());
 
                 let mut bufs = Vec::with_capacity(positions.len());
 
                 let mut brick_stream = ctx.submit_unordered_with_data(
                     positions
                         .iter()
-                        .enumerate()
-                        .map(|(i, pos)| (input.bricks.request(*pos), (i, *pos))),
+                        .zip(compute_descriptor_sets.into_iter())
+                        .map(|(pos, ds)| (input.bricks.request(*pos), (*pos, ds))),
                 );
 
                 let cmd = device.begin_command_buffer();
 
-                while let Some((brick, (i, pos))) = brick_stream.next().await {
+                while let Some((brick, (pos, ds))) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
                     let brick_layout = Layout::array::<f32>(brick_info.mem_elements()).unwrap();
@@ -313,21 +338,21 @@ pub fn linear_rescale<'op>(
 
                     let descriptor_writes = [
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(compute_descriptor_sets[i])
+                            .dst_set(ds)
                             .dst_binding(0)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                             .buffer_info(&[*config_descriptor_info])
                             .build(),
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(compute_descriptor_sets[i])
+                            .dst_set(ds)
                             .dst_binding(1)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                             .buffer_info(&[*db_info_in])
                             .build(),
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(compute_descriptor_sets[i])
+                            .dst_set(ds)
                             .dst_binding(2)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -348,19 +373,7 @@ pub fn linear_rescale<'op>(
                     let num_wgs = global_size / local_size;
 
                     unsafe {
-                        device.device.cmd_bind_pipeline(
-                            cmd,
-                            vk::PipelineBindPoint::COMPUTE,
-                            pipeline.pipeline,
-                        );
-                        device.device.cmd_bind_descriptor_sets(
-                            cmd,
-                            vk::PipelineBindPoint::COMPUTE,
-                            pipeline.pipeline_layout,
-                            0,
-                            &[compute_descriptor_sets[i]],
-                            &[],
-                        );
+                        pipeline.bind(device, cmd, ds);
                         device
                             .device
                             .cmd_dispatch(cmd, num_wgs.try_into().unwrap(), 1, 1);
