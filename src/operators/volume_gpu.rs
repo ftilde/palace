@@ -15,6 +15,7 @@ use super::{scalar::ScalarOperator, volume::VolumeOperator};
 struct Config {
     offset: f32,
     scale: f32,
+    num_chunk_elems: u32,
 }
 
 #[derive(Copy, Clone, AsStd140)]
@@ -30,6 +31,7 @@ layout (local_size_x = 256) in;
 layout(std140, binding = 0) uniform Config{
     float offset;
     float scale;
+    uint num_chunk_elems;
 } config;
 
 layout(std430, binding = 1) readonly buffer InputBuffer{
@@ -47,14 +49,11 @@ layout(std140, push_constant) uniform PushConstants
 
 void main()
 {
-    //grab global ID
     uint gID = gl_GlobalInvocationID.x;
-    //make sure we don't access past the buffer size
-    //if(gID < matrixCount)
-    //{
-        // do math
+
+    if(gID < config.num_chunk_elems) {
         outputData.values[gID] = config.scale*sourceData.values[gID] + config.offset;
-    //}
+    }
 }
 
 "#;
@@ -247,7 +246,11 @@ pub fn linear_rescale<'op>(
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
-                let config = Config { scale, offset };
+                let config = Config {
+                    scale,
+                    offset,
+                    num_chunk_elems: crate::data::hmul(m.chunk_size).try_into().unwrap(),
+                };
 
                 let device = ctx.vulkan_device();
 
@@ -401,8 +404,7 @@ pub fn linear_rescale<'op>(
                     let local_size = 256; //TODO: somehow ensure that this is the same as specified
                                           //in shader
                     let global_size = brick_info.mem_elements();
-                    assert!(global_size % local_size == 0);
-                    let num_wgs = global_size / local_size;
+                    let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                     unsafe {
                         pipeline.bind(device, cmd, ds);
