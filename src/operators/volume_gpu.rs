@@ -298,12 +298,12 @@ pub fn linear_rescale<'op>(
 
                 unsafe {
                     device.device.cmd_update_buffer(
-                        cmd,
+                        *cmd,
                         gpu_config.buffer,
                         0,
                         config.as_std140().as_bytes(),
                     );
-                    pipeline.bind(device, cmd);
+                    pipeline.bind(device, *cmd);
                 }
 
                 while let Some((brick, pos)) = brick_stream.next().await {
@@ -366,15 +366,15 @@ pub fn linear_rescale<'op>(
                     unsafe {
                         pipeline.push_constant(
                             device,
-                            cmd,
+                            *cmd,
                             PushConstants {
                                 chunk_pos: pos.into_elem::<u32>().into(),
                             },
                         );
-                        pipeline.push_descriptor_set(device, cmd, 0, &descriptor_writes);
+                        pipeline.push_descriptor_set(device, *cmd, 0, &descriptor_writes);
                         device
                             .device
-                            .cmd_dispatch(cmd, num_wgs.try_into().unwrap(), 1, 1);
+                            .cmd_dispatch(*cmd, num_wgs.try_into().unwrap(), 1, 1);
                     }
 
                     //let copy_info = vk::BufferCopy::builder().size(brick_size_mem as _);

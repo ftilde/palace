@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr};
+use std::ops::Deref;
 
 #[derive(Default)]
 struct Cache {
@@ -298,10 +299,23 @@ pub struct DeviceContext {
     queues: Vec<vk::Queue>,
 
     command_pool: vk::CommandPool,
-    command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
+    unused_command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
 
     vulkan_states: Cache,
     allocator: Allocator,
+}
+
+pub struct CommandBuffer {
+    buffer: vk::CommandBuffer,
+    fence: vk::Fence,
+}
+
+impl Deref for CommandBuffer {
+    type Target = vk::CommandBuffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
 }
 
 impl DeviceContext {
@@ -377,7 +391,7 @@ impl DeviceContext {
                 queues,
 
                 command_pool,
-                command_buffers,
+                unused_command_buffers: command_buffers,
 
                 push_descriptor_ext,
 
@@ -415,75 +429,71 @@ impl DeviceContext {
             .map(|(index, _memory_type)| index as _)
     }
 
-    pub fn begin_command_buffer(&self) -> vk::CommandBuffer {
+    pub fn begin_command_buffer(&self) -> CommandBuffer {
         unsafe {
-            for (command_buffer, fence) in self.command_buffers.borrow().iter() {
-                if self.device.get_fence_status(*fence).unwrap_or(false) {
-                    let begin_info = vk::CommandBufferBeginInfo::builder()
-                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-                    self.device
-                        .begin_command_buffer(*command_buffer, &begin_info)
-                        .expect("Failed to begin command buffer.");
-                    return *command_buffer;
-                }
-            }
-
-            // Create command buffer
-            let create_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pool)
-                .command_buffer_count(1);
-            let command_buffer = *self
-                .device
-                .allocate_command_buffers(&create_info)
-                .expect("Failed to allocate command buffer.")
-                .first()
-                .unwrap();
-
-            // Create fence
-            let create_info = vk::FenceCreateInfo::default();
-            let fence = self
-                .device
-                .create_fence(&create_info, None)
-                .expect("Failed to create fence.");
-
-            self.command_buffers
+            let (buffer, fence) = self
+                .unused_command_buffers
                 .borrow_mut()
-                .push((command_buffer, fence));
+                .pop()
+                .unwrap_or_else(|| {
+                    // Create command buffer
+                    let create_info = vk::CommandBufferAllocateInfo::builder()
+                        .command_pool(self.command_pool)
+                        .command_buffer_count(1);
+                    let command_buffer = *self
+                        .device
+                        .allocate_command_buffers(&create_info)
+                        .expect("Failed to allocate command buffer.")
+                        .first()
+                        .unwrap();
+
+                    // Create fence
+                    let create_info = vk::FenceCreateInfo::default();
+                    let fence = self
+                        .device
+                        .create_fence(&create_info, None)
+                        .expect("Failed to create fence.");
+
+                    (command_buffer, fence)
+                });
+
+            assert_eq!(self.device.get_fence_status(fence), Ok(false));
 
             let begin_info = vk::CommandBufferBeginInfo::builder()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             self.device
-                .begin_command_buffer(command_buffer, &begin_info)
+                .begin_command_buffer(buffer, &begin_info)
                 .expect("Failed to begin command buffer.");
-            return command_buffer;
+            return CommandBuffer { buffer, fence };
         }
     }
-    pub fn submit_command_buffer(&self, command_buffer: vk::CommandBuffer) -> vk::Fence {
+    pub fn submit_command_buffer(&self, command_buffer: CommandBuffer) {
         unsafe {
-            self.device.end_command_buffer(command_buffer).unwrap();
-            for (other, fence) in self.command_buffers.borrow().iter() {
-                if command_buffer == *other {
-                    let submits = [vk::SubmitInfo::builder()
-                        .command_buffers(std::slice::from_ref(&command_buffer))
-                        .build()];
-                    self.device
-                        .queue_submit(*self.queues.first().unwrap(), &submits, *fence)
-                        .expect("Failed to submit command buffers to queue.");
+            self.device.end_command_buffer(*command_buffer).unwrap();
+            let submits = [vk::SubmitInfo::builder()
+                .command_buffers(&[*command_buffer])
+                .build()];
+            self.device
+                .queue_submit(
+                    *self.queues.first().unwrap(),
+                    &submits,
+                    command_buffer.fence,
+                )
+                .expect("Failed to submit command buffers to queue.");
 
-                    self.device
-                        .wait_for_fences(std::slice::from_ref(fence), true, u64::max_value())
-                        .expect("Failed to wait for fence.");
-                    self.device
-                        .reset_fences(std::slice::from_ref(fence))
-                        .expect("Failed to reset fence.");
-                    self.device
-                        .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
-                        .expect("Failed to reset command buffer.");
+            self.device
+                .wait_for_fences(&[command_buffer.fence], true, u64::max_value())
+                .expect("Failed to wait for fence.");
+            self.device
+                .reset_fences(&[command_buffer.fence])
+                .expect("Failed to reset fence.");
+            self.device
+                .reset_command_buffer(*command_buffer, vk::CommandBufferResetFlags::empty())
+                .expect("Failed to reset command buffer.");
 
-                    return *fence;
-                }
-            }
-            panic!("Tried to submit unknown command buffer.");
+            self.unused_command_buffers
+                .borrow_mut()
+                .push((command_buffer.buffer, command_buffer.fence));
         }
     }
 }
@@ -497,7 +507,7 @@ impl Drop for DeviceContext {
         self.allocator.deinitialize();
 
         unsafe {
-            for (_buf, fence) in self.command_buffers.get_mut().drain(..) {
+            for (_buf, fence) in self.unused_command_buffers.get_mut().drain(..) {
                 self.device.destroy_fence(fence, None);
             }
 
