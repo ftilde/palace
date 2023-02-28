@@ -8,6 +8,7 @@ use gpu_allocator::MemoryLocation;
 use std::alloc::Layout;
 use std::any::Any;
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
@@ -142,7 +143,8 @@ impl VulkanManager {
                 .expect("Failed to enumerate physical devices.");
             let device_contexts: Vec<DeviceContext> = physical_devices
                 .iter()
-                .filter_map(|physical_device| {
+                .enumerate()
+                .filter_map(|(device_num, physical_device)| {
                     instance
                         .get_physical_device_queue_family_properties(*physical_device)
                         .iter()
@@ -153,6 +155,7 @@ impl VulkanManager {
                                 .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
                             {
                                 DeviceContext::new(
+                                    device_num,
                                     &instance,
                                     *physical_device,
                                     index as u32,
@@ -299,7 +302,10 @@ pub struct DeviceContext {
     queues: Vec<vk::Queue>,
 
     command_pool: vk::CommandPool,
-    unused_command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
+    available_command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
+
+    id: DeviceId,
+    submission_count: Cell<usize>,
 
     vulkan_states: Cache,
     allocator: Allocator,
@@ -318,8 +324,16 @@ impl Deref for CommandBuffer {
     }
 }
 
+pub type DeviceId = usize;
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CmdBufferSubmissionId {
+    device: DeviceId,
+    num: usize,
+}
+
 impl DeviceContext {
     pub fn new(
+        id: DeviceId,
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
         queue_family_index: u32,
@@ -391,7 +405,10 @@ impl DeviceContext {
                 queues,
 
                 command_pool,
-                unused_command_buffers: command_buffers,
+                available_command_buffers: command_buffers,
+
+                id,
+                submission_count: Cell::new(0),
 
                 push_descriptor_ext,
 
@@ -432,7 +449,7 @@ impl DeviceContext {
     pub fn begin_command_buffer(&self) -> CommandBuffer {
         unsafe {
             let (buffer, fence) = self
-                .unused_command_buffers
+                .available_command_buffers
                 .borrow_mut()
                 .pop()
                 .unwrap_or_else(|| {
@@ -467,7 +484,9 @@ impl DeviceContext {
             return CommandBuffer { buffer, fence };
         }
     }
-    pub fn submit_command_buffer(&self, command_buffer: CommandBuffer) {
+
+    #[must_use]
+    pub fn submit_command_buffer(&self, command_buffer: CommandBuffer) -> CmdBufferSubmissionId {
         unsafe {
             self.device.end_command_buffer(*command_buffer).unwrap();
             let submits = [vk::SubmitInfo::builder()
@@ -491,9 +510,17 @@ impl DeviceContext {
                 .reset_command_buffer(*command_buffer, vk::CommandBufferResetFlags::empty())
                 .expect("Failed to reset command buffer.");
 
-            self.unused_command_buffers
+            self.available_command_buffers
                 .borrow_mut()
                 .push((command_buffer.buffer, command_buffer.fence));
+
+            let submission_id = self.submission_count.get();
+            self.submission_count.set(submission_id + 1);
+
+            CmdBufferSubmissionId {
+                device: self.id,
+                num: submission_id,
+            }
         }
     }
 }
@@ -507,7 +534,7 @@ impl Drop for DeviceContext {
         self.allocator.deinitialize();
 
         unsafe {
-            for (_buf, fence) in self.unused_command_buffers.get_mut().drain(..) {
+            for (_buf, fence) in self.available_command_buffers.get_mut().drain(..) {
                 self.device.destroy_fence(fence, None);
             }
 
