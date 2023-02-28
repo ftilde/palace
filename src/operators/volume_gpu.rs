@@ -254,21 +254,15 @@ pub fn linear_rescale<'op>(
 
                 let device = ctx.vulkan_device();
 
-                let mut gpu_config = device.allocator().allocate(
+                let gpu_config = device.allocator().allocate(
                     layout_std140::<Config>(),
-                    BufferUsageFlags::TRANSFER_SRC | BufferUsageFlags::UNIFORM_BUFFER,
-                    gpu_allocator::MemoryLocation::CpuToGpu,
+                    BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::UNIFORM_BUFFER,
+                    gpu_allocator::MemoryLocation::GpuOnly,
                 );
 
                 let config_descriptor_info = vk::DescriptorBufferInfo::builder()
                     .buffer(gpu_config.buffer)
                     .range(gpu_config.allocation.size());
-
-                gpu_config
-                    .allocation
-                    .mapped_slice_mut()
-                    .unwrap()
-                    .copy_from_slice(config.as_std140().as_bytes());
 
                 let pipeline = device.request_state("linear_rescale_gpu_pipeline", || {
                     // TODO: It would be nice to derive these automagically from the shader.
@@ -340,6 +334,15 @@ pub fn linear_rescale<'op>(
 
                 let cmd = device.begin_command_buffer();
 
+                unsafe {
+                    device.device.cmd_update_buffer(
+                        cmd,
+                        gpu_config.buffer,
+                        0,
+                        config.as_std140().as_bytes(),
+                    );
+                }
+
                 while let Some((brick, (pos, ds))) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
@@ -347,13 +350,13 @@ pub fn linear_rescale<'op>(
 
                     let mut gpu_brick_in = device.allocator().allocate(
                         brick_layout,
-                        BufferUsageFlags::TRANSFER_SRC | BufferUsageFlags::STORAGE_BUFFER,
+                        BufferUsageFlags::STORAGE_BUFFER,
                         gpu_allocator::MemoryLocation::CpuToGpu,
                     );
 
                     let gpu_brick_out = device.allocator().allocate(
                         brick_layout,
-                        BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER,
+                        BufferUsageFlags::STORAGE_BUFFER,
                         gpu_allocator::MemoryLocation::GpuToCpu,
                     );
 
