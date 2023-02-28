@@ -6,10 +6,12 @@ use crate::{
     id::Id,
     operator::{DataId, OperatorId},
     threadpool::JobId,
+    vulkan::CmdBufferSubmissionId,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
 pub enum RequestId {
+    CmdBufferCompletion(CmdBufferSubmissionId),
     Data(DataId),
     Job(JobId),
     Group(GroupId),
@@ -24,6 +26,9 @@ impl RequestId {
             RequestId::Data(d) => *d,
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
             RequestId::Group(_) => panic!("Tried to unwrap DataId from RequestId::Group"),
+            RequestId::CmdBufferCompletion(_) => {
+                panic!("Tried to unwrap DataId from RequestId::CmdBufferCompletion")
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+    time::Duration,
 };
 
 use crate::{
@@ -305,6 +306,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
+            RequestType::CmdBufferCompletion(_id) => {}
             RequestType::Data(data_request) => {
                 if !already_requested {
                     if let Some(new_batch_id) = self.request_batcher.add(data_request) {
@@ -337,7 +339,14 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn wait_for_async_results(&mut self) {
-        let jobs = self.task_manager.wait_for_jobs();
+        let timeout = Duration::from_micros(100);
+        for device in self.data.device_contexts {
+            for done in device.wait_for_cmd_buffers(timeout) {
+                self.task_graph.resolved_implied(done.into());
+            }
+        }
+
+        let jobs = self.task_manager.wait_for_jobs(timeout);
         for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
         }

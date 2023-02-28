@@ -1,4 +1,5 @@
 use crate::id::Id;
+use crate::task::Request;
 use crate::Error;
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
@@ -14,6 +15,7 @@ use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr};
 use std::ops::Deref;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Cache {
@@ -303,6 +305,7 @@ pub struct DeviceContext {
 
     command_pool: vk::CommandPool,
     available_command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
+    waiting_command_buffers: RefCell<BTreeMap<CmdBufferSubmissionId, CommandBuffer>>,
 
     id: DeviceId,
     submission_count: Cell<usize>,
@@ -325,7 +328,7 @@ impl Deref for CommandBuffer {
 }
 
 pub type DeviceId = usize;
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferSubmissionId {
     device: DeviceId,
     num: usize,
@@ -406,6 +409,7 @@ impl DeviceContext {
 
                 command_pool,
                 available_command_buffers: command_buffers,
+                waiting_command_buffers: RefCell::new(Default::default()),
 
                 id,
                 submission_count: Cell::new(0),
@@ -486,7 +490,10 @@ impl DeviceContext {
     }
 
     #[must_use]
-    pub fn submit_command_buffer(&self, command_buffer: CommandBuffer) -> CmdBufferSubmissionId {
+    pub fn submit_command_buffer<'req, 'irrelevant>(
+        &'req self,
+        command_buffer: CommandBuffer,
+    ) -> Request<'req, 'irrelevant, ()> {
         unsafe {
             self.device.end_command_buffer(*command_buffer).unwrap();
             let submits = [vk::SubmitInfo::builder()
@@ -500,28 +507,84 @@ impl DeviceContext {
                 )
                 .expect("Failed to submit command buffers to queue.");
 
-            self.device
-                .wait_for_fences(&[command_buffer.fence], true, u64::max_value())
-                .expect("Failed to wait for fence.");
+            //self.device
+            //    .wait_for_fences(&[command_buffer.fence], true, u64::max_value())
+            //    .expect("Failed to wait for fence.");
+
+            let submission_id = self.submission_count.get();
+            self.submission_count.set(submission_id + 1);
+
+            let id = CmdBufferSubmissionId {
+                device: self.id,
+                num: submission_id,
+            };
+            let fence = command_buffer.fence;
+            self.waiting_command_buffers
+                .borrow_mut()
+                .insert(id, command_buffer);
+            Request {
+                type_: crate::task::RequestType::CmdBufferCompletion(id),
+                poll: Box::new(move |_ctx| {
+                    if self.device.get_fence_status(fence).unwrap() {
+                        self.recover_finished_cmd_buffer(id);
+                        Some(())
+                    } else {
+                        None
+                    }
+                }),
+                _marker: Default::default(),
+            }
+        }
+    }
+
+    fn recover_finished_cmd_buffer(&self, id: CmdBufferSubmissionId) {
+        let command_buffer = self
+            .waiting_command_buffers
+            .borrow_mut()
+            .remove(&id)
+            .unwrap();
+        unsafe {
+            assert_eq!(self.device.get_fence_status(command_buffer.fence), Ok(true));
+
             self.device
                 .reset_fences(&[command_buffer.fence])
                 .expect("Failed to reset fence.");
             self.device
                 .reset_command_buffer(*command_buffer, vk::CommandBufferResetFlags::empty())
                 .expect("Failed to reset command buffer.");
+        }
 
-            self.available_command_buffers
-                .borrow_mut()
-                .push((command_buffer.buffer, command_buffer.fence));
+        self.available_command_buffers
+            .borrow_mut()
+            .push((command_buffer.buffer, command_buffer.fence));
+    }
 
-            let submission_id = self.submission_count.get();
-            self.submission_count.set(submission_id + 1);
+    pub(crate) fn wait_for_cmd_buffers(&self, timeout: Duration) -> Vec<CmdBufferSubmissionId> {
+        let mut result = Vec::new();
 
-            CmdBufferSubmissionId {
-                device: self.id,
-                num: submission_id,
+        let waiting = self.waiting_command_buffers.borrow();
+        if waiting.is_empty() {
+            return result;
+        }
+        let waiting_fences = waiting.iter().map(|v| v.1.fence).collect::<Vec<_>>();
+
+        let wait_nanos = timeout.as_nanos().min(u64::max_value() as _) as u64;
+        match unsafe {
+            self.device
+                .wait_for_fences(&waiting_fences[..], true, wait_nanos)
+        } {
+            Ok(()) => {}
+            Err(vk::Result::TIMEOUT) => return result,
+            Err(o) => panic!("Wait for fences failed {}", o),
+        }
+
+        for (id, cb) in waiting.iter() {
+            if unsafe { self.device.get_fence_status(cb.fence).unwrap_or(false) } {
+                result.push(*id);
             }
         }
+
+        result
     }
 }
 
@@ -532,6 +595,8 @@ impl Drop for DeviceContext {
         }
 
         self.allocator.deinitialize();
+
+        assert!(self.waiting_command_buffers.get_mut().is_empty());
 
         unsafe {
             for (_buf, fence) in self.available_command_buffers.get_mut().drain(..) {

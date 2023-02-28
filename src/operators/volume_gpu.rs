@@ -390,8 +390,7 @@ pub fn linear_rescale<'op>(
                     bufs.push((pos, gpu_brick_in, gpu_brick_out));
                 }
 
-                // TODO: This currently blocks, which we obviously don't want.
-                let _handle = device.submit_command_buffer(cmd);
+                ctx.submit(device.submit_command_buffer(cmd)).await;
 
                 for (pos, gpu_brick_in, gpu_brick_out) in bufs.into_iter() {
                     let brick_info = m.chunk_info(pos);

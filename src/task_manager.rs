@@ -1,4 +1,4 @@
-use std::{cell::Cell, collections::BTreeMap};
+use std::{cell::Cell, collections::BTreeMap, time::Duration};
 
 use crate::{
     task::{Request, Task, ThreadPoolJob},
@@ -31,7 +31,7 @@ impl Drop for TaskManager<'_> {
             .values()
             .any(|d| d.waiting_on_threads > 0)
         {
-            let _ = self.wait_for_jobs();
+            let _ = self.wait_for_jobs(Duration::from_secs(u64::max_value()));
         }
         // First wait for all relevant jobs on the thread pool finish THEN drop tasks
     }
@@ -93,9 +93,15 @@ impl<'a> TaskManager<'a> {
         }
     }
 
-    pub fn wait_for_jobs(&mut self) -> Vec<JobId> {
-        let info = self.async_result_receiver.recv().unwrap();
+    pub fn wait_for_jobs(&mut self, timeout: Duration) -> Vec<JobId> {
         let mut result = Vec::new();
+        let info = match self.async_result_receiver.recv_timeout(timeout) {
+            Ok(info) => info,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return result,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("Job result pipe disconnected")
+            }
+        };
 
         let mut job_done = |info: JobInfo| {
             self.managed_tasks
@@ -144,6 +150,8 @@ impl ThreadSpawner {
             job_counter: Cell::new(0),
         }
     }
+
+    #[must_use]
     pub fn spawn<'req, 'irrelevant, R: Send + 'req>(
         &'req self,
         type_: JobType,

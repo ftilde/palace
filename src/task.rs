@@ -59,12 +59,14 @@ pub struct RequestGroup<'inv> {
 pub enum RequestType<'inv> {
     Data(DataRequest<'inv>),
     ThreadPoolJob(ThreadPoolJob, JobType),
+    CmdBufferCompletion(crate::vulkan::CmdBufferSubmissionId),
     Group(RequestGroup<'inv>),
 }
 
 impl RequestType<'_> {
     pub fn id(&self) -> RequestId {
         match self {
+            RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
             RequestType::Data(d) => RequestId::Data(d.id),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
@@ -236,7 +238,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) => {}
+            RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();
@@ -336,7 +338,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
             };
 
             let request_id = request.id();
@@ -429,6 +431,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
             match r.id() {
                 RequestId::Data(d) => ids.push(d.0),
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
+                RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
                 RequestId::Group(g) => ids.push(g.0),
             }
             match r.type_ {
@@ -440,7 +443,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, r.poll));

@@ -91,6 +91,7 @@ pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
 }
 
 impl<'op, Output: Copy> Operator<'op, (), Output> {
+    #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
         let id = DataId::new(self.id, &item);
@@ -153,6 +154,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         }
     }
 
+    #[must_use]
     pub fn request<'req, 'inv: 'req>(
         &'inv self,
         item: ItemDescriptor,
@@ -169,6 +171,8 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             _marker: Default::default(),
         }
     }
+
+    #[must_use]
     pub fn request_inplace<'req, 'inv: 'req>(
         &'inv self,
         item: ItemDescriptor,
