@@ -303,6 +303,7 @@ pub fn linear_rescale<'op>(
                         0,
                         config.as_std140().as_bytes(),
                     );
+                    pipeline.bind(device, cmd);
                 }
 
                 while let Some((brick, pos)) = brick_stream.next().await {
@@ -363,7 +364,6 @@ pub fn linear_rescale<'op>(
                     let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                     unsafe {
-                        pipeline.bind(device, cmd);
                         pipeline.push_constant(
                             device,
                             cmd,
