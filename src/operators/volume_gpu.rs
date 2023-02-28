@@ -109,8 +109,9 @@ impl ComputePipeline {
     ) -> Self {
         let mut shader = Shader::from_source(device, shader);
 
-        let dsl_info =
-            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_bindings);
+        let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder()
+            .bindings(&descriptor_set_bindings)
+            .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
         let descriptor_set_layout =
             unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
         let dsls = &[descriptor_set_layout];
@@ -156,35 +157,25 @@ impl ComputePipeline {
         }
     }
 
-    fn alloc_descriptor_sets(
-        &self,
-        device: &DeviceContext,
-        pool: vk::DescriptorPool,
-        num: usize,
-    ) -> Vec<vk::DescriptorSet> {
-        let layouts = vec![self.descriptor_set_layout; num];
-        let ds_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(pool)
-            .set_layouts(&layouts);
-        unsafe { device.device.allocate_descriptor_sets(&ds_info) }.unwrap()
-    }
-
-    unsafe fn bind(
-        &self,
-        device: &DeviceContext,
-        cmd: vk::CommandBuffer,
-        descriptor_set: vk::DescriptorSet,
-    ) {
+    unsafe fn bind(&self, device: &DeviceContext, cmd: vk::CommandBuffer) {
         device
             .device
             .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
-        device.device.cmd_bind_descriptor_sets(
+    }
+
+    unsafe fn push_descriptor_set(
+        &self,
+        device: &DeviceContext,
+        cmd: vk::CommandBuffer,
+        bind_set: u32,
+        writes: &[vk::WriteDescriptorSet],
+    ) {
+        device.push_descriptor_ext.cmd_push_descriptor_set(
             cmd,
             vk::PipelineBindPoint::COMPUTE,
             self.pipeline_layout,
-            0,
-            &[descriptor_set],
-            &[],
+            bind_set,
+            writes,
         );
     }
 
@@ -295,41 +286,12 @@ pub fn linear_rescale<'op>(
                     ComputePipeline::new(device, SHADER, &bindings, &push_constants)
                 });
 
-                // ----------------------------------------------------------------------------
-                // Descriptor Pool
-                // ----------------------------------------------------------------------------
-                let pool_sizes = [
-                    vk::DescriptorPoolSize::builder()
-                        .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                        .descriptor_count(positions.len() as u32)
-                        .build(),
-                    vk::DescriptorPoolSize::builder()
-                        .ty(vk::DescriptorType::STORAGE_BUFFER)
-                        .descriptor_count(positions.len() as u32 * 2)
-                        .build(),
-                ];
-                let max_sets = positions.len(); //??
-                let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
-                    .pool_sizes(&pool_sizes)
-                    .max_sets(max_sets as _);
-
-                let descriptor_pool = unsafe {
-                    device
-                        .device
-                        .create_descriptor_pool(&descriptor_pool_info, None)
-                }
-                .unwrap();
-
-                let compute_descriptor_sets =
-                    pipeline.alloc_descriptor_sets(&device, descriptor_pool, positions.len());
-
                 let mut bufs = Vec::with_capacity(positions.len());
 
                 let mut brick_stream = ctx.submit_unordered_with_data(
                     positions
                         .iter()
-                        .zip(compute_descriptor_sets.into_iter())
-                        .map(|(pos, ds)| (input.bricks.request(*pos), (*pos, ds))),
+                        .map(|pos| (input.bricks.request(*pos), *pos)),
                 );
 
                 let cmd = device.begin_command_buffer();
@@ -343,7 +305,7 @@ pub fn linear_rescale<'op>(
                     );
                 }
 
-                while let Some((brick, (pos, ds))) = brick_stream.next().await {
+                while let Some((brick, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
                     let brick_layout = Layout::array::<f32>(brick_info.mem_elements()).unwrap();
@@ -376,21 +338,18 @@ pub fn linear_rescale<'op>(
 
                     let descriptor_writes = [
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(ds)
                             .dst_binding(0)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                             .buffer_info(&[*config_descriptor_info])
                             .build(),
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(ds)
                             .dst_binding(1)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                             .buffer_info(&[*db_info_in])
                             .build(),
                         vk::WriteDescriptorSet::builder()
-                            .dst_set(ds)
                             .dst_binding(2)
                             .dst_array_element(0)
                             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -398,19 +357,13 @@ pub fn linear_rescale<'op>(
                             .build(),
                     ];
 
-                    unsafe {
-                        device
-                            .device
-                            .update_descriptor_sets(&descriptor_writes, &[])
-                    };
-
                     let local_size = 256; //TODO: somehow ensure that this is the same as specified
                                           //in shader
                     let global_size = brick_info.mem_elements();
                     let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                     unsafe {
-                        pipeline.bind(device, cmd, ds);
+                        pipeline.bind(device, cmd);
                         pipeline.push_constant(
                             device,
                             cmd,
@@ -418,6 +371,7 @@ pub fn linear_rescale<'op>(
                                 chunk_pos: pos.into_elem::<u32>().into(),
                             },
                         );
+                        pipeline.push_descriptor_set(device, cmd, 0, &descriptor_writes);
                         device
                             .device
                             .cmd_dispatch(cmd, num_wgs.try_into().unwrap(), 1, 1);
@@ -454,8 +408,6 @@ pub fn linear_rescale<'op>(
                     device.allocator().deallocate(gpu_brick_out);
                 }
                 device.allocator().deallocate(gpu_config);
-
-                unsafe { device.device.destroy_descriptor_pool(descriptor_pool, None) };
 
                 Ok(())
             }

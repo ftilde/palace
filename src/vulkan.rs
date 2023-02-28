@@ -1,6 +1,7 @@
 use crate::id::Id;
 use crate::Error;
 use ash::extensions::ext::DebugUtils;
+use ash::extensions::khr::PushDescriptor;
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 use gpu_allocator::MemoryLocation;
@@ -42,6 +43,10 @@ impl Cache {
             .map(|v| v.into_inner())
     }
 }
+
+const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[DebugUtils::name().as_ptr()];
+const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
+    &[PushDescriptor::name().as_ptr()];
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -93,26 +98,22 @@ impl VulkanManager {
             let entry = ash::Entry::load()?;
 
             // Create instance
-            let application_name = CStr::from_bytes_with_nul_unchecked(b"voreen-ng\0");
+            let application_name = cstr::cstr!("voreen-ng");
             let application_info = vk::ApplicationInfo::builder()
                 .application_name(application_name)
                 .engine_name(application_name)
                 .api_version(vk::make_api_version(0, 1, 3, 0));
 
-            let layer_names = [CStr::from_bytes_with_nul_unchecked(
-                b"VK_LAYER_KHRONOS_validation\0",
-            )];
+            let layer_names = [cstr::cstr!("VK_LAYER_KHRONOS_validation")];
             let layer_names_raw: Vec<*const c_char> = layer_names
                 .iter()
                 .map(|raw_name| raw_name.as_ptr())
                 .collect();
 
-            let extension_names_raw = vec![DebugUtils::name().as_ptr()];
-
             let create_info = vk::InstanceCreateInfo::builder()
                 .application_info(&application_info)
                 .enabled_layer_names(&layer_names_raw)
-                .enabled_extension_names(&extension_names_raw);
+                .enabled_extension_names(REQUIRED_EXTENSION_NAMES);
             let instance = entry
                 .create_instance(&create_info, None)
                 .expect("Instance creation failed.");
@@ -281,6 +282,10 @@ impl Allocator {
     }
 }
 
+unsafe fn strcmp(v1: *const std::ffi::c_char, v2: *const std::ffi::c_char) -> bool {
+    CStr::from_ptr(v1) == CStr::from_ptr(v2)
+}
+
 #[allow(unused)]
 pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
@@ -289,6 +294,7 @@ pub struct DeviceContext {
     queue_count: u32,
 
     pub device: ash::Device,
+    pub push_descriptor_ext: PushDescriptor,
     queues: Vec<vk::Queue>,
 
     command_pool: vk::CommandPool,
@@ -309,6 +315,24 @@ impl DeviceContext {
             let physical_device_memory_properties =
                 instance.get_physical_device_memory_properties(physical_device);
 
+            let device_extension_props = instance
+                .enumerate_device_extension_properties(physical_device)
+                .unwrap();
+
+            for ext in REQUIRED_DEVICE_EXTENSION_NAMES {
+                if device_extension_props
+                    .iter()
+                    .find(|p| strcmp(*ext, p.extension_name.as_ptr()))
+                    .is_none()
+                {
+                    return Err(format!(
+                        "Device does not support extension {}",
+                        CStr::from_ptr(*ext).to_string_lossy()
+                    )
+                    .into());
+                }
+            }
+
             // Create logical device
             let queue_priorities = vec![0 as f32; queue_count as usize];
             let queue_create_info = vk::DeviceQueueCreateInfo::builder()
@@ -317,10 +341,13 @@ impl DeviceContext {
             let enabled_features = vk::PhysicalDeviceFeatures::builder();
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
+                .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
                 .enabled_features(&enabled_features);
             let device = instance
                 .create_device(physical_device, &create_info, None)
                 .expect("Device creation failed.");
+
+            let push_descriptor_ext = PushDescriptor::new(instance, &device);
 
             // Get device queues
             let queues: Vec<vk::Queue> = (0..queue_count)
@@ -351,6 +378,8 @@ impl DeviceContext {
 
                 command_pool,
                 command_buffers,
+
+                push_descriptor_ext,
 
                 vulkan_states,
                 allocator,
