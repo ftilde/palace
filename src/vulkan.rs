@@ -5,7 +5,6 @@ use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
-use gpu_allocator::MemoryLocation;
 use std::alloc::Layout;
 use std::any::Any;
 use std::borrow::Cow;
@@ -219,6 +218,8 @@ pub struct Allocator {
     device: ash::Device,
 }
 
+pub type MemoryLocation = gpu_allocator::MemoryLocation;
+
 impl Allocator {
     pub fn new(
         instance: ash::Instance,
@@ -258,7 +259,7 @@ impl Allocator {
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: "some allocation",
                 requirements,
-                location,     // TODO: Try to choose something more specific
+                location,
                 linear: true, // Buffers are always linear
                 allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })

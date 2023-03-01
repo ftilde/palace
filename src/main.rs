@@ -15,6 +15,7 @@ mod data;
 mod id;
 mod operator;
 mod operators;
+mod ram_allocator;
 mod runtime;
 mod storage;
 mod task;
@@ -60,9 +61,6 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
-
-    #[arg(long, default_value = "true")]
-    with_vulkan: bool,
 }
 
 fn open_volume(
@@ -95,9 +93,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_size = args.mem_size << 30; //in gigabyte
 
     let mut runtime = RunTime::new(storage_size, args.compute_pool_size)?;
-    if args.with_vulkan {
-        runtime = runtime.with_vulkan()?;
-    }
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 

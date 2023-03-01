@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
-    storage::Storage,
+    storage::{Storage, StorageState},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext},
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -100,8 +100,9 @@ impl<'inv> RequestBatcher<'inv> {
 }
 
 pub struct RunTime {
-    pub storage: Storage,
-    pub vulkan: Option<VulkanManager>,
+    pub storage: StorageState,
+    pub ram: crate::ram_allocator::Allocator,
+    pub vulkan: VulkanManager,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
@@ -111,32 +112,25 @@ impl RunTime {
     pub fn new(storage_size: usize, num_compute_threads: Option<usize>) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
+        let vulkan = VulkanManager::new()?;
+        let ram = crate::ram_allocator::Allocator::new(storage_size)?;
+        let storage = Default::default();
         Ok(RunTime {
-            storage: Storage::new(storage_size)?,
+            storage,
+            ram,
             compute_thread_pool: ComputeThreadPool::new(
                 async_result_sender.clone(),
                 num_compute_threads,
             ),
             io_thread_pool: IoThreadPool::new(async_result_sender),
             async_result_receiver,
-            vulkan: None,
+            vulkan,
         })
-    }
-
-    pub fn with_vulkan(mut self) -> Result<Self, Error> {
-        self.vulkan = Some(VulkanManager::new()?);
-        Ok(self)
     }
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
         ContextAnchor {
-            data: ContextData::new(
-                &self.storage,
-                self.vulkan
-                    .as_ref()
-                    .map(|v| v.device_contexts())
-                    .unwrap_or(&[]),
-            ),
+            data: ContextData::new(&self.storage, &self.ram, self.vulkan.device_contexts()),
             compute_thread_pool: &mut self.compute_thread_pool,
             io_thread_pool: &mut self.io_thread_pool,
             async_result_receiver: &mut self.async_result_receiver,
@@ -144,7 +138,7 @@ impl RunTime {
     }
 }
 
-/// An object that contains all data that will be later lent out to `TastContexts` via `Executor`.
+/// An object that contains all data that will be later lent out to `TaskContexts` via `Executor`.
 ///
 /// A note on lifetime names:
 /// `'cref` refers to lifetimes that live at least as long as the context data (i.e., this anchor).
@@ -181,15 +175,22 @@ pub struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
     thread_spawner: ThreadSpawner,
-    pub storage: &'cref Storage,
+    pub storage: Storage<'cref>,
     device_contexts: &'cref [DeviceContext],
 }
 
 impl<'cref> ContextData<'cref, '_> {
-    pub fn new(storage: &'cref Storage, device_contexts: &'cref [DeviceContext]) -> Self {
+    pub fn new(
+        storage: &'cref StorageState,
+        ram: &'cref crate::ram_allocator::Allocator,
+        device_contexts: &'cref [DeviceContext],
+    ) -> Self {
         let request_queue = RequestQueue::new();
         let hints = TaskHints::new();
         let thread_spawner = ThreadSpawner::new();
+        let vram = device_contexts.iter().map(|c| c.allocator()).collect();
+        //TODO: Argue safety
+        let storage = unsafe { Storage::new(storage, ram, vram) };
         ContextData {
             request_queue,
             hints,

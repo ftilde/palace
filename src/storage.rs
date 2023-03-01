@@ -3,10 +3,9 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     mem::MaybeUninit,
-    pin::Pin,
 };
 
-use crate::{operator::DataId, util::num_elms_in_array, Error};
+use crate::{operator::DataId, util::num_elms_in_array, vulkan::DeviceId, Error};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -15,18 +14,24 @@ enum AccessState {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum StorageEntryState {
+enum RamStorageEntryState {
     Initializing,
     Initialized(AccessState),
 }
 
-impl StorageEntryState {
+#[derive(Debug, Eq, PartialEq)]
+enum VRamStorageEntryState {
+    Initializing,
+    Initialized(AccessState),
+}
+
+impl RamStorageEntryState {
     fn initialized(&self) -> bool {
-        matches!(self, StorageEntryState::Initialized(_))
+        matches!(self, RamStorageEntryState::Initialized(_))
     }
 
     fn lru_index(&self) -> Option<LRUIndex> {
-        if let StorageEntryState::Initialized(AccessState::UnRead(id)) = self {
+        if let RamStorageEntryState::Initialized(AccessState::UnRead(id)) = self {
             Some(*id)
         } else {
             None
@@ -35,22 +40,28 @@ impl StorageEntryState {
 }
 
 struct RamEntry {
-    state: StorageEntryState,
+    state: RamStorageEntryState,
     data: *mut u8,
+    size: usize,
 }
 
 impl RamEntry {
     fn safe_to_delete(&self) -> bool {
         matches!(
             self.state,
-            StorageEntryState::Initialized(AccessState::UnRead(_))
+            RamStorageEntryState::Initialized(AccessState::UnRead(_))
         )
     }
 }
 
+struct VRamEntry {
+    state: VRamStorageEntryState,
+    data: crate::vulkan::Allocation,
+}
+
 struct StorageEntry {
     ram: Option<RamEntry>,
-    size: usize,
+    vram: Vec<Option<VRamEntry>>,
 }
 
 impl StorageEntry {
@@ -60,20 +71,20 @@ impl StorageEntry {
 }
 
 pub struct ReadHandle<'a, T: ?Sized> {
-    storage: &'a Storage,
+    storage: &'a Storage<'a>,
     id: DataId,
     data: &'a T,
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
     fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
-        let mut index = storage.index.borrow_mut();
-        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().ram.as_mut().unwrap().state else {
+        let mut index = storage.state.index.borrow_mut();
+        let RamStorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().ram.as_mut().unwrap().state else {
             panic!("Trying to read uninitialized value");
         };
         *access_state = match *access_state {
             AccessState::ReadBy(n) => AccessState::ReadBy(n + 1),
             AccessState::UnRead(id) => {
-                storage.lru_manager.borrow_mut().remove(id);
+                storage.state.lru_manager.borrow_mut().remove(id);
                 AccessState::ReadBy(1)
             }
         };
@@ -116,15 +127,15 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
 }
 impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     fn drop(&mut self) {
-        let mut index = self.storage.index.borrow_mut();
+        let mut index = self.storage.state.index.borrow_mut();
 
-        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().ram.as_mut().unwrap().state else {
+        let RamStorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().ram.as_mut().unwrap().state else {
             panic!("Trying to read uninitialized value");
         };
 
         *access_state = match *access_state {
             AccessState::ReadBy(1) => {
-                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+                let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
                 AccessState::UnRead(lru_id)
             }
             AccessState::ReadBy(n) => AccessState::ReadBy(n - 1),
@@ -159,7 +170,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
 }
 
 pub struct DropError<'a> {
-    storage: &'a Storage,
+    storage: &'a Storage<'a>,
     id: DataId,
 }
 impl Drop for DropError<'_> {
@@ -168,13 +179,13 @@ impl Drop for DropError<'_> {
     }
 }
 pub struct DropMarkInitialized<'a> {
-    storage: &'a Storage,
+    storage: &'a Storage<'a>,
     id: DataId,
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
         self.storage.new_data.borrow_mut().insert(self.id);
-        let mut binding = self.storage.index.borrow_mut();
+        let mut binding = self.storage.state.index.borrow_mut();
         let state = &mut binding
             .get_mut(&self.id)
             .unwrap()
@@ -183,8 +194,8 @@ impl Drop for DropMarkInitialized<'_> {
             .unwrap()
             .state;
         assert!(!state.initialized());
-        let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
-        *state = StorageEntryState::Initialized(AccessState::UnRead(lru_id));
+        let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
+        *state = RamStorageEntryState::Initialized(AccessState::UnRead(lru_id));
     }
 }
 
@@ -372,6 +383,7 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
 
 type LRUIndex = u64;
 
+#[derive(Default)]
 struct LRUManager {
     list: BTreeMap<LRUIndex, DataId>,
     current: LRUIndex,
@@ -409,39 +421,48 @@ impl LRUManager {
     }
 }
 
-pub struct Storage {
+#[derive(Default)]
+pub struct StorageState {
     index: RefCell<BTreeMap<DataId, StorageEntry>>,
-    new_data: RefCell<BTreeSet<DataId>>,
-    allocator: Allocator,
     lru_manager: RefCell<LRUManager>,
 }
 
-impl Storage {
-    pub fn new(size: usize) -> Result<Self, Error> {
-        let allocator = Allocator::new(size)?;
-        Ok(Self {
-            index: RefCell::new(BTreeMap::new()),
+pub struct Storage<'a> {
+    state: &'a StorageState,
+    new_data: RefCell<BTreeSet<DataId>>,
+    ram: &'a crate::ram_allocator::Allocator,
+    vram: Vec<&'a crate::vulkan::Allocator>,
+}
+
+impl<'a> Storage<'a> {
+    pub unsafe fn new(
+        state: &'a StorageState,
+        ram: &'a crate::ram_allocator::Allocator,
+        vram: Vec<&'a crate::vulkan::Allocator>,
+    ) -> Self {
+        Self {
+            state,
             new_data: RefCell::new(BTreeSet::new()),
-            allocator,
-            lru_manager: RefCell::new(LRUManager::new()),
-        })
+            ram,
+            vram,
+        }
     }
 
     pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) {
-        let mut lru = self.lru_manager.borrow_mut();
-        let mut index = self.index.borrow_mut();
+        let mut lru = self.state.lru_manager.borrow_mut();
+        let mut index = self.state.index.borrow_mut();
         let mut collected = 0;
         for key in lru.drain_lru().into_iter() {
             let entry = index.get_mut(&key).unwrap();
-            let size = entry.size;
             let ram_entry = entry.ram.take().unwrap();
+            let size = ram_entry.size;
             if !entry.is_present() {
                 index.remove(&key).unwrap();
             }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.allocator.dealloc(ram_entry.data) };
+            unsafe { self.ram.dealloc(ram_entry.data) };
             self.new_data.borrow_mut().remove(&key);
 
             collected += size;
@@ -454,7 +475,7 @@ impl Storage {
     }
 
     pub fn try_free_ram(&self, key: DataId) -> Result<(), ()> {
-        let mut index = self.index.borrow_mut();
+        let mut index = self.state.index.borrow_mut();
         if index
             .get(&key)
             .unwrap()
@@ -471,7 +492,7 @@ impl Storage {
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.allocator.dealloc(ram_entry.data) };
+            unsafe { self.ram.dealloc(ram_entry.data) };
             self.new_data.borrow_mut().remove(&key);
             Ok(())
         } else {
@@ -485,25 +506,63 @@ impl Storage {
         place_holder.into_iter()
     }
 
+    // Allocates a GpuOnly storage buffer
+    fn alloc_vram(
+        &self,
+        device: DeviceId,
+        key: DataId,
+        layout: Layout,
+    ) -> Result<ash::vk::Buffer, Error> {
+        let vram = &self.vram[device];
+        let allocation = vram.allocate(
+            layout,
+            ash::vk::BufferUsageFlags::STORAGE_BUFFER,
+            crate::vulkan::MemoryLocation::GpuOnly,
+        );
+        // TODO garbage collection
+
+        let mut index = self.state.index.borrow_mut();
+        let entry = index
+            .entry(key)
+            .or_insert_with(|| self.gen_empty_storage_entry());
+
+        let buffer = allocation.buffer;
+        let prev = entry.vram[device].replace(VRamEntry {
+            state: VRamStorageEntryState::Initializing,
+            data: allocation,
+        });
+        assert!(prev.is_none());
+
+        Ok(buffer)
+    }
+
+    fn gen_empty_storage_entry(&self) -> StorageEntry {
+        StorageEntry {
+            ram: None,
+            vram: self.vram.iter().map(|_| None).collect(),
+        }
+    }
+
     fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
-        let data = match self.allocator.alloc(layout) {
+        let data = match self.ram.alloc(layout) {
             Ok(d) => d,
             Err(_e) => {
                 let garbage_collect_goal = 1 << 30; //One gigabyte for now maybe???
                 self.try_garbage_collect(garbage_collect_goal);
-                self.allocator.alloc(layout)?
+                self.ram.alloc(layout)?
             }
         };
 
-        let entry = StorageEntry {
-            ram: Some(RamEntry {
-                state: StorageEntryState::Initializing,
-                data,
-            }),
-            size: layout.size(),
-        };
+        let mut index = self.state.index.borrow_mut();
+        let entry = index
+            .entry(key)
+            .or_insert_with(|| self.gen_empty_storage_entry());
 
-        let prev = self.index.borrow_mut().insert(key, entry);
+        let prev = entry.ram.replace(RamEntry {
+            state: RamStorageEntryState::Initializing,
+            data,
+            size: layout.size(),
+        });
         assert!(prev.is_none());
 
         Ok(data)
@@ -525,11 +584,12 @@ impl Storage {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read_ram<'a, T: Copy>(&'a self, key: DataId) -> Option<ReadHandle<'a, [T]>> {
+    pub unsafe fn read_ram<'b, T: Copy>(&'b self, key: DataId) -> Option<ReadHandle<'b, [T]>> {
         let t_ref = {
-            let index = self.index.borrow();
+            let index = self.state.index.borrow();
             let entry = index.get(&key)?;
-            let ram_entry = entry.ram.as_ref().unwrap();
+            let ram_entry = entry.ram.as_ref()?;
+
             if !ram_entry.state.initialized() {
                 return None;
             }
@@ -537,7 +597,7 @@ impl Storage {
             let ptr = ram_entry.data;
             let t_ptr = ptr.cast::<T>();
 
-            let num_elements = num_elms_in_array::<T>(entry.size);
+            let num_elements = num_elms_in_array::<T>(ram_entry.size);
 
             // Safety: Type matches as per contract upheld by caller. There are also no mutable
             // references to the slot since it has already been initialized.
@@ -548,17 +608,17 @@ impl Storage {
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace<'a, T: Copy>(
-        &'a self,
+    pub unsafe fn try_update_inplace<'b, T: Copy>(
+        &'b self,
         old_key: DataId,
         new_key: DataId,
-    ) -> Option<Result<InplaceResult<'a, T>, Error>> {
-        let mut index = self.index.borrow_mut();
+    ) -> Option<Result<InplaceResult<'b, T>, Error>> {
+        let mut index = self.state.index.borrow_mut();
         let entry = index.get(&old_key)?;
-        let ram_entry = entry.ram.as_ref().unwrap();
+        let ram_entry = entry.ram.as_ref()?;
         assert!(ram_entry.state.initialized());
 
-        let num_elements = num_elms_in_array::<T>(entry.size);
+        let num_elements = num_elms_in_array::<T>(ram_entry.size);
 
         let ptr = ram_entry.data;
         let t_ptr = ptr.cast::<T>();
@@ -568,9 +628,9 @@ impl Storage {
             let mut entry = index.remove(&old_key).unwrap();
             let ram_entry = entry.ram.as_mut().unwrap();
             if let Some(lru_index) = ram_entry.state.lru_index() {
-                self.lru_manager.borrow_mut().remove(lru_index);
+                self.state.lru_manager.borrow_mut().remove(lru_index);
             }
-            ram_entry.state = StorageEntryState::Initializing;
+            ram_entry.state = RamStorageEntryState::Initializing;
 
             let prev = index.insert(new_key, entry);
             assert!(prev.is_none());
@@ -595,67 +655,5 @@ impl Storage {
             let r = ReadHandle::new(self, old_key, t_ref);
             InplaceResult::New(r, w)
         }))
-    }
-}
-
-struct Allocator {
-    alloc: RefCell<Pin<Box<good_memory_allocator::Allocator>>>,
-    buffer: *mut u8,
-    storage_layout: Layout,
-}
-
-impl Allocator {
-    pub fn new(size: usize) -> Result<Self, Error> {
-        let alignment = 4096;
-        let storage_layout = Layout::from_size_align(size, alignment).unwrap();
-
-        assert!(size > 0, "invalid storage size");
-
-        // Safety: size is > 0
-        let buffer = unsafe { std::alloc::alloc(storage_layout) };
-        if buffer.is_null() {
-            return Err("Failed to allocate memory buffer. Is it too large?".into());
-        }
-
-        let mut alloc = Box::pin(good_memory_allocator::Allocator::empty());
-
-        // Safety: The allocator is pinned and will thus not move. The memory region is only used
-        // by the allocator.
-        unsafe { alloc.init(buffer as usize, size) };
-
-        let alloc = RefCell::new(alloc);
-
-        Ok(Self {
-            buffer,
-            alloc,
-            storage_layout,
-        })
-    }
-
-    pub fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {
-        let mut alloc = self.alloc.borrow_mut();
-
-        assert!(layout.size() > 0);
-        // Safety: We ensure that layout.size() > 0
-        let ret = unsafe { alloc.alloc(layout) };
-        if ret.is_null() {
-            Err("Out of memory".into())
-        } else {
-            Ok(ret)
-        }
-    }
-
-    /// Safety: `ptr` must have been allocated with this allocator and must not have been
-    /// deallocated already.
-    pub unsafe fn dealloc(&self, ptr: *mut u8) {
-        let mut alloc = self.alloc.borrow_mut();
-        unsafe { alloc.dealloc(ptr) };
-    }
-}
-
-impl Drop for Allocator {
-    fn drop(&mut self) {
-        // Safety: buffer was allocated with exactly this layout, see new()
-        unsafe { std::alloc::dealloc(self.buffer, self.storage_layout) }
     }
 }

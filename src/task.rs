@@ -94,13 +94,13 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
 
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
-    pub storage: &'cref Storage,
+    pub storage: &'cref Storage<'cref>,
 }
 
 #[derive(Copy, Clone)]
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub requests: &'cref RequestQueue<'inv>,
-    pub storage: &'cref Storage,
+    pub storage: &'cref Storage<'cref>,
     pub hints: &'cref TaskHints,
     pub thread_pool: &'cref ThreadSpawner,
     pub device_contexts: &'cref [DeviceContext],
