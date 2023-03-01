@@ -106,7 +106,7 @@ impl VulkanManager {
             let application_info = vk::ApplicationInfo::builder()
                 .application_name(application_name)
                 .engine_name(application_name)
-                .api_version(vk::make_api_version(0, 1, 3, 0));
+                .api_version(vk::API_VERSION_1_3);
 
             let layer_names = [cstr::cstr!("VK_LAYER_KHRONOS_validation")];
             let layer_names_raw: Vec<*const c_char> = layer_names
@@ -343,9 +343,6 @@ impl DeviceContext {
         queue_count: u32,
     ) -> Result<Self, Error> {
         unsafe {
-            let physical_device_memory_properties =
-                instance.get_physical_device_memory_properties(physical_device);
-
             let device_extension_props = instance
                 .enumerate_device_extension_properties(physical_device)
                 .unwrap();
@@ -369,11 +366,15 @@ impl DeviceContext {
             let queue_create_info = vk::DeviceQueueCreateInfo::builder()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&queue_priorities);
+            let mut enabled_features_13 = vk::PhysicalDeviceVulkan13Features::builder()
+                .synchronization2(true)
+                .build();
             let enabled_features = vk::PhysicalDeviceFeatures::builder();
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
-                .enabled_features(&enabled_features);
+                .enabled_features(&enabled_features)
+                .push_next(&mut enabled_features_13);
             let device = instance
                 .create_device(physical_device, &create_info, None)
                 .expect("Device creation failed.");
@@ -397,6 +398,9 @@ impl DeviceContext {
             let vulkan_states = Cache::default();
 
             let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
+
+            let physical_device_memory_properties =
+                instance.get_physical_device_memory_properties(physical_device);
 
             Ok(DeviceContext {
                 physical_device,

@@ -303,6 +303,16 @@ pub fn linear_rescale<'op>(
                         0,
                         config.as_std140().as_bytes(),
                     );
+
+                    let memory_barriers = &[vk::MemoryBarrier2::builder()
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                        .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                        .build()];
+                    let barrier_info =
+                        vk::DependencyInfo::builder().memory_barriers(memory_barriers);
+                    device.device.cmd_pipeline_barrier2(*cmd, &barrier_info);
                     pipeline.bind(device, *cmd);
                 }
 
@@ -323,6 +333,8 @@ pub fn linear_rescale<'op>(
                         gpu_allocator::MemoryLocation::GpuToCpu,
                     );
 
+                    // Note: No flushing necessary since the staging buffers are created with
+                    // HOST_COHERENT bit
                     gpu_brick_in
                         .allocation
                         .mapped_slice_mut()
@@ -396,6 +408,9 @@ pub fn linear_rescale<'op>(
                     let brick_info = m.chunk_info(pos);
                     let mut output = ctx.alloc_slot(pos, brick_info.mem_elements()).unwrap();
                     //crate::data::init_non_full(&mut output, &brick_info, 0.0);
+
+                    // Note: No flushing necessary since the staging buffers are created with
+                    // HOST_COHERENT bit
                     crate::data::write_slice_uninit(
                         &mut *output,
                         bytemuck::cast_slice(gpu_brick_out.allocation.mapped_slice().unwrap()),
