@@ -177,7 +177,7 @@ fn eval_network(
         mean_val_unscaled, tasks_executed
     );
 
-    executor.data.storage.try_free(id).unwrap();
+    executor.data.storage.try_free_ram(id).unwrap();
 
     let tasks_executed_prev = executor.statistics().tasks_executed;
     let muv_ref = &mut mean_val_unscaled;

@@ -34,18 +34,28 @@ impl StorageEntryState {
     }
 }
 
-struct StorageEntry {
+struct RamEntry {
     state: StorageEntryState,
     data: *mut u8,
-    size: usize,
 }
 
-impl StorageEntry {
+impl RamEntry {
     fn safe_to_delete(&self) -> bool {
         matches!(
             self.state,
             StorageEntryState::Initialized(AccessState::UnRead(_))
         )
+    }
+}
+
+struct StorageEntry {
+    ram: Option<RamEntry>,
+    size: usize,
+}
+
+impl StorageEntry {
+    fn is_present(&self) -> bool {
+        self.ram.is_some() //TODO: Add VRAM presence checks here
     }
 }
 
@@ -57,7 +67,7 @@ pub struct ReadHandle<'a, T: ?Sized> {
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
     fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
         let mut index = storage.index.borrow_mut();
-        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().state else {
+        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().ram.as_mut().unwrap().state else {
             panic!("Trying to read uninitialized value");
         };
         *access_state = match *access_state {
@@ -108,7 +118,7 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
 
-        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().state else {
+        let StorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().ram.as_mut().unwrap().state else {
             panic!("Trying to read uninitialized value");
         };
 
@@ -163,7 +173,18 @@ pub struct DropMarkInitialized<'a> {
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.storage.mark_initialized(self.id);
+        self.storage.new_data.borrow_mut().insert(self.id);
+        let mut binding = self.storage.index.borrow_mut();
+        let state = &mut binding
+            .get_mut(&self.id)
+            .unwrap()
+            .ram
+            .as_mut()
+            .unwrap()
+            .state;
+        assert!(!state.initialized());
+        let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+        *state = StorageEntryState::Initialized(AccessState::UnRead(lru_id));
     }
 }
 
@@ -411,15 +432,20 @@ impl Storage {
         let mut index = self.index.borrow_mut();
         let mut collected = 0;
         for key in lru.drain_lru().into_iter() {
-            let entry = index.remove(&key).unwrap();
+            let entry = index.get_mut(&key).unwrap();
+            let size = entry.size;
+            let ram_entry = entry.ram.take().unwrap();
+            if !entry.is_present() {
+                index.remove(&key).unwrap();
+            }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.allocator.dealloc(entry.data) };
+            unsafe { self.allocator.dealloc(ram_entry.data) };
             self.new_data.borrow_mut().remove(&key);
 
-            collected += entry.size;
-            let Some(rest) = goal_in_bytes.checked_sub(entry.size) else {
+            collected += size;
+            let Some(rest) = goal_in_bytes.checked_sub(size) else {
                 break;
             };
             goal_in_bytes = rest;
@@ -427,30 +453,30 @@ impl Storage {
         println!("Garbage collect: {}B", collected);
     }
 
-    pub fn try_free(&self, key: DataId) -> Result<(), ()> {
+    pub fn try_free_ram(&self, key: DataId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
-        if index.get(&key).unwrap().safe_to_delete() {
-            let entry = index.remove(&key).unwrap();
-            if let Some(lru_index) = entry.state.lru_index() {
-                self.lru_manager.borrow_mut().remove(lru_index);
+        if index
+            .get(&key)
+            .unwrap()
+            .ram
+            .as_ref()
+            .unwrap()
+            .safe_to_delete()
+        {
+            let entry = index.get_mut(&key).unwrap();
+            let ram_entry = entry.ram.take().unwrap();
+            if !entry.is_present() {
+                index.remove(&key).unwrap();
             }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.allocator.dealloc(entry.data) };
+            unsafe { self.allocator.dealloc(ram_entry.data) };
             self.new_data.borrow_mut().remove(&key);
             Ok(())
         } else {
             Err(())
         }
-    }
-    pub fn mark_initialized(&self, key: DataId) {
-        self.new_data.borrow_mut().insert(key);
-        let mut binding = self.index.borrow_mut();
-        let state = &mut binding.get_mut(&key).unwrap().state;
-        assert!(!state.initialized());
-        let lru_id = self.lru_manager.borrow_mut().add(key);
-        *state = StorageEntryState::Initialized(AccessState::UnRead(lru_id));
     }
     pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataId> {
         let mut place_holder = BTreeSet::new();
@@ -459,7 +485,7 @@ impl Storage {
         place_holder.into_iter()
     }
 
-    fn alloc(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
+    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
         let data = match self.allocator.alloc(layout) {
             Ok(d) => d,
             Err(_e) => {
@@ -470,8 +496,10 @@ impl Storage {
         };
 
         let entry = StorageEntry {
-            state: StorageEntryState::Initializing,
-            data,
+            ram: Some(RamEntry {
+                state: StorageEntryState::Initializing,
+                data,
+            }),
             size: layout.size(),
         };
 
@@ -487,7 +515,7 @@ impl Storage {
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
-        let ptr = self.alloc(key, layout)?;
+        let ptr = self.alloc_ram(key, layout)?;
 
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
@@ -501,11 +529,12 @@ impl Storage {
         let t_ref = {
             let index = self.index.borrow();
             let entry = index.get(&key)?;
-            if !entry.state.initialized() {
+            let ram_entry = entry.ram.as_ref().unwrap();
+            if !ram_entry.state.initialized() {
                 return None;
             }
 
-            let ptr = entry.data;
+            let ptr = ram_entry.data;
             let t_ptr = ptr.cast::<T>();
 
             let num_elements = num_elms_in_array::<T>(entry.size);
@@ -526,20 +555,22 @@ impl Storage {
     ) -> Option<Result<InplaceResult<'a, T>, Error>> {
         let mut index = self.index.borrow_mut();
         let entry = index.get(&old_key)?;
-        assert!(entry.state.initialized());
+        let ram_entry = entry.ram.as_ref().unwrap();
+        assert!(ram_entry.state.initialized());
 
         let num_elements = num_elms_in_array::<T>(entry.size);
 
-        let ptr = entry.data;
+        let ptr = ram_entry.data;
         let t_ptr = ptr.cast::<T>();
 
-        let in_place_possible = entry.safe_to_delete();
+        let in_place_possible = ram_entry.safe_to_delete();
         Some(Ok(if in_place_possible {
             let mut entry = index.remove(&old_key).unwrap();
-            if let Some(lru_index) = entry.state.lru_index() {
+            let ram_entry = entry.ram.as_mut().unwrap();
+            if let Some(lru_index) = ram_entry.state.lru_index() {
                 self.lru_manager.borrow_mut().remove(lru_index);
             }
-            entry.state = StorageEntryState::Initializing;
+            ram_entry.state = StorageEntryState::Initializing;
 
             let prev = index.insert(new_key, entry);
             assert!(prev.is_none());
