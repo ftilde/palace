@@ -7,11 +7,11 @@ use std::task::Poll;
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
-use crate::storage::{Storage, WriteHandleUninit};
-use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId};
+use crate::storage::{Storage, VRamWriteHandleUninit, WriteHandleUninit};
+use crate::task_graph::{DataRequestId, GroupId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
-use crate::vulkan::DeviceContext;
+use crate::vulkan::{CommandBuffer, DeviceContext};
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
@@ -45,7 +45,7 @@ impl RequestInfo<'_> {
 type ResultPoll<'a, V> = Box<dyn FnMut(PollContext<'a>) -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
-    pub id: DataId,
+    pub id: DataRequestId,
     pub source: &'inv dyn OpaqueOperator,
     pub item: TypeErased,
 }
@@ -429,7 +429,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
 
         for (i, mut r) in r.into_iter().enumerate() {
             match r.id() {
-                RequestId::Data(d) => ids.push(d.0),
+                RequestId::Data(d) => ids.push(Id::hash(&d)),
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
                 RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
                 RequestId::Group(g) => ids.push(g.0),
@@ -503,6 +503,26 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
     ) -> Result<WriteHandleUninit<'cref, [MaybeUninit<Output>]>, Error> {
         let id = DataId::new(self.current_op(), &item);
         self.inner.storage.alloc_ram_slot(id, size)
+    }
+}
+
+impl<
+        'cref,
+        'inv,
+        ItemDescriptor: std::hash::Hash,
+        Output: Copy + ?Sized + crevice::std430::Std430,
+    > TaskContext<'cref, 'inv, ItemDescriptor, Output>
+{
+    pub fn alloc_slot_gpu<'a>(
+        &'a self,
+        cmd_buffer: &'a CommandBuffer,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Result<VRamWriteHandleUninit<'a>, Error> {
+        let id = DataId::new(self.current_op(), &item);
+        self.inner
+            .storage
+            .alloc_vram_slot::<Output>(cmd_buffer, id, size)
     }
 }
 

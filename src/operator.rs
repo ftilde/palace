@@ -2,8 +2,9 @@ use std::rc::Rc;
 
 use crate::{
     id::Id,
-    storage::{InplaceResult, ReadHandle},
+    storage::{DataLocation, InplaceResult, ReadHandle},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
+    task_graph::DataRequestId,
     Error,
 };
 
@@ -37,7 +38,7 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct DataId(pub Id);
 impl DataId {
     pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
@@ -98,7 +99,10 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id,
+                id: DataRequestId {
+                    id,
+                    location: DataLocation::Ram,
+                },
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -163,7 +167,10 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id,
+                id: DataRequestId {
+                    id,
+                    location: DataLocation::Ram,
+                },
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -183,7 +190,10 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: read_id,
+                id: DataRequestId {
+                    id: read_id,
+                    location: DataLocation::Ram,
+                },
                 source: self,
                 item: TypeErased::pack(item),
             }),

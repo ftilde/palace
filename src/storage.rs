@@ -5,7 +5,21 @@ use std::{
     mem::MaybeUninit,
 };
 
-use crate::{operator::DataId, util::num_elms_in_array, vulkan::DeviceId, Error};
+use ash::vk;
+
+use crate::{
+    operator::DataId,
+    task_graph::DataRequestId,
+    util::num_elms_in_array,
+    vulkan::{CommandBuffer, DeviceId},
+    Error,
+};
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum DataLocation {
+    Ram,
+    VRam(DeviceId),
+}
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -15,12 +29,6 @@ enum AccessState {
 
 #[derive(Debug, Eq, PartialEq)]
 enum RamStorageEntryState {
-    Initializing,
-    Initialized(AccessState),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum VRamStorageEntryState {
     Initializing,
     Initialized(AccessState),
 }
@@ -36,6 +44,19 @@ impl RamStorageEntryState {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum VRamStorageEntryState {
+    Initializing,
+    Initialized, //TODO: For freeing of vram ressources we probably want to save the index of the
+                 //last cmd buffer that used this
+}
+
+impl VRamStorageEntryState {
+    fn initialized(&self) -> bool {
+        matches!(self, VRamStorageEntryState::Initialized)
     }
 }
 
@@ -184,7 +205,10 @@ pub struct DropMarkInitialized<'a> {
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.storage.new_data.borrow_mut().insert(self.id);
+        self.storage.new_data.borrow_mut().insert(DataRequestId {
+            id: self.id,
+            location: DataLocation::Ram,
+        });
         let mut binding = self.storage.state.index.borrow_mut();
         let state = &mut binding
             .get_mut(&self.id)
@@ -381,6 +405,96 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
     }
 }
 
+pub struct VRamWriteHandle<D> {
+    pub buffer: ash::vk::Buffer,
+    pub size: u64,
+    drop_handler: D,
+    //TODO: synchronization info
+}
+
+pub type VRamWriteHandleInit<'a> = VRamWriteHandle<DropBarrierAndMarkInitialized<'a>>;
+pub type VRamWriteHandleUninit<'a> = VRamWriteHandle<DropErrorVram<'a>>;
+
+pub struct DropErrorVram<'a> {
+    storage: &'a Storage<'a>,
+    id: DataId,
+    cmd_buffer: &'a CommandBuffer,
+}
+impl Drop for DropErrorVram<'_> {
+    fn drop(&mut self) {
+        panic!("The WriteHandle was not marked initialized!");
+    }
+}
+pub struct DropBarrierAndMarkInitialized<'a> {
+    storage: &'a Storage<'a>,
+    id: DataId,
+    cmd_buffer: &'a CommandBuffer,
+    buffer: vk::Buffer,
+}
+impl Drop for DropBarrierAndMarkInitialized<'_> {
+    fn drop(&mut self) {
+        // Add pipeline barrier
+        // TODO: This is probably not especially efficient
+        let memory_barriers = &[vk::BufferMemoryBarrier2::builder()
+            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+            .buffer(self.buffer)
+            .offset(0)
+            .size(vk::WHOLE_SIZE)
+            .build()];
+        let barrier_info = vk::DependencyInfo::builder().buffer_memory_barriers(memory_barriers);
+        self.cmd_buffer.pipeline_barrier(&barrier_info);
+
+        // Mark as initialized
+        self.storage.new_data.borrow_mut().insert(DataRequestId {
+            id: self.id,
+            location: DataLocation::VRam(self.cmd_buffer.id().device),
+        });
+        let mut binding = self.storage.state.index.borrow_mut();
+        let state = &mut binding.get_mut(&self.id).unwrap().vram[self.cmd_buffer.id().device]
+            .as_mut()
+            .unwrap()
+            .state;
+        assert!(!state.initialized());
+        *state = VRamStorageEntryState::Initialized;
+    }
+}
+
+impl<'a> VRamWriteHandleUninit<'a> {
+    /// Safety: The corresponding slot has to have been completely written to.
+    pub unsafe fn initialized(self) -> VRamWriteHandleInit<'a> {
+        let VRamWriteHandle {
+            buffer,
+            size,
+            drop_handler,
+        } = self;
+
+        let id = drop_handler.id;
+        let storage = drop_handler.storage;
+        let cmd_buffer = drop_handler.cmd_buffer;
+        // Avoid running destructor which would panic
+        std::mem::forget(drop_handler);
+
+        VRamWriteHandle {
+            drop_handler: DropBarrierAndMarkInitialized {
+                id,
+                storage,
+                cmd_buffer,
+                buffer,
+            },
+            buffer,
+            size,
+        }
+    }
+}
+pub struct VRamReadHandle<'a> {
+    pub buffer: ash::vk::Buffer,
+    pub size: u64,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
 type LRUIndex = u64;
 
 #[derive(Default)]
@@ -390,13 +504,6 @@ struct LRUManager {
 }
 
 impl LRUManager {
-    fn new() -> Self {
-        LRUManager {
-            list: BTreeMap::new(),
-            current: 0,
-        }
-    }
-
     fn remove(&mut self, old: LRUIndex) {
         self.list.remove(&old).unwrap();
     }
@@ -429,7 +536,7 @@ pub struct StorageState {
 
 pub struct Storage<'a> {
     state: &'a StorageState,
-    new_data: RefCell<BTreeSet<DataId>>,
+    new_data: RefCell<BTreeSet<DataRequestId>>,
     ram: &'a crate::ram_allocator::Allocator,
     vram: Vec<&'a crate::vulkan::Allocator>,
 }
@@ -463,7 +570,11 @@ impl<'a> Storage<'a> {
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
             unsafe { self.ram.dealloc(ram_entry.data) };
-            self.new_data.borrow_mut().remove(&key);
+            let data_key = DataRequestId {
+                id: key,
+                location: DataLocation::Ram,
+            };
+            self.new_data.borrow_mut().remove(&data_key);
 
             collected += size;
             let Some(rest) = goal_in_bytes.checked_sub(size) else {
@@ -493,13 +604,17 @@ impl<'a> Storage<'a> {
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
             unsafe { self.ram.dealloc(ram_entry.data) };
-            self.new_data.borrow_mut().remove(&key);
+            let data_key = DataRequestId {
+                id: key,
+                location: DataLocation::Ram,
+            };
+            self.new_data.borrow_mut().remove(&data_key);
             Ok(())
         } else {
             Err(())
         }
     }
-    pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataId> {
+    pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataRequestId> {
         let mut place_holder = BTreeSet::new();
         let mut d = self.new_data.borrow_mut();
         std::mem::swap(&mut *d, &mut place_holder);
@@ -534,6 +649,48 @@ impl<'a> Storage<'a> {
         assert!(prev.is_none());
 
         Ok(buffer)
+    }
+
+    pub fn alloc_vram_slot<'b, T: Copy + crevice::std430::Std430>(
+        &'b self,
+        cmd_buffer: &'b CommandBuffer,
+        key: DataId,
+        num: usize,
+    ) -> Result<VRamWriteHandleUninit<'b>, Error> {
+        //TODO: Not sure if this actually works with std430
+        let layout = Layout::array::<T>(num).unwrap();
+        let size = layout.size();
+        let buffer = self.alloc_vram(cmd_buffer.id().device, key, layout)?;
+
+        Ok(VRamWriteHandleUninit {
+            buffer,
+            size: size as u64,
+            drop_handler: DropErrorVram {
+                storage: self,
+                id: key,
+                cmd_buffer,
+            },
+        })
+    }
+
+    pub unsafe fn read_vram<'b, T: Copy>(
+        &'b self,
+        device: DeviceId,
+        key: DataId,
+    ) -> Option<VRamReadHandle<'b>> {
+        let index = self.state.index.borrow();
+        let entry = index.get(&key)?;
+        let vram_entry = entry.vram[device].as_ref()?;
+
+        if !vram_entry.state.initialized() {
+            return None;
+        }
+
+        Some(VRamReadHandle {
+            buffer: vram_entry.data.buffer,
+            size: vram_entry.data.allocation.size(),
+            _marker: Default::default(),
+        })
     }
 
     fn gen_empty_storage_entry(&self) -> StorageEntry {

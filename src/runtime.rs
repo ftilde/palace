@@ -70,7 +70,7 @@ impl<'inv> RequestBatcher<'inv> {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
-            id: request.id,
+            id: request.id.id,
             item: request.item,
         };
         match self.pending_batches.entry(op_id) {
@@ -295,7 +295,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 };
                 for d in self.data.storage.newest_data() {
-                    self.task_graph.resolved_implied(d.into());
+                    let mut exact_match = false;
+                    for location in self.task_graph.requested_locations(d.id) {
+                        if *location == d.location {
+                            exact_match = true;
+                        } else {
+                            panic!(
+                                "Oh no, we need to transfer from {:?} to {:?}",
+                                d.location, location
+                            );
+                        }
+                    }
+                    // TODO: This is a bit ugly
+                    if exact_match {
+                        self.task_graph.resolved_implied(d.into());
+                    }
                 }
             }
         }
@@ -307,7 +321,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
-            RequestType::CmdBufferCompletion(_id) => {}
             RequestType::Data(data_request) => {
                 if !already_requested {
                     if let Some(new_batch_id) = self.request_batcher.add(data_request) {
@@ -315,6 +328,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 }
             }
+            RequestType::CmdBufferCompletion(_id) => {}
             RequestType::ThreadPoolJob(job, type_) => {
                 self.task_manager.spawn_job(job, type_).unwrap();
             }
@@ -340,6 +354,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn wait_for_async_results(&mut self) {
+        for device in self.data.device_contexts {
+            device.try_submit_and_cycle_command_buffer();
+        }
+
         let timeout = Duration::from_micros(100);
         for device in self.data.device_contexts {
             for done in device.wait_for_cmd_buffers(timeout) {

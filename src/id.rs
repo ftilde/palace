@@ -1,6 +1,6 @@
 use sha1_smol::Sha1;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Id(u128);
 
 #[repr(C, align(16))]

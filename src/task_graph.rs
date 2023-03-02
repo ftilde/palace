@@ -5,14 +5,21 @@ use derive_more::From;
 use crate::{
     id::Id,
     operator::{DataId, OperatorId},
+    storage::DataLocation,
     threadpool::JobId,
     vulkan::CmdBufferSubmissionId,
 };
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct DataRequestId {
+    pub id: DataId,
+    pub location: DataLocation,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
-    Data(DataId),
+    Data(DataRequestId),
     Job(JobId),
     Group(GroupId),
 }
@@ -21,7 +28,7 @@ pub enum RequestId {
 pub struct GroupId(pub Id);
 
 impl RequestId {
-    pub fn unwrap_data(&self) -> DataId {
+    pub fn unwrap_data(&self) -> DataRequestId {
         match self {
             RequestId::Data(d) => *d,
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
@@ -61,6 +68,7 @@ pub struct TaskGraph {
     implied_ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
     in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
+    requested_locations: BTreeMap<DataId, BTreeSet<DataLocation>>,
 }
 
 impl TaskGraph {
@@ -80,6 +88,15 @@ impl TaskGraph {
             .or_default()
             .insert(wanted, progress_indicator);
         self.implied_ready.remove(&wants);
+
+        if let RequestId::Data(d) = wanted {
+            let entry = self.requested_locations.entry(d.id).or_default();
+            entry.insert(d.location);
+        }
+    }
+
+    pub fn requested_locations(&self, id: DataId) -> &BTreeSet<DataLocation> {
+        self.requested_locations.get(&id).unwrap()
     }
 
     pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
@@ -99,6 +116,13 @@ impl TaskGraph {
     }
 
     pub fn resolved_implied(&mut self, id: RequestId) {
+        if let RequestId::Data(d) = id {
+            let entry = self.requested_locations.get_mut(&d.id).unwrap();
+            entry.remove(&d.location);
+            if entry.is_empty() {
+                self.requested_locations.remove(&d.id);
+            }
+        }
         for rev_dep in self.required_by.remove(&id).iter().flatten() {
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();

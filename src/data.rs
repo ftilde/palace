@@ -381,18 +381,18 @@ pub unsafe fn slice_assume_init_mut<T>(slice: &mut [MaybeUninit<T>]) -> &mut [T]
 
 // Unstable function copied from stdlib:
 // https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#method.write_slice
-pub fn write_slice_uninit<'a, T>(this: &'a mut [MaybeUninit<T>], src: &[T]) -> &'a mut [T]
-where
-    T: Copy,
-{
-    // SAFETY: &[T] and &[MaybeUninit<T>] have the same layout
-    let uninit_src: &[MaybeUninit<T>] = unsafe { std::mem::transmute(src) };
-
-    this.copy_from_slice(uninit_src);
-
-    // SAFETY: Valid elements have just been copied into `this` so it is initialized
-    unsafe { slice_assume_init_mut(this) }
-}
+//pub fn write_slice_uninit<'a, T>(this: &'a mut [MaybeUninit<T>], src: &[T]) -> &'a mut [T]
+//where
+//    T: Copy,
+//{
+//    // SAFETY: &[T] and &[MaybeUninit<T>] have the same layout
+//    let uninit_src: &[MaybeUninit<T>] = unsafe { std::mem::transmute(src) };
+//
+//    this.copy_from_slice(uninit_src);
+//
+//    // SAFETY: Valid elements have just been copied into `this` so it is initialized
+//    unsafe { slice_assume_init_mut(this) }
+//}
 
 pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
     for v in data.iter_mut() {

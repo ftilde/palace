@@ -13,7 +13,6 @@ use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr};
-use std::ops::Deref;
 use std::time::Duration;
 
 #[derive(Default)]
@@ -305,34 +304,51 @@ pub struct DeviceContext {
     queues: Vec<vk::Queue>,
 
     command_pool: vk::CommandPool,
-    available_command_buffers: RefCell<Vec<(vk::CommandBuffer, vk::Fence)>>,
-    waiting_command_buffers: RefCell<BTreeMap<CmdBufferSubmissionId, CommandBuffer>>,
+    available_command_buffers: RefCell<Vec<RawCommandBuffer>>,
+    waiting_command_buffers: RefCell<BTreeMap<CmdBufferSubmissionId, RawCommandBuffer>>,
+    current_command_buffer: RefCell<CommandBuffer>,
 
-    id: DeviceId,
+    pub id: DeviceId,
     submission_count: Cell<usize>,
 
     vulkan_states: Cache,
     allocator: Allocator,
 }
 
-pub struct CommandBuffer {
+pub struct RawCommandBuffer {
     buffer: vk::CommandBuffer,
     fence: vk::Fence,
 }
+pub struct CommandBuffer {
+    buffer: vk::CommandBuffer,
+    fence: vk::Fence,
+    id: CmdBufferSubmissionId,
+    device: ash::Device,
+    used: bool,
+}
 
-impl Deref for CommandBuffer {
-    type Target = vk::CommandBuffer;
+impl CommandBuffer {
+    pub unsafe fn raw(&self) -> vk::CommandBuffer {
+        self.buffer
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.buffer
+    pub fn id(&self) -> CmdBufferSubmissionId {
+        self.id
+    }
+
+    pub fn pipeline_barrier(&self, barrier_info: &vk::DependencyInfo) {
+        unsafe {
+            self.device
+                .cmd_pipeline_barrier2(self.buffer, &barrier_info)
+        };
     }
 }
 
 pub type DeviceId = usize;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferSubmissionId {
-    device: DeviceId,
-    num: usize,
+    pub device: DeviceId,
+    pub num: usize,
 }
 
 impl DeviceContext {
@@ -403,6 +419,22 @@ impl DeviceContext {
             let physical_device_memory_properties =
                 instance.get_physical_device_memory_properties(physical_device);
 
+            let submission_count = Cell::new(0);
+
+            let current_command_buffer = Self::create_command_buffer(command_pool, &device);
+            let begin_info = vk::CommandBufferBeginInfo::builder()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            device
+                .begin_command_buffer(current_command_buffer.buffer, &begin_info)
+                .expect("Failed to begin command buffer.");
+
+            let current_command_buffer = RefCell::new(Self::pack_cmd_buffer(
+                device.clone(),
+                current_command_buffer,
+                id,
+                &submission_count,
+            ));
+
             Ok(DeviceContext {
                 physical_device,
                 physical_device_memory_properties,
@@ -415,9 +447,10 @@ impl DeviceContext {
                 command_pool,
                 available_command_buffers: command_buffers,
                 waiting_command_buffers: RefCell::new(Default::default()),
+                current_command_buffer,
 
                 id,
-                submission_count: Cell::new(0),
+                submission_count,
 
                 push_descriptor_ext,
 
@@ -455,119 +488,148 @@ impl DeviceContext {
             .map(|(index, _memory_type)| index as _)
     }
 
-    pub fn begin_command_buffer(&self) -> CommandBuffer {
-        unsafe {
-            let (buffer, fence) = self
-                .available_command_buffers
-                .borrow_mut()
-                .pop()
-                .unwrap_or_else(|| {
-                    // Create command buffer
-                    let create_info = vk::CommandBufferAllocateInfo::builder()
-                        .command_pool(self.command_pool)
-                        .command_buffer_count(1);
-                    let command_buffer = *self
-                        .device
-                        .allocate_command_buffers(&create_info)
-                        .expect("Failed to allocate command buffer.")
-                        .first()
-                        .unwrap();
+    fn create_command_buffer(
+        command_pool: vk::CommandPool,
+        device: &ash::Device,
+    ) -> RawCommandBuffer {
+        // Create command buffer
+        let create_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(command_pool)
+            .command_buffer_count(1);
+        let command_buffer = unsafe {
+            *device
+                .allocate_command_buffers(&create_info)
+                .expect("Failed to allocate command buffer.")
+                .first()
+                .unwrap()
+        };
 
-                    // Create fence
-                    let create_info = vk::FenceCreateInfo::default();
-                    let fence = self
-                        .device
-                        .create_fence(&create_info, None)
-                        .expect("Failed to create fence.");
+        // Create fence
+        let create_info = vk::FenceCreateInfo::default();
+        let fence = unsafe {
+            device
+                .create_fence(&create_info, None)
+                .expect("Failed to create fence.")
+        };
 
-                    (command_buffer, fence)
-                });
-
-            assert_eq!(self.device.get_fence_status(fence), Ok(false));
-
-            let begin_info = vk::CommandBufferBeginInfo::builder()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            self.device
-                .begin_command_buffer(buffer, &begin_info)
-                .expect("Failed to begin command buffer.");
-            return CommandBuffer { buffer, fence };
+        RawCommandBuffer {
+            buffer: command_buffer,
+            fence,
         }
     }
 
-    #[must_use]
-    pub fn submit_command_buffer<'req, 'irrelevant>(
-        &'req self,
-        command_buffer: CommandBuffer,
-    ) -> Request<'req, 'irrelevant, ()> {
+    fn pack_cmd_buffer(
+        device: ash::Device,
+        RawCommandBuffer { buffer, fence }: RawCommandBuffer,
+        id: DeviceId,
+        submission_count: &Cell<usize>,
+    ) -> CommandBuffer {
+        let submission_id = submission_count.get();
+        submission_count.set(submission_id + 1);
+
+        let id = CmdBufferSubmissionId {
+            device: id,
+            num: submission_id,
+        };
+
+        CommandBuffer {
+            buffer,
+            fence,
+            id,
+            device,
+            used: false,
+        }
+    }
+
+    pub(crate) fn try_submit_and_cycle_command_buffer(&self) {
+        let mut current = self.current_command_buffer.borrow_mut();
+        if !current.used {
+            return;
+        }
+
+        // Create new
+        let next_cmd_buffer = self
+            .available_command_buffers
+            .borrow_mut()
+            .pop()
+            .unwrap_or_else(|| Self::create_command_buffer(self.command_pool, &self.device));
+
+        let next_cmd_buffer = Self::pack_cmd_buffer(
+            self.device.clone(),
+            next_cmd_buffer,
+            self.id,
+            &self.submission_count,
+        );
+
+        assert_eq!(
+            unsafe { self.device.get_fence_status(next_cmd_buffer.fence) },
+            Ok(false)
+        );
+
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
-            self.device.end_command_buffer(*command_buffer).unwrap();
-            let submits = [vk::SubmitInfo::builder()
-                .command_buffers(&[*command_buffer])
-                .build()];
+            self.device
+                .begin_command_buffer(next_cmd_buffer.buffer, &begin_info)
+                .expect("Failed to begin command buffer.")
+        };
+
+        // Swap current
+        let prev_cmd_buffer = std::mem::replace(&mut *current, next_cmd_buffer);
+
+        // Stow away prev one as waiting
+        let CommandBuffer {
+            buffer, fence, id, ..
+        } = prev_cmd_buffer;
+        self.waiting_command_buffers
+            .borrow_mut()
+            .insert(id, RawCommandBuffer { buffer, fence });
+
+        // Submit current
+        unsafe {
+            self.device
+                .end_command_buffer(prev_cmd_buffer.buffer)
+                .unwrap()
+        };
+        let submits = [vk::SubmitInfo::builder()
+            .command_buffers(&[prev_cmd_buffer.buffer])
+            .build()];
+        unsafe {
             self.device
                 .queue_submit(
                     *self.queues.first().unwrap(),
                     &submits,
-                    command_buffer.fence,
+                    prev_cmd_buffer.fence,
                 )
-                .expect("Failed to submit command buffers to queue.");
-
-            //self.device
-            //    .wait_for_fences(&[command_buffer.fence], true, u64::max_value())
-            //    .expect("Failed to wait for fence.");
-
-            let submission_id = self.submission_count.get();
-            self.submission_count.set(submission_id + 1);
-
-            let id = CmdBufferSubmissionId {
-                device: self.id,
-                num: submission_id,
-            };
-            let fence = command_buffer.fence;
-            self.waiting_command_buffers
-                .borrow_mut()
-                .insert(id, command_buffer);
-            Request {
-                type_: crate::task::RequestType::CmdBufferCompletion(id),
-                poll: Box::new(move |_ctx| {
-                    if self.device.get_fence_status(fence).unwrap() {
-                        self.recover_finished_cmd_buffer(id);
-                        Some(())
-                    } else {
-                        None
-                    }
-                }),
-                _marker: Default::default(),
-            }
-        }
+                .expect("Failed to submit command buffers to queue.")
+        };
     }
 
-    fn recover_finished_cmd_buffer(&self, id: CmdBufferSubmissionId) {
-        let command_buffer = self
-            .waiting_command_buffers
-            .borrow_mut()
-            .remove(&id)
-            .unwrap();
-        unsafe {
-            assert_eq!(self.device.get_fence_status(command_buffer.fence), Ok(true));
-
-            self.device
-                .reset_fences(&[command_buffer.fence])
-                .expect("Failed to reset fence.");
-            self.device
-                .reset_command_buffer(*command_buffer, vk::CommandBufferResetFlags::empty())
-                .expect("Failed to reset command buffer.");
+    #[must_use]
+    pub fn wait_for_cmd_buffer_submission<'req, 'irrelevant>(
+        &'req self,
+    ) -> Request<'req, 'irrelevant, ()> {
+        let current = self.current_command_buffer.borrow();
+        let id = current.id;
+        let fence = current.fence;
+        Request {
+            type_: crate::task::RequestType::CmdBufferCompletion(id),
+            poll: Box::new(move |_ctx| {
+                if unsafe { self.device.get_fence_status(fence) }.unwrap() {
+                    Some(())
+                } else {
+                    None
+                }
+            }),
+            _marker: Default::default(),
         }
-
-        self.available_command_buffers
-            .borrow_mut()
-            .push((command_buffer.buffer, command_buffer.fence));
     }
 
     pub(crate) fn wait_for_cmd_buffers(&self, timeout: Duration) -> Vec<CmdBufferSubmissionId> {
         let mut result = Vec::new();
 
-        let waiting = self.waiting_command_buffers.borrow();
+        let mut waiting_ref = self.waiting_command_buffers.borrow_mut();
+        let waiting = std::mem::take(&mut *waiting_ref);
         if waiting.is_empty() {
             return result;
         }
@@ -583,13 +645,47 @@ impl DeviceContext {
             Err(o) => panic!("Wait for fences failed {}", o),
         }
 
-        for (id, cb) in waiting.iter() {
-            if unsafe { self.device.get_fence_status(cb.fence).unwrap_or(false) } {
-                result.push(*id);
-            }
-        }
+        // TODO: replace with BTreeMap::drain_filter once stable
+        let new_waiting = waiting
+            .into_iter()
+            .filter_map(|(id, command_buffer)| {
+                if unsafe {
+                    self.device
+                        .get_fence_status(command_buffer.fence)
+                        .unwrap_or(false)
+                } {
+                    unsafe {
+                        self.device
+                            .reset_fences(&[command_buffer.fence])
+                            .expect("Failed to reset fence.");
+                        self.device
+                            .reset_command_buffer(
+                                command_buffer.buffer,
+                                vk::CommandBufferResetFlags::empty(),
+                            )
+                            .expect("Failed to reset command buffer.");
+                    }
 
+                    self.available_command_buffers
+                        .borrow_mut()
+                        .push(command_buffer);
+                    result.push(id);
+                    None
+                } else {
+                    Some((id, command_buffer))
+                }
+            })
+            .collect();
+
+        *waiting_ref = new_waiting;
         result
+    }
+
+    pub fn with_cmd_buffer<R, F: FnOnce(&CommandBuffer) -> R>(&self, f: F) -> R {
+        let mut cmd_buf = self.current_command_buffer.borrow_mut();
+        cmd_buf.used = true;
+
+        f(&mut *cmd_buf)
     }
 }
 
@@ -604,8 +700,8 @@ impl Drop for DeviceContext {
         assert!(self.waiting_command_buffers.get_mut().is_empty());
 
         unsafe {
-            for (_buf, fence) in self.available_command_buffers.get_mut().drain(..) {
-                self.device.destroy_fence(fence, None);
+            for cb in self.available_command_buffers.get_mut().drain(..) {
+                self.device.destroy_fence(cb.fence, None);
             }
 
             self.device.destroy_command_pool(self.command_pool, None);

@@ -294,11 +294,9 @@ pub fn linear_rescale<'op>(
                         .map(|pos| (input.bricks.request(*pos), *pos)),
                 );
 
-                let cmd = device.begin_command_buffer();
-
-                unsafe {
+                device.with_cmd_buffer(|cmd| unsafe {
                     device.device.cmd_update_buffer(
-                        *cmd,
+                        cmd.raw(),
                         gpu_config.buffer,
                         0,
                         config.as_std140().as_bytes(),
@@ -312,9 +310,10 @@ pub fn linear_rescale<'op>(
                         .build()];
                     let barrier_info =
                         vk::DependencyInfo::builder().memory_barriers(memory_barriers);
-                    device.device.cmd_pipeline_barrier2(*cmd, &barrier_info);
-                    pipeline.bind(device, *cmd);
-                }
+                    device
+                        .device
+                        .cmd_pipeline_barrier2(cmd.raw(), &barrier_info);
+                });
 
                 while let Some((brick, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
@@ -327,67 +326,76 @@ pub fn linear_rescale<'op>(
                         gpu_allocator::MemoryLocation::CpuToGpu,
                     );
 
-                    let gpu_brick_out = device.allocator().allocate(
-                        brick_layout,
-                        BufferUsageFlags::STORAGE_BUFFER,
-                        gpu_allocator::MemoryLocation::GpuToCpu,
-                    );
+                    device.with_cmd_buffer(|cmd| {
+                        let gpu_brick_out = ctx.alloc_slot_gpu(cmd, pos, 1)?;
 
-                    // Note: No flushing necessary since the staging buffers are created with
-                    // HOST_COHERENT bit
-                    gpu_brick_in
-                        .allocation
-                        .mapped_slice_mut()
-                        .unwrap()
-                        .copy_from_slice(bytemuck::cast_slice(&*brick));
+                        // Note: No flushing necessary since the staging buffers are created with
+                        // HOST_COHERENT bit
+                        gpu_brick_in
+                            .allocation
+                            .mapped_slice_mut()
+                            .unwrap()
+                            .copy_from_slice(bytemuck::cast_slice(&*brick));
 
-                    let db_info_in = vk::DescriptorBufferInfo::builder()
-                        .buffer(gpu_brick_in.buffer)
-                        .range(gpu_brick_in.allocation.size());
+                        let db_info_in = vk::DescriptorBufferInfo::builder()
+                            .buffer(gpu_brick_in.buffer)
+                            .range(gpu_brick_in.allocation.size());
 
-                    let db_info_out = vk::DescriptorBufferInfo::builder()
-                        .buffer(gpu_brick_out.buffer)
-                        .range(gpu_brick_out.allocation.size());
+                        let db_info_out = vk::DescriptorBufferInfo::builder()
+                            .buffer(gpu_brick_out.buffer)
+                            .range(gpu_brick_out.size);
 
-                    let descriptor_writes = [
-                        vk::WriteDescriptorSet::builder()
-                            .dst_binding(0)
-                            .dst_array_element(0)
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                            .buffer_info(&[*config_descriptor_info])
-                            .build(),
-                        vk::WriteDescriptorSet::builder()
-                            .dst_binding(1)
-                            .dst_array_element(0)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .buffer_info(&[*db_info_in])
-                            .build(),
-                        vk::WriteDescriptorSet::builder()
-                            .dst_binding(2)
-                            .dst_array_element(0)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .buffer_info(&[*db_info_out])
-                            .build(),
-                    ];
+                        let descriptor_writes = [
+                            vk::WriteDescriptorSet::builder()
+                                .dst_binding(0)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                                .buffer_info(&[*config_descriptor_info])
+                                .build(),
+                            vk::WriteDescriptorSet::builder()
+                                .dst_binding(1)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(&[*db_info_in])
+                                .build(),
+                            vk::WriteDescriptorSet::builder()
+                                .dst_binding(2)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(&[*db_info_out])
+                                .build(),
+                        ];
 
-                    let local_size = 256; //TODO: somehow ensure that this is the same as specified
-                                          //in shader
-                    let global_size = brick_info.mem_elements();
-                    let num_wgs = crate::util::div_round_up(global_size, local_size);
+                        let local_size = 256; //TODO: somehow ensure that this is the same as specified
+                                              //in shader
+                        let global_size = brick_info.mem_elements();
+                        let num_wgs = crate::util::div_round_up(global_size, local_size);
 
-                    unsafe {
-                        pipeline.push_constant(
-                            device,
-                            *cmd,
-                            PushConstants {
-                                chunk_pos: pos.into_elem::<u32>().into(),
-                            },
-                        );
-                        pipeline.push_descriptor_set(device, *cmd, 0, &descriptor_writes);
-                        device
-                            .device
-                            .cmd_dispatch(*cmd, num_wgs.try_into().unwrap(), 1, 1);
-                    }
+                        unsafe {
+                            pipeline.bind(device, cmd.raw());
+                            pipeline.push_constant(
+                                device,
+                                cmd.raw(),
+                                PushConstants {
+                                    chunk_pos: pos.into_elem::<u32>().into(),
+                                },
+                            );
+                            pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
+                            device.device.cmd_dispatch(
+                                cmd.raw(),
+                                num_wgs.try_into().unwrap(),
+                                1,
+                                1,
+                            );
+                        }
+
+                        // TODO: Maybe to allow more parallel access we want to postpone this,
+                        // since this involves a memory barrier
+                        // Possible alternative: Only insert barriers before use/download
+                        unsafe { gpu_brick_out.initialized() };
+
+                        Ok::<(), crate::Error>(())
+                    })?;
 
                     //let copy_info = vk::BufferCopy::builder().size(brick_size_mem as _);
                     //unsafe {
@@ -399,27 +407,13 @@ pub fn linear_rescale<'op>(
                     //    );
                     //}
 
-                    bufs.push((pos, gpu_brick_in, gpu_brick_out));
+                    bufs.push(gpu_brick_in);
                 }
 
-                ctx.submit(device.submit_command_buffer(cmd)).await;
+                ctx.submit(device.wait_for_cmd_buffer_submission()).await;
 
-                for (pos, gpu_brick_in, gpu_brick_out) in bufs.into_iter() {
-                    let brick_info = m.chunk_info(pos);
-                    let mut output = ctx.alloc_slot(pos, brick_info.mem_elements()).unwrap();
-                    //crate::data::init_non_full(&mut output, &brick_info, 0.0);
-
-                    // Note: No flushing necessary since the staging buffers are created with
-                    // HOST_COHERENT bit
-                    crate::data::write_slice_uninit(
-                        &mut *output,
-                        bytemuck::cast_slice(gpu_brick_out.allocation.mapped_slice().unwrap()),
-                    );
-
-                    unsafe { output.initialized() };
-
+                for gpu_brick_in in bufs.into_iter() {
                     device.allocator().deallocate(gpu_brick_in);
-                    device.allocator().deallocate(gpu_brick_out);
                 }
                 device.allocator().deallocate(gpu_config);
 
