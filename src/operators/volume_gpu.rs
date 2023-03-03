@@ -328,24 +328,30 @@ pub fn linear_rescale<'op>(
                             .buffer(gpu_brick_out.buffer)
                             .range(gpu_brick_out.size);
 
+                        // TODO: Using build is really dangerous territory since it discards the
+                        // lifetime of the builder and thus buffer_info parameters which allows us
+                        // to use a temporary slice like &[*db_info_in] resulting in invalid reads.
+                        let buf0 = [*config_descriptor_info];
+                        let buf1 = [*db_info_in];
+                        let buf2 = [*db_info_out];
                         let descriptor_writes = [
                             vk::WriteDescriptorSet::builder()
                                 .dst_binding(0)
                                 .dst_array_element(0)
                                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                                .buffer_info(&[*config_descriptor_info])
+                                .buffer_info(&buf0)
                                 .build(),
                             vk::WriteDescriptorSet::builder()
                                 .dst_binding(1)
                                 .dst_array_element(0)
                                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&[*db_info_in])
+                                .buffer_info(&buf1)
                                 .build(),
                             vk::WriteDescriptorSet::builder()
                                 .dst_binding(2)
                                 .dst_array_element(0)
                                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&[*db_info_out])
+                                .buffer_info(&buf2)
                                 .build(),
                         ];
 

@@ -789,14 +789,13 @@ impl DeviceContext {
                 .end_command_buffer(prev_cmd_buffer.buffer)
                 .unwrap()
         };
-        let submits = [vk::SubmitInfo::builder()
-            .command_buffers(&[prev_cmd_buffer.buffer])
-            .build()];
+        let bufs = [prev_cmd_buffer.buffer];
+        let submit = vk::SubmitInfo::builder().command_buffers(&bufs);
         unsafe {
             self.device
                 .queue_submit(
                     *self.queues.first().unwrap(),
-                    &submits,
+                    &[submit.build()],
                     prev_cmd_buffer.fence,
                 )
                 .expect("Failed to submit command buffers to queue.")
