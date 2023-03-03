@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
 use crate::storage::{Storage, VRamWriteHandleUninit, WriteHandleUninit};
-use crate::task_graph::{DataRequestId, GroupId, ProgressIndicator, RequestId, TaskId};
+use crate::task_graph::{GroupId, LocatedDataId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::vulkan::{CommandBuffer, DeviceContext};
@@ -45,7 +45,7 @@ impl RequestInfo<'_> {
 type ResultPoll<'a, V> = Box<dyn FnMut(PollContext<'a>) -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
-    pub id: DataRequestId,
+    pub id: LocatedDataId,
     pub source: &'inv dyn OpaqueOperator,
     pub item: TypeErased,
 }
@@ -105,6 +105,52 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub thread_pool: &'cref ThreadSpawner,
     pub device_contexts: &'cref [DeviceContext],
     pub current_task: TaskId,
+}
+
+impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
+    pub fn submit<'req, V: 'req>(
+        &'req self,
+        mut request: Request<'req, 'inv, V>,
+    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
+        async move {
+            match request.type_ {
+                RequestType::Data(_) | RequestType::Group(_) => {
+                    if let Some(res) = (request.poll)(PollContext {
+                        storage: self.storage,
+                    }) {
+                        return std::future::ready(res).await;
+                    }
+                }
+                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
+            };
+
+            let request_id = request.id();
+
+            let progress_indicator = if let RequestType::Group(_) = request.type_ {
+                ProgressIndicator::PartialPossible
+            } else {
+                ProgressIndicator::WaitForComplete
+            };
+
+            self.requests.push(RequestInfo {
+                task: request.type_,
+                progress_indicator,
+            });
+
+            futures::pending!();
+
+            loop {
+                if let Some(data) = (request.poll)(PollContext {
+                    storage: self.storage,
+                }) {
+                    self.hints.noticed_completion(request_id);
+                    return std::future::ready(data).await;
+                } else {
+                    futures::pending!();
+                }
+            }
+        }
+    }
 }
 
 pub trait RequestStream<'req, 'inv, V> {
@@ -324,50 +370,6 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
             _output_marker: Default::default(),
         }
     }
-
-    pub fn submit<'req, V: 'req>(
-        &'req self,
-        mut request: Request<'req, 'inv, V>,
-    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
-        async move {
-            match request.type_ {
-                RequestType::Data(_) | RequestType::Group(_) => {
-                    if let Some(res) = (request.poll)(PollContext {
-                        storage: self.inner.storage,
-                    }) {
-                        return std::future::ready(res).await;
-                    }
-                }
-                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
-            };
-
-            let request_id = request.id();
-
-            let progress_indicator = if let RequestType::Group(_) = request.type_ {
-                ProgressIndicator::PartialPossible
-            } else {
-                ProgressIndicator::WaitForComplete
-            };
-
-            self.inner.requests.push(RequestInfo {
-                task: request.type_,
-                progress_indicator,
-            });
-
-            futures::pending!();
-
-            loop {
-                if let Some(data) = (request.poll)(PollContext {
-                    storage: self.inner.storage,
-                }) {
-                    self.inner.hints.noticed_completion(request_id);
-                    return std::future::ready(data).await;
-                } else {
-                    futures::pending!();
-                }
-            }
-        }
-    }
     /// Spawn a job on the io pool. This job is allowed to hold locks/do IO, but should not do
     /// excessive computation.
     pub fn spawn_io<'req, R: Send + 'req>(
@@ -394,7 +396,13 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
         self.inner.current_task.operator()
     }
 
-    #[allow(unused)] //We will probably use this at some point
+    pub fn submit<'req, V: 'req>(
+        &'req self,
+        request: Request<'req, 'inv, V>,
+    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
+        self.inner.submit(request)
+    }
+
     pub fn submit_unordered<'req, V: 'req>(
         &'req self,
         requests: impl Iterator<Item = Request<'req, 'inv, V>> + 'req,

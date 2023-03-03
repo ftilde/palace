@@ -9,7 +9,7 @@ use ash::vk;
 
 use crate::{
     operator::DataId,
-    task_graph::DataRequestId,
+    task_graph::LocatedDataId,
     util::num_elms_in_array,
     vulkan::{CommandBuffer, DeviceId},
     Error,
@@ -83,6 +83,7 @@ struct VRamEntry {
 struct StorageEntry {
     ram: Option<RamEntry>,
     vram: Vec<Option<VRamEntry>>,
+    layout: Layout,
 }
 
 impl StorageEntry {
@@ -91,13 +92,12 @@ impl StorageEntry {
     }
 }
 
-pub struct ReadHandle<'a, T: ?Sized> {
+struct ReadCountHandler<'a> {
     storage: &'a Storage<'a>,
     id: DataId,
-    data: &'a T,
 }
-impl<'a, T: ?Sized> ReadHandle<'a, T> {
-    fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
+impl<'a> ReadCountHandler<'a> {
+    fn new(storage: &'a Storage, id: DataId) -> Self {
         let mut index = storage.state.index.borrow_mut();
         let RamStorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().ram.as_mut().unwrap().state else {
             panic!("Trying to read uninitialized value");
@@ -110,43 +110,10 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
             }
         };
 
-        Self { storage, id, data }
-    }
-
-    pub fn map<O>(self, f: impl FnOnce(&'a T) -> &'a O) -> ReadHandle<'a, O> {
-        let ret = ReadHandle {
-            storage: self.storage,
-            id: self.id,
-            data: f(&self.data),
-        };
-        // Avoid running destructor which would signify that we are done reading.
-        std::mem::forget(self);
-        ret
-    }
-
-    pub fn into_thread_handle(self) -> ThreadReadHandle<'a, T>
-    where
-        T: Send,
-    {
-        let ret = ThreadReadHandle {
-            id: self.id,
-            data: self.data,
-            panic_handle: Default::default(),
-        };
-        //Avoid running destructor
-        std::mem::forget(self);
-
-        ret
+        Self { storage, id }
     }
 }
-impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.data
-    }
-}
-impl<T: ?Sized> Drop for ReadHandle<'_, T> {
+impl Drop for ReadCountHandler<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.state.index.borrow_mut();
 
@@ -167,6 +134,54 @@ impl<T: ?Sized> Drop for ReadHandle<'_, T> {
     }
 }
 
+pub struct ReadHandle<'a, T: ?Sized> {
+    _count_handler: ReadCountHandler<'a>,
+    data: &'a T,
+}
+impl<'a, T: ?Sized> ReadHandle<'a, T> {
+    fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
+        Self {
+            _count_handler: ReadCountHandler::new(storage, id),
+            data,
+        }
+    }
+
+    pub fn map<O>(self, f: impl FnOnce(&'a T) -> &'a O) -> ReadHandle<'a, O> {
+        let ret = ReadHandle {
+            _count_handler: self._count_handler,
+            data: f(&self.data),
+        };
+        ret
+    }
+
+    pub fn into_thread_handle(self) -> ThreadReadHandle<'a, T>
+    where
+        T: Send,
+    {
+        let ret = ThreadReadHandle {
+            id: self._count_handler.id,
+            data: self.data,
+            panic_handle: Default::default(),
+        };
+        //Avoid running destructor
+        std::mem::forget(self._count_handler);
+
+        ret
+    }
+}
+impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+pub struct RawReadHandle<'a> {
+    _count_handler: ReadCountHandler<'a>,
+    pub data: *const u8,
+    pub layout: Layout,
+}
+
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
     id: DataId,
     data: &'a T,
@@ -183,8 +198,10 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
     pub fn into_main_handle(self, storage: &'a Storage) -> ReadHandle<'a, T> {
         self.panic_handle.dismiss();
         ReadHandle {
-            storage,
-            id: self.id,
+            _count_handler: ReadCountHandler {
+                storage,
+                id: self.id,
+            },
             data: self.data,
         }
     }
@@ -193,6 +210,15 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
 pub struct DropError<'a> {
     storage: &'a Storage<'a>,
     id: DataId,
+}
+impl<'a> DropError<'a> {
+    fn into_mark_initialized(self) -> DropMarkInitialized<'a> {
+        let id = self.id;
+        let storage = self.storage;
+        // Avoid running destructor which would panic
+        std::mem::forget(self);
+        DropMarkInitialized { storage, id }
+    }
 }
 impl Drop for DropError<'_> {
     fn drop(&mut self) {
@@ -205,7 +231,7 @@ pub struct DropMarkInitialized<'a> {
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.storage.new_data.borrow_mut().insert(DataRequestId {
+        self.storage.new_data.borrow_mut().insert(LocatedDataId {
             id: self.id,
             location: DataLocation::Ram,
         });
@@ -248,6 +274,12 @@ impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
     }
+}
+
+pub struct RawWriteHandle<DropHandler> {
+    pub data: *mut u8,
+    pub layout: Layout,
+    drop_handler: DropHandler,
 }
 
 #[derive(Default)]
@@ -308,7 +340,9 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerUninitialized> {
 }
 
 pub type WriteHandleUninit<'a, T> = WriteHandle<'a, T, DropError<'a>>;
+pub type RawWriteHandleUninit<'a> = RawWriteHandle<DropError<'a>>;
 pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerUninitialized>;
+
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
         WriteHandle {
@@ -318,16 +352,9 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     }
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized(self) -> WriteHandleInit<'a, T> {
-        let WriteHandle { data, drop_handler } = self;
-
-        let id = drop_handler.id;
-        let storage = drop_handler.storage;
-        // Avoid running destructor which would panic
-        std::mem::forget(drop_handler);
-
         WriteHandle {
-            drop_handler: DropMarkInitialized { id, storage },
-            data,
+            drop_handler: self.drop_handler.into_mark_initialized(),
+            data: self.data,
         }
     }
     pub fn into_thread_handle(self) -> ThreadWriteHandleUninit<'a, T>
@@ -344,7 +371,19 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
         }
     }
 }
+impl<'a> RawWriteHandleUninit<'a> {
+    /// Safety: The corresponding slot has to have been completely written to.
+    pub unsafe fn initialized(self) -> RawWriteHandleInit<'a> {
+        RawWriteHandle {
+            drop_handler: self.drop_handler.into_mark_initialized(),
+            data: self.data,
+            layout: self.layout,
+        }
+    }
+}
+
 pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
+pub type RawWriteHandleInit<'a> = RawWriteHandle<DropMarkInitialized<'a>>;
 pub type ThreadWriteHandleInit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerInitialized>;
 impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
     pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
@@ -448,7 +487,7 @@ impl Drop for DropBarrierAndMarkInitialized<'_> {
         self.cmd_buffer.pipeline_barrier(&barrier_info);
 
         // Mark as initialized
-        self.storage.new_data.borrow_mut().insert(DataRequestId {
+        self.storage.new_data.borrow_mut().insert(LocatedDataId {
             id: self.id,
             location: DataLocation::VRam(self.cmd_buffer.id().device),
         });
@@ -491,7 +530,7 @@ impl<'a> VRamWriteHandleUninit<'a> {
 }
 pub struct VRamReadHandle<'a> {
     pub buffer: ash::vk::Buffer,
-    pub size: u64,
+    pub layout: Layout,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -536,7 +575,7 @@ pub struct StorageState {
 
 pub struct Storage<'a> {
     state: &'a StorageState,
-    new_data: RefCell<BTreeSet<DataRequestId>>,
+    new_data: RefCell<BTreeSet<LocatedDataId>>,
     ram: &'a crate::ram_allocator::Allocator,
     vram: Vec<&'a crate::vulkan::Allocator>,
 }
@@ -570,7 +609,7 @@ impl<'a> Storage<'a> {
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
             unsafe { self.ram.dealloc(ram_entry.data) };
-            let data_key = DataRequestId {
+            let data_key = LocatedDataId {
                 id: key,
                 location: DataLocation::Ram,
             };
@@ -604,7 +643,7 @@ impl<'a> Storage<'a> {
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
             unsafe { self.ram.dealloc(ram_entry.data) };
-            let data_key = DataRequestId {
+            let data_key = LocatedDataId {
                 id: key,
                 location: DataLocation::Ram,
             };
@@ -614,7 +653,19 @@ impl<'a> Storage<'a> {
             Err(())
         }
     }
-    pub(crate) fn newest_data(&self) -> impl Iterator<Item = DataRequestId> {
+
+    pub(crate) fn present(&self, LocatedDataId { id, location }: LocatedDataId) -> bool {
+        let index = self.state.index.borrow();
+        index
+            .get(&id)
+            .map(|e| match location {
+                DataLocation::Ram => e.ram.is_some(),
+                DataLocation::VRam(i) => e.vram[i].is_some(),
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn newest_data(&self) -> impl Iterator<Item = LocatedDataId> {
         let mut place_holder = BTreeSet::new();
         let mut d = self.new_data.borrow_mut();
         std::mem::swap(&mut *d, &mut place_holder);
@@ -629,6 +680,7 @@ impl<'a> Storage<'a> {
         layout: Layout,
     ) -> Result<ash::vk::Buffer, Error> {
         let vram = &self.vram[device];
+        //TODO: I think we may need transfer_src/transfer_dst bits
         let allocation = vram.allocate(
             layout,
             ash::vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -639,7 +691,7 @@ impl<'a> Storage<'a> {
         let mut index = self.state.index.borrow_mut();
         let entry = index
             .entry(key)
-            .or_insert_with(|| self.gen_empty_storage_entry());
+            .or_insert_with(|| self.gen_empty_storage_entry(layout));
 
         let buffer = allocation.buffer;
         let prev = entry.vram[device].replace(VRamEntry {
@@ -651,14 +703,12 @@ impl<'a> Storage<'a> {
         Ok(buffer)
     }
 
-    pub fn alloc_vram_slot<'b, T: Copy + crevice::std430::Std430>(
+    pub fn alloc_vram_slot_raw<'b>(
         &'b self,
         cmd_buffer: &'b CommandBuffer,
         key: DataId,
-        num: usize,
+        layout: Layout,
     ) -> Result<VRamWriteHandleUninit<'b>, Error> {
-        //TODO: Not sure if this actually works with std430
-        let layout = Layout::array::<T>(num).unwrap();
         let size = layout.size();
         let buffer = self.alloc_vram(cmd_buffer.id().device, key, layout)?;
 
@@ -673,11 +723,18 @@ impl<'a> Storage<'a> {
         })
     }
 
-    pub unsafe fn read_vram<'b, T: Copy>(
+    pub fn alloc_vram_slot<'b, T: Copy + crevice::std430::Std430>(
         &'b self,
-        device: DeviceId,
+        cmd_buffer: &'b CommandBuffer,
         key: DataId,
-    ) -> Option<VRamReadHandle<'b>> {
+        num: usize,
+    ) -> Result<VRamWriteHandleUninit<'b>, Error> {
+        //TODO: Not sure if this actually works with std430
+        let layout = Layout::array::<T>(num).unwrap();
+        self.alloc_vram_slot_raw(cmd_buffer, key, layout)
+    }
+
+    pub fn read_vram<'b>(&'b self, device: DeviceId, key: DataId) -> Option<VRamReadHandle<'b>> {
         let index = self.state.index.borrow();
         let entry = index.get(&key)?;
         let vram_entry = entry.vram[device].as_ref()?;
@@ -688,15 +745,16 @@ impl<'a> Storage<'a> {
 
         Some(VRamReadHandle {
             buffer: vram_entry.data.buffer,
-            size: vram_entry.data.allocation.size(),
+            layout: entry.layout,
             _marker: Default::default(),
         })
     }
 
-    fn gen_empty_storage_entry(&self) -> StorageEntry {
+    fn gen_empty_storage_entry(&self, layout: Layout) -> StorageEntry {
         StorageEntry {
             ram: None,
             vram: self.vram.iter().map(|_| None).collect(),
+            layout,
         }
     }
 
@@ -713,7 +771,7 @@ impl<'a> Storage<'a> {
         let mut index = self.state.index.borrow_mut();
         let entry = index
             .entry(key)
-            .or_insert_with(|| self.gen_empty_storage_entry());
+            .or_insert_with(|| self.gen_empty_storage_entry(layout));
 
         let prev = entry.ram.replace(RamEntry {
             state: RamStorageEntryState::Initializing,
@@ -723,6 +781,23 @@ impl<'a> Storage<'a> {
         assert!(prev.is_none());
 
         Ok(data)
+    }
+
+    pub fn alloc_ram_slot_raw(
+        &self,
+        key: DataId,
+        layout: Layout,
+    ) -> Result<RawWriteHandleUninit, Error> {
+        let ptr = self.alloc_ram(key, layout)?;
+
+        Ok(RawWriteHandleUninit {
+            data: ptr,
+            layout,
+            drop_handler: DropError {
+                storage: self,
+                id: key,
+            },
+        })
     }
 
     pub fn alloc_ram_slot<T: Copy>(
@@ -738,6 +813,26 @@ impl<'a> Storage<'a> {
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
         Ok(WriteHandleUninit::new(self, key, t_ref))
+    }
+
+    /// Safety: The initial allocation for the TaskId must have happened with the same type
+    pub fn read_ram_raw<'b>(&'b self, key: DataId) -> Option<RawReadHandle<'b>> {
+        let (data, layout) = {
+            let index = self.state.index.borrow();
+            let entry = index.get(&key)?;
+            let ram_entry = entry.ram.as_ref()?;
+
+            if !ram_entry.state.initialized() {
+                return None;
+            }
+
+            (ram_entry.data, entry.layout)
+        };
+        Some(RawReadHandle {
+            _count_handler: ReadCountHandler::new(self, key),
+            data,
+            layout,
+        })
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type

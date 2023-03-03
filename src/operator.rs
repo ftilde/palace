@@ -4,7 +4,7 @@ use crate::{
     id::Id,
     storage::{DataLocation, InplaceResult, ReadHandle},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
-    task_graph::DataRequestId,
+    task_graph::LocatedDataId,
     Error,
 };
 
@@ -45,6 +45,9 @@ impl DataId {
         let data_id = Id::hash(descriptor);
 
         DataId(Id::combine(&[op.inner(), data_id]))
+    }
+    pub fn in_location(self, location: DataLocation) -> LocatedDataId {
+        LocatedDataId { id: self, location }
     }
 }
 
@@ -99,7 +102,7 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: DataRequestId {
+                id: LocatedDataId {
                     id,
                     location: DataLocation::Ram,
                 },
@@ -167,7 +170,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: DataRequestId {
+                id: LocatedDataId {
                     id,
                     location: DataLocation::Ram,
                 },
@@ -190,7 +193,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: DataRequestId {
+                id: LocatedDataId {
                     id: read_id,
                     location: DataLocation::Ram,
                 },

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
-    storage::{Storage, StorageState},
+    storage::{DataLocation, Storage, StorageState},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext},
     task_graph::{RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -166,6 +166,7 @@ impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
             waker: dummy_waker(),
             task_graph: TaskGraph::new(),
             statistics: Statistics::new(),
+            transfer_manager: Default::default(),
             request_batcher: Default::default(),
         }
     }
@@ -206,6 +207,7 @@ pub struct Executor<'cref, 'inv> {
     task_manager: TaskManager<'cref>,
     request_batcher: RequestBatcher<'inv>,
     task_graph: TaskGraph,
+    transfer_manager: crate::vulkan::TransferManager,
     statistics: Statistics,
     waker: Waker,
 }
@@ -295,20 +297,45 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 };
                 for d in self.data.storage.newest_data() {
-                    let mut exact_match = false;
-                    for location in self.task_graph.requested_locations(d.id) {
-                        if *location == d.location {
-                            exact_match = true;
-                        } else {
-                            panic!(
-                                "Oh no, we need to transfer from {:?} to {:?}",
-                                d.location, location
-                            );
+                    for requested in self.task_graph.requested_locations(d.id) {
+                        let data = d.id;
+                        match (d.location, requested) {
+                            (DataLocation::Ram, DataLocation::Ram) => {
+                                self.task_graph.resolved_implied(d.into());
+                            }
+                            (DataLocation::VRam(source), DataLocation::VRam(target))
+                                if target == source =>
+                            {
+                                self.task_graph.resolved_implied(d.into());
+                            }
+                            (DataLocation::VRam(_source), DataLocation::VRam(_target)) => {
+                                panic!("VRam to VRam transfer not implemented, yet")
+                            }
+                            (DataLocation::Ram, target @ DataLocation::VRam(target_id)) => {
+                                if !self.data.storage.present(data.in_location(target)) {
+                                    let task_id = self.transfer_manager.next_id();
+                                    let transfer_task = self.transfer_manager.transfer_to_gpu(
+                                        self.context(task_id),
+                                        &self.data.device_contexts[target_id],
+                                        data,
+                                    );
+                                    self.task_manager.add_task(task_id, transfer_task);
+                                    self.task_graph.add_implied(task_id);
+                                }
+                            }
+                            (DataLocation::VRam(source_id), target @ DataLocation::Ram) => {
+                                if !self.data.storage.present(data.in_location(target)) {
+                                    let task_id = self.transfer_manager.next_id();
+                                    let transfer_task = self.transfer_manager.transfer_to_cpu(
+                                        self.context(task_id),
+                                        &self.data.device_contexts[source_id],
+                                        data,
+                                    );
+                                    self.task_manager.add_task(task_id, transfer_task);
+                                    self.task_graph.add_implied(task_id);
+                                }
+                            }
                         }
-                    }
-                    // TODO: This is a bit ugly
-                    if exact_match {
-                        self.task_graph.resolved_implied(d.into());
                     }
                 }
             }

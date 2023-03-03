@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct DataRequestId {
+pub struct LocatedDataId {
     pub id: DataId,
     pub location: DataLocation,
 }
@@ -19,7 +19,7 @@ pub struct DataRequestId {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
-    Data(DataRequestId),
+    Data(LocatedDataId),
     Job(JobId),
     Group(GroupId),
 }
@@ -28,7 +28,7 @@ pub enum RequestId {
 pub struct GroupId(pub Id);
 
 impl RequestId {
-    pub fn unwrap_data(&self) -> DataRequestId {
+    pub fn unwrap_data(&self) -> LocatedDataId {
         match self {
             RequestId::Data(d) => *d,
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
@@ -95,8 +95,8 @@ impl TaskGraph {
         }
     }
 
-    pub fn requested_locations(&self, id: DataId) -> &BTreeSet<DataLocation> {
-        self.requested_locations.get(&id).unwrap()
+    pub fn requested_locations(&self, id: DataId) -> BTreeSet<DataLocation> {
+        self.requested_locations.get(&id).unwrap().clone()
     }
 
     pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
