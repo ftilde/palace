@@ -137,6 +137,14 @@ impl RunTime {
         }
     }
 }
+impl Drop for RunTime {
+    fn drop(&mut self) {
+        let anchored = self.context_anchor();
+        // Safety: The runtime (including all references to storage) is dropped now, so no dangling
+        // references will be left behind
+        unsafe { anchored.data.storage.free_vram() };
+    }
+}
 
 /// An object that contains all data that will be later lent out to `TaskContexts` via `Executor`.
 ///
@@ -296,45 +304,49 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         self.enqueue_requested(task_id);
                     }
                 };
-                for d in self.data.storage.newest_data() {
-                    for requested in self.task_graph.requested_locations(d.id) {
-                        let data = d.id;
-                        match (d.location, requested) {
-                            (DataLocation::Ram, DataLocation::Ram) => {
-                                self.task_graph.resolved_implied(d.into());
-                            }
-                            (DataLocation::VRam(source), DataLocation::VRam(target))
-                                if target == source =>
-                            {
-                                self.task_graph.resolved_implied(d.into());
-                            }
-                            (DataLocation::VRam(_source), DataLocation::VRam(_target)) => {
-                                panic!("VRam to VRam transfer not implemented, yet")
-                            }
-                            (DataLocation::Ram, target @ DataLocation::VRam(target_id)) => {
-                                if !self.data.storage.present(data.in_location(target)) {
-                                    let task_id = self.transfer_manager.next_id();
-                                    let transfer_task = self.transfer_manager.transfer_to_gpu(
-                                        self.context(task_id),
-                                        &self.data.device_contexts[target_id],
-                                        data,
-                                    );
-                                    self.task_manager.add_task(task_id, transfer_task);
-                                    self.task_graph.add_implied(task_id);
-                                }
-                            }
-                            (DataLocation::VRam(source_id), target @ DataLocation::Ram) => {
-                                if !self.data.storage.present(data.in_location(target)) {
-                                    let task_id = self.transfer_manager.next_id();
-                                    let transfer_task = self.transfer_manager.transfer_to_cpu(
-                                        self.context(task_id),
-                                        &self.data.device_contexts[source_id],
-                                        data,
-                                    );
-                                    self.task_manager.add_task(task_id, transfer_task);
-                                    self.task_graph.add_implied(task_id);
-                                }
-                            }
+                self.register_produced_data();
+            }
+        }
+    }
+
+    fn register_produced_data(&mut self) {
+        for d in self.data.storage.newest_data() {
+            for requested in self.task_graph.requested_locations(d.id) {
+                let data = d.id;
+                match (d.location, requested) {
+                    (DataLocation::Ram, DataLocation::Ram) => {
+                        self.task_graph.resolved_implied(d.into());
+                    }
+                    (DataLocation::VRam(source), DataLocation::VRam(target))
+                        if target == source =>
+                    {
+                        self.task_graph.resolved_implied(d.into());
+                    }
+                    (DataLocation::VRam(_source), DataLocation::VRam(_target)) => {
+                        panic!("VRam to VRam transfer not implemented, yet")
+                    }
+                    (DataLocation::Ram, target @ DataLocation::VRam(target_id)) => {
+                        if !self.data.storage.present(data.in_location(target)) {
+                            let task_id = self.transfer_manager.next_id();
+                            let transfer_task = self.transfer_manager.transfer_to_gpu(
+                                self.context(task_id),
+                                &self.data.device_contexts[target_id],
+                                data,
+                            );
+                            self.task_manager.add_task(task_id, transfer_task);
+                            self.task_graph.add_implied(task_id);
+                        }
+                    }
+                    (DataLocation::VRam(source_id), target @ DataLocation::Ram) => {
+                        if !self.data.storage.present(data.in_location(target)) {
+                            let task_id = self.transfer_manager.next_id();
+                            let transfer_task = self.transfer_manager.transfer_to_cpu(
+                                self.context(task_id),
+                                &self.data.device_contexts[source_id],
+                                data,
+                            );
+                            self.task_manager.add_task(task_id, transfer_task);
+                            self.task_graph.add_implied(task_id);
                         }
                     }
                 }

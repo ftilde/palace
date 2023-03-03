@@ -581,6 +581,9 @@ pub struct Storage<'a> {
 }
 
 impl<'a> Storage<'a> {
+    /// Safety: The same combination of `state`, `ram` and `vram` must be used to construct a
+    /// `Storage` at all times. No modifications outside of `Storage` must be done to either of
+    /// these structs in the meantime.
     pub unsafe fn new(
         state: &'a StorageState,
         ram: &'a crate::ram_allocator::Allocator,
@@ -591,6 +594,19 @@ impl<'a> Storage<'a> {
             new_data: RefCell::new(BTreeSet::new()),
             ram,
             vram,
+        }
+    }
+
+    /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
+    /// references is done!
+    pub unsafe fn free_vram(&self) {
+        let mut index = self.state.index.borrow_mut();
+        for entry in index.values_mut() {
+            for (i, vram_entry) in entry.vram.iter_mut().enumerate() {
+                if let Some(vram_entry) = vram_entry.take() {
+                    self.vram[i].deallocate(vram_entry.data);
+                }
+            }
         }
     }
 
@@ -680,10 +696,11 @@ impl<'a> Storage<'a> {
         layout: Layout,
     ) -> Result<ash::vk::Buffer, Error> {
         let vram = &self.vram[device];
-        //TODO: I think we may need transfer_src/transfer_dst bits
         let allocation = vram.allocate(
             layout,
-            ash::vk::BufferUsageFlags::STORAGE_BUFFER,
+            ash::vk::BufferUsageFlags::STORAGE_BUFFER
+                | ash::vk::BufferUsageFlags::TRANSFER_DST
+                | ash::vk::BufferUsageFlags::TRANSFER_SRC,
             crate::vulkan::MemoryLocation::GpuOnly,
         );
         // TODO garbage collection

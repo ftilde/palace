@@ -218,7 +218,7 @@ pub struct Allocation {
     pub buffer: vk::Buffer,
 }
 
-pub struct BufferCache {
+pub struct StagingBufferStash {
     buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
     buf_type: gpu_allocator::MemoryLocation,
     flags: vk::BufferUsageFlags,
@@ -237,7 +237,7 @@ impl std::ops::Deref for CachedAllocation {
     }
 }
 
-impl BufferCache {
+impl StagingBufferStash {
     fn new(buf_type: gpu_allocator::MemoryLocation, flags: vk::BufferUsageFlags) -> Self {
         Self {
             buffers: Default::default(),
@@ -247,15 +247,16 @@ impl BufferCache {
     }
     fn request(&self, allocator: &Allocator, layout: Layout) -> CachedAllocation {
         let mut buffers = self.buffers.borrow_mut();
+        let buffers = buffers.entry(layout).or_default();
         let inner = buffers
-            .get_mut(&layout)
-            .and_then(|b| b.pop())
+            .pop()
             .unwrap_or_else(|| allocator.allocate(layout, self.flags, self.buf_type));
         CachedAllocation {
             inner,
             alignment: layout.align(),
         }
     }
+    /// Safety: The buffer must have previously been allocated from this stash
     unsafe fn return_buf(&self, allocation: CachedAllocation) {
         let layout = Layout::from_size_align_unchecked(
             allocation.inner.allocation.size() as _,
@@ -263,6 +264,16 @@ impl BufferCache {
         );
         let mut buffers = self.buffers.borrow_mut();
         buffers.get_mut(&layout).unwrap().push(allocation.inner);
+    }
+
+    /// Safety: The allocator must be the same that was used for all `request`s.
+    unsafe fn deinitialize(&self, allocator: &Allocator) {
+        let mut buffers = self.buffers.borrow_mut();
+        for (_, b) in buffers.drain() {
+            for b in b {
+                allocator.deallocate(b);
+            }
+        }
     }
 }
 
@@ -367,8 +378,8 @@ pub struct DeviceContext {
 
     vulkan_states: Cache,
     allocator: Allocator,
-    staging_to_gpu: BufferCache,
-    staging_to_cpu: BufferCache,
+    staging_to_gpu: StagingBufferStash,
+    staging_to_cpu: StagingBufferStash,
 }
 
 pub struct RawCommandBuffer {
@@ -433,6 +444,7 @@ impl TransferManager {
             let staging_buf = device.staging_to_gpu.request(&device.allocator, layout);
             let out_ptr = staging_buf.allocation.mapped_ptr().unwrap();
 
+            // Safety: Both buffers contain plain butes, are of the same size and do not overlap.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     input_buf.data,
@@ -452,12 +464,18 @@ impl TransferManager {
                         &[*copy_info],
                     );
                 }
-                // TODO: NO_PUSH_main: staging buffers have to be returned. Maybe we can do something
-                // with the epoch to do this safely?
 
                 unsafe { gpu_buf_out.initialized() };
                 Ok::<(), crate::Error>(())
             })?;
+
+            ctx.submit(device.wait_for_cmd_buffer_submission()).await;
+
+            // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
+            // in copying anymore and can be freed.
+            unsafe {
+                device.staging_to_gpu.return_buf(staging_buf);
+            }
             Ok(())
         }
         .into()
@@ -477,7 +495,6 @@ impl TransferManager {
             let staging_buf = device.staging_to_cpu.request(&device.allocator, layout);
 
             device.with_cmd_buffer(|cmd| {
-                let gpu_buf_out = storage.alloc_vram_slot_raw(cmd, key, layout)?;
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
                     device.device.cmd_copy_buffer(
@@ -488,7 +505,6 @@ impl TransferManager {
                     );
                 }
 
-                unsafe { gpu_buf_out.initialized() };
                 Ok::<(), crate::Error>(())
             })?;
 
@@ -505,6 +521,11 @@ impl TransferManager {
                     layout.size(),
                 )
             };
+
+            // Safety: We have just written the buffer using a memcpy
+            unsafe {
+                out_buf.initialized();
+            }
 
             // Safety: This is exactly the buffer that we requested above and it is no longer used
             // in the compute pipeline since we have waited for the command buffer to finish.
@@ -590,11 +611,11 @@ impl DeviceContext {
 
             let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
 
-            let staging_to_cpu = BufferCache::new(
+            let staging_to_cpu = StagingBufferStash::new(
                 MemoryLocation::GpuToCpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             );
-            let staging_to_gpu = BufferCache::new(
+            let staging_to_gpu = StagingBufferStash::new(
                 MemoryLocation::CpuToGpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
             );
@@ -762,14 +783,6 @@ impl DeviceContext {
         // Swap current
         let prev_cmd_buffer = std::mem::replace(&mut *current, next_cmd_buffer);
 
-        // Stow away prev one as waiting
-        let CommandBuffer {
-            buffer, fence, id, ..
-        } = prev_cmd_buffer;
-        self.waiting_command_buffers
-            .borrow_mut()
-            .insert(id, RawCommandBuffer { buffer, fence });
-
         // Submit current
         unsafe {
             self.device
@@ -788,6 +801,14 @@ impl DeviceContext {
                 )
                 .expect("Failed to submit command buffers to queue.")
         };
+
+        // Stow away prev one as waiting
+        let CommandBuffer {
+            buffer, fence, id, ..
+        } = prev_cmd_buffer;
+        self.waiting_command_buffers
+            .borrow_mut()
+            .insert(id, RawCommandBuffer { buffer, fence });
     }
 
     #[must_use]
@@ -796,15 +817,11 @@ impl DeviceContext {
     ) -> Request<'req, 'irrelevant, ()> {
         let current = self.current_command_buffer.borrow();
         let id = current.id;
-        let fence = current.fence;
         Request {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
             poll: Box::new(move |_ctx| {
-                if unsafe { self.device.get_fence_status(fence) }.unwrap() {
-                    Some(())
-                } else {
-                    None
-                }
+                // Assuming that this will only ever be polled if ready.
+                Some(())
             }),
             _marker: Default::default(),
         }
@@ -880,6 +897,11 @@ impl Drop for DeviceContext {
             unsafe { vulkan_state.deinitialize(self) };
         }
 
+        // Safety: Using the exact same allocator (the only one of this device)
+        unsafe {
+            self.staging_to_gpu.deinitialize(&self.allocator);
+            self.staging_to_cpu.deinitialize(&self.allocator);
+        }
         self.allocator.deinitialize();
 
         assert!(self.waiting_command_buffers.get_mut().is_empty());
@@ -888,6 +910,8 @@ impl Drop for DeviceContext {
             for cb in self.available_command_buffers.get_mut().drain(..) {
                 self.device.destroy_fence(cb.fence, None);
             }
+            self.device
+                .destroy_fence(self.current_command_buffer.borrow().fence, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);

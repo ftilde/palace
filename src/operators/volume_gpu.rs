@@ -286,12 +286,10 @@ pub fn linear_rescale<'op>(
                     ComputePipeline::new(device, SHADER, &bindings, &push_constants)
                 });
 
-                let mut bufs = Vec::with_capacity(positions.len());
-
                 let mut brick_stream = ctx.submit_unordered_with_data(
                     positions
                         .iter()
-                        .map(|pos| (input.bricks.request(*pos), *pos)),
+                        .map(|pos| (input.bricks.request_gpu(device.id, *pos), *pos)),
                 );
 
                 device.with_cmd_buffer(|cmd| unsafe {
@@ -315,31 +313,16 @@ pub fn linear_rescale<'op>(
                         .cmd_pipeline_barrier2(cmd.raw(), &barrier_info);
                 });
 
-                while let Some((brick, pos)) = brick_stream.next().await {
+                while let Some((gpu_brick_in, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
-                    let brick_layout = Layout::array::<f32>(brick_info.mem_elements()).unwrap();
-
-                    let mut gpu_brick_in = device.allocator().allocate(
-                        brick_layout,
-                        BufferUsageFlags::STORAGE_BUFFER,
-                        gpu_allocator::MemoryLocation::CpuToGpu,
-                    );
-
                     device.with_cmd_buffer(|cmd| {
-                        let gpu_brick_out = ctx.alloc_slot_gpu(cmd, pos, 1)?;
-
-                        // Note: No flushing necessary since the staging buffers are created with
-                        // HOST_COHERENT bit
-                        gpu_brick_in
-                            .allocation
-                            .mapped_slice_mut()
-                            .unwrap()
-                            .copy_from_slice(bytemuck::cast_slice(&*brick));
+                        let gpu_brick_out =
+                            ctx.alloc_slot_gpu(cmd, pos, brick_info.mem_elements())?;
 
                         let db_info_in = vk::DescriptorBufferInfo::builder()
                             .buffer(gpu_brick_in.buffer)
-                            .range(gpu_brick_in.allocation.size());
+                            .range(gpu_brick_in.layout.size() as _);
 
                         let db_info_out = vk::DescriptorBufferInfo::builder()
                             .buffer(gpu_brick_out.buffer)
@@ -396,25 +379,9 @@ pub fn linear_rescale<'op>(
 
                         Ok::<(), crate::Error>(())
                     })?;
-
-                    //let copy_info = vk::BufferCopy::builder().size(brick_size_mem as _);
-                    //unsafe {
-                    //    device.device.cmd_copy_buffer(
-                    //        cmd,
-                    //        gpu_brick_in.buffer,
-                    //        gpu_brick_out.buffer,
-                    //        &[*copy_info],
-                    //    );
-                    //}
-
-                    bufs.push(gpu_brick_in);
                 }
 
                 ctx.submit(device.wait_for_cmd_buffer_submission()).await;
-
-                for gpu_brick_in in bufs.into_iter() {
-                    device.allocator().deallocate(gpu_brick_in);
-                }
                 device.allocator().deallocate(gpu_config);
 
                 Ok(())

@@ -2,9 +2,10 @@ use std::rc::Rc;
 
 use crate::{
     id::Id,
-    storage::{DataLocation, InplaceResult, ReadHandle},
+    storage::{DataLocation, InplaceResult, ReadHandle, VRamReadHandle},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::LocatedDataId,
+    vulkan::DeviceId,
     Error,
 };
 
@@ -178,6 +179,28 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 item: TypeErased::pack(item),
             }),
             poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+            _marker: Default::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn request_gpu<'req, 'inv: 'req>(
+        &'inv self,
+        gpu: DeviceId,
+        item: ItemDescriptor,
+    ) -> Request<'req, 'inv, VRamReadHandle<'req>> {
+        let id = DataId::new(self.id, &item);
+
+        Request {
+            type_: RequestType::Data(DataRequest {
+                id: LocatedDataId {
+                    id,
+                    location: DataLocation::VRam(gpu),
+                },
+                source: self,
+                item: TypeErased::pack(item),
+            }),
+            poll: Box::new(move |ctx| ctx.storage.read_vram(gpu, id)),
             _marker: Default::default(),
         }
     }
