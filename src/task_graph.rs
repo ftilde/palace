@@ -68,6 +68,7 @@ pub struct TaskGraph {
     implied_ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
     in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
+    groups: BTreeMap<GroupId, BTreeSet<RequestId>>,
     requested_locations: BTreeMap<DataId, BTreeSet<DataLocation>>,
 }
 
@@ -102,6 +103,8 @@ impl TaskGraph {
     pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
         let entry = self.in_groups.entry(in_).or_default();
         entry.insert(group);
+        let entry = self.groups.entry(group).or_default();
+        entry.insert(in_);
     }
 
     pub fn add_implied(&mut self, id: TaskId) {
@@ -128,11 +131,6 @@ impl TaskGraph {
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
             let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
             resolved_deps.insert(id);
-            if let Some(groups) = self.in_groups.remove(&id) {
-                for group in groups {
-                    resolved_deps.insert(group.into());
-                }
-            }
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
@@ -141,6 +139,21 @@ impl TaskGraph {
                 }
             }
         }
+
+        let mut resolved_groups = Vec::new();
+        if let Some(groups) = self.in_groups.remove(&id) {
+            for group in groups {
+                let group_members = self.groups.get_mut(&group).unwrap();
+                group_members.remove(&id);
+                if group_members.is_empty() {
+                    resolved_groups.push(group);
+                    self.groups.remove(&group);
+                }
+            }
+        }
+        for group in resolved_groups {
+            self.resolved_implied(group.into());
+        }
     }
 
     pub fn task_done(&mut self, id: TaskId) {
@@ -148,7 +161,8 @@ impl TaskGraph {
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
         let deps = self.waits_on.remove(&id).unwrap();
-        assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
+        assert!(deps.is_empty());
+        //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
     }
 
     pub fn next_implied_ready(&mut self) -> BTreeSet<TaskId> {
