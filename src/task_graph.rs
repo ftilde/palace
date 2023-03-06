@@ -257,17 +257,19 @@ pub fn export(graph: &TaskGraph) {
         stmts,
     };
 
+    let filename = "taskgraph.svg";
+
     let mut ctx = PrinterContext::default();
     ctx.always_inline();
-    let empty = exec(
+    let _empty = exec(
         graph,
         &mut ctx,
         vec![
             CommandArg::Format(Format::Svg),
             CommandArg::Layout(Layout::Sfdp),
-            CommandArg::Output("taskgraph.svg".to_string()),
+            CommandArg::Output(filename.to_string()),
         ],
     )
     .unwrap();
-    println!("Dot result: {}", empty);
+    println!("Finished writing dependency graph to file: {}", filename);
 }
