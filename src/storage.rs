@@ -88,7 +88,7 @@ struct StorageEntry {
 
 impl StorageEntry {
     fn is_present(&self) -> bool {
-        self.ram.is_some() //TODO: Add VRAM presence checks here
+        self.ram.is_some() || self.vram.iter().any(|v| v.is_some())
     }
 }
 
