@@ -244,16 +244,37 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
+        enum StuckState {
+            Not,
+            Reported,
+            WaitingSince(std::time::Instant),
+        }
+        let mut stuck_state = StuckState::Not;
         loop {
             let ready = self.task_graph.next_implied_ready();
             if ready.is_empty() {
                 if self.task_graph.has_open_tasks() {
+                    let stuck_time = match stuck_state {
+                        StuckState::Not => Some(std::time::Instant::now()),
+                        StuckState::WaitingSince(t) => Some(t),
+                        StuckState::Reported => None,
+                    };
+                    if let Some(stuck_time) = stuck_time {
+                        if stuck_time.elapsed() > std::time::Duration::from_secs(5) {
+                            eprintln!("Execution appears to be stuck. Generating dependency file");
+                            crate::task_graph::export(&self.task_graph);
+                            stuck_state = StuckState::Reported;
+                        } else {
+                            stuck_state = StuckState::WaitingSince(stuck_time);
+                        }
+                    }
                     self.wait_for_async_results();
                     continue;
                 }
 
                 return Ok(());
             }
+            stuck_state = StuckState::Not;
 
             for task_id in ready {
                 let resolved_deps =

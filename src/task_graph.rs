@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use derive_more::From;
+use graphviz_rust::attributes::EdgeAttributes;
 
 use crate::{
     id::Id,
@@ -178,4 +179,95 @@ impl TaskGraph {
     pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut BTreeSet<RequestId>> {
         self.resolved_deps.get_mut(&task)
     }
+}
+
+pub fn export(graph: &TaskGraph) {
+    use graphviz_rust::cmd::*;
+    use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
+    use graphviz_rust::dot_structures::{EdgeTy, Vertex};
+    use graphviz_rust::exec;
+    use graphviz_rust::printer::*;
+    use graphviz_rust::{
+        attributes::{self, color, NodeAttributes},
+        into_attr::IntoAttribute,
+    };
+
+    let mut stmts = Vec::new();
+    let mut id_counter = 0;
+    let task_nodes = graph
+        .waits_on
+        .keys()
+        .map(|k| {
+            let label = format!("\"{}{}\"", k.op.1, k.num);
+            id_counter += 1;
+            let id = id_counter.to_string();
+            let node_id = NodeId(Id::Plain(id), None);
+            let mut attributes = Vec::new();
+            attributes.push(NodeAttributes::label(label));
+            attributes.push(NodeAttributes::shape(attributes::shape::rectangle));
+            let node = Node {
+                id: node_id.clone(),
+                attributes,
+            };
+            stmts.push(Stmt::Node(node));
+            (*k, node_id)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let request_nodes = graph
+        .required_by
+        .keys()
+        .map(|k| {
+            let label = format!("\"{:?}\"", k);
+            id_counter += 1;
+            let id = id_counter.to_string();
+            let node_id = NodeId(Id::Plain(id), None);
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            attributes.push(NodeAttributes::label(label));
+            attributes.push(NodeAttributes::shape(attributes::shape::ellipse));
+            let node = Node {
+                id: node_id.clone(),
+                attributes,
+            };
+            stmts.push(Stmt::Node(node));
+            (*k, node_id)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for (t, r) in &graph.waits_on {
+        for (r, _dep_type) in r {
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+            let edge = Edge {
+                ty: EdgeTy::Pair(
+                    Vertex::N(task_nodes.get(t).unwrap().clone()),
+                    Vertex::N(request_nodes.get(r).unwrap().clone()),
+                ),
+                attributes,
+            };
+            stmts.push(Stmt::Edge(edge))
+        }
+    }
+
+    let graph = Graph::DiGraph {
+        id: Id::Plain(format!("TaskGraph")),
+        strict: true,
+        stmts,
+    };
+
+    let mut ctx = PrinterContext::default();
+    ctx.always_inline();
+    let empty = exec(
+        graph,
+        &mut ctx,
+        vec![
+            CommandArg::Format(Format::Svg),
+            CommandArg::Layout(Layout::Sfdp),
+            CommandArg::Output("taskgraph.svg".to_string()),
+        ],
+    )
+    .unwrap();
+    println!("Dot result: {}", empty);
 }

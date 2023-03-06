@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct OperatorId(Id, &'static str);
+pub struct OperatorId(Id, pub &'static str);
 impl OperatorId {
     pub fn new(name: &'static str) -> Self {
         let id = Id::from_data(name.as_bytes());
