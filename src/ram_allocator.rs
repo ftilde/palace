@@ -55,6 +55,10 @@ impl Allocator {
         let mut alloc = self.alloc.borrow_mut();
         unsafe { alloc.dealloc(ptr) };
     }
+
+    pub fn size(&self) -> usize {
+        self.storage_layout.size()
+    }
 }
 
 impl Drop for Allocator {

@@ -801,7 +801,9 @@ impl<'a> Storage<'a> {
         let data = match self.ram.alloc(layout) {
             Ok(d) => d,
             Err(_e) => {
-                let garbage_collect_goal = 1 << 30; //One gigabyte for now maybe???
+                // Always try to free half of available ram
+                // TODO: Other solutions may be better.
+                let garbage_collect_goal = self.ram.size() / 2;
                 self.try_garbage_collect(garbage_collect_goal);
                 self.ram.alloc(layout)?
             }
