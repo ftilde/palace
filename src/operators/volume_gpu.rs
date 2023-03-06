@@ -215,7 +215,7 @@ pub fn linear_rescale<'op>(
     offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
     VolumeOperator::with_state(
-        OperatorId::new("volume_scale")
+        OperatorId::new("volume_scale_gpu")
             .dependent_on(&input)
             .dependent_on(&scale)
             .dependent_on(&offset),
