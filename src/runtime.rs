@@ -56,7 +56,7 @@ impl TaskIdManager {
 struct RequestBatch<'inv> {
     items: BTreeSet<DataRequestItem>,
     op: &'inv dyn OpaqueOperator,
-    //batch_id: TaskId,
+    batch_id: TaskId,
 }
 
 #[derive(Default)]
@@ -65,8 +65,13 @@ struct RequestBatcher<'inv> {
     task_id_manager: TaskIdManager,
 }
 
+enum BatchAddResult {
+    New(TaskId),
+    Existing(TaskId),
+}
+
 impl<'inv> RequestBatcher<'inv> {
-    fn add(&mut self, request: DataRequest<'inv>) -> Option<TaskId> {
+    fn add(&mut self, request: DataRequest<'inv>) -> BatchAddResult {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
@@ -81,13 +86,14 @@ impl<'inv> RequestBatcher<'inv> {
                 o.insert(RequestBatch {
                     items,
                     op: source,
-                    //batch_id,
+                    batch_id,
                 });
-                Some(batch_id)
+                BatchAddResult::New(batch_id)
             }
             std::collections::btree_map::Entry::Occupied(mut o) => {
-                o.get_mut().items.insert(req_item);
-                None
+                let entry = o.get_mut();
+                entry.items.insert(req_item);
+                BatchAddResult::Existing(entry.batch_id)
             }
         }
     }
@@ -339,6 +345,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 {
                     self.task_manager.add_task(task_id, transfer_task);
                     self.task_graph.add_implied(task_id);
+                    self.task_graph.will_provide(task_id, available.id);
                 } else {
                     self.task_graph.resolved_implied(requested.into());
                 }
@@ -386,28 +393,27 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
             RequestType::Data(data_request) => {
+                let data_id = data_request.id;
                 if !already_requested {
-                    if let Some(available) = self
-                        .data
-                        .storage
-                        .available_locations(data_request.id.id)
-                        .pop()
+                    if let Some(available) = self.data.storage.available_locations(data_id.id).pop()
                     {
                         // Data should not already be present
-                        assert_ne!(available, data_request.id.location);
+                        assert_ne!(available, data_id.location);
                         let (task_id, transfer_task) = self
-                            .transfer_if_required(
-                                data_request.id.id,
-                                available,
-                                data_request.id.location,
-                            )
+                            .transfer_if_required(data_id.id, available, data_id.location)
                             .unwrap();
                         self.task_manager.add_task(task_id, transfer_task);
                         self.task_graph.add_implied(task_id);
+                        self.task_graph.will_provide(task_id, data_request.id.id);
                     } else {
-                        if let Some(new_batch_id) = self.request_batcher.add(data_request) {
-                            self.task_graph.add_implied(new_batch_id);
-                        }
+                        let task_id = match self.request_batcher.add(data_request) {
+                            BatchAddResult::New(id) => {
+                                self.task_graph.add_implied(id);
+                                id
+                            }
+                            BatchAddResult::Existing(id) => id,
+                        };
+                        self.task_graph.will_provide(task_id, data_id.id);
                     }
                 }
             }

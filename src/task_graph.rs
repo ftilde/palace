@@ -65,6 +65,7 @@ pub struct TaskGraph {
     implied_tasks: BTreeSet<TaskId>,
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
+    will_provide: BTreeMap<TaskId, BTreeSet<DataId>>,
     implied_ready: BTreeSet<TaskId>,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
     in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
@@ -105,6 +106,11 @@ impl TaskGraph {
         entry.insert(group);
         let entry = self.groups.entry(group).or_default();
         entry.insert(in_);
+    }
+
+    pub fn will_provide(&mut self, task: TaskId, data: DataId) {
+        let entries = self.will_provide.entry(task).or_default();
+        entries.insert(data);
     }
 
     pub fn add_implied(&mut self, id: TaskId) {
@@ -160,6 +166,9 @@ impl TaskGraph {
         self.implied_tasks.remove(&id);
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
+
+        self.will_provide.remove(&id).unwrap();
+
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
         //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
@@ -235,6 +244,27 @@ pub fn export(graph: &TaskGraph) {
         })
         .collect::<BTreeMap<_, _>>();
 
+    let data_nodes = graph
+        .requested_locations
+        .keys()
+        .map(|k| {
+            let label = format!("\"{:?}\"", k);
+            id_counter += 1;
+            let id = id_counter.to_string();
+            let node_id = NodeId(Id::Plain(id), None);
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            attributes.push(NodeAttributes::label(label));
+            attributes.push(NodeAttributes::shape(attributes::shape::ellipse));
+            let node = Node {
+                id: node_id.clone(),
+                attributes,
+            };
+            stmts.push(Stmt::Node(node));
+            (*k, node_id)
+        })
+        .collect::<BTreeMap<_, _>>();
+
     for (t, r) in &graph.waits_on {
         for (r, _dep_type) in r {
             let mut attributes = Vec::new();
@@ -244,6 +274,37 @@ pub fn export(graph: &TaskGraph) {
                 ty: EdgeTy::Pair(
                     Vertex::N(task_nodes.get(t).unwrap().clone()),
                     Vertex::N(request_nodes.get(r).unwrap().clone()),
+                ),
+                attributes,
+            };
+            stmts.push(Stmt::Edge(edge))
+        }
+    }
+
+    for (t, r) in &graph.will_provide {
+        for r in r {
+            if let Some(r) = data_nodes.get(r).cloned() {
+                let mut attributes = Vec::new();
+                attributes.push(color::default().into_attr());
+                attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+                let edge = Edge {
+                    ty: EdgeTy::Pair(Vertex::N(r), Vertex::N(task_nodes.get(t).unwrap().clone())),
+                    attributes,
+                };
+                stmts.push(Stmt::Edge(edge))
+            }
+        }
+    }
+
+    for (d, l) in &graph.requested_locations {
+        for l in l {
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            let r_id = d.in_location(*l).into();
+            let edge = Edge {
+                ty: EdgeTy::Pair(
+                    Vertex::N(request_nodes.get(&r_id).unwrap().clone()),
+                    Vertex::N(data_nodes.get(d).unwrap().clone()),
                 ),
                 attributes,
             };
@@ -266,7 +327,7 @@ pub fn export(graph: &TaskGraph) {
         &mut ctx,
         vec![
             CommandArg::Format(Format::Svg),
-            CommandArg::Layout(Layout::Sfdp),
+            CommandArg::Layout(Layout::Dot),
             CommandArg::Output(filename.to_string()),
         ],
     )
