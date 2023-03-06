@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use derive_more::From;
-use graphviz_rust::attributes::EdgeAttributes;
 
 use crate::{
     id::Id,
@@ -182,6 +181,7 @@ impl TaskGraph {
 }
 
 pub fn export(graph: &TaskGraph) {
+    use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
     use graphviz_rust::dot_structures::{EdgeTy, Vertex};
