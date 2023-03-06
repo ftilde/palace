@@ -654,6 +654,9 @@ impl<'a> Storage<'a> {
             let ram_entry = entry.ram.take().unwrap();
             if !entry.is_present() {
                 index.remove(&key).unwrap();
+
+                let lru_index = ram_entry.state.lru_index().unwrap();
+                self.state.lru_manager.borrow_mut().remove(lru_index);
             }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
@@ -915,9 +918,11 @@ impl<'a> Storage<'a> {
         Some(Ok(if in_place_possible {
             let mut entry = index.remove(&old_key).unwrap();
             let ram_entry = entry.ram.as_mut().unwrap();
-            if let Some(lru_index) = ram_entry.state.lru_index() {
-                self.state.lru_manager.borrow_mut().remove(lru_index);
-            }
+
+            // safe_to_delete => there is an lru_index
+            let lru_index = ram_entry.state.lru_index().unwrap();
+            self.state.lru_manager.borrow_mut().remove(lru_index);
+
             ram_entry.state = RamStorageEntryState::Initializing;
 
             let prev = index.insert(new_key, entry);
