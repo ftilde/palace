@@ -681,6 +681,25 @@ impl<'a> Storage<'a> {
             .unwrap_or(false)
     }
 
+    pub(crate) fn available_locations(&self, id: DataId) -> Vec<DataLocation> {
+        let index = self.state.index.borrow();
+        index
+            .get(&id)
+            .map(|e| {
+                let mut res = Vec::new();
+                if e.ram.is_some() {
+                    res.push(DataLocation::Ram);
+                }
+                for (i, v) in e.vram.iter().enumerate() {
+                    if v.is_some() {
+                        res.push(DataLocation::VRam(i));
+                    }
+                }
+                res
+            })
+            .unwrap_or(Vec::new())
+    }
+
     pub(crate) fn newest_data(&self) -> impl Iterator<Item = LocatedDataId> {
         let mut place_holder = BTreeSet::new();
         let mut d = self.new_data.borrow_mut();
