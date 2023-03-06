@@ -830,11 +830,10 @@ impl DeviceContext {
         let mut result = Vec::new();
 
         let mut waiting_ref = self.waiting_command_buffers.borrow_mut();
-        let waiting = std::mem::take(&mut *waiting_ref);
-        if waiting.is_empty() {
+        if waiting_ref.is_empty() {
             return result;
         }
-        let waiting_fences = waiting.iter().map(|v| v.1.fence).collect::<Vec<_>>();
+        let waiting_fences = waiting_ref.iter().map(|v| v.1.fence).collect::<Vec<_>>();
 
         let wait_nanos = timeout.as_nanos().min(u64::max_value() as _) as u64;
         match unsafe {
@@ -846,6 +845,7 @@ impl DeviceContext {
             Err(o) => panic!("Wait for fences failed {}", o),
         }
 
+        let waiting = std::mem::take(&mut *waiting_ref);
         // TODO: replace with BTreeMap::drain_filter once stable
         let new_waiting = waiting
             .into_iter()
