@@ -677,17 +677,6 @@ impl<'a> Storage<'a> {
         }
     }
 
-    pub(crate) fn present(&self, LocatedDataId { id, location }: LocatedDataId) -> bool {
-        let index = self.state.index.borrow();
-        index
-            .get(&id)
-            .map(|e| match location {
-                DataLocation::Ram => e.ram.is_some(),
-                DataLocation::VRam(i) => e.vram[i].is_some(),
-            })
-            .unwrap_or(false)
-    }
-
     pub(crate) fn available_locations(&self, id: DataId) -> Vec<DataLocation> {
         let index = self.state.index.borrow();
         index
