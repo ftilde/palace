@@ -42,6 +42,7 @@ impl RequestInfo<'_> {
     }
 }
 
+/// Note: Per contract, the poll function must not be called after it has returned Some once.
 type ResultPoll<'a, V> = Box<dyn FnMut() -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {

@@ -111,8 +111,6 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                // TODO: The Option shenanigans are actually not really required here. We just have
-                // to convince the compiler... Revisit.
                 let mut access = Some(ctx.storage.register_ram_access(id));
                 Box::new(move || unsafe {
                     access = match ctx
@@ -192,8 +190,6 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                // TODO: The Option shenanigans are actually not really required here. We just have
-                // to convince the compiler... Revisit.
                 let mut access = Some(ctx.storage.register_ram_access(id));
                 Box::new(move || unsafe {
                     access = match ctx.storage.read_ram(access.take().unwrap()) {
@@ -248,8 +244,6 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                // TODO: The Option shenanigans are actually not really required here. We just have
-                // to convince the compiler... Revisit.
                 let mut access = Some(ctx.storage.register_ram_access(read_id));
                 Box::new(move || unsafe {
                     access = match ctx
