@@ -269,6 +269,16 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if stuck_time.elapsed() > std::time::Duration::from_secs(5) {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
                             crate::task_graph::export(&self.task_graph);
+                            //eprintln!("Device states:");
+                            //for device in self.data.device_contexts {
+                            //    let buf = device.current_command_buffer.borrow();
+                            //    eprintln!("{}: {:?}", device.id, buf.id());
+                            //    let waiting = device.waiting_command_buffers.borrow();
+                            //    eprintln!("Waiting: {}", waiting.len());
+                            //    for w in waiting.iter() {
+                            //        eprintln!("{}: {:?}", device.id, w.0);
+                            //    }
+                            //}
                             stuck_state = StuckState::Reported;
                         } else {
                             stuck_state = StuckState::WaitingSince(stuck_time);
@@ -367,10 +377,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             (DataLocation::Ram, DataLocation::VRam(target_id)) => {
                 let task_id = self.transfer_manager.next_id();
+                let access = self.data.storage.register_ram_access(data);
                 let transfer_task = self.transfer_manager.transfer_to_gpu(
                     self.context(task_id),
                     &self.data.device_contexts[target_id],
-                    data,
+                    access,
                 );
                 Some((task_id, transfer_task))
             }

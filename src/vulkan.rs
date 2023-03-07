@@ -435,19 +435,22 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        key: DataId,
+        access: crate::storage::RamAccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
             let storage = ctx.storage;
-            let input_buf = storage.read_ram_raw(key).unwrap();
-            let layout = input_buf.layout;
+            let key = access.id;
+            let Ok(input_buf) = storage.read_ram_raw(access) else {
+                panic!("Data should already be in ram");
+            };
+            let layout = input_buf.info.layout;
             let staging_buf = device.staging_to_gpu.request(&device.allocator, layout);
             let out_ptr = staging_buf.allocation.mapped_ptr().unwrap();
 
             // Safety: Both buffers contain plain butes, are of the same size and do not overlap.
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    input_buf.data,
+                    input_buf.info.data,
                     out_ptr.as_ptr().cast(),
                     layout.size(),
                 )
@@ -818,9 +821,11 @@ impl DeviceContext {
         let id = current.id;
         Request {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
-            poll: Box::new(move |_ctx| {
-                // Assuming that this will only ever be polled if ready.
-                Some(())
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(|| {
+                    // Assuming that this will only ever be polled if ready.
+                    Some(())
+                })
             }),
             _marker: Default::default(),
         }

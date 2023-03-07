@@ -201,12 +201,14 @@ impl ThreadSpawner {
         };
         Request {
             type_: crate::task::RequestType::ThreadPoolJob(job, type_),
-            poll: Box::new(move |_ctx| match result_receiver.try_recv() {
-                Ok(res) => Some(res),
-                Err(oneshot::TryRecvError::Empty) => None,
-                Err(oneshot::TryRecvError::Disconnected) => {
-                    panic!("Either polled twice or the compute thread was interrupted")
-                }
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || match result_receiver.try_recv() {
+                    Ok(res) => Some(res),
+                    Err(oneshot::TryRecvError::Empty) => None,
+                    Err(oneshot::TryRecvError::Disconnected) => {
+                        panic!("Either polled twice or the compute thread was interrupted")
+                    }
+                })
             }),
             _marker: Default::default(),
         }

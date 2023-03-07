@@ -23,28 +23,21 @@ pub enum DataLocation {
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
-    ReadBy(usize),
-    UnRead(LRUIndex),
+    Some(usize),
+    None(LRUIndex),
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug)]
+pub struct RamStorageInfo {
+    pub data: *mut u8,
+    pub layout: Layout,
+}
+
+#[derive(Debug)]
 enum RamStorageEntryState {
-    Initializing,
-    Initialized(AccessState),
-}
-
-impl RamStorageEntryState {
-    fn initialized(&self) -> bool {
-        matches!(self, RamStorageEntryState::Initialized(_))
-    }
-
-    fn lru_index(&self) -> Option<LRUIndex> {
-        if let RamStorageEntryState::Initialized(AccessState::UnRead(id)) = self {
-            Some(*id)
-        } else {
-            None
-        }
-    }
+    Registered,
+    Initializing(RamStorageInfo),
+    Initialized(RamStorageInfo),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -62,28 +55,32 @@ impl VRamStorageEntryState {
 
 struct RamEntry {
     state: RamStorageEntryState,
-    data: *mut u8,
-    size: usize,
+    access: AccessState,
 }
 
 impl RamEntry {
     fn safe_to_delete(&self) -> bool {
-        matches!(
-            self.state,
-            RamStorageEntryState::Initialized(AccessState::UnRead(_))
-        )
+        matches!(self.access, AccessState::None(_))
+    }
+
+    fn lru_index(&self) -> Option<LRUIndex> {
+        if let AccessState::None(id) = self.access {
+            Some(id)
+        } else {
+            None
+        }
     }
 }
 
 struct VRamEntry {
     state: VRamStorageEntryState,
     data: crate::vulkan::Allocation,
+    layout: Layout,
 }
 
 struct StorageEntry {
     ram: Option<RamEntry>,
     vram: Vec<Option<VRamEntry>>,
-    layout: Layout,
 }
 
 impl StorageEntry {
@@ -92,42 +89,38 @@ impl StorageEntry {
     }
 }
 
-struct ReadCountHandler<'a> {
+pub struct RamAccessToken<'a> {
     storage: &'a Storage<'a>,
-    id: DataId,
+    pub id: DataId,
 }
-impl<'a> ReadCountHandler<'a> {
+impl<'a> RamAccessToken<'a> {
     fn new(storage: &'a Storage, id: DataId) -> Self {
         let mut index = storage.state.index.borrow_mut();
-        let RamStorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&id).unwrap().ram.as_mut().unwrap().state else {
-            panic!("Trying to read uninitialized value");
-        };
-        *access_state = match *access_state {
-            AccessState::ReadBy(n) => AccessState::ReadBy(n + 1),
-            AccessState::UnRead(id) => {
+        let ram_entry = index.get_mut(&id).unwrap().ram.as_mut().unwrap();
+
+        ram_entry.access = match ram_entry.access {
+            AccessState::Some(n) => AccessState::Some(n + 1),
+            AccessState::None(id) => {
                 storage.state.lru_manager.borrow_mut().remove(id);
-                AccessState::ReadBy(1)
+                AccessState::Some(1)
             }
         };
 
         Self { storage, id }
     }
 }
-impl Drop for ReadCountHandler<'_> {
+impl Drop for RamAccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.state.index.borrow_mut();
+        let ram_entry = index.get_mut(&self.id).unwrap().ram.as_mut().unwrap();
 
-        let RamStorageEntryState::Initialized(ref mut access_state) = &mut index.get_mut(&self.id).unwrap().ram.as_mut().unwrap().state else {
-            panic!("Trying to read uninitialized value");
-        };
-
-        *access_state = match *access_state {
-            AccessState::ReadBy(1) => {
+        ram_entry.access = match ram_entry.access {
+            AccessState::Some(1) => {
                 let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
-                AccessState::UnRead(lru_id)
+                AccessState::None(lru_id)
             }
-            AccessState::ReadBy(n) => AccessState::ReadBy(n - 1),
-            AccessState::UnRead(_id) => {
+            AccessState::Some(n) => AccessState::Some(n - 1),
+            AccessState::None(_id) => {
                 panic!("Invalid state");
             }
         };
@@ -135,20 +128,13 @@ impl Drop for ReadCountHandler<'_> {
 }
 
 pub struct ReadHandle<'a, T: ?Sized> {
-    _count_handler: ReadCountHandler<'a>,
+    access: RamAccessToken<'a>,
     data: &'a T,
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
-    fn new(storage: &'a Storage, id: DataId, data: &'a T) -> Self {
-        Self {
-            _count_handler: ReadCountHandler::new(storage, id),
-            data,
-        }
-    }
-
     pub fn map<O>(self, f: impl FnOnce(&'a T) -> &'a O) -> ReadHandle<'a, O> {
         let ret = ReadHandle {
-            _count_handler: self._count_handler,
+            access: self.access,
             data: f(&self.data),
         };
         ret
@@ -159,12 +145,12 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
         T: Send,
     {
         let ret = ThreadReadHandle {
-            id: self._count_handler.id,
+            id: self.access.id,
             data: self.data,
             panic_handle: Default::default(),
         };
         //Avoid running destructor
-        std::mem::forget(self._count_handler);
+        std::mem::forget(self.access);
 
         ret
     }
@@ -177,9 +163,9 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
     }
 }
 pub struct RawReadHandle<'a> {
-    _count_handler: ReadCountHandler<'a>,
-    pub data: *const u8,
-    pub layout: Layout,
+    #[allow(unused)]
+    access: RamAccessToken<'a>,
+    pub info: RamStorageInfo,
 }
 
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
@@ -198,7 +184,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
     pub fn into_main_handle(self, storage: &'a Storage) -> ReadHandle<'a, T> {
         self.panic_handle.dismiss();
         ReadHandle {
-            _count_handler: ReadCountHandler {
+            access: RamAccessToken {
                 storage,
                 id: self.id,
             },
@@ -208,16 +194,17 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
 }
 
 pub struct DropError<'a> {
-    storage: &'a Storage<'a>,
-    id: DataId,
+    access: RamAccessToken<'a>,
 }
 impl<'a> DropError<'a> {
     fn into_mark_initialized(self) -> DropMarkInitialized<'a> {
-        let id = self.id;
-        let storage = self.storage;
+        let id = self.access.id;
+        let storage = self.access.storage;
         // Avoid running destructor which would panic
         std::mem::forget(self);
-        DropMarkInitialized { storage, id }
+        DropMarkInitialized {
+            access: RamAccessToken { storage, id },
+        }
     }
 }
 impl Drop for DropError<'_> {
@@ -226,26 +213,36 @@ impl Drop for DropError<'_> {
     }
 }
 pub struct DropMarkInitialized<'a> {
-    storage: &'a Storage<'a>,
-    id: DataId,
+    access: RamAccessToken<'a>,
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.storage.new_data.borrow_mut().insert(LocatedDataId {
-            id: self.id,
-            location: DataLocation::Ram,
-        });
-        let mut binding = self.storage.state.index.borrow_mut();
-        let state = &mut binding
-            .get_mut(&self.id)
-            .unwrap()
-            .ram
-            .as_mut()
-            .unwrap()
-            .state;
-        assert!(!state.initialized());
-        let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
-        *state = RamStorageEntryState::Initialized(AccessState::UnRead(lru_id));
+        self.access
+            .storage
+            .new_data
+            .borrow_mut()
+            .insert(LocatedDataId {
+                id: self.access.id,
+                location: DataLocation::Ram,
+            });
+        {
+            let mut binding = self.access.storage.state.index.borrow_mut();
+            let state = &mut binding
+                .get_mut(&self.access.id)
+                .unwrap()
+                .ram
+                .as_mut()
+                .unwrap()
+                .state;
+            *state = match state {
+                s @ (RamStorageEntryState::Registered | RamStorageEntryState::Initialized(_)) => {
+                    panic!("Entry should be in state Initializing, but is in {:?}", s);
+                }
+                RamStorageEntryState::Initializing(info) => {
+                    RamStorageEntryState::Initialized(*info)
+                }
+            };
+        }
     }
 }
 
@@ -319,8 +316,10 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerInitialized> {
         self._panic_handle.dismiss();
         WriteHandle {
             drop_handler: DropMarkInitialized {
-                storage,
-                id: self.id,
+                access: RamAccessToken {
+                    storage,
+                    id: self.id,
+                },
             },
             data: self.data,
         }
@@ -331,8 +330,10 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerUninitialized> {
         self._panic_handle.dismiss();
         WriteHandle {
             drop_handler: DropError {
-                storage,
-                id: self.id,
+                access: RamAccessToken {
+                    storage,
+                    id: self.id,
+                },
             },
             data: self.data,
         }
@@ -344,12 +345,6 @@ pub type RawWriteHandleUninit<'a> = RawWriteHandle<DropError<'a>>;
 pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerUninitialized>;
 
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
-    pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
-        WriteHandle {
-            drop_handler: DropError { id, storage },
-            data,
-        }
-    }
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized(self) -> WriteHandleInit<'a, T> {
         WriteHandle {
@@ -361,7 +356,7 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     where
         T: Send,
     {
-        let id = self.drop_handler.id;
+        let id = self.drop_handler.access.id;
         std::mem::forget(self.drop_handler);
         ThreadWriteHandle {
             id,
@@ -386,17 +381,11 @@ pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
 pub type RawWriteHandleInit<'a> = RawWriteHandle<DropMarkInitialized<'a>>;
 pub type ThreadWriteHandleInit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerInitialized>;
 impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
-    pub fn new(storage: &'a Storage, id: DataId, data: &'a mut T) -> Self {
-        WriteHandle {
-            drop_handler: DropMarkInitialized { id, storage },
-            data,
-        }
-    }
     pub fn into_thread_handle(self) -> ThreadWriteHandleInit<'a, T>
     where
         T: Send,
     {
-        let id = self.drop_handler.id;
+        let id = self.drop_handler.access.id;
         std::mem::forget(self.drop_handler);
         ThreadWriteHandle {
             id,
@@ -617,20 +606,27 @@ impl<'a> Storage<'a> {
         for key in lru.drain_lru().into_iter() {
             let entry = index.get_mut(&key).unwrap();
             let ram_entry = entry.ram.take().unwrap();
-            let size = ram_entry.size;
+            let info = match ram_entry.state {
+                RamStorageEntryState::Registered => panic!("Should not be in LRU list"),
+                RamStorageEntryState::Initializing(info)
+                | RamStorageEntryState::Initialized(info) => info,
+            };
+            assert!(matches!(ram_entry.access, AccessState::None(_)));
+
             if !entry.is_present() {
                 index.remove(&key).unwrap();
             }
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.ram.dealloc(ram_entry.data) };
+            unsafe { self.ram.dealloc(info.data) };
             let data_key = LocatedDataId {
                 id: key,
                 location: DataLocation::Ram,
             };
             self.new_data.borrow_mut().remove(&data_key);
 
+            let size = info.layout.size();
             collected += size;
             let Some(rest) = goal_in_bytes.checked_sub(size) else {
                 break;
@@ -652,16 +648,24 @@ impl<'a> Storage<'a> {
         {
             let entry = index.get_mut(&key).unwrap();
             let ram_entry = entry.ram.take().unwrap();
+
+            let info = match ram_entry.state {
+                RamStorageEntryState::Registered => return Err(()),
+                RamStorageEntryState::Initializing(info)
+                | RamStorageEntryState::Initialized(info) => info,
+            };
+
             if !entry.is_present() {
                 index.remove(&key).unwrap();
 
-                let lru_index = ram_entry.state.lru_index().unwrap();
+                let lru_index = ram_entry.lru_index().unwrap();
                 self.state.lru_manager.borrow_mut().remove(lru_index);
             }
+
             // Safety: all data ptrs in the index have been allocated with the allocator.
             // Deallocation only happens exactly here where the entry is also removed from the
             // index.
-            unsafe { self.ram.dealloc(ram_entry.data) };
+            unsafe { self.ram.dealloc(info.data) };
             let data_key = LocatedDataId {
                 id: key,
                 location: DataLocation::Ram,
@@ -690,7 +694,15 @@ impl<'a> Storage<'a> {
             .get(&id)
             .map(|e| {
                 let mut res = Vec::new();
-                if e.ram.is_some() {
+                if e.ram
+                    .as_ref()
+                    .map(|e| match e.state {
+                        RamStorageEntryState::Initialized(_) => true,
+                        RamStorageEntryState::Registered => false,
+                        RamStorageEntryState::Initializing(_) => panic!("This should not happen"),
+                    })
+                    .unwrap_or(false)
+                {
                     res.push(DataLocation::Ram);
                 }
                 for (i, v) in e.vram.iter().enumerate() {
@@ -708,6 +720,24 @@ impl<'a> Storage<'a> {
         let mut d = self.new_data.borrow_mut();
         std::mem::swap(&mut *d, &mut place_holder);
         place_holder.into_iter()
+    }
+
+    pub fn register_ram_access(&self, id: DataId) -> RamAccessToken {
+        {
+            let mut index = self.state.index.borrow_mut();
+            let entry = index
+                .entry(id)
+                .or_insert_with(|| self.gen_empty_storage_entry());
+
+            if entry.ram.is_none() {
+                entry.ram = Some(RamEntry {
+                    state: RamStorageEntryState::Registered,
+                    access: AccessState::Some(0), // Will be overwritten immediately when generating
+                                                  // the RamToken
+                });
+            }
+        }
+        RamAccessToken::new(self, id)
     }
 
     // Allocates a GpuOnly storage buffer
@@ -730,12 +760,13 @@ impl<'a> Storage<'a> {
         let mut index = self.state.index.borrow_mut();
         let entry = index
             .entry(key)
-            .or_insert_with(|| self.gen_empty_storage_entry(layout));
+            .or_insert_with(|| self.gen_empty_storage_entry());
 
         let buffer = allocation.buffer;
         let prev = entry.vram[device].replace(VRamEntry {
             state: VRamStorageEntryState::Initializing,
             data: allocation,
+            layout,
         });
         assert!(prev.is_none());
 
@@ -784,44 +815,50 @@ impl<'a> Storage<'a> {
 
         Some(VRamReadHandle {
             buffer: vram_entry.data.buffer,
-            layout: entry.layout,
+            layout: vram_entry.layout,
             _marker: Default::default(),
         })
     }
 
-    fn gen_empty_storage_entry(&self, layout: Layout) -> StorageEntry {
+    fn gen_empty_storage_entry(&self) -> StorageEntry {
         StorageEntry {
             ram: None,
             vram: self.vram.iter().map(|_| None).collect(),
-            layout,
         }
     }
 
-    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<*mut u8, Error> {
-        let data = match self.ram.alloc(layout) {
-            Ok(d) => d,
-            Err(_e) => {
-                // Always try to free half of available ram
-                // TODO: Other solutions may be better.
-                let garbage_collect_goal = self.ram.size() / 2;
-                self.try_garbage_collect(garbage_collect_goal);
-                self.ram.alloc(layout)?
-            }
+    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<(*mut u8, RamAccessToken), Error> {
+        let data = {
+            let data = match self.ram.alloc(layout) {
+                Ok(d) => d,
+                Err(_e) => {
+                    // Always try to free half of available ram
+                    // TODO: Other solutions may be better.
+                    let garbage_collect_goal = self.ram.size() / 2;
+                    self.try_garbage_collect(garbage_collect_goal);
+                    self.ram.alloc(layout)?
+                }
+            };
+
+            let mut index = self.state.index.borrow_mut();
+            let entry = index
+                .entry(key)
+                .or_insert_with(|| self.gen_empty_storage_entry());
+
+            let info = RamStorageInfo { data, layout };
+
+            let prev = entry.ram.take();
+            let new_entry = RamEntry {
+                state: RamStorageEntryState::Initializing(info),
+                access: prev
+                    .map(|p| p.access)
+                    .unwrap_or_else(|| AccessState::Some(0)),
+            };
+            entry.ram = Some(new_entry);
+            data
         };
 
-        let mut index = self.state.index.borrow_mut();
-        let entry = index
-            .entry(key)
-            .or_insert_with(|| self.gen_empty_storage_entry(layout));
-
-        let prev = entry.ram.replace(RamEntry {
-            state: RamStorageEntryState::Initializing,
-            data,
-            size: layout.size(),
-        });
-        assert!(prev.is_none());
-
-        Ok(data)
+        Ok((data, RamAccessToken::new(self, key)))
     }
 
     pub fn alloc_ram_slot_raw(
@@ -829,15 +866,12 @@ impl<'a> Storage<'a> {
         key: DataId,
         layout: Layout,
     ) -> Result<RawWriteHandleUninit, Error> {
-        let ptr = self.alloc_ram(key, layout)?;
+        let (ptr, access) = self.alloc_ram(key, layout)?;
 
         Ok(RawWriteHandleUninit {
             data: ptr,
             layout,
-            drop_handler: DropError {
-                storage: self,
-                id: key,
-            },
+            drop_handler: DropError { access },
         })
     }
 
@@ -847,95 +881,133 @@ impl<'a> Storage<'a> {
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
-        let ptr = self.alloc_ram(key, layout)?;
+        let (ptr, access) = self.alloc_ram(key, layout)?;
 
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        Ok(WriteHandleUninit::new(self, key, t_ref))
-    }
-
-    /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub fn read_ram_raw<'b>(&'b self, key: DataId) -> Option<RawReadHandle<'b>> {
-        let (data, layout) = {
-            let index = self.state.index.borrow();
-            let entry = index.get(&key)?;
-            let ram_entry = entry.ram.as_ref()?;
-
-            if !ram_entry.state.initialized() {
-                return None;
-            }
-
-            (ram_entry.data, entry.layout)
-        };
-        Some(RawReadHandle {
-            _count_handler: ReadCountHandler::new(self, key),
-            data,
-            layout,
+        Ok(WriteHandleUninit {
+            data: t_ref,
+            drop_handler: DropError { access },
         })
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read_ram<'b, T: Copy>(&'b self, key: DataId) -> Option<ReadHandle<'b, [T]>> {
+    pub fn read_ram_raw<'b, 't: 'b>(
+        &'b self,
+        access: RamAccessToken<'t>,
+    ) -> Result<RawReadHandle<'b>, RamAccessToken<'t>> {
+        let info = {
+            let index = self.state.index.borrow();
+            let Some(entry) = index.get(&access.id) else {
+                return Err(access);
+            };
+            let Some(ram_entry) = entry.ram.as_ref() else {
+                return Err(access);
+            };
+            let RamStorageEntryState::Initialized(info) = ram_entry.state else {
+                return Err(access);
+            };
+
+            info
+        };
+        Ok(RawReadHandle { access, info })
+    }
+
+    /// Safety: The initial allocation for the TaskId must have happened with the same type
+    pub unsafe fn read_ram<'b, 't: 'b, T: Copy>(
+        &'b self,
+        access: RamAccessToken<'t>,
+    ) -> Result<ReadHandle<'b, [T]>, RamAccessToken<'t>> {
         let t_ref = {
             let index = self.state.index.borrow();
-            let entry = index.get(&key)?;
-            let ram_entry = entry.ram.as_ref()?;
+            let Some(entry) = index.get(&access.id) else {
+                return Err(access);
+            };
+            let Some(ram_entry) = entry.ram.as_ref() else {
+                return Err(access);
+            };
 
-            if !ram_entry.state.initialized() {
-                return None;
-            }
+            let RamStorageEntryState::Initialized(info) = ram_entry.state else {
+                return Err(access);
+            };
 
-            let ptr = ram_entry.data;
+            let ptr = info.data;
             let t_ptr = ptr.cast::<T>();
 
-            let num_elements = num_elms_in_array::<T>(ram_entry.size);
+            let num_elements = num_elms_in_array::<T>(info.layout.size());
 
             // Safety: Type matches as per contract upheld by caller. There are also no mutable
             // references to the slot since it has already been initialized.
             unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
         };
-        Some(ReadHandle::new(self, key, t_ref))
+        Ok(ReadHandle {
+            access,
+            data: t_ref,
+        })
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace<'b, T: Copy>(
+    pub unsafe fn try_update_inplace<'b, 't: 'b, T: Copy>(
         &'b self,
-        old_key: DataId,
+        old_access: RamAccessToken<'t>,
         new_key: DataId,
-    ) -> Option<Result<InplaceResult<'b, T>, Error>> {
+    ) -> Result<Result<InplaceResult<'b, T>, Error>, RamAccessToken<'t>> {
+        let old_key = old_access.id;
+
         let mut index = self.state.index.borrow_mut();
-        let entry = index.get(&old_key)?;
-        let ram_entry = entry.ram.as_ref()?;
-        assert!(ram_entry.state.initialized());
+        let Some(entry) = index.get(&old_access.id) else {
+                return Err(old_access);
+            };
+        let Some(ram_entry) = entry.ram.as_ref() else {
+                return Err(old_access);
+            };
 
-        let num_elements = num_elms_in_array::<T>(ram_entry.size);
+        let RamStorageEntryState::Initialized(info) = ram_entry.state else {
+            return Err(old_access)
+        };
 
-        let ptr = ram_entry.data;
+        let num_elements = num_elms_in_array::<T>(info.layout.size());
+
+        let ptr = info.data;
         let t_ptr = ptr.cast::<T>();
 
-        let in_place_possible = ram_entry.safe_to_delete();
-        Some(Ok(if in_place_possible {
-            let mut entry = index.remove(&old_key).unwrap();
-            let ram_entry = entry.ram.as_mut().unwrap();
+        // Only allow inplace if we are EXACTLY the one reader
+        let in_place_possible = matches!(ram_entry.access, AccessState::Some(1));
 
-            // safe_to_delete => there is an lru_index
-            let lru_index = ram_entry.state.lru_index().unwrap();
-            self.state.lru_manager.borrow_mut().remove(lru_index);
+        Ok(Ok(if in_place_possible {
+            // Repurpose access key for the read/write handle
+            let mut new_access = old_access;
+            new_access.id = new_key;
 
-            ram_entry.state = RamStorageEntryState::Initializing;
+            let _old_entry = index.remove(&old_key).unwrap();
+            let new_entry = index
+                .entry(new_key)
+                .or_insert_with(|| self.gen_empty_storage_entry());
 
-            let prev = index.insert(new_key, entry);
-            assert!(prev.is_none());
+            let prev = new_entry.ram.take();
+            let access = match prev.map(|v| v.access) {
+                Some(AccessState::Some(n)) => AccessState::Some(n + 1),
+                Some(AccessState::None(_)) => panic!("If present, entry should have accessors"),
+                None => AccessState::Some(1),
+            };
+            let new_ram_entry = RamEntry {
+                state: RamStorageEntryState::Initializing(info),
+                access,
+            };
+            new_entry.ram = Some(new_ram_entry);
 
             // Safety: Type matches as per contract upheld by caller. There are also no other
             // references to the slot since it has (1.) been already initialized and (2.) there are
             // no readers. In other words: safe_to_delete also implies no other references.
             let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
 
-            InplaceResult::Inplace(WriteHandleInit::new(self, new_key, t_ref))
+            InplaceResult::Inplace(WriteHandleInit {
+                data: t_ref,
+                drop_handler: DropMarkInitialized { access: new_access },
+            })
         } else {
             std::mem::drop(index); // Release borrow for alloc
 
@@ -945,9 +1017,12 @@ impl<'a> Storage<'a> {
 
             let w = match self.alloc_ram_slot(new_key, num_elements) {
                 Ok(w) => w,
-                Err(e) => return Some(Err(e)),
+                Err(e) => return Ok(Err(e)),
             };
-            let r = ReadHandle::new(self, old_key, t_ref);
+            let r = ReadHandle {
+                data: t_ref,
+                access: RamAccessToken::new(self, old_key),
+            };
             InplaceResult::New(r, w)
         }))
     }

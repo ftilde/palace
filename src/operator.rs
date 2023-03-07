@@ -110,8 +110,21 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
                 source: self,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| unsafe {
-                ctx.storage.read_ram(id).map(|v| *v.map(|a| &a[0]))
+            gen_poll: Box::new(move |ctx| {
+                // TODO: The Option shenanigans are actually not really required here. We just have
+                // to convince the compiler... Revisit.
+                let mut access = Some(ctx.storage.register_ram_access(id));
+                Box::new(move || unsafe {
+                    access = match ctx
+                        .storage
+                        .read_ram(access.take().unwrap())
+                        .map(|v| *v.map(|a| &a[0]))
+                    {
+                        Ok(v) => return Some(v),
+                        Err(access) => Some(access),
+                    };
+                    None
+                })
             }),
             _marker: Default::default(),
         }
@@ -178,7 +191,18 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 source: self,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| unsafe { ctx.storage.read_ram(id) }),
+            gen_poll: Box::new(move |ctx| {
+                // TODO: The Option shenanigans are actually not really required here. We just have
+                // to convince the compiler... Revisit.
+                let mut access = Some(ctx.storage.register_ram_access(id));
+                Box::new(move || unsafe {
+                    access = match ctx.storage.read_ram(access.take().unwrap()) {
+                        Ok(v) => return Some(v),
+                        Err(access) => Some(access),
+                    };
+                    None
+                })
+            }),
             _marker: Default::default(),
         }
     }
@@ -200,7 +224,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 source: self,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| ctx.storage.read_vram(gpu, id)),
+            gen_poll: Box::new(move |ctx| Box::new(move || ctx.storage.read_vram(gpu, id))),
             _marker: Default::default(),
         }
     }
@@ -223,7 +247,21 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 source: self,
                 item: TypeErased::pack(item),
             }),
-            poll: Box::new(move |ctx| unsafe { ctx.storage.try_update_inplace(read_id, write_id) }),
+            gen_poll: Box::new(move |ctx| {
+                // TODO: The Option shenanigans are actually not really required here. We just have
+                // to convince the compiler... Revisit.
+                let mut access = Some(ctx.storage.register_ram_access(read_id));
+                Box::new(move || unsafe {
+                    access = match ctx
+                        .storage
+                        .try_update_inplace(access.take().unwrap(), write_id)
+                    {
+                        Ok(v) => return Some(v),
+                        Err(access) => Some(access),
+                    };
+                    None
+                })
+            }),
             _marker: Default::default(),
         }
     }

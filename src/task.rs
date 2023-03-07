@@ -42,7 +42,7 @@ impl RequestInfo<'_> {
     }
 }
 
-type ResultPoll<'a, V> = Box<dyn FnMut(PollContext<'a>) -> Option<V> + 'a>;
+type ResultPoll<'a, V> = Box<dyn FnMut() -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
     pub id: LocatedDataId,
@@ -82,7 +82,7 @@ pub struct ThreadPoolJob {
 
 pub struct Request<'req, 'inv, V> {
     pub type_: RequestType<'inv>,
-    pub poll: ResultPoll<'req, V>,
+    pub gen_poll: Box<dyn FnOnce(PollContext<'req>) -> ResultPoll<'req, V> + 'req>,
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
 
@@ -110,21 +110,21 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
     pub fn submit<'req, V: 'req>(
         &'req self,
-        mut request: Request<'req, 'inv, V>,
+        request: Request<'req, 'inv, V>,
     ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
         async move {
+            let request_id = request.id();
+            let mut poll = (request.gen_poll)(PollContext {
+                storage: self.storage,
+            });
             match request.type_ {
                 RequestType::Data(_) | RequestType::Group(_) => {
-                    if let Some(res) = (request.poll)(PollContext {
-                        storage: self.storage,
-                    }) {
+                    if let Some(res) = poll() {
                         return std::future::ready(res).await;
                     }
                 }
                 RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
             };
-
-            let request_id = request.id();
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
                 ProgressIndicator::PartialPossible
@@ -140,9 +140,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             futures::pending!();
 
             loop {
-                if let Some(data) = (request.poll)(PollContext {
-                    storage: self.storage,
-                }) {
+                if let Some(data) = poll() {
                     self.hints.noticed_completion(request_id);
                     return std::future::ready(data).await;
                 } else {
@@ -274,12 +272,13 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
         ret
     }
 
-    pub fn push_request(&mut self, (mut req, data): (Request<'req, 'inv, V>, D)) {
+    pub fn push_request(&mut self, (req, data): (Request<'req, 'inv, V>, D)) {
+        let mut poll = (req.gen_poll)(PollContext {
+            storage: self.task_context.storage,
+        });
         match req.type_ {
             RequestType::Data(_) | RequestType::Group(_) => {
-                if let Some(r) = (req.poll)(PollContext {
-                    storage: self.task_context.storage,
-                }) {
+                if let Some(r) = poll() {
                     self.ready.push_back((r, data));
                     return;
                 }
@@ -292,7 +291,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             task: req.type_,
             progress_indicator: ProgressIndicator::PartialPossible,
         });
-        entry.push((req.poll, data));
+        entry.push((poll, data));
     }
 }
 
@@ -317,9 +316,7 @@ impl<'req, 'inv, V, D> futures::Stream for RequestStreamSource<'req, 'inv, V, D>
                 *t = std::mem::take(t)
                     .into_iter()
                     .filter_map(|(mut result_poll, data)| {
-                        if let Some(v) = result_poll(PollContext {
-                            storage: s.task_context.storage,
-                        }) {
+                        if let Some(v) = result_poll() {
                             s.task_context.hints.noticed_completion(c);
                             s.ready.push_back((v, data));
                             None
@@ -435,18 +432,19 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
         let mut ids: Vec<Id> = Vec::with_capacity(l);
         let mut done = Vec::with_capacity(l);
 
-        for (i, mut r) in r.into_iter().enumerate() {
+        for (i, r) in r.into_iter().enumerate() {
             match r.id() {
                 RequestId::Data(d) => ids.push(Id::hash(&d)),
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
                 RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
                 RequestId::Group(g) => ids.push(g.0),
             }
+            let mut poll = (r.gen_poll)(PollContext {
+                storage: self.storage(),
+            });
             match r.type_ {
                 RequestType::Data(_) | RequestType::Group(_) => {
-                    if let Some(v) = (r.poll)(PollContext {
-                        storage: self.storage(),
-                    }) {
+                    if let Some(v) = poll() {
                         done.push(MaybeUninit::new(v));
                         continue;
                     }
@@ -454,7 +452,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                 RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
             }
             done.push(MaybeUninit::uninit());
-            polls.push((i, r.poll));
+            polls.push((i, poll));
             types.push(r.type_);
         }
         let id = Id::combine(&ids[..]);
@@ -463,27 +461,29 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                 id: GroupId(id),
                 all: types,
             }),
-            poll: Box::new(move |ctx| {
-                // TODO: possibly add some kind of information which ones are ready?
-                polls.retain_mut(|(i, poll)| match poll(ctx) {
-                    Some(v) => {
-                        done[*i].write(v);
-                        false
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    // TODO: possibly add some kind of information which ones are ready?
+                    polls.retain_mut(|(i, poll)| match poll() {
+                        Some(v) => {
+                            done[*i].write(v);
+                            false
+                        }
+                        None => true,
+                    });
+                    if polls.is_empty() {
+                        let ret = std::mem::take(&mut done);
+                        // TODO: The following "should" basically be a noop. Maybe this can be
+                        // optimized, but maybe the compiler already does a good job for this.
+                        let ret = ret
+                            .into_iter()
+                            .map(|v| unsafe { v.assume_init() })
+                            .collect();
+                        Some(ret)
+                    } else {
+                        None
                     }
-                    None => true,
-                });
-                if polls.is_empty() {
-                    let ret = std::mem::take(&mut done);
-                    // TODO: The following "should" basically be a noop. Maybe this can be
-                    // optimized, but maybe the compiler already does a good job for this.
-                    let ret = ret
-                        .into_iter()
-                        .map(|v| unsafe { v.assume_init() })
-                        .collect();
-                    Some(ret)
-                } else {
-                    None
-                }
+                })
             }),
             _marker: Default::default(),
         }
