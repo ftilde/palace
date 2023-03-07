@@ -387,10 +387,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             (DataLocation::VRam(source_id), DataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
+                let device = &self.data.device_contexts[source_id];
+                let access = self.data.storage.register_vram_access(device, data);
                 let transfer_task = self.transfer_manager.transfer_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
-                    data,
+                    access,
                 );
                 Some((task_id, transfer_task))
             }

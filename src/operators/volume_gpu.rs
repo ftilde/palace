@@ -280,7 +280,7 @@ impl<'a> AsDescriptor for VRamReadHandle<'a> {
     }
 }
 
-impl<D> AsDescriptor for VRamWriteHandle<D> {
+impl<'a> AsDescriptor for VRamWriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -394,10 +394,10 @@ void main()
                 while let Some((gpu_brick_in, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
-                    device.with_cmd_buffer(|cmd| {
-                        let gpu_brick_out =
-                            ctx.alloc_slot_gpu(cmd, pos, brick_info.mem_elements())?;
+                    let gpu_brick_out =
+                        ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
 
+                    device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &scale_gpu,
                             &offset_gpu,
@@ -429,14 +429,12 @@ void main()
                                 1,
                             );
                         }
+                    });
 
-                        // TODO: Maybe to allow more parallel access we want to postpone this,
-                        // since this involves a memory barrier
-                        // Possible alternative: Only insert barriers before use/download
-                        unsafe { gpu_brick_out.initialized() };
-
-                        Ok::<(), crate::Error>(())
-                    })?;
+                    // TODO: Maybe to allow more parallel access we want to postpone this,
+                    // since this involves a memory barrier
+                    // Possible alternative: Only insert barriers before use/download
+                    unsafe { gpu_brick_out.initialized() };
                 }
 
                 Ok(())
@@ -574,11 +572,11 @@ void main() {
                 {
                     let out_info = m_out.chunk_info(pos);
 
-                    device.with_cmd_buffer(|cmd| {
-                        let gpu_brick_out = ctx
-                            .alloc_slot_gpu(cmd, pos, out_info.mem_elements())
-                            .unwrap();
+                    let gpu_brick_out = ctx
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                        .unwrap();
 
+                    device.with_cmd_buffer(|cmd| {
                         let out_begin = out_info.begin();
                         let out_end = out_info.end();
 
@@ -638,9 +636,8 @@ void main() {
                                 );
                             }
                         }
-
-                        unsafe { gpu_brick_out.initialized() };
                     });
+                    unsafe { gpu_brick_out.initialized() };
                 }
 
                 Ok(())

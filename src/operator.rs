@@ -220,7 +220,19 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 source: self,
                 item: TypeErased::pack(item),
             }),
-            gen_poll: Box::new(move |ctx| Box::new(move || ctx.storage.read_vram(gpu, id))),
+            gen_poll: Box::new(move |ctx| {
+                let device = &ctx.device_contexts[gpu];
+                let mut access = Some(ctx.storage.register_vram_access(device, id));
+                Box::new(
+                    move || match ctx.storage.read_vram(device, access.take().unwrap()) {
+                        Ok(r) => Some(r),
+                        Err(t) => {
+                            access = Some(t);
+                            None
+                        }
+                    },
+                )
+            }),
             _marker: Default::default(),
         }
     }

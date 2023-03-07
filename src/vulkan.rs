@@ -1,5 +1,4 @@
 use crate::id::Id;
-use crate::operator::DataId;
 use crate::operator::OperatorId;
 use crate::task::OpaqueTaskContext;
 use crate::task::Request;
@@ -391,7 +390,7 @@ pub struct CommandBuffer {
     fence: vk::Fence,
     id: CmdBufferSubmissionId,
     device: ash::Device,
-    used: bool,
+    used: Cell<bool>,
 }
 
 impl CommandBuffer {
@@ -456,8 +455,8 @@ impl TransferManager {
                 )
             };
 
+            let gpu_buf_out = storage.alloc_vram_slot_raw(device, key, layout)?;
             device.with_cmd_buffer(|cmd| {
-                let gpu_buf_out = storage.alloc_vram_slot_raw(cmd, key, layout)?;
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
                     device.device.cmd_copy_buffer(
@@ -468,9 +467,9 @@ impl TransferManager {
                     );
                 }
 
-                unsafe { gpu_buf_out.initialized() };
                 Ok::<(), crate::Error>(())
             })?;
+            unsafe { gpu_buf_out.initialized() };
 
             ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
@@ -488,11 +487,14 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        key: DataId,
+        access: crate::storage::VRamAccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
+            let key = access.id;
             let storage = ctx.storage;
-            let gpu_buf_in = storage.read_vram(device.id, key).unwrap();
+            let Ok(gpu_buf_in) = storage.read_vram(device, access) else {
+                panic!("Data should already be in vram");
+            };
             let layout = gpu_buf_in.layout;
 
             let staging_buf = device.staging_to_cpu.request(&device.allocator, layout);
@@ -715,6 +717,10 @@ impl DeviceContext {
             .unwrap_or_else(|| self.current_command_buffer.borrow().id.epoch > epoch)
     }
 
+    pub fn current_epoch(&self) -> CmdBufferEpoch {
+        self.current_command_buffer.borrow().id.epoch
+    }
+
     fn create_command_buffer(
         command_pool: vk::CommandPool,
         device: &ash::Device,
@@ -764,13 +770,13 @@ impl DeviceContext {
             fence,
             id,
             device,
-            used: false,
+            used: Cell::new(false),
         }
     }
 
     pub(crate) fn try_submit_and_cycle_command_buffer(&self) {
         let mut current = self.current_command_buffer.borrow_mut();
-        if !current.used {
+        if !current.used.get() {
             return;
         }
 
@@ -913,10 +919,10 @@ impl DeviceContext {
     }
 
     pub fn with_cmd_buffer<R, F: FnOnce(&CommandBuffer) -> R>(&self, f: F) -> R {
-        let mut cmd_buf = self.current_command_buffer.borrow_mut();
-        cmd_buf.used = true;
+        let cmd_buf = self.current_command_buffer.borrow();
+        cmd_buf.used.set(true);
 
-        f(&mut *cmd_buf)
+        f(&cmd_buf)
     }
 }
 
