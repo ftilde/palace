@@ -387,7 +387,7 @@ pub fn linear_rescale<'op>(
                     })?;
                 }
 
-                ctx.submit(device.wait_for_cmd_buffer_submission()).await;
+                ctx.submit(device.wait_for_cmd_buffer_completion()).await;
                 device.allocator().deallocate(gpu_config);
 
                 Ok(())

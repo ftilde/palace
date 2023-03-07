@@ -447,7 +447,7 @@ impl TransferManager {
             let staging_buf = device.staging_to_gpu.request(&device.allocator, layout);
             let out_ptr = staging_buf.allocation.mapped_ptr().unwrap();
 
-            // Safety: Both buffers contain plain butes, are of the same size and do not overlap.
+            // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     input_buf.info.data,
@@ -472,7 +472,7 @@ impl TransferManager {
                 Ok::<(), crate::Error>(())
             })?;
 
-            ctx.submit(device.wait_for_cmd_buffer_submission()).await;
+            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
             // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
             // in copying anymore and can be freed.
@@ -511,12 +511,14 @@ impl TransferManager {
                 Ok::<(), crate::Error>(())
             })?;
 
-            ctx.submit(device.wait_for_cmd_buffer_submission()).await;
+            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
             let out_buf = storage.alloc_ram_slot_raw(key, layout).unwrap();
 
             // Safety: Both buffers have `layout` as their layout. Staging buf data is now valid
-            // since we have waited for the command buffer to finish.
+            // since we have waited for the command buffer to finish. This content has also reached
+            // the mapped region of the staging_buf allocation since it was allocated with
+            // HOST_VISIBLE and HOST_COHERENT.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     staging_buf.allocation.mapped_ptr().unwrap().as_ptr().cast(),
@@ -525,7 +527,7 @@ impl TransferManager {
                 )
             };
 
-            // Safety: We have just written the buffer using a memcpy
+            // Safety: We have just written the complete buffer using a memcpy
             unsafe {
                 out_buf.initialized();
             }
@@ -701,6 +703,18 @@ impl DeviceContext {
             .map(|(index, _memory_type)| index as _)
     }
 
+    pub fn cmd_buffer_completed(
+        &self,
+        CmdBufferSubmissionId { device, epoch }: CmdBufferSubmissionId,
+    ) -> bool {
+        assert_eq!(device, self.id);
+        self.waiting_command_buffers
+            .borrow()
+            .first_key_value()
+            .map(|(k, _)| k > &epoch)
+            .unwrap_or_else(|| self.current_command_buffer.borrow().id.epoch > epoch)
+    }
+
     fn create_command_buffer(
         command_pool: vk::CommandPool,
         device: &ash::Device,
@@ -819,17 +833,20 @@ impl DeviceContext {
     }
 
     #[must_use]
-    pub fn wait_for_cmd_buffer_submission<'req, 'irrelevant>(
+    pub fn wait_for_cmd_buffer_completion<'req, 'irrelevant>(
         &'req self,
     ) -> Request<'req, 'irrelevant, ()> {
         let current = self.current_command_buffer.borrow();
         let id = current.id;
         Request {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
-            gen_poll: Box::new(move |_ctx| {
-                Box::new(|| {
-                    // Assuming that this will only ever be polled if ready.
-                    Some(())
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || {
+                    if ctx.device_contexts[id.device].cmd_buffer_completed(id) {
+                        Some(())
+                    } else {
+                        None
+                    }
                 })
             }),
             _marker: Default::default(),

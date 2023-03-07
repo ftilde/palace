@@ -96,6 +96,7 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
     pub storage: &'cref Storage<'cref>,
+    pub device_contexts: &'cref [DeviceContext],
 }
 
 #[derive(Copy, Clone)]
@@ -117,6 +118,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             let request_id = request.id();
             let mut poll = (request.gen_poll)(PollContext {
                 storage: self.storage,
+                device_contexts: self.device_contexts,
             });
             match request.type_ {
                 RequestType::Data(_) | RequestType::Group(_) => {
@@ -276,6 +278,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
     pub fn push_request(&mut self, (req, data): (Request<'req, 'inv, V>, D)) {
         let mut poll = (req.gen_poll)(PollContext {
             storage: self.task_context.storage,
+            device_contexts: self.task_context.device_contexts,
         });
         match req.type_ {
             RequestType::Data(_) | RequestType::Group(_) => {
@@ -441,7 +444,8 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
                 RequestId::Group(g) => ids.push(g.0),
             }
             let mut poll = (r.gen_poll)(PollContext {
-                storage: self.storage(),
+                storage: self.inner.storage,
+                device_contexts: self.inner.device_contexts,
             });
             match r.type_ {
                 RequestType::Data(_) | RequestType::Group(_) => {
