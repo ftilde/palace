@@ -370,7 +370,7 @@ pub struct DeviceContext {
 
     command_pool: vk::CommandPool,
     available_command_buffers: RefCell<Vec<RawCommandBuffer>>,
-    waiting_command_buffers: RefCell<BTreeMap<CmdBufferSubmissionId, RawCommandBuffer>>,
+    waiting_command_buffers: RefCell<BTreeMap<CmdBufferEpoch, RawCommandBuffer>>,
     current_command_buffer: RefCell<CommandBuffer>,
 
     pub id: DeviceId,
@@ -543,10 +543,14 @@ impl TransferManager {
 }
 
 pub type DeviceId = usize;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CmdBufferEpoch(usize);
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferSubmissionId {
     pub device: DeviceId,
-    pub num: usize,
+    pub epoch: CmdBufferEpoch,
 }
 
 impl DeviceContext {
@@ -738,7 +742,7 @@ impl DeviceContext {
 
         let id = CmdBufferSubmissionId {
             device: id,
-            num: submission_id,
+            epoch: CmdBufferEpoch(submission_id),
         };
 
         CommandBuffer {
@@ -808,9 +812,10 @@ impl DeviceContext {
         let CommandBuffer {
             buffer, fence, id, ..
         } = prev_cmd_buffer;
+        let CmdBufferSubmissionId { epoch, .. } = id;
         self.waiting_command_buffers
             .borrow_mut()
-            .insert(id, RawCommandBuffer { buffer, fence });
+            .insert(epoch, RawCommandBuffer { buffer, fence });
     }
 
     #[must_use]
@@ -854,7 +859,7 @@ impl DeviceContext {
         // TODO: replace with BTreeMap::drain_filter once stable
         let new_waiting = waiting
             .into_iter()
-            .filter_map(|(id, command_buffer)| {
+            .filter_map(|(epoch, command_buffer)| {
                 if unsafe {
                     self.device
                         .get_fence_status(command_buffer.fence)
@@ -875,10 +880,13 @@ impl DeviceContext {
                     self.available_command_buffers
                         .borrow_mut()
                         .push(command_buffer);
-                    result.push(id);
+                    result.push(CmdBufferSubmissionId {
+                        device: self.id,
+                        epoch,
+                    });
                     None
                 } else {
-                    Some((id, command_buffer))
+                    Some((epoch, command_buffer))
                 }
             })
             .collect();
