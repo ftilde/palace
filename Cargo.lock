@@ -365,6 +365,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
 name = "futures"
 version = "0.3.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1319,6 +1325,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "spirq"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71c88764cd9145ec7ae858530ece53950f5674b97c048e6567ef4fa59e3fdb0b"
+dependencies = [
+ "fnv",
+ "num-derive",
+ "num-traits",
+ "spirv",
+]
+
+[[package]]
+name = "spirv"
+version = "0.2.0+1.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "246bfa38fe3db3f1dfc8ca5a2cdeb7348c78be2112740cc0ec8ef18b6d94f830"
+dependencies = [
+ "bitflags",
+ "num-traits",
+]
+
+[[package]]
 name = "spirv-compiler"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1538,6 +1566,7 @@ dependencies = [
  "oneshot",
  "pin-project",
  "sha1_smol",
+ "spirq",
  "spirv-compiler",
  "sxd-document",
  "sxd-xpath",

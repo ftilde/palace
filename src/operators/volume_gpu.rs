@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use ash::vk::{self};
 use crevice::std140::{AsStd140, Std140};
 use futures::StreamExt;
+use spirq::{EntryPoint, ReflectConfig};
 
 use crate::{
     operator::OperatorId,
@@ -60,15 +63,25 @@ void main()
 
 struct Shader {
     module: vk::ShaderModule,
+    entry_points: Vec<EntryPoint>,
 }
 
 impl Shader {
     fn from_compiled(device: &DeviceContext, code: &[u32]) -> Self {
         let info = vk::ShaderModuleCreateInfo::builder().code(&code);
 
+        let entry_points = ReflectConfig::new()
+            .spv(code)
+            .ref_all_rscs(true)
+            .reflect()
+            .unwrap();
+
         let module = unsafe { device.device.create_shader_module(&info, None) }.unwrap();
 
-        Self { module }
+        Self {
+            module,
+            entry_points,
+        }
     }
     fn from_source(device: &DeviceContext, source: &str) -> Self {
         use spirv_compiler::*;
@@ -93,27 +106,99 @@ impl VulkanState for Shader {
 struct ComputePipeline {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
 }
 
 impl ComputePipeline {
-    fn new(
-        device: &DeviceContext,
-        shader: &str,
-        descriptor_set_bindings: &[vk::DescriptorSetLayoutBinding],
-        push_constant_ranges: &[vk::PushConstantRange],
-    ) -> Self {
+    fn new(device: &DeviceContext, shader: &str) -> Self {
         let mut shader = Shader::from_source(device, shader);
 
-        let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&descriptor_set_bindings)
-            .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
-        let descriptor_set_layout =
-            unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
-        let dsls = &[descriptor_set_layout];
+        let entry_point_name = "main";
+        let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
 
+        let pipeline_info = vk::PipelineShaderStageCreateInfo::builder()
+            .module(shader.module)
+            .name(&entry_point_name_c)
+            .stage(vk::ShaderStageFlags::COMPUTE);
+
+        let entry_point = shader
+            .entry_points
+            .iter()
+            .find(|e| e.name == entry_point_name)
+            .expect("Shader does not have the expected entry point name");
+
+        assert_eq!(entry_point.exec_model, spirq::ExecutionModel::GLCompute);
+
+        let mut descriptor_bindings: BTreeMap<u32, Vec<_>> = BTreeMap::new();
+        let mut push_constant = None;
+        let stage = vk::ShaderStageFlags::COMPUTE;
+
+        for var in &entry_point.vars {
+            match var {
+                spirq::Variable::Input { .. } => panic!("Unexpected input var"),
+                spirq::Variable::Output { .. } => panic!("Unexpected output var"),
+                spirq::Variable::Descriptor {
+                    name: _,
+                    desc_bind,
+                    desc_ty,
+                    ty: _,
+                    nbind: _,
+                } => {
+                    let d_type = match desc_ty {
+                        spirq::DescriptorType::Sampler() => todo!(),
+                        spirq::DescriptorType::CombinedImageSampler() => todo!(),
+                        spirq::DescriptorType::SampledImage() => todo!(),
+                        spirq::DescriptorType::StorageImage(_) => todo!(),
+                        spirq::DescriptorType::UniformTexelBuffer() => todo!(),
+                        spirq::DescriptorType::StorageTexelBuffer(_) => todo!(),
+                        spirq::DescriptorType::UniformBuffer() => {
+                            vk::DescriptorType::UNIFORM_BUFFER
+                        }
+                        spirq::DescriptorType::StorageBuffer(_) => {
+                            vk::DescriptorType::STORAGE_BUFFER
+                        }
+                        spirq::DescriptorType::InputAttachment(_) => todo!(),
+                        spirq::DescriptorType::AccelStruct() => todo!(),
+                    };
+                    let binding = vk::DescriptorSetLayoutBinding::builder()
+                        .binding(desc_bind.bind())
+                        .descriptor_type(d_type)
+                        .descriptor_count(1)
+                        .stage_flags(stage)
+                        .build();
+
+                    let set = desc_bind.set();
+                    let set_bindings = descriptor_bindings.entry(set).or_default();
+                    set_bindings.push(binding);
+                }
+                spirq::Variable::PushConstant { name: _, ty } => {
+                    let c = vk::PushConstantRange::builder()
+                        .size(ty.nbyte().unwrap().try_into().unwrap())
+                        .stage_flags(stage)
+                        .build();
+                    let prev = push_constant.replace(c);
+                    assert!(prev.is_none(), "Should only have on push constant");
+                }
+                spirq::Variable::SpecConstant { .. } => panic!("Unexpected spec constant"),
+            }
+        }
+
+        let descriptor_set_layouts = descriptor_bindings
+            .into_iter()
+            .map(|(_, bindings)| {
+                let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder()
+                    .bindings(&bindings)
+                    .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
+                unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let push_constant_ranges = push_constant
+            .as_ref()
+            .map(std::slice::from_ref)
+            .unwrap_or(&[]);
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(dsls)
+            .set_layouts(&descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
 
         let pipeline_layout = unsafe {
@@ -122,11 +207,6 @@ impl ComputePipeline {
                 .create_pipeline_layout(&pipeline_layout_info, None)
         }
         .unwrap();
-
-        let pipeline_info = vk::PipelineShaderStageCreateInfo::builder()
-            .module(shader.module)
-            .name(cstr::cstr!("main"))
-            .stage(vk::ShaderStageFlags::COMPUTE);
 
         let pipeline_info = vk::ComputePipelineCreateInfo::builder()
             .stage(*pipeline_info)
@@ -149,7 +229,7 @@ impl ComputePipeline {
         Self {
             pipeline,
             pipeline_layout,
-            descriptor_set_layout,
+            descriptor_set_layouts,
         }
     }
 
@@ -194,9 +274,11 @@ impl ComputePipeline {
 impl VulkanState for ComputePipeline {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         unsafe {
-            context
-                .device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            for descriptor_set_layout in &self.descriptor_set_layouts {
+                context
+                    .device
+                    .destroy_descriptor_set_layout(*descriptor_set_layout, None);
+            }
             context.device.destroy_pipeline(self.pipeline, None);
             context
                 .device
@@ -278,40 +360,7 @@ pub fn linear_rescale<'op>(
                 };
 
                 let pipeline = device.request_state("linear_rescale_gpu_pipeline", || {
-                    // TODO: It would be nice to derive these automagically from the shader.
-                    // https://crates.io/crates/spirv-tools may be useful for this.
-                    let bindings = [
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                            .build(),
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                            .build(),
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                            .build(),
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(3)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                            .build(),
-                    ];
-                    let push_constants = [vk::PushConstantRange::builder()
-                        .size(PushConstants::std140_size_static() as _)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .build()];
-
-                    ComputePipeline::new(device, SHADER, &bindings, &push_constants)
+                    ComputePipeline::new(device, SHADER)
                 });
 
                 let mut brick_stream = ctx.submit_unordered_with_data(
