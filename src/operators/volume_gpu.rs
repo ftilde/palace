@@ -1,61 +1,19 @@
 use std::collections::BTreeMap;
 
-use ash::vk::{self};
+use ash::vk;
 use crevice::std140::{AsStd140, Std140};
 use futures::StreamExt;
 use spirq::{EntryPoint, ReflectConfig};
 
 use crate::{
+    data::{BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
+    id::Id,
     operator::OperatorId,
     storage::{VRamReadHandle, VRamWriteHandle},
     vulkan::{DeviceContext, VulkanState},
 };
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
-
-#[derive(Copy, Clone, AsStd140)]
-struct PushConstants {
-    chunk_pos: mint::Vector3<u32>,
-    num_chunk_elems: u32,
-}
-
-const SHADER: &'static str = r#"
-#version 450
-
-layout (local_size_x = 256) in;
-
-layout(std430, binding = 0) readonly buffer InputScale{
-    float value;
-} scale;
-
-layout(std430, binding = 1) readonly buffer InputOffset{
-    float value;
-} offset;
-
-layout(std430, binding = 2) readonly buffer InputBuffer{
-    float values[];
-} sourceData;
-
-layout(std430, binding = 3) buffer OutputBuffer{
-    float values[];
-} outputData;
-
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 chunk_pos;
-    uint num_chunk_elems;
-} constants;
-
-void main()
-{
-    uint gID = gl_GlobalInvocationID.x;
-
-    if(gID < constants.num_chunk_elems) {
-        outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
-    }
-}
-
-"#;
 
 //fn layout_std140<T: AsStd140>() -> Layout {
 //    unsafe { Layout::from_size_align_unchecked(T::std140_size_static(), T::Output::ALIGNMENT) }
@@ -356,6 +314,48 @@ pub fn linear_rescale<'op>(
     scale: ScalarOperator<'op, f32>,
     offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
+    #[derive(Copy, Clone, AsStd140)]
+    struct PushConstants {
+        chunk_pos: mint::Vector3<u32>,
+        num_chunk_elems: u32,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputScale{
+    float value;
+} scale;
+
+layout(std430, binding = 1) readonly buffer InputOffset{
+    float value;
+} offset;
+
+layout(std430, binding = 2) readonly buffer InputBuffer{
+    float values[];
+} sourceData;
+
+layout(std430, binding = 3) buffer OutputBuffer{
+    float values[];
+} outputData;
+
+layout(std140, push_constant) uniform PushConstants
+{
+    uvec3 chunk_pos;
+    uint num_chunk_elems;
+} constants;
+
+void main()
+{
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < constants.num_chunk_elems) {
+        outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
+    }
+}
+"#;
+
     VolumeOperator::with_state(
         OperatorId::new("volume_scale_gpu")
             .dependent_on(&input)
@@ -437,6 +437,210 @@ pub fn linear_rescale<'op>(
 
                         Ok::<(), crate::Error>(())
                     })?;
+                }
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
+pub fn rechunk<'op>(
+    input: VolumeOperator<'op>,
+    brick_size: LocalVoxelPosition,
+) -> VolumeOperator<'op> {
+    #[derive(Copy, Clone, AsStd140)]
+    struct PushConstants {
+        mem_size_in: mint::Vector3<u32>,
+        mem_size_out: mint::Vector3<u32>,
+        begin_in: mint::Vector3<u32>,
+        begin_out: mint::Vector3<u32>,
+        region_size: mint::Vector3<u32>,
+        global_size: u32,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    float values[];
+} sourceData;
+
+layout(std430, binding = 1) buffer OutputBuffer{
+    float values[];
+} outputData;
+
+layout(std140, push_constant) uniform PushConstants
+{
+    uvec3 mem_size_in;
+    uvec3 mem_size_out;
+    uvec3 begin_in;
+    uvec3 begin_out;
+    uvec3 region_size;
+    uint global_size;
+} constants;
+
+uvec3 from_linear(uint linear_pos, uvec3 size) {
+    uvec3 vec_pos;
+    vec_pos.x = linear_pos % size.x;
+    linear_pos /= size.x;
+    vec_pos.y = linear_pos % size.y;
+    linear_pos /= size.y;
+    vec_pos.z = linear_pos;
+
+    return vec_pos;
+}
+
+uint to_linear(uvec3 vec_pos, uvec3 size) {
+    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
+}
+
+void main() {
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < constants.global_size) {
+        uvec3 region_pos = from_linear(gID, constants.region_size);
+
+        uvec3 in_pos = constants.begin_in + region_pos;
+        uvec3 out_pos = constants.begin_out + region_pos;
+
+        uint in_index = to_linear(in_pos, constants.mem_size_in);
+        uint out_index = to_linear(out_pos, constants.mem_size_out);
+
+        outputData.values[out_index] = sourceData.values[in_index];
+    }
+}
+"#;
+    VolumeOperator::with_state(
+        OperatorId::new("volume_rechunk_gpu")
+            .dependent_on(&input)
+            .dependent_on(Id::hash(&brick_size)),
+        input.clone(),
+        input,
+        move |ctx, input, _| {
+            async move {
+                let req = input.metadata.request_scalar();
+                let mut m = ctx.submit(req).await;
+                m.chunk_size = brick_size;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, input, _| {
+            // TODO: optimize case where input.brick_size == output.brick_size
+            async move {
+                let device = ctx.vulkan_device();
+
+                let pipeline = device.request_state("volume_rechunk_gpu_pipeline", || {
+                    ComputePipeline::new(device, SHADER)
+                });
+
+                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let m_out = {
+                    let mut m_out = m_in;
+                    m_out.chunk_size = brick_size;
+                    m_out
+                };
+
+                let requests = positions.into_iter().map(|pos| {
+                    let out_info = m_out.chunk_info(pos);
+                    let out_begin = out_info.begin();
+                    let out_end = out_info.end();
+
+                    let in_begin_brick = m_in.chunk_pos(out_begin);
+                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
+
+                    let in_brick_positions = itertools::iproduct! {
+                        in_begin_brick.z().raw..=in_end_brick.z().raw,
+                        in_begin_brick.y().raw..=in_end_brick.y().raw,
+                        in_begin_brick.x().raw..=in_end_brick.x().raw
+                    }
+                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
+                    .collect::<Vec<_>>();
+                    let intersecting_bricks = ctx.group(
+                        in_brick_positions
+                            .iter()
+                            .map(|pos| input.bricks.request_gpu(device.id, *pos)),
+                    );
+
+                    (intersecting_bricks, (pos, in_brick_positions))
+                });
+
+                let mut stream = ctx.submit_unordered_with_data(requests);
+                while let Some((intersecting_bricks, (pos, in_brick_positions))) =
+                    stream.next().await
+                {
+                    let out_info = m_out.chunk_info(pos);
+
+                    device.with_cmd_buffer(|cmd| {
+                        let gpu_brick_out = ctx
+                            .alloc_slot_gpu(cmd, pos, out_info.mem_elements())
+                            .unwrap();
+
+                        let out_begin = out_info.begin();
+                        let out_end = out_info.end();
+
+                        for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                            .iter()
+                            .zip(in_brick_positions.into_iter())
+                        {
+                            let in_info = m_in.chunk_info(in_brick_pos);
+
+                            let in_begin = in_info.begin();
+                            let in_end = in_info.end();
+
+                            let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
+                            let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                            let overlap_size = (overlap_end - overlap_begin)
+                                .map(LocalVoxelCoordinate::interpret_as);
+
+                            let in_chunk_begin = in_info.in_chunk(overlap_begin);
+
+                            let out_chunk_begin = out_info.in_chunk(overlap_begin);
+
+                            let descriptor_config =
+                                DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
+                            let descriptor_writes = descriptor_config.writes();
+
+                            let local_size = pipeline.local_size();
+
+                            let global_size = crate::data::hmul(overlap_size);
+                            let num_wgs = crate::util::div_round_up(global_size, local_size);
+
+                            //TODO initialization of outside regions
+                            unsafe {
+                                pipeline.bind(device, cmd.raw());
+                                pipeline.push_constant(
+                                    device,
+                                    cmd.raw(),
+                                    PushConstants {
+                                        mem_size_in: m_in.chunk_size.into_elem::<u32>().into(),
+                                        mem_size_out: m_out.chunk_size.into_elem::<u32>().into(),
+                                        begin_in: in_chunk_begin.into_elem::<u32>().into(),
+                                        begin_out: out_chunk_begin.into_elem::<u32>().into(),
+                                        region_size: overlap_size.into_elem::<u32>().into(),
+                                        global_size: global_size as _,
+                                    },
+                                );
+                                pipeline.push_descriptor_set(
+                                    device,
+                                    cmd.raw(),
+                                    0,
+                                    &descriptor_writes,
+                                );
+                                device.device.cmd_dispatch(
+                                    cmd.raw(),
+                                    num_wgs.try_into().unwrap(),
+                                    1,
+                                    1,
+                                );
+                            }
+                        }
+
+                        unsafe { gpu_brick_out.initialized() };
+                    });
                 }
 
                 Ok(())
