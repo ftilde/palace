@@ -13,8 +13,6 @@ use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
 #[derive(Copy, Clone, AsStd140)]
 struct Config {
-    offset: f32,
-    scale: f32,
     num_chunk_elems: u32,
 }
 
@@ -29,22 +27,28 @@ const SHADER: &'static str = r#"
 layout (local_size_x = 256) in;
 
 layout(std140, binding = 0) uniform Config{
-    float offset;
-    float scale;
     uint num_chunk_elems;
 } config;
 
-layout(std430, binding = 1) readonly buffer InputBuffer{
+layout(std430, binding = 1) readonly buffer InputScale{
+    float value;
+} scale;
+
+layout(std430, binding = 2) readonly buffer InputOffset{
+    float value;
+} offset;
+
+layout(std430, binding = 3) readonly buffer InputBuffer{
     float values[];
 } sourceData;
 
-layout(std430, binding = 2) buffer OutputBuffer{
+layout(std430, binding = 4) buffer OutputBuffer{
     float values[];
 } outputData;
 
 layout(std140, push_constant) uniform PushConstants
 {
-	uvec3 chunk_pos;
+    uvec3 chunk_pos;
 } constants;
 
 void main()
@@ -52,7 +56,7 @@ void main()
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < config.num_chunk_elems) {
-        outputData.values[gID] = config.scale*sourceData.values[gID] + config.offset;
+        outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
     }
 }
 
@@ -231,19 +235,17 @@ pub fn linear_rescale<'op>(
         },
         move |ctx, positions, (input, scale, offset), _| {
             async move {
-                let (scale, offset, m) = futures::join! {
-                    ctx.submit(scale.request_scalar()),
-                    ctx.submit(offset.request_scalar()),
+                let device = ctx.vulkan_device();
+
+                let (scale_gpu, offset_gpu, m) = futures::join! {
+                    ctx.submit(scale.request_gpu(device.id, ())),
+                    ctx.submit(offset.request_gpu(device.id, ())),
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
                 let config = Config {
-                    scale,
-                    offset,
                     num_chunk_elems: crate::data::hmul(m.chunk_size).try_into().unwrap(),
                 };
-
-                let device = ctx.vulkan_device();
 
                 let gpu_config = device.allocator().allocate(
                     layout_std140::<Config>(),
@@ -273,6 +275,18 @@ pub fn linear_rescale<'op>(
                             .build(),
                         vk::DescriptorSetLayoutBinding::builder()
                             .binding(2)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .build(),
+                        vk::DescriptorSetLayoutBinding::builder()
+                            .binding(3)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .build(),
+                        vk::DescriptorSetLayoutBinding::builder()
+                            .binding(4)
                             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                             .descriptor_count(1)
                             .stage_flags(vk::ShaderStageFlags::COMPUTE)
@@ -320,6 +334,14 @@ pub fn linear_rescale<'op>(
                         let gpu_brick_out =
                             ctx.alloc_slot_gpu(cmd, pos, brick_info.mem_elements())?;
 
+                        let db_info_scale = vk::DescriptorBufferInfo::builder()
+                            .buffer(scale_gpu.buffer)
+                            .range(scale_gpu.layout.size() as _);
+
+                        let db_info_offset = vk::DescriptorBufferInfo::builder()
+                            .buffer(offset_gpu.buffer)
+                            .range(offset_gpu.layout.size() as _);
+
                         let db_info_in = vk::DescriptorBufferInfo::builder()
                             .buffer(gpu_brick_in.buffer)
                             .range(gpu_brick_in.layout.size() as _);
@@ -332,8 +354,10 @@ pub fn linear_rescale<'op>(
                         // lifetime of the builder and thus buffer_info parameters which allows us
                         // to use a temporary slice like &[*db_info_in] resulting in invalid reads.
                         let buf0 = [*config_descriptor_info];
-                        let buf1 = [*db_info_in];
-                        let buf2 = [*db_info_out];
+                        let buf1 = [*db_info_scale];
+                        let buf2 = [*db_info_offset];
+                        let buf3 = [*db_info_in];
+                        let buf4 = [*db_info_out];
                         let descriptor_writes = [
                             vk::WriteDescriptorSet::builder()
                                 .dst_binding(0)
@@ -352,6 +376,18 @@ pub fn linear_rescale<'op>(
                                 .dst_array_element(0)
                                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                                 .buffer_info(&buf2)
+                                .build(),
+                            vk::WriteDescriptorSet::builder()
+                                .dst_binding(3)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(&buf3)
+                                .build(),
+                            vk::WriteDescriptorSet::builder()
+                                .dst_binding(4)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(&buf4)
                                 .build(),
                         ];
 
