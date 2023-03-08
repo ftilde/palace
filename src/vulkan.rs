@@ -225,7 +225,7 @@ pub struct StagingBufferStash {
 
 pub struct CachedAllocation {
     inner: Allocation,
-    alignment: usize,
+    requested_layout: Layout, //May differ from layout of the allocation, at least in size
 }
 
 impl std::ops::Deref for CachedAllocation {
@@ -252,17 +252,16 @@ impl StagingBufferStash {
             .unwrap_or_else(|| allocator.allocate(layout, self.flags, self.buf_type));
         CachedAllocation {
             inner,
-            alignment: layout.align(),
+            requested_layout: layout,
         }
     }
     /// Safety: The buffer must have previously been allocated from this stash
     unsafe fn return_buf(&self, allocation: CachedAllocation) {
-        let layout = Layout::from_size_align_unchecked(
-            allocation.inner.allocation.size() as _,
-            allocation.alignment,
-        );
         let mut buffers = self.buffers.borrow_mut();
-        buffers.get_mut(&layout).unwrap().push(allocation.inner);
+        buffers
+            .get_mut(&allocation.requested_layout)
+            .unwrap()
+            .push(allocation.inner);
     }
 
     /// Safety: The allocator must be the same that was used for all `request`s.
