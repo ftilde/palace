@@ -649,3 +649,38 @@ void main() {
         },
     )
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{data::VoxelPosition, operators::volume::VolumeOperatorState, test_util::*};
+
+    #[test]
+    fn test_rescale_gpu() {
+        // Small
+        let size = VoxelPosition::fill(5.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let (point_vol, center) = center_point_vol(size, brick_size);
+        {
+            let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+                for z in 0..size.z().raw {
+                    for y in 0..size.y().raw {
+                        for x in 0..size.x().raw {
+                            let pos = VoxelPosition::from([z, y, x]);
+                            if pos != center {
+                                comp[pos.as_index()] = 1.0;
+                            }
+                        }
+                    }
+                }
+                comp[center.as_index()] = -1.0;
+            };
+            let scale = (-2.0).into();
+            let offset = (1.0).into();
+            let input = point_vol.operate();
+            let output = linear_rescale(input, scale, offset);
+            compare_volume(output, size, fill_expected);
+        };
+    }
+}

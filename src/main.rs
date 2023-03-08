@@ -21,6 +21,8 @@ mod storage;
 mod task;
 mod task_graph;
 mod task_manager;
+#[cfg(test)]
+mod test_util;
 mod threadpool;
 mod util;
 mod vulkan;
