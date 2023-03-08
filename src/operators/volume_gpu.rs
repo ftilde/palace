@@ -227,6 +227,26 @@ impl<D> AsDescriptor for VRamWriteHandle<D> {
     }
 }
 
+struct DescriptorConfig<const N: usize> {
+    buffer_infos: [vk::DescriptorBufferInfo; N],
+}
+impl<const N: usize> DescriptorConfig<N> {
+    fn new(buffers: [&dyn AsDescriptor; N]) -> Self {
+        let buffer_infos = std::array::from_fn(|i| buffers[i].gen_buffer_info());
+        Self { buffer_infos }
+    }
+    fn writes(&self) -> [vk::WriteDescriptorSet; N] {
+        std::array::from_fn(|i| {
+            vk::WriteDescriptorSet::builder()
+                .dst_binding(i as u32)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(std::slice::from_ref(&self.buffer_infos[i]))
+                .build()
+        })
+    }
+}
+
 pub fn linear_rescale<'op>(
     input: VolumeOperator<'op>,
     scale: ScalarOperator<'op, f32>,
@@ -307,39 +327,13 @@ pub fn linear_rescale<'op>(
                         let gpu_brick_out =
                             ctx.alloc_slot_gpu(cmd, pos, brick_info.mem_elements())?;
 
-                        // TODO: Using build is really dangerous territory since it discards the
-                        // lifetime of the builder and thus buffer_info parameters which allows us
-                        // to use a temporary slice like &[*db_info_in] resulting in invalid reads.
-                        let buf0 = [scale_gpu.gen_buffer_info()];
-                        let buf1 = [offset_gpu.gen_buffer_info()];
-                        let buf2 = [gpu_brick_in.gen_buffer_info()];
-                        let buf3 = [gpu_brick_out.gen_buffer_info()];
-                        let descriptor_writes = [
-                            vk::WriteDescriptorSet::builder()
-                                .dst_binding(0)
-                                .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&buf0)
-                                .build(),
-                            vk::WriteDescriptorSet::builder()
-                                .dst_binding(1)
-                                .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&buf1)
-                                .build(),
-                            vk::WriteDescriptorSet::builder()
-                                .dst_binding(2)
-                                .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&buf2)
-                                .build(),
-                            vk::WriteDescriptorSet::builder()
-                                .dst_binding(3)
-                                .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&buf3)
-                                .build(),
-                        ];
+                        let descriptor_config = DescriptorConfig::new([
+                            &scale_gpu,
+                            &offset_gpu,
+                            &gpu_brick_in,
+                            &gpu_brick_out,
+                        ]);
+                        let descriptor_writes = descriptor_config.writes();
 
                         let local_size = 256; //TODO: somehow ensure that this is the same as specified
                                               //in shader
