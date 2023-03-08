@@ -1567,6 +1567,7 @@ dependencies = [
  "pin-project",
  "sha1_smol",
  "spirq",
+ "spirv",
  "spirv-compiler",
  "sxd-document",
  "sxd-xpath",

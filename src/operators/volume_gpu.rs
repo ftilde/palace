@@ -107,6 +107,7 @@ struct ComputePipeline {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
+    local_size: usize,
 }
 
 impl ComputePipeline {
@@ -131,6 +132,7 @@ impl ComputePipeline {
 
         let mut descriptor_bindings: BTreeMap<u32, Vec<_>> = BTreeMap::new();
         let mut push_constant = None;
+        let mut local_size = None;
         let stage = vk::ShaderStageFlags::COMPUTE;
 
         for var in &entry_point.vars {
@@ -183,6 +185,22 @@ impl ComputePipeline {
             }
         }
 
+        for e in &entry_point.exec_modes {
+            match e.exec_mode {
+                spirv::ExecutionMode::LocalSize => {
+                    let ls = e.operands.first().unwrap().value.to_u32();
+                    let prev = local_size.replace(ls);
+                    assert!(prev.is_none());
+                }
+                _ => {}
+            }
+        }
+
+        let local_size = local_size
+            .expect("local size should have been specified in shader")
+            .try_into()
+            .unwrap();
+
         let descriptor_set_layouts = descriptor_bindings
             .into_iter()
             .map(|(_, bindings)| {
@@ -230,6 +248,7 @@ impl ComputePipeline {
             pipeline,
             pipeline_layout,
             descriptor_set_layouts,
+            local_size,
         }
     }
 
@@ -268,6 +287,9 @@ impl ComputePipeline {
             0,
             val.as_std140().as_bytes(),
         );
+    }
+    fn local_size(&self) -> usize {
+        self.local_size
     }
 }
 
@@ -384,8 +406,8 @@ pub fn linear_rescale<'op>(
                         ]);
                         let descriptor_writes = descriptor_config.writes();
 
-                        let local_size = 256; //TODO: somehow ensure that this is the same as specified
-                                              //in shader
+                        let local_size = pipeline.local_size();
+
                         let global_size = brick_info.mem_elements();
                         let num_wgs = crate::util::div_round_up(global_size, local_size);
 
