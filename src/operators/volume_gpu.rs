@@ -1,24 +1,19 @@
-use std::alloc::Layout;
-
-use ash::vk::{self, BufferUsageFlags};
+use ash::vk::{self};
 use crevice::std140::{AsStd140, Std140};
 use futures::StreamExt;
 
 use crate::{
     operator::OperatorId,
+    storage::{VRamReadHandle, VRamWriteHandle},
     vulkan::{DeviceContext, VulkanState},
 };
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
 #[derive(Copy, Clone, AsStd140)]
-struct Config {
-    num_chunk_elems: u32,
-}
-
-#[derive(Copy, Clone, AsStd140)]
 struct PushConstants {
     chunk_pos: mint::Vector3<u32>,
+    num_chunk_elems: u32,
 }
 
 const SHADER: &'static str = r#"
@@ -26,45 +21,42 @@ const SHADER: &'static str = r#"
 
 layout (local_size_x = 256) in;
 
-layout(std140, binding = 0) uniform Config{
-    uint num_chunk_elems;
-} config;
-
-layout(std430, binding = 1) readonly buffer InputScale{
+layout(std430, binding = 0) readonly buffer InputScale{
     float value;
 } scale;
 
-layout(std430, binding = 2) readonly buffer InputOffset{
+layout(std430, binding = 1) readonly buffer InputOffset{
     float value;
 } offset;
 
-layout(std430, binding = 3) readonly buffer InputBuffer{
+layout(std430, binding = 2) readonly buffer InputBuffer{
     float values[];
 } sourceData;
 
-layout(std430, binding = 4) buffer OutputBuffer{
+layout(std430, binding = 3) buffer OutputBuffer{
     float values[];
 } outputData;
 
 layout(std140, push_constant) uniform PushConstants
 {
     uvec3 chunk_pos;
+    uint num_chunk_elems;
 } constants;
 
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
 
-    if(gID < config.num_chunk_elems) {
+    if(gID < constants.num_chunk_elems) {
         outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
     }
 }
 
 "#;
 
-fn layout_std140<T: AsStd140>() -> Layout {
-    unsafe { Layout::from_size_align_unchecked(T::std140_size_static(), T::Output::ALIGNMENT) }
-}
+//fn layout_std140<T: AsStd140>() -> Layout {
+//    unsafe { Layout::from_size_align_unchecked(T::std140_size_static(), T::Output::ALIGNMENT) }
+//}
 
 struct Shader {
     module: vk::ShaderModule,
@@ -213,6 +205,28 @@ impl VulkanState for ComputePipeline {
     }
 }
 
+trait AsDescriptor {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
+}
+
+impl<'a> AsDescriptor for VRamReadHandle<'a> {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::builder()
+            .buffer(self.buffer)
+            .range(self.layout.size() as _)
+            .build()
+    }
+}
+
+impl<D> AsDescriptor for VRamWriteHandle<D> {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::builder()
+            .buffer(self.buffer)
+            .range(self.size as _)
+            .build()
+    }
+}
+
 pub fn linear_rescale<'op>(
     input: VolumeOperator<'op>,
     scale: ScalarOperator<'op, f32>,
@@ -243,27 +257,13 @@ pub fn linear_rescale<'op>(
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
-                let config = Config {
-                    num_chunk_elems: crate::data::hmul(m.chunk_size).try_into().unwrap(),
-                };
-
-                let gpu_config = device.allocator().allocate(
-                    layout_std140::<Config>(),
-                    BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::UNIFORM_BUFFER,
-                    gpu_allocator::MemoryLocation::GpuOnly,
-                );
-
-                let config_descriptor_info = vk::DescriptorBufferInfo::builder()
-                    .buffer(gpu_config.buffer)
-                    .range(gpu_config.allocation.size());
-
                 let pipeline = device.request_state("linear_rescale_gpu_pipeline", || {
                     // TODO: It would be nice to derive these automagically from the shader.
                     // https://crates.io/crates/spirv-tools may be useful for this.
                     let bindings = [
                         vk::DescriptorSetLayoutBinding::builder()
                             .binding(0)
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                             .descriptor_count(1)
                             .stage_flags(vk::ShaderStageFlags::COMPUTE)
                             .build(),
@@ -285,12 +285,6 @@ pub fn linear_rescale<'op>(
                             .descriptor_count(1)
                             .stage_flags(vk::ShaderStageFlags::COMPUTE)
                             .build(),
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(4)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                            .build(),
                     ];
                     let push_constants = [vk::PushConstantRange::builder()
                         .size(PushConstants::std140_size_static() as _)
@@ -306,27 +300,6 @@ pub fn linear_rescale<'op>(
                         .map(|pos| (input.bricks.request_gpu(device.id, *pos), *pos)),
                 );
 
-                device.with_cmd_buffer(|cmd| unsafe {
-                    device.device.cmd_update_buffer(
-                        cmd.raw(),
-                        gpu_config.buffer,
-                        0,
-                        config.as_std140().as_bytes(),
-                    );
-
-                    let memory_barriers = &[vk::MemoryBarrier2::builder()
-                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-                        .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                        .build()];
-                    let barrier_info =
-                        vk::DependencyInfo::builder().memory_barriers(memory_barriers);
-                    device
-                        .device
-                        .cmd_pipeline_barrier2(cmd.raw(), &barrier_info);
-                });
-
                 while let Some((gpu_brick_in, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
@@ -334,35 +307,18 @@ pub fn linear_rescale<'op>(
                         let gpu_brick_out =
                             ctx.alloc_slot_gpu(cmd, pos, brick_info.mem_elements())?;
 
-                        let db_info_scale = vk::DescriptorBufferInfo::builder()
-                            .buffer(scale_gpu.buffer)
-                            .range(scale_gpu.layout.size() as _);
-
-                        let db_info_offset = vk::DescriptorBufferInfo::builder()
-                            .buffer(offset_gpu.buffer)
-                            .range(offset_gpu.layout.size() as _);
-
-                        let db_info_in = vk::DescriptorBufferInfo::builder()
-                            .buffer(gpu_brick_in.buffer)
-                            .range(gpu_brick_in.layout.size() as _);
-
-                        let db_info_out = vk::DescriptorBufferInfo::builder()
-                            .buffer(gpu_brick_out.buffer)
-                            .range(gpu_brick_out.size);
-
                         // TODO: Using build is really dangerous territory since it discards the
                         // lifetime of the builder and thus buffer_info parameters which allows us
                         // to use a temporary slice like &[*db_info_in] resulting in invalid reads.
-                        let buf0 = [*config_descriptor_info];
-                        let buf1 = [*db_info_scale];
-                        let buf2 = [*db_info_offset];
-                        let buf3 = [*db_info_in];
-                        let buf4 = [*db_info_out];
+                        let buf0 = [scale_gpu.gen_buffer_info()];
+                        let buf1 = [offset_gpu.gen_buffer_info()];
+                        let buf2 = [gpu_brick_in.gen_buffer_info()];
+                        let buf3 = [gpu_brick_out.gen_buffer_info()];
                         let descriptor_writes = [
                             vk::WriteDescriptorSet::builder()
                                 .dst_binding(0)
                                 .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                                 .buffer_info(&buf0)
                                 .build(),
                             vk::WriteDescriptorSet::builder()
@@ -383,12 +339,6 @@ pub fn linear_rescale<'op>(
                                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                                 .buffer_info(&buf3)
                                 .build(),
-                            vk::WriteDescriptorSet::builder()
-                                .dst_binding(4)
-                                .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                                .buffer_info(&buf4)
-                                .build(),
                         ];
 
                         let local_size = 256; //TODO: somehow ensure that this is the same as specified
@@ -403,6 +353,7 @@ pub fn linear_rescale<'op>(
                                 cmd.raw(),
                                 PushConstants {
                                     chunk_pos: pos.into_elem::<u32>().into(),
+                                    num_chunk_elems: m.num_elements().try_into().unwrap(),
                                 },
                             );
                             pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
@@ -422,9 +373,6 @@ pub fn linear_rescale<'op>(
                         Ok::<(), crate::Error>(())
                     })?;
                 }
-
-                ctx.submit(device.wait_for_cmd_buffer_completion()).await;
-                device.allocator().deallocate(gpu_config);
 
                 Ok(())
             }
