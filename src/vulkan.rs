@@ -213,7 +213,7 @@ impl Drop for VulkanManager {
 }
 
 pub struct Allocation {
-    pub allocation: gpu_allocator::vulkan::Allocation,
+    allocation: gpu_allocator::vulkan::Allocation,
     pub buffer: vk::Buffer,
 }
 
