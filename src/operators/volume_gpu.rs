@@ -657,30 +657,55 @@ mod test {
 
     #[test]
     fn test_rescale_gpu() {
-        // Small
         let size = VoxelPosition::fill(5.into());
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let (point_vol, center) = center_point_vol(size, brick_size);
-        {
-            let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
-                for z in 0..size.z().raw {
-                    for y in 0..size.y().raw {
-                        for x in 0..size.x().raw {
-                            let pos = VoxelPosition::from([z, y, x]);
-                            if pos != center {
-                                comp[pos.as_index()] = 1.0;
-                            }
+
+        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+            for z in 0..size.z().raw {
+                for y in 0..size.y().raw {
+                    for x in 0..size.x().raw {
+                        let pos = VoxelPosition::from([z, y, x]);
+                        if pos != center {
+                            comp[pos.as_index()] = 1.0;
                         }
                     }
                 }
-                comp[center.as_index()] = -1.0;
-            };
-            let scale = (-2.0).into();
-            let offset = (1.0).into();
-            let input = point_vol.operate();
-            let output = linear_rescale(input, scale, offset);
-            compare_volume(output, size, fill_expected);
+            }
+            comp[center.as_index()] = -1.0;
         };
+        let scale = (-2.0).into();
+        let offset = (1.0).into();
+        let input = point_vol.operate();
+        let output = linear_rescale(input, scale, offset);
+        compare_volume(output, size, fill_expected);
+    }
+
+    #[test]
+    fn test_rechunk_gpu() {
+        let size = VoxelPosition::fill(5.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let input = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            crate::data::to_linear(v, size) as f32
+        });
+
+        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+            for z in 0..size.z().raw {
+                for y in 0..size.y().raw {
+                    for x in 0..size.x().raw {
+                        let pos = VoxelPosition::from([z, y, x]);
+                        let val = crate::data::to_linear(pos, size) as f32;
+                        comp[pos.as_index()] = val
+                    }
+                }
+            }
+        };
+        let input = input.operate();
+        for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
+            let output = rechunk(input.clone(), LocalVoxelPosition::from(chunk_size));
+            compare_volume(output, size, fill_expected);
+        }
     }
 }
