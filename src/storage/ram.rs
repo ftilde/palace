@@ -424,7 +424,7 @@ impl Storage {
             };
             goal_in_bytes = rest;
         }
-        println!("Garbage collect: {}B", collected);
+        println!("Garbage collect RAM: {}B", collected);
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {

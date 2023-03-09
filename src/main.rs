@@ -122,7 +122,7 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let rechunked = volume::rechunk(vol, LocalVoxelPosition::fill(48.into()));
+    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()));
 
     let smoothing_kernel = &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0];
     let convolved = volume::separable_convolution(
@@ -131,8 +131,8 @@ fn eval_network(
     );
     let mapped = volume::map(convolved, |v| v.min(0.5));
 
-    let scaled1 = volume::linear_rescale(mapped, factor.into(), 0.0.into());
-    let scaled2 = volume::linear_rescale(scaled1, factor.into(), 0.0.into());
+    let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
+    let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
     let scaled2 = volume_gpu::linear_rescale(scaled2, (-1.0).into(), 0.0.into());
 
     let mean = volume::mean(scaled2);

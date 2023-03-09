@@ -40,6 +40,13 @@ impl LRUManager {
         new
     }
 
+    fn get_next(&self) -> Option<DataId> {
+        self.list.first_key_value().map(|(_, d)| *d)
+    }
+    fn pop_next(&mut self) {
+        self.list.pop_first();
+    }
+
     fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = DataId> + 'a {
         std::iter::from_fn(move || {
             return self.list.pop_first().map(|(_, d)| d);

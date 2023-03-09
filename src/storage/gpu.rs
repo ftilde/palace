@@ -1,6 +1,7 @@
 use std::{alloc::Layout, cell::RefCell, collections::BTreeMap};
 
 use ash::vk;
+use gpu_allocator::vulkan::AllocationScheme;
 
 use crate::{
     operator::DataId,
@@ -9,10 +10,12 @@ use crate::{
     Error,
 };
 
+use super::LRUIndex;
+
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
     Some(usize),
-    None(/*LRUIndex, */ CmdBufferEpoch),
+    None(LRUIndex, CmdBufferEpoch),
 }
 
 enum StorageEntryState {
@@ -22,7 +25,7 @@ enum StorageEntryState {
 }
 
 struct StorageInfo {
-    pub allocation: crate::vulkan::Allocation,
+    pub allocation: Allocation,
     pub layout: Layout,
 }
 
@@ -43,8 +46,8 @@ impl<'a> AccessToken<'a> {
 
         vram_entry.access = match vram_entry.access {
             AccessState::Some(n) => AccessState::Some(n + 1),
-            AccessState::None(/*id, */ _) => {
-                //storage.state.lru_manager.borrow_mut().remove(id);
+            AccessState::None(id, _) => {
+                storage.lru_manager.borrow_mut().remove(id);
                 AccessState::Some(1)
             }
         };
@@ -63,8 +66,8 @@ impl Drop for AccessToken<'_> {
 
         vram_entry.access = match vram_entry.access {
             AccessState::Some(1) => {
-                //let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
-                AccessState::None(/*lru_id, */ self.device.current_epoch())
+                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+                AccessState::None(lru_id, self.device.current_epoch())
             }
             AccessState::Some(n) => AccessState::Some(n - 1),
             AccessState::None(..) => {
@@ -145,25 +148,21 @@ pub struct ReadHandle<'a> {
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
-    _lru_manager: RefCell<super::LRUManager>,
-    allocator: crate::vulkan::Allocator,
+    lru_manager: RefCell<super::LRUManager>,
+    allocator: Allocator,
     new_data: super::NewDataManager,
     id: DeviceId,
 }
 
 impl Storage {
-    pub fn new(device: DeviceId, allocator: crate::vulkan::Allocator) -> Self {
+    pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
             index: Default::default(),
-            _lru_manager: Default::default(),
+            lru_manager: Default::default(),
             allocator,
             new_data: Default::default(),
             id: device,
         }
-    }
-
-    pub(crate) fn allocator(&self) -> &crate::vulkan::Allocator {
-        &self.allocator
     }
 
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
@@ -178,6 +177,50 @@ impl Storage {
                 }
             }
         }
+    }
+
+    pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) {
+        let mut lru = self.lru_manager.borrow_mut();
+        let mut index = self.index.borrow_mut();
+        let mut collected = 0;
+        while let Some(key) = lru.get_next() {
+            let entry = index.get_mut(&key).unwrap();
+            let AccessState::None(_, f) = entry.access else {
+                panic!("Should not be in LRU list");
+            };
+            if !device.cmd_buffer_completed(f) {
+                // All following LRU items will have the same or a later epoch so cannot be deleted
+                // either
+                break;
+            }
+
+            let entry = index.remove(&key).unwrap();
+
+            let info = match entry.state {
+                StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                    info
+                }
+            };
+
+            // Safety: All allocations in the index have been allocated with the allocator.
+            // Deallocation only happens exactly here where the entry is also removed from the
+            // index. The allocation is also not used on the gpu anymore since the last access
+            // epoch has already passed.
+            unsafe { self.allocator.deallocate(info.allocation) };
+
+            self.new_data.remove(key);
+
+            lru.pop_next();
+
+            let size = info.layout.size();
+            collected += size;
+            let Some(rest) = goal_in_bytes.checked_sub(size) else {
+                break;
+            };
+            goal_in_bytes = rest;
+        }
+        println!("Garbage collect GPU: {}B", collected);
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {
@@ -208,20 +251,43 @@ impl Storage {
         AccessToken::new(self, device, id)
     }
 
+    pub fn allocate(
+        &self,
+        device: &DeviceContext,
+        layout: Layout,
+        use_flags: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> Allocation {
+        match self.allocator.allocate(layout, use_flags, location) {
+            Ok(a) => a,
+            Err(_e) => {
+                let garbage_collect_goal = 1 << 30;
+                self.try_garbage_collect(device, garbage_collect_goal);
+                self.allocator
+                    .allocate(layout, use_flags, location)
+                    .expect("Out of memory and nothing we can do about it.")
+            }
+        }
+    }
+
+    /// Safety: Allocation must come from this storage
+    pub unsafe fn deallocate(&self, allocation: Allocation) {
+        self.allocator.deallocate(allocation);
+    }
+
     // Allocates a GpuOnly storage buffer
-    fn alloc<'b>(
+    fn alloc_ssbo<'b>(
         &'b self,
         device: &'b DeviceContext,
         key: DataId,
         layout: Layout,
     ) -> Result<(ash::vk::Buffer, AccessToken<'b>), Error> {
-        let allocation = self.allocator.allocate(
-            layout,
-            ash::vk::BufferUsageFlags::STORAGE_BUFFER
-                | ash::vk::BufferUsageFlags::TRANSFER_DST
-                | ash::vk::BufferUsageFlags::TRANSFER_SRC,
-            crate::vulkan::MemoryLocation::GpuOnly,
-        );
+        let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
+            | ash::vk::BufferUsageFlags::TRANSFER_DST
+            | ash::vk::BufferUsageFlags::TRANSFER_SRC;
+        let location = MemoryLocation::GpuOnly;
+        let allocation = self.allocate(device, layout, flags, location);
+
         let buffer = allocation.buffer;
 
         {
@@ -248,7 +314,7 @@ impl Storage {
         layout: Layout,
     ) -> Result<WriteHandle<'b>, Error> {
         let size = layout.size();
-        let (buffer, access) = self.alloc(device, key, layout)?;
+        let (buffer, access) = self.alloc_ssbo(device, key, layout)?;
 
         Ok(WriteHandle {
             buffer,
@@ -290,5 +356,98 @@ impl Storage {
 
     pub fn deinitialize(&mut self) {
         self.allocator.deinitialize();
+    }
+}
+
+pub struct Allocation {
+    allocation: gpu_allocator::vulkan::Allocation,
+    pub buffer: vk::Buffer,
+}
+
+impl Allocation {
+    pub fn mapped_ptr(&self) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
+        self.allocation.mapped_ptr()
+    }
+}
+
+pub struct Allocator {
+    allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
+    device: ash::Device,
+}
+
+pub type MemoryLocation = gpu_allocator::MemoryLocation;
+
+impl Allocator {
+    pub fn new(
+        instance: ash::Instance,
+        device: ash::Device,
+        physical_device: vk::PhysicalDevice,
+    ) -> Self {
+        let allocator = RefCell::new(Some(
+            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance,
+                device: device.clone(),
+                physical_device,
+                debug_settings: Default::default(),
+                buffer_device_address: false, // TODO: check the BufferDeviceAddressFeatures struct.
+            })
+            .unwrap(),
+        ));
+        Self { allocator, device }
+    }
+    pub fn allocate(
+        &self,
+        layout: Layout,
+        use_flags: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> gpu_allocator::Result<Allocation> {
+        // Setup vulkan info
+        let vk_info = vk::BufferCreateInfo::builder()
+            .size(layout.size() as u64)
+            .usage(use_flags);
+
+        let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
+        let mut requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        requirements.alignment = requirements.alignment.max(layout.align() as u64);
+
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+            name: "some allocation",
+            requirements,
+            location,
+            linear: true, // Buffers are always linear
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        });
+        let allocation = match allocation {
+            Ok(a) => a,
+            Err(e) => {
+                unsafe { self.device.destroy_buffer(buffer, None) };
+                return Err(e);
+            }
+        };
+
+        // Bind memory to the buffer
+        unsafe {
+            self.device
+                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
+
+        Ok(Allocation { allocation, buffer })
+    }
+
+    /// Safety: Allocation must come from this allocator
+    pub unsafe fn deallocate(&self, allocation: Allocation) {
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        allocator.free(allocation.allocation).unwrap();
+        unsafe { self.device.destroy_buffer(allocation.buffer, None) };
+    }
+
+    pub fn deinitialize(&mut self) {
+        let mut a = self.allocator.borrow_mut();
+        let mut tmp = None;
+        std::mem::swap(&mut *a, &mut tmp);
     }
 }

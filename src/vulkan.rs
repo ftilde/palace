@@ -1,5 +1,8 @@
 use crate::id::Id;
 use crate::operator::OperatorId;
+use crate::storage::gpu::Allocation;
+use crate::storage::gpu::Allocator;
+use crate::storage::gpu::MemoryLocation;
 use crate::task::OpaqueTaskContext;
 use crate::task::Request;
 use crate::task::Task;
@@ -8,7 +11,6 @@ use crate::Error;
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
 use ash::vk;
-use gpu_allocator::vulkan::AllocationScheme;
 use std::alloc::Layout;
 use std::any::Any;
 use std::borrow::Cow;
@@ -212,11 +214,6 @@ impl Drop for VulkanManager {
     }
 }
 
-pub struct Allocation {
-    allocation: gpu_allocator::vulkan::Allocation,
-    pub buffer: vk::Buffer,
-}
-
 pub struct StagingBufferStash {
     buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
     buf_type: gpu_allocator::MemoryLocation,
@@ -244,12 +241,14 @@ impl StagingBufferStash {
             flags,
         }
     }
-    fn request(&self, allocator: &Allocator, layout: Layout) -> CachedAllocation {
+    fn request(&self, device: &DeviceContext, layout: Layout) -> CachedAllocation {
         let mut buffers = self.buffers.borrow_mut();
         let buffers = buffers.entry(layout).or_default();
-        let inner = buffers
-            .pop()
-            .unwrap_or_else(|| allocator.allocate(layout, self.flags, self.buf_type));
+        let inner = buffers.pop().unwrap_or_else(|| {
+            device
+                .storage
+                .allocate(device, layout, self.flags, self.buf_type)
+        });
         CachedAllocation {
             inner,
             requested_layout: layout,
@@ -264,90 +263,14 @@ impl StagingBufferStash {
             .push(allocation.inner);
     }
 
-    /// Safety: The allocator must be the same that was used for all `request`s.
-    unsafe fn deinitialize(&self, allocator: &Allocator) {
+    /// Safety: The device must be the same that was used for all `request`s.
+    unsafe fn deinitialize(&self, device: &DeviceContext) {
         let mut buffers = self.buffers.borrow_mut();
         for (_, b) in buffers.drain() {
             for b in b {
-                allocator.deallocate(b);
+                device.storage.deallocate(b);
             }
         }
-    }
-}
-
-pub struct Allocator {
-    allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
-    device: ash::Device,
-}
-
-pub type MemoryLocation = gpu_allocator::MemoryLocation;
-
-impl Allocator {
-    pub fn new(
-        instance: ash::Instance,
-        device: ash::Device,
-        physical_device: vk::PhysicalDevice,
-    ) -> Self {
-        let allocator = RefCell::new(Some(
-            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
-                instance,
-                device: device.clone(),
-                physical_device,
-                debug_settings: Default::default(),
-                buffer_device_address: false, // TODO: check the BufferDeviceAddressFeatures struct.
-            })
-            .unwrap(),
-        ));
-        Self { allocator, device }
-    }
-    pub fn allocate(
-        &self,
-        layout: Layout,
-        use_flags: vk::BufferUsageFlags,
-        location: MemoryLocation,
-    ) -> Allocation {
-        // Setup vulkan info
-        let vk_info = vk::BufferCreateInfo::builder()
-            .size(layout.size() as u64)
-            .usage(use_flags);
-
-        let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
-        let mut requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
-        requirements.alignment = requirements.alignment.max(layout.align() as u64);
-
-        let mut allocator = self.allocator.borrow_mut();
-        let allocator = allocator.as_mut().unwrap();
-        let allocation = allocator
-            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name: "some allocation",
-                requirements,
-                location,
-                linear: true, // Buffers are always linear
-                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            })
-            .unwrap();
-
-        // Bind memory to the buffer
-        unsafe {
-            self.device
-                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .unwrap()
-        };
-
-        Allocation { allocation, buffer }
-    }
-
-    pub fn deallocate(&self, allocation: Allocation) {
-        let mut allocator = self.allocator.borrow_mut();
-        let allocator = allocator.as_mut().unwrap();
-        allocator.free(allocation.allocation).unwrap();
-        unsafe { self.device.destroy_buffer(allocation.buffer, None) };
-    }
-
-    pub fn deinitialize(&mut self) {
-        let mut a = self.allocator.borrow_mut();
-        let mut tmp = None;
-        std::mem::swap(&mut *a, &mut tmp);
     }
 }
 
@@ -442,10 +365,8 @@ impl TransferManager {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
-            let staging_buf = device
-                .staging_to_gpu
-                .request(&device.storage.allocator(), layout);
-            let out_ptr = staging_buf.allocation.mapped_ptr().unwrap();
+            let staging_buf = device.staging_to_gpu.request(&device, layout);
+            let out_ptr = staging_buf.mapped_ptr().unwrap();
 
             // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
             unsafe {
@@ -498,9 +419,7 @@ impl TransferManager {
             };
             let layout = gpu_buf_in.layout;
 
-            let staging_buf = device
-                .staging_to_cpu
-                .request(&device.storage.allocator(), layout);
+            let staging_buf = device.staging_to_cpu.request(&device, layout);
 
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
@@ -526,7 +445,7 @@ impl TransferManager {
             // HOST_VISIBLE and HOST_COHERENT.
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    staging_buf.allocation.mapped_ptr().unwrap().as_ptr().cast(),
+                    staging_buf.mapped_ptr().unwrap().as_ptr().cast(),
                     out_buf.data,
                     layout.size(),
                 )
@@ -706,11 +625,7 @@ impl DeviceContext {
             .map(|(index, _memory_type)| index as _)
     }
 
-    pub fn cmd_buffer_completed(
-        &self,
-        CmdBufferSubmissionId { device, epoch }: CmdBufferSubmissionId,
-    ) -> bool {
-        assert_eq!(device, self.id);
+    pub fn cmd_buffer_completed(&self, epoch: CmdBufferEpoch) -> bool {
         self.waiting_command_buffers
             .borrow()
             .first_key_value()
@@ -849,7 +764,7 @@ impl DeviceContext {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
-                    if ctx.device_contexts[id.device].cmd_buffer_completed(id) {
+                    if ctx.device_contexts[id.device].cmd_buffer_completed(id.epoch) {
                         Some(())
                     } else {
                         None
@@ -935,8 +850,8 @@ impl Drop for DeviceContext {
 
         // Safety: Using the exact same allocator (the only one of this device)
         unsafe {
-            self.staging_to_gpu.deinitialize(&self.storage.allocator());
-            self.staging_to_cpu.deinitialize(&self.storage.allocator());
+            self.staging_to_gpu.deinitialize(&self);
+            self.staging_to_cpu.deinitialize(&self);
         }
 
         self.storage.deinitialize();
