@@ -195,11 +195,7 @@ impl Storage {
             .map(move |d| d.in_location(super::DataLocation::VRam(id)))
     }
 
-    pub fn register_vram_access<'b>(
-        &'b self,
-        device: &'b DeviceContext,
-        id: DataId,
-    ) -> AccessToken<'b> {
+    pub fn register_access<'b>(&'b self, device: &'b DeviceContext, id: DataId) -> AccessToken<'b> {
         {
             let mut index = self.index.borrow_mut();
             index.entry(id).or_insert_with(|| {
@@ -213,7 +209,7 @@ impl Storage {
     }
 
     // Allocates a GpuOnly storage buffer
-    fn alloc_vram<'b>(
+    fn alloc<'b>(
         &'b self,
         device: &'b DeviceContext,
         key: DataId,
@@ -245,14 +241,14 @@ impl Storage {
         Ok((buffer, AccessToken::new(self, device, key)))
     }
 
-    pub fn alloc_vram_slot_raw<'b>(
+    pub fn alloc_slot_raw<'b>(
         &'b self,
         device: &'b DeviceContext,
         key: DataId,
         layout: Layout,
     ) -> Result<WriteHandle<'b>, Error> {
         let size = layout.size();
-        let (buffer, access) = self.alloc_vram(device, key, layout)?;
+        let (buffer, access) = self.alloc(device, key, layout)?;
 
         Ok(WriteHandle {
             buffer,
@@ -262,7 +258,7 @@ impl Storage {
         })
     }
 
-    pub fn alloc_vram_slot<'b, T: Copy + crevice::std430::Std430>(
+    pub fn alloc_slot<'b, T: Copy + crevice::std430::Std430>(
         &'b self,
         device: &'b DeviceContext,
         key: DataId,
@@ -270,10 +266,10 @@ impl Storage {
     ) -> Result<WriteHandle<'b>, Error> {
         //TODO: Not sure if this actually works with std430
         let layout = Layout::array::<T>(num).unwrap();
-        self.alloc_vram_slot_raw(device, key, layout)
+        self.alloc_slot_raw(device, key, layout)
     }
 
-    pub fn read_vram<'b, 't: 'b>(
+    pub fn read<'b, 't: 'b>(
         &'b self,
         access: AccessToken<'t>,
     ) -> Result<ReadHandle<'b>, AccessToken<'t>> {

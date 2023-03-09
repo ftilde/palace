@@ -111,11 +111,11 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_ram_access(id));
+                let mut access = Some(ctx.storage.register_access(id));
                 Box::new(move || unsafe {
                     access = match ctx
                         .storage
-                        .read_ram(access.take().unwrap())
+                        .read(access.take().unwrap())
                         .map(|v| *v.map(|a| &a[0]))
                     {
                         Ok(v) => return Some(v),
@@ -190,9 +190,9 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_ram_access(id));
+                let mut access = Some(ctx.storage.register_access(id));
                 Box::new(move || unsafe {
-                    access = match ctx.storage.read_ram(access.take().unwrap()) {
+                    access = match ctx.storage.read(access.take().unwrap()) {
                         Ok(v) => return Some(v),
                         Err(access) => Some(access),
                     };
@@ -222,16 +222,14 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             }),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
-                let mut access = Some(device.storage.register_vram_access(device, id));
-                Box::new(
-                    move || match device.storage.read_vram(access.take().unwrap()) {
-                        Ok(r) => Some(r),
-                        Err(t) => {
-                            access = Some(t);
-                            None
-                        }
-                    },
-                )
+                let mut access = Some(device.storage.register_access(device, id));
+                Box::new(move || match device.storage.read(access.take().unwrap()) {
+                    Ok(r) => Some(r),
+                    Err(t) => {
+                        access = Some(t);
+                        None
+                    }
+                })
             }),
             _marker: Default::default(),
         }
@@ -256,7 +254,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_ram_access(read_id));
+                let mut access = Some(ctx.storage.register_access(read_id));
                 Box::new(move || unsafe {
                     access = match ctx
                         .storage

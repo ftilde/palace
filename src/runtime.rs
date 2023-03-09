@@ -375,7 +375,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             (DataLocation::Ram, DataLocation::VRam(target_id)) => {
                 let task_id = self.transfer_manager.next_id();
-                let access = self.data.storage.register_ram_access(data);
+                let access = self.data.storage.register_access(data);
                 let transfer_task = self.transfer_manager.transfer_to_gpu(
                     self.context(task_id),
                     &self.data.device_contexts[target_id],
@@ -386,7 +386,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             (DataLocation::VRam(source_id), DataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
-                let access = device.storage.register_vram_access(device, data);
+                let access = device.storage.register_access(device, data);
                 let transfer_task = self.transfer_manager.transfer_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],

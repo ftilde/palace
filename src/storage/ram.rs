@@ -435,7 +435,7 @@ impl Storage {
             .unwrap_or(false)
     }
 
-    pub fn try_free_ram(&self, key: DataId) -> Result<(), ()> {
+    pub fn try_free(&self, key: DataId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
         if index.get(&key).unwrap().safe_to_delete() {
             let entry = index.get_mut(&key).unwrap();
@@ -468,7 +468,7 @@ impl Storage {
             .map(|d| d.in_location(super::DataLocation::Ram))
     }
 
-    pub fn register_ram_access(&self, id: DataId) -> AccessToken {
+    pub fn register_access(&self, id: DataId) -> AccessToken {
         {
             let mut index = self.index.borrow_mut();
             index.entry(id).or_insert_with(|| Entry {
@@ -480,7 +480,7 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
-    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<(*mut u8, AccessToken), Error> {
+    fn alloc(&self, key: DataId, layout: Layout) -> Result<(*mut u8, AccessToken), Error> {
         let data = {
             let data = match self.allocator.alloc(layout) {
                 Ok(d) => d,
@@ -511,12 +511,12 @@ impl Storage {
         Ok((data, AccessToken::new(self, key)))
     }
 
-    pub fn alloc_ram_slot_raw(
+    pub fn alloc_slot_raw(
         &self,
         key: DataId,
         layout: Layout,
     ) -> Result<RawWriteHandleUninit, Error> {
-        let (ptr, access) = self.alloc_ram(key, layout)?;
+        let (ptr, access) = self.alloc(key, layout)?;
 
         Ok(RawWriteHandleUninit {
             data: ptr,
@@ -525,13 +525,13 @@ impl Storage {
         })
     }
 
-    pub fn alloc_ram_slot<T: Copy>(
+    pub fn alloc_slot<T: Copy>(
         &self,
         key: DataId,
         size: usize,
     ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
         let layout = Layout::array::<T>(size).unwrap();
-        let (ptr, access) = self.alloc_ram(key, layout)?;
+        let (ptr, access) = self.alloc(key, layout)?;
 
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
@@ -544,7 +544,7 @@ impl Storage {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub fn read_ram_raw<'b, 't: 'b>(
+    pub fn read_raw<'b, 't: 'b>(
         &'b self,
         access: AccessToken<'t>,
     ) -> Result<RawReadHandle<'b>, AccessToken<'t>> {
@@ -563,7 +563,7 @@ impl Storage {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read_ram<'b, 't: 'b, T: Copy>(
+    pub unsafe fn read<'b, 't: 'b, T: Copy>(
         &'b self,
         access: AccessToken<'t>,
     ) -> Result<ReadHandle<'b, [T]>, AccessToken<'t>> {
@@ -652,7 +652,7 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = match self.alloc_ram_slot(new_key, num_elements) {
+            let w = match self.alloc_slot(new_key, num_elements) {
                 Ok(w) => w,
                 Err(e) => return Ok(Err(e)),
             };

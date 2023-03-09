@@ -516,7 +516,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
         size: usize,
     ) -> Result<WriteHandleUninit<'cref, [MaybeUninit<Output>]>, Error> {
         let id = DataId::new(self.current_op(), &item);
-        self.inner.storage.alloc_ram_slot(id, size)
+        self.inner.storage.alloc_slot(id, size)
     }
 }
 
@@ -534,7 +534,7 @@ impl<
         size: usize,
     ) -> Result<WriteHandle<'a>, Error> {
         let id = DataId::new(self.current_op(), &item);
-        device.storage.alloc_vram_slot::<Output>(device, id, size)
+        device.storage.alloc_slot::<Output>(device, id, size)
     }
 }
 

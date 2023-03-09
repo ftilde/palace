@@ -438,7 +438,7 @@ impl TransferManager {
         async move {
             let storage = ctx.storage;
             let key = access.id;
-            let Ok(input_buf) = storage.read_ram_raw(access) else {
+            let Ok(input_buf) = storage.read_raw(access) else {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
@@ -456,7 +456,7 @@ impl TransferManager {
                 )
             };
 
-            let gpu_buf_out = device.storage.alloc_vram_slot_raw(device, key, layout)?;
+            let gpu_buf_out = device.storage.alloc_slot_raw(device, key, layout)?;
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
@@ -493,7 +493,7 @@ impl TransferManager {
         async move {
             let key = access.id;
             let storage = ctx.storage;
-            let Ok(gpu_buf_in) = device.storage.read_vram(access) else {
+            let Ok(gpu_buf_in) = device.storage.read(access) else {
                 panic!("Data should already be in vram");
             };
             let layout = gpu_buf_in.layout;
@@ -518,7 +518,7 @@ impl TransferManager {
 
             ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
-            let out_buf = storage.alloc_ram_slot_raw(key, layout).unwrap();
+            let out_buf = storage.alloc_slot_raw(key, layout).unwrap();
 
             // Safety: Both buffers have `layout` as their layout. Staging buf data is now valid
             // since we have waited for the command buffer to finish. This content has also reached
