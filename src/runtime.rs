@@ -118,8 +118,7 @@ impl RunTime {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanManager::new()?;
-        let ram = crate::ram_allocator::Allocator::new(storage_size)?;
-        let ram = crate::storage::ram::Storage::new(ram);
+        let ram = crate::storage::ram::Storage::new(storage_size)?;
         Ok(RunTime {
             ram,
             compute_thread_pool: ComputeThreadPool::new(

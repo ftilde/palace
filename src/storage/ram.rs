@@ -1,4 +1,4 @@
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit};
+use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit, pin::Pin};
 
 use crate::{operator::DataId, task_graph::LocatedDataId, util::num_elms_in_array, Error};
 
@@ -379,7 +379,7 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, RamEntry>>,
     lru_manager: RefCell<super::LRUManager>,
-    allocator: crate::ram_allocator::Allocator,
+    allocator: Allocator,
     new_data: super::NewDataManager,
 }
 
@@ -387,13 +387,14 @@ impl Storage {
     /// Safety: The same combination of `state`, `ram` and `vram` must be used to construct a
     /// `Storage` at all times. No modifications outside of `Storage` must be done to either of
     /// these structs in the meantime.
-    pub fn new(allocator: crate::ram_allocator::Allocator) -> Self {
-        Self {
+    pub fn new(size: usize) -> Result<Self, Error> {
+        let allocator = Allocator::new(size)?;
+        Ok(Self {
             index: Default::default(),
             lru_manager: Default::default(),
             new_data: Default::default(),
             allocator,
-        }
+        })
     }
 
     pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) {
@@ -661,5 +662,71 @@ impl Storage {
             };
             InplaceResult::New(r, w)
         }))
+    }
+}
+
+pub struct Allocator {
+    alloc: RefCell<Pin<Box<good_memory_allocator::Allocator>>>,
+    buffer: *mut u8,
+    storage_layout: Layout,
+}
+
+impl Allocator {
+    fn new(size: usize) -> Result<Self, Error> {
+        let alignment = 4096;
+        let storage_layout = Layout::from_size_align(size, alignment).unwrap();
+
+        assert!(size > 0, "invalid storage size");
+
+        // Safety: size is > 0
+        let buffer = unsafe { std::alloc::alloc(storage_layout) };
+        if buffer.is_null() {
+            return Err("Failed to allocate memory buffer. Is it too large?".into());
+        }
+
+        let mut alloc = Box::pin(good_memory_allocator::Allocator::empty());
+
+        // Safety: The allocator is pinned and will thus not move. The memory region is only used
+        // by the allocator.
+        unsafe { alloc.init(buffer as usize, size) };
+
+        let alloc = RefCell::new(alloc);
+
+        Ok(Self {
+            buffer,
+            alloc,
+            storage_layout,
+        })
+    }
+
+    fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {
+        let mut alloc = self.alloc.borrow_mut();
+
+        assert!(layout.size() > 0);
+        // Safety: We ensure that layout.size() > 0
+        let ret = unsafe { alloc.alloc(layout) };
+        if ret.is_null() {
+            Err("Out of memory".into())
+        } else {
+            Ok(ret)
+        }
+    }
+
+    /// Safety: `ptr` must have been allocated with this allocator and must not have been
+    /// deallocated already.
+    unsafe fn dealloc(&self, ptr: *mut u8) {
+        let mut alloc = self.alloc.borrow_mut();
+        unsafe { alloc.dealloc(ptr) };
+    }
+
+    fn size(&self) -> usize {
+        self.storage_layout.size()
+    }
+}
+
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        // Safety: buffer was allocated with exactly this layout, see new()
+        unsafe { std::alloc::dealloc(self.buffer, self.storage_layout) }
     }
 }

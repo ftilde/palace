@@ -15,7 +15,6 @@ mod data;
 mod id;
 mod operator;
 mod operators;
-mod ram_allocator;
 mod runtime;
 mod storage;
 mod task;
