@@ -1,4 +1,8 @@
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap};
+use std::{
+    alloc::Layout,
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+};
 
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
@@ -261,8 +265,8 @@ impl Storage {
         match self.allocator.allocate(layout, use_flags, location) {
             Ok(a) => a,
             Err(_e) => {
-                let garbage_collect_goal = 1 << 30;
-                self.try_garbage_collect(device, garbage_collect_goal);
+                let garbage_collect_goal = self.allocator.allocated() / 2;
+                self.try_garbage_collect(device, garbage_collect_goal as _);
                 self.allocator
                     .allocate(layout, use_flags, location)
                     .expect("Out of memory and nothing we can do about it.")
@@ -373,6 +377,7 @@ impl Allocation {
 pub struct Allocator {
     allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
     device: ash::Device,
+    num_alloced: Cell<u64>,
 }
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
@@ -393,7 +398,12 @@ impl Allocator {
             })
             .unwrap(),
         ));
-        Self { allocator, device }
+        let num_alloced = Cell::new(0);
+        Self {
+            allocator,
+            device,
+            num_alloced,
+        }
     }
     pub fn allocate(
         &self,
@@ -434,6 +444,9 @@ impl Allocator {
                 .unwrap()
         };
 
+        self.num_alloced
+            .set(self.num_alloced.get() + allocation.size());
+
         Ok(Allocation { allocation, buffer })
     }
 
@@ -441,8 +454,16 @@ impl Allocator {
     pub unsafe fn deallocate(&self, allocation: Allocation) {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
+        let size = allocation.allocation.size();
         allocator.free(allocation.allocation).unwrap();
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
+
+        self.num_alloced
+            .set(self.num_alloced.get().checked_sub(size).unwrap());
+    }
+
+    fn allocated(&self) -> u64 {
+        self.num_alloced.get()
     }
 
     pub fn deinitialize(&mut self) {
