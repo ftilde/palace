@@ -8,9 +8,9 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
-    storage::{DataLocation, Storage, StorageState},
+    storage::{ram::Storage, DataLocation},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext},
-    task_graph::{RequestId, TaskGraph, TaskId},
+    task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     vulkan::{DeviceContext, VulkanManager},
@@ -106,8 +106,7 @@ impl<'inv> RequestBatcher<'inv> {
 }
 
 pub struct RunTime {
-    pub storage: StorageState,
-    pub ram: crate::ram_allocator::Allocator,
+    pub ram: crate::storage::ram::Storage,
     pub vulkan: VulkanManager,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
@@ -120,9 +119,8 @@ impl RunTime {
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanManager::new()?;
         let ram = crate::ram_allocator::Allocator::new(storage_size)?;
-        let storage = Default::default();
+        let ram = crate::storage::ram::Storage::new(ram);
         Ok(RunTime {
-            storage,
             ram,
             compute_thread_pool: ComputeThreadPool::new(
                 async_result_sender.clone(),
@@ -136,7 +134,7 @@ impl RunTime {
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
         ContextAnchor {
-            data: ContextData::new(&self.storage, &self.ram, self.vulkan.device_contexts()),
+            data: ContextData::new(&self.ram, self.vulkan.device_contexts()),
             compute_thread_pool: &mut self.compute_thread_pool,
             io_thread_pool: &mut self.io_thread_pool,
             async_result_receiver: &mut self.async_result_receiver,
@@ -148,7 +146,9 @@ impl Drop for RunTime {
         let anchored = self.context_anchor();
         // Safety: The runtime (including all references to storage) is dropped now, so no dangling
         // references will be left behind
-        unsafe { anchored.data.storage.free_vram() };
+        for device in anchored.data.device_contexts {
+            unsafe { device.storage.free_vram() };
+        }
     }
 }
 
@@ -190,22 +190,15 @@ pub struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
     thread_spawner: ThreadSpawner,
-    pub storage: Storage<'cref>,
+    pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
 }
 
 impl<'cref> ContextData<'cref, '_> {
-    pub fn new(
-        storage: &'cref StorageState,
-        ram: &'cref crate::ram_allocator::Allocator,
-        device_contexts: &'cref [DeviceContext],
-    ) -> Self {
+    pub fn new(storage: &'cref Storage, device_contexts: &'cref [DeviceContext]) -> Self {
         let request_queue = RequestQueue::new();
         let hints = TaskHints::new();
         let thread_spawner = ThreadSpawner::new();
-        let vram = device_contexts.iter().map(|c| c.allocator()).collect();
-        //TODO: Argue safety
-        let storage = unsafe { Storage::new(storage, ram, vram) };
         ContextData {
             request_queue,
             hints,
@@ -346,8 +339,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn register_produced_data(&mut self) {
-        for available in self.data.storage.newest_data() {
+    fn register_produced_data_from(&mut self, items: impl Iterator<Item = LocatedDataId>) {
+        for available in items {
             for requested in self.task_graph.requested_locations(available.id) {
                 let requested = available.id.in_location(requested);
                 if let Some((task_id, transfer_task)) =
@@ -360,6 +353,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     self.task_graph.resolved_implied(requested.into());
                 }
             }
+        }
+    }
+    fn register_produced_data(&mut self) {
+        self.register_produced_data_from(self.data.storage.newest_data());
+        for device in self.data.device_contexts {
+            self.register_produced_data_from(device.storage.newest_data());
         }
     }
 
@@ -388,7 +387,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             (DataLocation::VRam(source_id), DataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
-                let access = self.data.storage.register_vram_access(device, data);
+                let access = device.storage.register_vram_access(device, data);
                 let transfer_task = self.transfer_manager.transfer_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
@@ -396,6 +395,19 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 );
                 Some((task_id, transfer_task))
             }
+        }
+    }
+
+    fn find_available_location(&self, datum: DataId) -> Option<DataLocation> {
+        if self.data.storage.is_readable(datum) {
+            Some(DataLocation::Ram)
+        } else {
+            for device in self.data.device_contexts {
+                if device.storage.is_readable(datum) {
+                    return Some(DataLocation::VRam(device.id));
+                }
+            }
+            None
         }
     }
 
@@ -408,8 +420,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::Data(data_request) => {
                 let data_id = data_request.id;
                 if !already_requested {
-                    if let Some(available) = self.data.storage.available_locations(data_id.id).pop()
-                    {
+                    if let Some(available) = self.find_available_location(data_id.id) {
                         // Data should not already be present
                         assert_ne!(available, data_id.location);
                         let (task_id, transfer_task) = self

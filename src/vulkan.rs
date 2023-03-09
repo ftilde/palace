@@ -375,7 +375,7 @@ pub struct DeviceContext {
     submission_count: Cell<usize>,
 
     vulkan_states: Cache,
-    allocator: Allocator,
+    pub storage: crate::storage::gpu::Storage,
     staging_to_gpu: StagingBufferStash,
     staging_to_cpu: StagingBufferStash,
 }
@@ -433,7 +433,7 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        access: crate::storage::RamAccessToken<'cref>,
+        access: crate::storage::ram::RamAccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
             let storage = ctx.storage;
@@ -442,7 +442,9 @@ impl TransferManager {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
-            let staging_buf = device.staging_to_gpu.request(&device.allocator, layout);
+            let staging_buf = device
+                .staging_to_gpu
+                .request(&device.storage.allocator(), layout);
             let out_ptr = staging_buf.allocation.mapped_ptr().unwrap();
 
             // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
@@ -454,7 +456,7 @@ impl TransferManager {
                 )
             };
 
-            let gpu_buf_out = storage.alloc_vram_slot_raw(device, key, layout)?;
+            let gpu_buf_out = device.storage.alloc_vram_slot_raw(device, key, layout)?;
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
@@ -486,17 +488,19 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        access: crate::storage::VRamAccessToken<'cref>,
+        access: crate::storage::gpu::VRamAccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
             let key = access.id;
             let storage = ctx.storage;
-            let Ok(gpu_buf_in) = storage.read_vram(device, access) else {
+            let Ok(gpu_buf_in) = device.storage.read_vram(access) else {
                 panic!("Data should already be in vram");
             };
             let layout = gpu_buf_in.layout;
 
-            let staging_buf = device.staging_to_cpu.request(&device.allocator, layout);
+            let staging_buf = device
+                .staging_to_cpu
+                .request(&device.storage.allocator(), layout);
 
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
@@ -649,6 +653,8 @@ impl DeviceContext {
                 &submission_count,
             ));
 
+            let storage = crate::storage::gpu::Storage::new(id, allocator);
+
             Ok(DeviceContext {
                 physical_device,
                 physical_device_memory_properties,
@@ -669,15 +675,11 @@ impl DeviceContext {
                 push_descriptor_ext,
 
                 vulkan_states,
-                allocator,
+                storage,
                 staging_to_cpu,
                 staging_to_gpu,
             })
         }
-    }
-
-    pub fn allocator(&self) -> &Allocator {
-        &self.allocator
     }
 
     pub fn request_state<'a, T: VulkanState + 'static>(
@@ -933,10 +935,11 @@ impl Drop for DeviceContext {
 
         // Safety: Using the exact same allocator (the only one of this device)
         unsafe {
-            self.staging_to_gpu.deinitialize(&self.allocator);
-            self.staging_to_cpu.deinitialize(&self.allocator);
+            self.staging_to_gpu.deinitialize(&self.storage.allocator());
+            self.staging_to_cpu.deinitialize(&self.storage.allocator());
         }
-        self.allocator.deinitialize();
+
+        self.storage.deinitialize();
 
         assert!(self.waiting_command_buffers.get_mut().is_empty());
 

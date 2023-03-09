@@ -8,7 +8,7 @@ use crate::{
     },
     id::Id,
     operator::{Operator, OperatorId},
-    storage::{InplaceResult, ThreadInplaceResult},
+    storage::ram::{InplaceResult, ThreadInplaceResult},
     task::{RequestStream, Task, TaskContext},
 };
 

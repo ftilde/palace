@@ -9,7 +9,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
     id::Id,
     operator::OperatorId,
-    storage::{VRamReadHandle, VRamWriteHandle},
+    storage::gpu::{VRamReadHandle, VRamWriteHandle},
     vulkan::{DeviceContext, VulkanState},
 };
 

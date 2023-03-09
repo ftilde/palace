@@ -7,7 +7,8 @@ use std::task::Poll;
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
-use crate::storage::{Storage, VRamWriteHandle, WriteHandleUninit};
+use crate::storage::gpu::VRamWriteHandle;
+use crate::storage::ram::{Storage, WriteHandleUninit};
 use crate::task_graph::{GroupId, LocatedDataId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
@@ -95,14 +96,14 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
 
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
-    pub storage: &'cref Storage<'cref>,
+    pub storage: &'cref Storage,
     pub device_contexts: &'cref [DeviceContext],
 }
 
 #[derive(Copy, Clone)]
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub requests: &'cref RequestQueue<'inv>,
-    pub storage: &'cref Storage<'cref>,
+    pub storage: &'cref Storage,
     pub hints: &'cref TaskHints,
     pub thread_pool: &'cref ThreadSpawner,
     pub device_contexts: &'cref [DeviceContext],
@@ -533,9 +534,7 @@ impl<
         size: usize,
     ) -> Result<VRamWriteHandle<'a>, Error> {
         let id = DataId::new(self.current_op(), &item);
-        self.inner
-            .storage
-            .alloc_vram_slot::<Output>(device, id, size)
+        device.storage.alloc_vram_slot::<Output>(device, id, size)
     }
 }
 

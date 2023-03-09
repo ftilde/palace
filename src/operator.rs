@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     id::Id,
-    storage::{DataLocation, InplaceResult, ReadHandle, VRamReadHandle},
+    storage::{gpu::VRamReadHandle, ram::InplaceResult, ram::ReadHandle, DataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::LocatedDataId,
     vulkan::DeviceId,
@@ -222,9 +222,9 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             }),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
-                let mut access = Some(ctx.storage.register_vram_access(device, id));
+                let mut access = Some(device.storage.register_vram_access(device, id));
                 Box::new(
-                    move || match ctx.storage.read_vram(device, access.take().unwrap()) {
+                    move || match device.storage.read_vram(access.take().unwrap()) {
                         Ok(r) => Some(r),
                         Err(t) => {
                             access = Some(t);
