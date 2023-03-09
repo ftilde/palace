@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     id::Id,
-    storage::{gpu::VRamReadHandle, ram::InplaceResult, ram::ReadHandle, DataLocation},
+    storage::{gpu, ram, DataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::LocatedDataId,
     vulkan::DeviceId,
@@ -177,7 +177,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     pub fn request<'req, 'inv: 'req>(
         &'inv self,
         item: ItemDescriptor,
-    ) -> Request<'req, 'inv, ReadHandle<'req, [Output]>> {
+    ) -> Request<'req, 'inv, ram::ReadHandle<'req, [Output]>> {
         let id = DataId::new(self.id, &item);
 
         Request {
@@ -208,7 +208,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         &'inv self,
         gpu: DeviceId,
         item: ItemDescriptor,
-    ) -> Request<'req, 'inv, VRamReadHandle<'req>> {
+    ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
         let id = DataId::new(self.id, &item);
 
         Request {
@@ -242,7 +242,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         &'inv self,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 'inv, Result<InplaceResult<'req, f32>, Error>> {
+    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, f32>, Error>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 

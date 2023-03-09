@@ -433,7 +433,7 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        access: crate::storage::ram::RamAccessToken<'cref>,
+        access: crate::storage::ram::AccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
             let storage = ctx.storage;
@@ -488,7 +488,7 @@ impl TransferManager {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        access: crate::storage::gpu::VRamAccessToken<'cref>,
+        access: crate::storage::gpu::AccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
             let key = access.id;

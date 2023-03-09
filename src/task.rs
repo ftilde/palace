@@ -7,7 +7,7 @@ use std::task::Poll;
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{RequestQueue, TaskHints};
-use crate::storage::gpu::VRamWriteHandle;
+use crate::storage::gpu::WriteHandle;
 use crate::storage::ram::{Storage, WriteHandleUninit};
 use crate::task_graph::{GroupId, LocatedDataId, ProgressIndicator, RequestId, TaskId};
 use crate::task_manager::ThreadSpawner;
@@ -532,7 +532,7 @@ impl<
         device: &'a DeviceContext,
         item: ItemDescriptor,
         size: usize,
-    ) -> Result<VRamWriteHandle<'a>, Error> {
+    ) -> Result<WriteHandle<'a>, Error> {
         let id = DataId::new(self.current_op(), &item);
         device.storage.alloc_vram_slot::<Output>(device, id, size)
     }

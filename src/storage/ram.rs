@@ -5,36 +5,36 @@ use crate::{operator::DataId, task_graph::LocatedDataId, util::num_elms_in_array
 use super::LRUIndex;
 
 #[derive(Debug, Eq, PartialEq)]
-enum RamAccessState {
+enum AccessState {
     Some(usize),
     None(LRUIndex),
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct RamStorageInfo {
+pub struct StorageInfo {
     pub data: *mut u8,
     pub layout: Layout,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum RamStorageEntryState {
+enum StorageEntryState {
     Registered,
-    Initializing(RamStorageInfo),
-    Initialized(RamStorageInfo),
+    Initializing(StorageInfo),
+    Initialized(StorageInfo),
 }
 
-struct RamEntry {
-    state: RamStorageEntryState,
-    access: RamAccessState,
+struct Entry {
+    state: StorageEntryState,
+    access: AccessState,
 }
 
-impl RamEntry {
+impl Entry {
     fn safe_to_delete(&self) -> bool {
-        matches!(self.access, RamAccessState::None(_))
+        matches!(self.access, AccessState::None(_))
     }
 
     fn lru_index(&self) -> Option<LRUIndex> {
-        if let RamAccessState::None(id) = self.access {
+        if let AccessState::None(id) = self.access {
             Some(id)
         } else {
             None
@@ -42,38 +42,38 @@ impl RamEntry {
     }
 }
 
-pub struct RamAccessToken<'a> {
+pub struct AccessToken<'a> {
     storage: &'a Storage,
     pub id: DataId,
 }
-impl<'a> RamAccessToken<'a> {
+impl<'a> AccessToken<'a> {
     fn new(storage: &'a Storage, id: DataId) -> Self {
         let mut index = storage.index.borrow_mut();
         let ram_entry = index.get_mut(&id).unwrap();
 
         ram_entry.access = match ram_entry.access {
-            RamAccessState::Some(n) => RamAccessState::Some(n + 1),
-            RamAccessState::None(id) => {
+            AccessState::Some(n) => AccessState::Some(n + 1),
+            AccessState::None(id) => {
                 storage.lru_manager.borrow_mut().remove(id);
-                RamAccessState::Some(1)
+                AccessState::Some(1)
             }
         };
 
         Self { storage, id }
     }
 }
-impl Drop for RamAccessToken<'_> {
+impl Drop for AccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
         let ram_entry = index.get_mut(&self.id).unwrap();
 
         ram_entry.access = match ram_entry.access {
-            RamAccessState::Some(1) => {
+            AccessState::Some(1) => {
                 let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
-                RamAccessState::None(lru_id)
+                AccessState::None(lru_id)
             }
-            RamAccessState::Some(n) => RamAccessState::Some(n - 1),
-            RamAccessState::None(_id) => {
+            AccessState::Some(n) => AccessState::Some(n - 1),
+            AccessState::None(_id) => {
                 panic!("Invalid state");
             }
         };
@@ -81,7 +81,7 @@ impl Drop for RamAccessToken<'_> {
 }
 
 pub struct ReadHandle<'a, T: ?Sized> {
-    access: RamAccessToken<'a>,
+    access: AccessToken<'a>,
     data: &'a T,
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
@@ -116,9 +116,9 @@ impl<T: ?Sized> std::ops::Deref for ReadHandle<'_, T> {
     }
 }
 pub struct RawReadHandle<'a> {
-    pub info: RamStorageInfo,
+    pub info: StorageInfo,
     #[allow(unused)]
-    access: RamAccessToken<'a>,
+    access: AccessToken<'a>,
 }
 
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
@@ -137,7 +137,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
     pub fn into_main_handle(self, storage: &'a Storage) -> ReadHandle<'a, T> {
         self.panic_handle.dismiss();
         ReadHandle {
-            access: RamAccessToken {
+            access: AccessToken {
                 storage,
                 id: self.id,
             },
@@ -147,7 +147,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
 }
 
 pub struct DropError<'a> {
-    access: RamAccessToken<'a>,
+    access: AccessToken<'a>,
 }
 impl<'a> DropError<'a> {
     fn into_mark_initialized(self) -> DropMarkInitialized<'a> {
@@ -156,7 +156,7 @@ impl<'a> DropError<'a> {
         // Avoid running destructor which would panic
         std::mem::forget(self);
         DropMarkInitialized {
-            access: RamAccessToken { storage, id },
+            access: AccessToken { storage, id },
         }
     }
 }
@@ -166,7 +166,7 @@ impl Drop for DropError<'_> {
     }
 }
 pub struct DropMarkInitialized<'a> {
-    access: RamAccessToken<'a>,
+    access: AccessToken<'a>,
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
@@ -175,15 +175,13 @@ impl Drop for DropMarkInitialized<'_> {
             let mut binding = self.access.storage.index.borrow_mut();
             let state = &mut binding.get_mut(&self.access.id).unwrap().state;
             *state = match state {
-                RamStorageEntryState::Registered => {
+                StorageEntryState::Registered => {
                     panic!("Entry should be in state Initializing, but is in Registered");
                 }
-                RamStorageEntryState::Initialized(_) => {
+                StorageEntryState::Initialized(_) => {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
-                RamStorageEntryState::Initializing(info) => {
-                    RamStorageEntryState::Initialized(*info)
-                }
+                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(*info),
             };
         }
     }
@@ -259,7 +257,7 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerInitialized> {
         self._panic_handle.dismiss();
         WriteHandle {
             drop_handler: DropMarkInitialized {
-                access: RamAccessToken {
+                access: AccessToken {
                     storage,
                     id: self.id,
                 },
@@ -273,7 +271,7 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerUninitialized> {
         self._panic_handle.dismiss();
         WriteHandle {
             drop_handler: DropError {
-                access: RamAccessToken {
+                access: AccessToken {
                     storage,
                     id: self.id,
                 },
@@ -377,7 +375,7 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
 }
 
 pub struct Storage {
-    index: RefCell<BTreeMap<DataId, RamEntry>>,
+    index: RefCell<BTreeMap<DataId, Entry>>,
     lru_manager: RefCell<super::LRUManager>,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -404,11 +402,12 @@ impl Storage {
         for key in lru.drain_lru().into_iter() {
             let entry = index.get_mut(&key).unwrap();
             let info = match entry.state {
-                RamStorageEntryState::Registered => panic!("Should not be in LRU list"),
-                RamStorageEntryState::Initializing(info)
-                | RamStorageEntryState::Initialized(info) => info,
+                StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                    info
+                }
             };
-            assert!(matches!(entry.access, RamAccessState::None(_)));
+            assert!(matches!(entry.access, AccessState::None(_)));
 
             index.remove(&key).unwrap();
 
@@ -432,7 +431,7 @@ impl Storage {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, RamStorageEntryState::Initialized(_)))
+            .map(|e| matches!(e.state, StorageEntryState::Initialized(_)))
             .unwrap_or(false)
     }
 
@@ -442,9 +441,10 @@ impl Storage {
             let entry = index.get_mut(&key).unwrap();
 
             let info = match entry.state {
-                RamStorageEntryState::Registered => return Err(()),
-                RamStorageEntryState::Initializing(info)
-                | RamStorageEntryState::Initialized(info) => info,
+                StorageEntryState::Registered => return Err(()),
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                    info
+                }
             };
 
             let lru_index = entry.lru_index().unwrap();
@@ -468,19 +468,19 @@ impl Storage {
             .map(|d| d.in_location(super::DataLocation::Ram))
     }
 
-    pub fn register_ram_access(&self, id: DataId) -> RamAccessToken {
+    pub fn register_ram_access(&self, id: DataId) -> AccessToken {
         {
             let mut index = self.index.borrow_mut();
-            index.entry(id).or_insert_with(|| RamEntry {
-                state: RamStorageEntryState::Registered,
-                access: RamAccessState::Some(0), // Will be overwritten immediately when generating
-                                                 // the RamToken
+            index.entry(id).or_insert_with(|| Entry {
+                state: StorageEntryState::Registered,
+                access: AccessState::Some(0), // Will be overwritten immediately when generating
+                                              // the RamToken
             });
         }
-        RamAccessToken::new(self, id)
+        AccessToken::new(self, id)
     }
 
-    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<(*mut u8, RamAccessToken), Error> {
+    fn alloc_ram(&self, key: DataId, layout: Layout) -> Result<(*mut u8, AccessToken), Error> {
         let data = {
             let data = match self.allocator.alloc(layout) {
                 Ok(d) => d,
@@ -495,20 +495,20 @@ impl Storage {
 
             let mut index = self.index.borrow_mut();
 
-            let entry = index.entry(key).or_insert_with(|| RamEntry {
-                state: RamStorageEntryState::Registered,
-                access: RamAccessState::Some(0), // Will be overwritten immediately when generating
-                                                 // the RamToken
+            let entry = index.entry(key).or_insert_with(|| Entry {
+                state: StorageEntryState::Registered,
+                access: AccessState::Some(0), // Will be overwritten immediately when generating
+                                              // the RamToken
             });
 
-            let info = RamStorageInfo { data, layout };
+            let info = StorageInfo { data, layout };
 
-            entry.state = RamStorageEntryState::Initializing(info);
+            entry.state = StorageEntryState::Initializing(info);
 
             data
         };
 
-        Ok((data, RamAccessToken::new(self, key)))
+        Ok((data, AccessToken::new(self, key)))
     }
 
     pub fn alloc_ram_slot_raw(
@@ -546,14 +546,14 @@ impl Storage {
     /// Safety: The initial allocation for the TaskId must have happened with the same type
     pub fn read_ram_raw<'b, 't: 'b>(
         &'b self,
-        access: RamAccessToken<'t>,
-    ) -> Result<RawReadHandle<'b>, RamAccessToken<'t>> {
+        access: AccessToken<'t>,
+    ) -> Result<RawReadHandle<'b>, AccessToken<'t>> {
         let info = {
             let index = self.index.borrow();
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
             };
-            let RamStorageEntryState::Initialized(info) = entry.state else {
+            let StorageEntryState::Initialized(info) = entry.state else {
                 return Err(access);
             };
 
@@ -565,15 +565,15 @@ impl Storage {
     /// Safety: The initial allocation for the TaskId must have happened with the same type
     pub unsafe fn read_ram<'b, 't: 'b, T: Copy>(
         &'b self,
-        access: RamAccessToken<'t>,
-    ) -> Result<ReadHandle<'b, [T]>, RamAccessToken<'t>> {
+        access: AccessToken<'t>,
+    ) -> Result<ReadHandle<'b, [T]>, AccessToken<'t>> {
         let t_ref = {
             let index = self.index.borrow();
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
             };
 
-            let RamStorageEntryState::Initialized(info) = entry.state else {
+            let StorageEntryState::Initialized(info) = entry.state else {
                 return Err(access);
             };
 
@@ -596,9 +596,9 @@ impl Storage {
     /// size must match the initial allocation
     pub unsafe fn try_update_inplace<'b, 't: 'b, T: Copy>(
         &'b self,
-        old_access: RamAccessToken<'t>,
+        old_access: AccessToken<'t>,
         new_key: DataId,
-    ) -> Result<Result<InplaceResult<'b, T>, Error>, RamAccessToken<'t>> {
+    ) -> Result<Result<InplaceResult<'b, T>, Error>, AccessToken<'t>> {
         let old_key = old_access.id;
 
         let mut index = self.index.borrow_mut();
@@ -606,7 +606,7 @@ impl Storage {
                 return Err(old_access);
             };
 
-        let RamStorageEntryState::Initialized(info) = entry.state else {
+        let StorageEntryState::Initialized(info) = entry.state else {
             return Err(old_access)
         };
 
@@ -616,7 +616,7 @@ impl Storage {
         let t_ptr = ptr.cast::<T>();
 
         // Only allow inplace if we are EXACTLY the one reader
-        let in_place_possible = matches!(entry.access, RamAccessState::Some(1));
+        let in_place_possible = matches!(entry.access, AccessState::Some(1));
 
         Ok(Ok(if in_place_possible {
             // Repurpose access key for the read/write handle
@@ -624,16 +624,16 @@ impl Storage {
             new_access.id = new_key;
 
             let _old_entry = index.remove(&old_key).unwrap();
-            let new_entry = index.entry(new_key).or_insert_with(|| RamEntry {
-                state: RamStorageEntryState::Registered,
-                access: RamAccessState::Some(0),
+            let new_entry = index.entry(new_key).or_insert_with(|| Entry {
+                state: StorageEntryState::Registered,
+                access: AccessState::Some(0),
             });
 
-            new_entry.state = RamStorageEntryState::Initializing(info);
+            new_entry.state = StorageEntryState::Initializing(info);
 
             new_entry.access = match new_entry.access {
-                RamAccessState::Some(n) => RamAccessState::Some(n + 1),
-                RamAccessState::None(_) => panic!("If present, entry should have accessors"),
+                AccessState::Some(n) => AccessState::Some(n + 1),
+                AccessState::None(_) => panic!("If present, entry should have accessors"),
             };
 
             // Safety: Type matches as per contract upheld by caller. There are also no other
@@ -658,7 +658,7 @@ impl Storage {
             };
             let r = ReadHandle {
                 data: t_ref,
-                access: RamAccessToken::new(self, old_key),
+                access: AccessToken::new(self, old_key),
             };
             InplaceResult::New(r, w)
         }))

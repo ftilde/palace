@@ -10,42 +10,42 @@ use crate::{
 };
 
 #[derive(Debug, Eq, PartialEq)]
-enum VRamAccessState {
+enum AccessState {
     Some(usize),
     None(/*LRUIndex, */ CmdBufferEpoch),
 }
 
-enum VRamStorageEntryState {
+enum StorageEntryState {
     Registered,
-    Initializing(VRamStorageInfo),
-    Initialized(VRamStorageInfo),
+    Initializing(StorageInfo),
+    Initialized(StorageInfo),
 }
 
-pub struct VRamStorageInfo {
+struct StorageInfo {
     pub allocation: crate::vulkan::Allocation,
     pub layout: Layout,
 }
 
-struct VRamEntry {
-    state: VRamStorageEntryState,
-    access: VRamAccessState,
+struct Entry {
+    state: StorageEntryState,
+    access: AccessState,
 }
 
-pub struct VRamAccessToken<'a> {
+pub struct AccessToken<'a> {
     storage: &'a Storage,
     device: &'a DeviceContext,
     pub id: DataId,
 }
-impl<'a> VRamAccessToken<'a> {
+impl<'a> AccessToken<'a> {
     fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
         let mut index = storage.index.borrow_mut();
         let vram_entry = index.get_mut(&id).unwrap();
 
         vram_entry.access = match vram_entry.access {
-            VRamAccessState::Some(n) => VRamAccessState::Some(n + 1),
-            VRamAccessState::None(/*id, */ _) => {
+            AccessState::Some(n) => AccessState::Some(n + 1),
+            AccessState::None(/*id, */ _) => {
                 //storage.state.lru_manager.borrow_mut().remove(id);
-                VRamAccessState::Some(1)
+                AccessState::Some(1)
             }
         };
 
@@ -56,42 +56,42 @@ impl<'a> VRamAccessToken<'a> {
         }
     }
 }
-impl Drop for VRamAccessToken<'_> {
+impl Drop for AccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
         vram_entry.access = match vram_entry.access {
-            VRamAccessState::Some(1) => {
+            AccessState::Some(1) => {
                 //let lru_id = self.storage.state.lru_manager.borrow_mut().add(self.id);
-                VRamAccessState::None(/*lru_id, */ self.device.current_epoch())
+                AccessState::None(/*lru_id, */ self.device.current_epoch())
             }
-            VRamAccessState::Some(n) => VRamAccessState::Some(n - 1),
-            VRamAccessState::None(..) => {
+            AccessState::Some(n) => AccessState::Some(n - 1),
+            AccessState::None(..) => {
                 panic!("Invalid state");
             }
         };
     }
 }
 
-pub struct VRamWriteHandle<'a> {
+pub struct WriteHandle<'a> {
     pub buffer: ash::vk::Buffer,
     pub size: u64,
-    drop_handler: DropErrorVram,
-    access: VRamAccessToken<'a>,
+    drop_handler: DropError,
+    access: AccessToken<'a>,
 }
 
-pub struct DropErrorVram;
-impl Drop for DropErrorVram {
+pub struct DropError;
+impl Drop for DropError {
     fn drop(&mut self) {
         panic!("The WriteHandle was not marked initialized!");
     }
 }
 
-impl<'a> VRamWriteHandle<'a> {
+impl<'a> WriteHandle<'a> {
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized(self) {
-        let VRamWriteHandle {
+        let WriteHandle {
             buffer,
             access,
             drop_handler,
@@ -108,18 +108,15 @@ impl<'a> VRamWriteHandle<'a> {
         {
             let entry = &mut binding.get_mut(&access.id).unwrap();
 
-            entry.state =
-                match std::mem::replace(&mut entry.state, VRamStorageEntryState::Registered) {
-                    VRamStorageEntryState::Registered => {
-                        panic!("Entry should be in state Initializing, but is in Registered");
-                    }
-                    VRamStorageEntryState::Initialized(_) => {
-                        panic!("Entry should be in state Initializing, but is in Initialized");
-                    }
-                    VRamStorageEntryState::Initializing(info) => {
-                        VRamStorageEntryState::Initialized(info)
-                    }
-                };
+            entry.state = match std::mem::replace(&mut entry.state, StorageEntryState::Registered) {
+                StorageEntryState::Registered => {
+                    panic!("Entry should be in state Initializing, but is in Registered");
+                }
+                StorageEntryState::Initialized(_) => {
+                    panic!("Entry should be in state Initializing, but is in Initialized");
+                }
+                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(info),
+            };
         }
 
         // Add pipeline barrier
@@ -139,15 +136,15 @@ impl<'a> VRamWriteHandle<'a> {
         });
     }
 }
-pub struct VRamReadHandle<'a> {
+pub struct ReadHandle<'a> {
     pub buffer: ash::vk::Buffer,
     pub layout: Layout,
     #[allow(unused)]
-    access: VRamAccessToken<'a>,
+    access: AccessToken<'a>,
 }
 
 pub struct Storage {
-    index: RefCell<BTreeMap<DataId, VRamEntry>>,
+    index: RefCell<BTreeMap<DataId, Entry>>,
     _lru_manager: RefCell<super::LRUManager>,
     allocator: crate::vulkan::Allocator,
     new_data: super::NewDataManager,
@@ -174,10 +171,9 @@ impl Storage {
     pub unsafe fn free_vram(&self) {
         let mut index = self.index.borrow_mut();
         for entry in index.values_mut() {
-            match std::mem::replace(&mut entry.state, VRamStorageEntryState::Registered) {
-                VRamStorageEntryState::Registered => {}
-                VRamStorageEntryState::Initializing(info)
-                | VRamStorageEntryState::Initialized(info) => {
+            match std::mem::replace(&mut entry.state, StorageEntryState::Registered) {
+                StorageEntryState::Registered => {}
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
                     self.allocator.deallocate(info.allocation);
                 }
             }
@@ -188,7 +184,7 @@ impl Storage {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, VRamStorageEntryState::Initialized(_)))
+            .map(|e| matches!(e.state, StorageEntryState::Initialized(_)))
             .unwrap_or(false)
     }
 
@@ -203,17 +199,17 @@ impl Storage {
         &'b self,
         device: &'b DeviceContext,
         id: DataId,
-    ) -> VRamAccessToken<'b> {
+    ) -> AccessToken<'b> {
         {
             let mut index = self.index.borrow_mut();
             index.entry(id).or_insert_with(|| {
-                VRamEntry {
-                    state: VRamStorageEntryState::Registered,
-                    access: VRamAccessState::Some(0), // Will be overwritten immediately when generating token
+                Entry {
+                    state: StorageEntryState::Registered,
+                    access: AccessState::Some(0), // Will be overwritten immediately when generating token
                 }
             });
         }
-        VRamAccessToken::new(self, device, id)
+        AccessToken::new(self, device, id)
     }
 
     // Allocates a GpuOnly storage buffer
@@ -222,7 +218,7 @@ impl Storage {
         device: &'b DeviceContext,
         key: DataId,
         layout: Layout,
-    ) -> Result<(ash::vk::Buffer, VRamAccessToken<'b>), Error> {
+    ) -> Result<(ash::vk::Buffer, AccessToken<'b>), Error> {
         let allocation = self.allocator.allocate(
             layout,
             ash::vk::BufferUsageFlags::STORAGE_BUFFER
@@ -234,19 +230,19 @@ impl Storage {
 
         {
             let mut index = self.index.borrow_mut();
-            let entry = index.entry(key).or_insert_with(|| VRamEntry {
-                state: VRamStorageEntryState::Registered,
-                access: VRamAccessState::Some(0), // Will be overwritten immediately when generating token
+            let entry = index.entry(key).or_insert_with(|| Entry {
+                state: StorageEntryState::Registered,
+                access: AccessState::Some(0), // Will be overwritten immediately when generating token
             });
 
-            let info = VRamStorageInfo { allocation, layout };
+            let info = StorageInfo { allocation, layout };
 
-            assert!(matches!(entry.state, VRamStorageEntryState::Registered));
+            assert!(matches!(entry.state, StorageEntryState::Registered));
 
-            entry.state = VRamStorageEntryState::Initializing(info);
+            entry.state = StorageEntryState::Initializing(info);
         }
 
-        Ok((buffer, VRamAccessToken::new(self, device, key)))
+        Ok((buffer, AccessToken::new(self, device, key)))
     }
 
     pub fn alloc_vram_slot_raw<'b>(
@@ -254,15 +250,15 @@ impl Storage {
         device: &'b DeviceContext,
         key: DataId,
         layout: Layout,
-    ) -> Result<VRamWriteHandle<'b>, Error> {
+    ) -> Result<WriteHandle<'b>, Error> {
         let size = layout.size();
         let (buffer, access) = self.alloc_vram(device, key, layout)?;
 
-        Ok(VRamWriteHandle {
+        Ok(WriteHandle {
             buffer,
             size: size as u64,
             access,
-            drop_handler: DropErrorVram,
+            drop_handler: DropError,
         })
     }
 
@@ -271,7 +267,7 @@ impl Storage {
         device: &'b DeviceContext,
         key: DataId,
         num: usize,
-    ) -> Result<VRamWriteHandle<'b>, Error> {
+    ) -> Result<WriteHandle<'b>, Error> {
         //TODO: Not sure if this actually works with std430
         let layout = Layout::array::<T>(num).unwrap();
         self.alloc_vram_slot_raw(device, key, layout)
@@ -279,17 +275,17 @@ impl Storage {
 
     pub fn read_vram<'b, 't: 'b>(
         &'b self,
-        access: VRamAccessToken<'t>,
-    ) -> Result<VRamReadHandle<'b>, VRamAccessToken<'t>> {
+        access: AccessToken<'t>,
+    ) -> Result<ReadHandle<'b>, AccessToken<'t>> {
         let index = self.index.borrow();
         let Some(entry) = index.get(&access.id) else {
             return Err(access);
         };
-        let VRamStorageEntryState::Initialized(info) = &entry.state else {
+        let StorageEntryState::Initialized(info) = &entry.state else {
             return Err(access);
         };
 
-        Ok(VRamReadHandle {
+        Ok(ReadHandle {
             buffer: info.allocation.buffer,
             layout: info.layout,
             access,

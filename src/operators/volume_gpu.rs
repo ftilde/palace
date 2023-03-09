@@ -9,7 +9,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
     id::Id,
     operator::OperatorId,
-    storage::gpu::{VRamReadHandle, VRamWriteHandle},
+    storage::gpu::{ReadHandle, WriteHandle},
     vulkan::{DeviceContext, VulkanState},
 };
 
@@ -271,7 +271,7 @@ trait AsDescriptor {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
 }
 
-impl<'a> AsDescriptor for VRamReadHandle<'a> {
+impl<'a> AsDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -280,7 +280,7 @@ impl<'a> AsDescriptor for VRamReadHandle<'a> {
     }
 }
 
-impl<'a> AsDescriptor for VRamWriteHandle<'a> {
+impl<'a> AsDescriptor for WriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
