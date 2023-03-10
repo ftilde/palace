@@ -22,22 +22,33 @@ use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::time::Duration;
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct RessourceId(Id);
+impl RessourceId {
+    pub fn new(name: &'static str) -> Self {
+        let id = Id::from_data(name.as_bytes());
+        RessourceId(id)
+    }
+    pub fn of(self, op: OperatorId) -> Self {
+        RessourceId(Id::combine(&[self.0, op.inner()]))
+    }
+    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
+        RessourceId(Id::combine(&[self.0, id.into()]))
+    }
+    pub fn inner(&self) -> Id {
+        self.0
+    }
+}
+
 #[derive(Default)]
 struct Cache {
-    values: RefCell<BTreeMap<Id, UnsafeCell<Box<dyn VulkanState>>>>,
+    values: RefCell<BTreeMap<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
 }
 
 impl Cache {
-    fn get<'a, V: VulkanState, F: FnOnce() -> V>(
-        &'a self,
-        key: &'static str,
-        generate: F,
-    ) -> &'a V {
-        let t_id = crate::id::func_id::<V>();
-        let key = Id::combine(&[Id::from_data(key.as_bytes()), t_id]);
-
+    fn get<'a, V: VulkanState, F: FnOnce() -> V>(&'a self, id: RessourceId, generate: F) -> &'a V {
         let mut m = self.values.borrow_mut();
-        let raw = m.entry(key).or_insert_with(|| {
+        let raw = m.entry(id).or_insert_with(|| {
             let v = generate();
             UnsafeCell::new(Box::new(v))
         });
@@ -603,7 +614,7 @@ impl DeviceContext {
 
     pub fn request_state<'a, T: VulkanState + 'static>(
         &'a self,
-        identifier: &'static str,
+        identifier: RessourceId,
         init: impl FnOnce() -> T + 'a,
     ) -> &'a T {
         self.vulkan_states.get(identifier, || init())

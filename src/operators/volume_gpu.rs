@@ -10,7 +10,7 @@ use crate::{
     id::Id,
     operator::OperatorId,
     storage::gpu::{ReadHandle, WriteHandle},
-    vulkan::{DeviceContext, VulkanState},
+    vulkan::{DeviceContext, RessourceId, VulkanState},
 };
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
@@ -19,9 +19,55 @@ use super::{scalar::ScalarOperator, volume::VolumeOperator};
 //    unsafe { Layout::from_size_align_unchecked(T::std140_size_static(), T::Output::ALIGNMENT) }
 //}
 
+struct ShaderDefines {
+    defines: BTreeMap<String, String>,
+}
+
+impl ShaderDefines {
+    fn new() -> Self {
+        Self {
+            defines: Default::default(),
+        }
+    }
+    fn add(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.defines.insert(key.into(), value.into());
+        self
+    }
+}
+
 struct Shader {
     module: vk::ShaderModule,
     entry_points: Vec<EntryPoint>,
+}
+
+trait ShaderSource {
+    fn build(self) -> Vec<u32>;
+}
+
+impl ShaderSource for (&str, ShaderDefines) {
+    fn build(self) -> Vec<u32> {
+        let source = self.0;
+        let defines = self.1;
+
+        use spirv_compiler::*;
+
+        let mut compiler = CompilerBuilder::new()
+            .with_source_language(SourceLanguage::GLSL)
+            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_2);
+
+        for (k, v) in defines.defines.into_iter() {
+            compiler = compiler.with_macro(&k, Some(&v));
+        }
+        let mut compiler = compiler.build().unwrap();
+        let kind = ShaderKind::Compute;
+        compiler.compile_from_string(&source, kind).unwrap()
+    }
+}
+
+impl ShaderSource for &str {
+    fn build(self) -> Vec<u32> {
+        (self, ShaderDefines::new()).build()
+    }
 }
 
 impl Shader {
@@ -41,17 +87,8 @@ impl Shader {
             entry_points,
         }
     }
-    fn from_source(device: &DeviceContext, source: &str) -> Self {
-        use spirv_compiler::*;
-
-        let mut compiler = CompilerBuilder::new()
-            .with_source_language(SourceLanguage::GLSL)
-            .build()
-            .unwrap();
-        let kind = ShaderKind::Compute;
-        let compiled = compiler.compile_from_string(&source, kind).unwrap();
-
-        Self::from_compiled(device, compiled.as_slice())
+    fn from_source(device: &DeviceContext, source: impl ShaderSource) -> Self {
+        Self::from_compiled(device, &source.build())
     }
 }
 
@@ -69,7 +106,7 @@ struct ComputePipeline {
 }
 
 impl ComputePipeline {
-    fn new(device: &DeviceContext, shader: &str) -> Self {
+    fn new(device: &DeviceContext, shader: impl ShaderSource) -> Self {
         let mut shader = Shader::from_source(device, shader);
 
         let entry_point_name = "main";
@@ -102,8 +139,9 @@ impl ComputePipeline {
                     desc_bind,
                     desc_ty,
                     ty: _,
-                    nbind: _,
+                    nbind,
                 } => {
+                    assert!(*nbind > 0, "Dynamic SSBOs are currently not supported (since we are using push descriptors, see https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-VkDescriptorSetLayoutCreateInfo-flags-00280)");
                     let d_type = match desc_ty {
                         spirq::DescriptorType::Sampler() => todo!(),
                         spirq::DescriptorType::CombinedImageSampler() => todo!(),
@@ -115,7 +153,11 @@ impl ComputePipeline {
                             vk::DescriptorType::UNIFORM_BUFFER
                         }
                         spirq::DescriptorType::StorageBuffer(_) => {
-                            vk::DescriptorType::STORAGE_BUFFER
+                            if *nbind > 0 {
+                                vk::DescriptorType::STORAGE_BUFFER
+                            } else {
+                                vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+                            }
                         }
                         spirq::DescriptorType::InputAttachment(_) => todo!(),
                         spirq::DescriptorType::AccelStruct() => todo!(),
@@ -123,7 +165,7 @@ impl ComputePipeline {
                     let binding = vk::DescriptorSetLayoutBinding::builder()
                         .binding(desc_bind.bind())
                         .descriptor_type(d_type)
-                        .descriptor_count(1)
+                        .descriptor_count(*nbind)
                         .stage_flags(stage)
                         .build();
 
@@ -289,11 +331,33 @@ impl<'a> AsDescriptor for WriteHandle<'a> {
     }
 }
 
+trait AsDescriptors {
+    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo>;
+}
+
+impl<T: AsDescriptor> AsDescriptors for T {
+    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
+        vec![self.gen_buffer_info()]
+    }
+}
+
+impl<const N: usize, T: AsDescriptor> AsDescriptors for [&T; N] {
+    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
+        self.iter().map(|i| i.gen_buffer_info()).collect()
+    }
+}
+
+impl<T: AsDescriptor> AsDescriptors for &[&T] {
+    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
+        self.iter().map(|i| i.gen_buffer_info()).collect()
+    }
+}
+
 struct DescriptorConfig<const N: usize> {
-    buffer_infos: [vk::DescriptorBufferInfo; N],
+    buffer_infos: [Vec<vk::DescriptorBufferInfo>; N],
 }
 impl<const N: usize> DescriptorConfig<N> {
-    fn new(buffers: [&dyn AsDescriptor; N]) -> Self {
+    fn new(buffers: [&dyn AsDescriptors; N]) -> Self {
         let buffer_infos = std::array::from_fn(|i| buffers[i].gen_buffer_info());
         Self { buffer_infos }
     }
@@ -303,7 +367,7 @@ impl<const N: usize> DescriptorConfig<N> {
                 .dst_binding(i as u32)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(std::slice::from_ref(&self.buffer_infos[i]))
+                .buffer_info(&self.buffer_infos[i])
                 .build()
         })
     }
@@ -381,9 +445,10 @@ void main()
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
-                let pipeline = device.request_state("linear_rescale_gpu_pipeline", || {
-                    ComputePipeline::new(device, SHADER)
-                });
+                let pipeline = device
+                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(device, SHADER)
+                    });
 
                 let mut brick_stream = ctx.submit_unordered_with_data(
                     positions
@@ -459,12 +524,13 @@ pub fn rechunk<'op>(
     }
     const SHADER: &'static str = r#"
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[];
-} sourceData;
+} sourceData [NUM_BRICKS];
 
 layout(std430, binding = 1) buffer OutputBuffer{
     float values[];
@@ -507,7 +573,7 @@ void main() {
         uint in_index = to_linear(in_pos, constants.mem_size_in);
         uint out_index = to_linear(out_pos, constants.mem_size_out);
 
-        outputData.values[out_index] = sourceData.values[in_index];
+        outputData.values[out_index] = sourceData[NUM_BRICKS-1].values[in_index];
     }
 }
 "#;
@@ -531,9 +597,22 @@ void main() {
             async move {
                 let device = ctx.vulkan_device();
 
-                let pipeline = device.request_state("volume_rechunk_gpu_pipeline", || {
-                    ComputePipeline::new(device, SHADER)
-                });
+                let num_bricks = (positions.first().unwrap().x().raw % 30) as usize;
+
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(Id::hash(&num_bricks)),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().add("NUM_BRICKS", num_bricks.to_string()),
+                            ),
+                        )
+                    },
+                );
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
                 let m_out = {
@@ -598,8 +677,9 @@ void main() {
 
                             let out_chunk_begin = out_info.in_chunk(overlap_begin);
 
+                            let in_bricks = vec![gpu_brick_in; num_bricks];
                             let descriptor_config =
-                                DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
+                                DescriptorConfig::new([&in_bricks.as_slice(), &gpu_brick_out]);
                             let descriptor_writes = descriptor_config.writes();
 
                             let local_size = pipeline.local_size();

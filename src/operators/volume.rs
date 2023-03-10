@@ -365,7 +365,9 @@ pub fn convolution_1d<'op, const DIM: usize>(
     assert!(kernel_size % 2 == 1, "Kernel size must be odd");
     let extent = kernel_size / 2;
     VolumeOperator::with_state(
-        OperatorId::new("convolution_1d").dependent_on(&input),
+        OperatorId::new("convolution_1d")
+            .dependent_on(&input)
+            .dependent_on(bytemuck::cast_slice(kernel)),
         input.clone(),
         input,
         move |ctx, input, _| {
