@@ -6,7 +6,7 @@ use futures::StreamExt;
 use spirq::{EntryPoint, ReflectConfig};
 
 use crate::{
-    data::{chunk, chunk_mut, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
+    data::{chunk, chunk_mut, BrickPosition, LocalCoordinate, LocalVoxelPosition},
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -684,8 +684,8 @@ void main() {
 
                             let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
                             let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
-                            let overlap_size = (overlap_end - overlap_begin)
-                                .map(LocalVoxelCoordinate::interpret_as);
+                            let overlap_size =
+                                (overlap_end - overlap_begin).map(LocalCoordinate::interpret_as);
 
                             let in_chunk_begin = in_info.in_chunk(overlap_begin);
 
@@ -1227,7 +1227,7 @@ pub fn separable_convolution<'op>(
 mod test {
     use super::*;
     use crate::{
-        data::{GlobalVoxelCoordinate, Vector, VoxelPosition},
+        data::{GlobalCoordinate, Vector, VoxelPosition},
         operators::volume::VolumeOperatorState,
         test_util::*,
     };
@@ -1361,7 +1361,7 @@ mod test {
                         let l1_dist = offset.map(i32::abs).fold(0, std::ops::Add::add);
                         let expected_val = 1 << l1_dist;
                         comp[(center.try_into_elem::<i32>().unwrap() + offset)
-                            .try_into_elem::<GlobalVoxelCoordinate>()
+                            .try_into_elem::<GlobalCoordinate>()
                             .unwrap()
                             .as_index()] = expected_val as f32;
                     }

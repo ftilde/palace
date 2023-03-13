@@ -4,7 +4,7 @@ use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 
 use crate::{
     array::VolumeMetaData,
-    data::{LocalVoxelCoordinate, VoxelPosition},
+    data::{LocalCoordinate, VoxelPosition},
     operator::OperatorId,
     operators::{
         tensor::TensorOperator,
@@ -40,8 +40,8 @@ fn read_metadata(header: &NiftiHeader) -> Result<VolumeMetaData, Error> {
 
     let chunk_size = [
         1.into(),
-        LocalVoxelCoordinate::interpret_as(dimensions.y()),
-        LocalVoxelCoordinate::interpret_as(dimensions.x()),
+        LocalCoordinate::interpret_as(dimensions.y()),
+        LocalCoordinate::interpret_as(dimensions.x()),
     ]
     .into();
 

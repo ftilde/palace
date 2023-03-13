@@ -2,15 +2,14 @@ use futures::stream::StreamExt;
 
 use crate::{
     data::{
-        chunk, chunk_mut, slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition,
-        Vector,
+        chunk, chunk_mut, slice_range, BrickPosition, LocalCoordinate, LocalVoxelPosition, Vector,
     },
     id::Id,
     operator::OperatorId,
     task::RequestStream,
 };
 
-use super::{scalar::ScalarOperator, tensor::TensorOperator};
+use super::{array::ArrayOperator, scalar::ScalarOperator, tensor::TensorOperator};
 
 pub trait VolumeOperatorState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a>;
@@ -150,7 +149,7 @@ pub fn rechunk<'op>(
                                 let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
                                 let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
                                 let overlap_size = (overlap_end - overlap_begin)
-                                    .map(LocalVoxelCoordinate::interpret_as);
+                                    .map(LocalCoordinate::interpret_as);
 
                                 let in_chunk_begin = in_info.in_chunk(overlap_begin);
                                 let in_chunk_end = in_chunk_begin + overlap_size;
@@ -187,17 +186,14 @@ pub fn rechunk<'op>(
 /// only supported (and thus always applied) border handling routine.
 pub fn convolution_1d<'op, const DIM: usize>(
     input: VolumeOperator<'op>,
-    kernel: &'op [f32],
+    kernel: ArrayOperator<'op>,
 ) -> VolumeOperator<'op> {
-    let kernel_size = kernel.len() as u32;
-    assert!(kernel_size % 2 == 1, "Kernel size must be odd");
-    let extent = kernel_size / 2;
     TensorOperator::with_state(
         OperatorId::new("convolution_1d")
             .dependent_on(&input)
-            .dependent_on(bytemuck::cast_slice(kernel)),
+            .dependent_on(&kernel),
         input.clone(),
-        input,
+        (input, kernel),
         move |ctx, input, _| {
             async move {
                 let req = input.metadata.request_scalar();
@@ -206,10 +202,26 @@ pub fn convolution_1d<'op, const DIM: usize>(
             }
             .into()
         },
-        move |ctx, positions, input, _| {
+        move |ctx, positions, (input, kernel), _| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
-                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let (m_in, kernel_m, kernel_handle) = futures::join!(
+                    ctx.submit(input.metadata.request_scalar()),
+                    ctx.submit(kernel.metadata.request_scalar()),
+                    ctx.submit(kernel.bricks.request([0].into())),
+                );
+
+                assert_eq!(
+                    kernel_m.dimensions.raw(),
+                    kernel_m.chunk_size.raw(),
+                    "Only unchunked kernels are supported for now"
+                );
+
+                let kernel_size = *kernel_m.dimensions.raw();
+                assert!(kernel_size % 2 == 1, "Kernel size must be odd");
+                let extent = kernel_size / 2;
+
+                let kernel = &*kernel_handle;
                 let m_out = m_in;
 
                 let requests = positions.into_iter().map(|pos| {
@@ -361,11 +373,11 @@ pub fn convolution_1d<'op, const DIM: usize>(
 
 pub fn separable_convolution<'op>(
     v: VolumeOperator<'op>,
-    kernels: [&'op [f32]; 3],
+    [k0, k1, k2]: [ArrayOperator<'op>; 3],
 ) -> VolumeOperator<'op> {
-    let v = convolution_1d::<2>(v, kernels[2]);
-    let v = convolution_1d::<1>(v, kernels[1]);
-    let v = convolution_1d::<0>(v, kernels[0]);
+    let v = convolution_1d::<2>(v, k2);
+    let v = convolution_1d::<1>(v, k1);
+    let v = convolution_1d::<0>(v, k0);
     v
 }
 
@@ -373,7 +385,7 @@ pub fn separable_convolution<'op>(
 mod test {
     use super::*;
     use crate::{
-        data::{GlobalVoxelCoordinate, VoxelPosition},
+        data::{GlobalCoordinate, VoxelPosition},
         test_util::*,
     };
 
@@ -384,6 +396,7 @@ mod test {
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {
         let input = input.operate();
+        let kernel = crate::operators::array::from_static(kernel);
         let output = convolution_1d::<DIM>(input, kernel);
         compare_volume(output, size, fill_expected);
     }
@@ -440,10 +453,9 @@ mod test {
 
         let (point_vol, center) = center_point_vol(size, brick_size);
 
-        let output = separable_convolution(
-            point_vol.operate(),
-            [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]],
-        );
+        let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
+        let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
+        let output = separable_convolution(point_vol.operate(), kernels);
         compare_volume(output, size, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {
@@ -452,7 +464,7 @@ mod test {
                         let l1_dist = offset.map(i32::abs).fold(0, std::ops::Add::add);
                         let expected_val = 1 << l1_dist;
                         comp[(center.try_into_elem::<i32>().unwrap() + offset)
-                            .try_into_elem::<GlobalVoxelCoordinate>()
+                            .try_into_elem::<GlobalCoordinate>()
                             .unwrap()
                             .as_index()] = expected_val as f32;
                     }

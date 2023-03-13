@@ -124,10 +124,14 @@ fn eval_network(
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()));
 
-    let smoothing_kernel = &[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0];
-    let convolved = volume_gpu::separable_convolution(
+    let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
+    let convolved = volume::separable_convolution(
         rechunked.clone(),
-        [smoothing_kernel, smoothing_kernel, smoothing_kernel],
+        [
+            smoothing_kernel.clone(),
+            smoothing_kernel.clone(),
+            smoothing_kernel,
+        ],
     );
     let mapped = tensor::map(convolved, |v| v.min(0.5));
 

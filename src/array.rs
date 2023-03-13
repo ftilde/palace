@@ -1,9 +1,9 @@
-use crate::data::{hmul, ChunkCoordinate, GlobalVoxelCoordinate, LocalVoxelCoordinate, Vector};
+use crate::data::{hmul, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector};
 
 pub struct ChunkInfo<const N: usize> {
-    pub mem_dimensions: Vector<N, LocalVoxelCoordinate>,
-    pub logical_dimensions: Vector<N, LocalVoxelCoordinate>,
-    pub begin: Vector<N, GlobalVoxelCoordinate>,
+    pub mem_dimensions: Vector<N, LocalCoordinate>,
+    pub logical_dimensions: Vector<N, LocalCoordinate>,
+    pub begin: Vector<N, GlobalCoordinate>,
 }
 impl<const N: usize> ChunkInfo<N> {
     pub fn is_contiguous(&self) -> bool {
@@ -21,17 +21,14 @@ impl<const N: usize> ChunkInfo<N> {
         hmul(self.mem_dimensions)
     }
 
-    pub fn in_chunk(
-        &self,
-        pos: Vector<N, GlobalVoxelCoordinate>,
-    ) -> Vector<N, LocalVoxelCoordinate> {
-        (pos - self.begin).map(LocalVoxelCoordinate::interpret_as)
+    pub fn in_chunk(&self, pos: Vector<N, GlobalCoordinate>) -> Vector<N, LocalCoordinate> {
+        (pos - self.begin).map(LocalCoordinate::interpret_as)
     }
 
-    pub fn begin(&self) -> Vector<N, GlobalVoxelCoordinate> {
+    pub fn begin(&self) -> Vector<N, GlobalCoordinate> {
         self.begin
     }
-    pub fn end(&self) -> Vector<N, GlobalVoxelCoordinate> {
+    pub fn end(&self) -> Vector<N, GlobalCoordinate> {
         self.begin + self.logical_dimensions
     }
 }
@@ -39,8 +36,8 @@ impl<const N: usize> ChunkInfo<N> {
 #[repr(C)]
 #[derive(Copy, Clone, Hash)]
 pub struct TensorMetaData<const N: usize> {
-    pub dimensions: Vector<N, GlobalVoxelCoordinate>,
-    pub chunk_size: Vector<N, LocalVoxelCoordinate>,
+    pub dimensions: Vector<N, GlobalCoordinate>,
+    pub chunk_size: Vector<N, LocalCoordinate>,
 }
 
 impl<const N: usize> TensorMetaData<N> {
@@ -52,13 +49,13 @@ impl<const N: usize> TensorMetaData<N> {
             crate::util::div_round_up(a.raw, b.raw).into()
         })
     }
-    pub fn chunk_pos(&self, pos: Vector<N, GlobalVoxelCoordinate>) -> Vector<N, ChunkCoordinate> {
+    pub fn chunk_pos(&self, pos: Vector<N, GlobalCoordinate>) -> Vector<N, ChunkCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
     }
-    fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+    fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
-    fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalVoxelCoordinate> {
+    fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalCoordinate> {
         let next_pos = pos + Vector::fill(1u32);
         let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
@@ -66,7 +63,7 @@ impl<const N: usize> TensorMetaData<N> {
     pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkInfo<N> {
         let begin = self.chunk_begin(pos);
         let end = self.chunk_end(pos);
-        let logical_dim = (end - begin).map(LocalVoxelCoordinate::interpret_as);
+        let logical_dim = (end - begin).map(LocalCoordinate::interpret_as);
         ChunkInfo {
             mem_dimensions: self.chunk_size,
             logical_dimensions: logical_dim,

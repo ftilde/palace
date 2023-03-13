@@ -2,7 +2,7 @@ use futures::StreamExt;
 
 use crate::{
     array::TensorMetaData,
-    data::{ChunkCoordinate, Vector},
+    data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     id::Id,
     operator::{Operator, OperatorId},
     storage::ram::{InplaceResult, ThreadInplaceResult},
@@ -132,7 +132,7 @@ pub fn map<'op, const N: usize>(
     f: fn(f32) -> f32,
 ) -> TensorOperator<'op, N> {
     TensorOperator::with_state(
-        OperatorId::new("volume_scale")
+        OperatorId::new("tensor_map")
             .dependent_on(&input)
             .dependent_on(Id::hash(&f)),
         input.clone(),
@@ -162,7 +162,7 @@ pub fn linear_rescale<'op, const N: usize>(
     offset: ScalarOperator<'op, f32>,
 ) -> TensorOperator<'op, N> {
     TensorOperator::with_state(
-        OperatorId::new("volume_scale")
+        OperatorId::new("tensor_linear_scale")
             .dependent_on(&input)
             .dependent_on(&factor)
             .dependent_on(&offset),
@@ -190,4 +190,47 @@ pub fn linear_rescale<'op, const N: usize>(
             .into()
         },
     )
+}
+
+pub fn from_static<'op, const N: usize>(
+    size: Vector<N, GlobalCoordinate>,
+    values: &'op [f32],
+) -> Result<TensorOperator<'op, N>, crate::Error> {
+    let m = TensorMetaData {
+        dimensions: size,
+        chunk_size: size.map(LocalCoordinate::interpret_as),
+    };
+    let n_elem = crate::data::hmul(size);
+    if n_elem != values.len() {
+        return Err(format!(
+            "Tensor ({}) and data ({}) size do not match",
+            n_elem,
+            values.len()
+        )
+        .into());
+    }
+    Ok(TensorOperator::new(
+        OperatorId::new("tensor_from_static")
+            .dependent_on(Id::hash(&size))
+            .dependent_on(bytemuck::cast_slice(values)), //TODO: this is a performance problem for
+        move |ctx, _, _| async move { ctx.write(m) }.into(),
+        move |ctx, _, _, _| {
+            async move {
+                let mut out = ctx
+                    .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
+                    .unwrap();
+                let mut out_data = &mut *out;
+                ctx.submit(ctx.spawn_compute(move || {
+                    crate::data::write_slice_uninit(&mut out_data, values);
+                }))
+                .await;
+
+                // Safety: slot and values are of the exact same size. Thus all values are
+                // initialized.
+                unsafe { out.initialized() };
+                Ok(())
+            }
+            .into()
+        },
+    ))
 }

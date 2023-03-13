@@ -23,11 +23,11 @@ pub fn to_linear<const N: usize, T: CoordinateType>(
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct LocalVoxelCoordinateType;
-impl CoordinateType for LocalVoxelCoordinateType {}
+pub struct LocalCoordinateType;
+impl CoordinateType for LocalCoordinateType {}
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct GlobalVoxelCoordinateType;
-impl CoordinateType for GlobalVoxelCoordinateType {}
+pub struct GlobalCoordinateType;
+impl CoordinateType for GlobalCoordinateType {}
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ChunkCoordinateType;
 impl CoordinateType for ChunkCoordinateType {}
@@ -120,15 +120,15 @@ impl_coordinate_ops!(usize, |rhs| rhs as u32);
 impl_coordinate_ops!(u32, |rhs| rhs);
 impl_coordinate_ops!(Self, |rhs: Self| rhs.raw);
 
-impl Add<LocalVoxelCoordinate> for GlobalVoxelCoordinate {
-    type Output = GlobalVoxelCoordinate;
-    fn add(self, rhs: LocalVoxelCoordinate) -> Self::Output {
+impl Add<LocalCoordinate> for GlobalCoordinate {
+    type Output = GlobalCoordinate;
+    fn add(self, rhs: LocalCoordinate) -> Self::Output {
         (self.raw + rhs.raw).into()
     }
 }
 
-pub type LocalVoxelCoordinate = Coordinate<LocalVoxelCoordinateType>;
-pub type GlobalVoxelCoordinate = Coordinate<GlobalVoxelCoordinateType>;
+pub type LocalCoordinate = Coordinate<LocalCoordinateType>;
+pub type GlobalCoordinate = Coordinate<GlobalCoordinateType>;
 pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
 #[repr(C)]
@@ -203,14 +203,26 @@ impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
     }
 }
 
-impl<const N: usize> Vector<N, GlobalVoxelCoordinate> {
-    pub fn local(self) -> Vector<N, LocalVoxelCoordinate> {
-        self.map(LocalVoxelCoordinate::interpret_as)
+impl<const N: usize> Vector<N, GlobalCoordinate> {
+    pub fn local(self) -> Vector<N, LocalCoordinate> {
+        self.map(LocalCoordinate::interpret_as)
     }
 }
-impl<const N: usize> Vector<N, LocalVoxelCoordinate> {
-    pub fn global(self) -> Vector<N, GlobalVoxelCoordinate> {
-        self.map(GlobalVoxelCoordinate::interpret_as)
+impl<const N: usize> Vector<N, LocalCoordinate> {
+    pub fn global(self) -> Vector<N, GlobalCoordinate> {
+        self.map(GlobalCoordinate::interpret_as)
+    }
+}
+impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
+    pub fn raw(self) -> Vector<N, u32> {
+        self.map(|v| v.raw)
+    }
+}
+impl<T> std::ops::Deref for Vector<1, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0[0]
     }
 }
 
@@ -285,8 +297,8 @@ impl<T: Copy> Into<mint::Vector3<T>> for Vector<3, T> {
     }
 }
 
-pub type LocalVoxelPosition = Vector<3, LocalVoxelCoordinate>;
-pub type VoxelPosition = Vector<3, GlobalVoxelCoordinate>;
+pub type LocalVoxelPosition = Vector<3, LocalCoordinate>;
+pub type VoxelPosition = Vector<3, GlobalCoordinate>;
 pub type BrickPosition = Vector<3, ChunkCoordinate>;
 
 fn dimension_order_stride<T: CoordinateType>(
@@ -381,18 +393,18 @@ pub unsafe fn slice_assume_init_mut<T>(slice: &mut [MaybeUninit<T>]) -> &mut [T]
 
 // Unstable function copied from stdlib:
 // https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#method.write_slice
-//pub fn write_slice_uninit<'a, T>(this: &'a mut [MaybeUninit<T>], src: &[T]) -> &'a mut [T]
-//where
-//    T: Copy,
-//{
-//    // SAFETY: &[T] and &[MaybeUninit<T>] have the same layout
-//    let uninit_src: &[MaybeUninit<T>] = unsafe { std::mem::transmute(src) };
-//
-//    this.copy_from_slice(uninit_src);
-//
-//    // SAFETY: Valid elements have just been copied into `this` so it is initialized
-//    unsafe { slice_assume_init_mut(this) }
-//}
+pub fn write_slice_uninit<'a, T>(this: &'a mut [MaybeUninit<T>], src: &[T]) -> &'a mut [T]
+where
+    T: Copy,
+{
+    // SAFETY: &[T] and &[MaybeUninit<T>] have the same layout
+    let uninit_src: &[MaybeUninit<T>] = unsafe { std::mem::transmute(src) };
+
+    this.copy_from_slice(uninit_src);
+
+    // SAFETY: Valid elements have just been copied into `this` so it is initialized
+    unsafe { slice_assume_init_mut(this) }
+}
 
 pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
     for v in data.iter_mut() {
