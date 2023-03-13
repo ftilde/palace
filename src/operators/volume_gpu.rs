@@ -510,7 +510,7 @@ void main()
                                 cmd.raw(),
                                 PushConstants {
                                     chunk_pos: pos.into_elem::<u32>().into(),
-                                    num_chunk_elems: m.num_elements().try_into().unwrap(),
+                                    num_chunk_elems: global_size.try_into().unwrap(),
                                 },
                             );
                             pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
