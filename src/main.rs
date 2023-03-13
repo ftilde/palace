@@ -45,6 +45,7 @@ struct FileArgs {
 enum Input {
     File(FileArgs),
     Synthetic(SyntheticArgs),
+    SyntheticCpu(SyntheticArgs),
 }
 
 #[derive(Parser)]
@@ -99,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol_state = match args.input {
         Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::Synthetic(args) => Box::new(operators::rasterize_function::normalized(
+        Input::SyntheticCpu(args) => Box::new(operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
             brick_size,
             |v| {
@@ -110,6 +111,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 r2.sqrt()
             },
         )),
+        Input::Synthetic(args) => Box::new(operators::volume_gpu::VoxelRasterizerGLSL {
+            metadata: array::VolumeMetaData {
+                dimensions: VoxelPosition::fill(args.size.into()),
+                chunk_size: brick_size,
+            },
+            body: r#"{
+
+                vec3 centered = pos_normalized-vec3(0.5);
+                vec3 sq = centered*centered;
+                float d_sq = sq.x + sq.y + sq.z;
+                result = sqrt(d_sq);
+
+            }"#
+            .to_owned(),
+        }),
     };
 
     eval_network(&mut runtime, &*vol_state, args.factor)
@@ -133,7 +149,7 @@ fn eval_network(
             smoothing_kernel,
         ],
     );
-    let mapped = tensor::map(convolved, |v| v.min(0.5));
+    let mapped = convolved; //tensor::map(convolved, |v| v.min(0.5));
 
     let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
     let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());

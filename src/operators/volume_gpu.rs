@@ -6,12 +6,12 @@ use futures::StreamExt;
 use spirq::{EntryPoint, ReflectConfig};
 
 use crate::{
-    data::{chunk, chunk_mut, BrickPosition, LocalCoordinate, LocalVoxelPosition},
+    array::VolumeMetaData,
+    data::{BrickPosition, LocalCoordinate, LocalVoxelPosition},
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::gpu::{ReadHandle, WriteHandle},
-    task::RequestStream,
     vulkan::{DeviceContext, RessourceId, VulkanState},
 };
 
@@ -1035,6 +1035,158 @@ pub fn separable_convolution<'op>(
     v
 }
 
+pub struct VoxelRasterizerGLSL {
+    pub body: String,
+    pub metadata: VolumeMetaData,
+}
+
+impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
+    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
+        #[derive(Copy, Clone, AsStd140)]
+        struct PushConstants {
+            offset: mint::Vector3<u32>,
+            mem_dim: mint::Vector3<u32>,
+            logical_dim: mint::Vector3<u32>,
+            vol_dim: mint::Vector3<u32>,
+            num_chunk_elems: u32,
+        }
+
+        let m = self.metadata;
+
+        let shader = format!(
+            "{}{}{}",
+            r#"
+#version 450
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer OutputBuffer{
+    float values[];
+} outputData;
+
+layout(std140, push_constant) uniform PushConstants
+{
+    uvec3 offset;
+    uvec3 mem_dim;
+    uvec3 logical_dim;
+    uvec3 vol_dim;
+    uint num_chunk_elems;
+} consts;
+
+uvec3 from_linear(uint linear_pos, uvec3 size) {
+    uvec3 vec_pos;
+    vec_pos.x = linear_pos % size.x;
+    linear_pos /= size.x;
+    vec_pos.y = linear_pos % size.y;
+    linear_pos /= size.y;
+    vec_pos.z = linear_pos;
+
+    return vec_pos;
+}
+
+uint to_linear(uvec3 vec_pos, uvec3 size) {
+    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
+}
+
+void main()
+{
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < consts.num_chunk_elems) {
+        uvec3 out_local = from_linear(gID, consts.mem_dim);
+        float result = 0.0;
+        uvec3 pos_voxel = out_local + consts.offset;
+        vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
+
+        if(out_local.x < consts.logical_dim.x && out_local.y < consts.logical_dim.y && out_local.z < consts.logical_dim.z) {
+        "#,
+            self.body,
+            r#"
+        } else {
+            result = 123.456;
+        }
+
+        outputData.values[gID] = result;
+    }
+}
+"#
+        );
+
+        TensorOperator::with_state(
+            OperatorId::new("rasterize_gpu")
+                .dependent_on(Id::hash(&shader))
+                .dependent_on(Id::hash(&m)),
+            (),
+            shader,
+            move |ctx, _, _| async move { ctx.write(m) }.into(),
+            move |ctx, positions, shader, _| {
+                async move {
+                    let device = ctx.vulkan_device();
+
+                    let pipeline = device
+                        .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                            ComputePipeline::new(device, shader.as_str())
+                        });
+
+                    for pos in positions {
+                        let brick_info = m.chunk_info(pos);
+
+                        let gpu_brick_out =
+                            ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
+                        device.with_cmd_buffer(|cmd| {
+                            let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
+                            let descriptor_writes = descriptor_config.writes();
+
+                            let local_size = pipeline.local_size();
+
+                            let global_size = brick_info.mem_elements();
+                            let num_wgs = crate::util::div_round_up(global_size, local_size);
+
+                            unsafe {
+                                pipeline.bind(device, cmd.raw());
+                                pipeline.push_constant(
+                                    device,
+                                    cmd.raw(),
+                                    PushConstants {
+                                        num_chunk_elems: m.num_elements().try_into().unwrap(),
+                                        offset: brick_info.begin.into_elem::<u32>().into(),
+                                        logical_dim: brick_info
+                                            .logical_dimensions
+                                            .into_elem::<u32>()
+                                            .into(),
+                                        mem_dim: m.chunk_size.into_elem::<u32>().into(),
+                                        vol_dim: m.dimensions.into_elem::<u32>().into(),
+                                    },
+                                );
+                                pipeline.push_descriptor_set(
+                                    device,
+                                    cmd.raw(),
+                                    0,
+                                    &descriptor_writes,
+                                );
+                                device.device.cmd_dispatch(
+                                    cmd.raw(),
+                                    num_wgs.try_into().unwrap(),
+                                    1,
+                                    1,
+                                );
+                            }
+                        });
+
+                        // TODO: Maybe to allow more parallel access we want to postpone this,
+                        // since this involves a memory barrier
+                        // Possible alternative: Only insert barriers before use/download
+                        unsafe { gpu_brick_out.initialized() };
+                    }
+
+                    Ok(())
+                }
+                .into()
+            },
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1094,6 +1246,34 @@ mod test {
         let input = input.operate();
         for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
             let output = rechunk(input.clone(), LocalVoxelPosition::from(chunk_size));
+            compare_volume(output, size, fill_expected);
+        }
+    }
+
+    #[test]
+    fn test_rasterize_gpu() {
+        let size = VoxelPosition::fill(5.into());
+
+        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+            for z in 0..size.z().raw {
+                for y in 0..size.y().raw {
+                    for x in 0..size.x().raw {
+                        let pos = VoxelPosition::from([z, y, x]);
+                        comp[pos.as_index()] = x as f32 + y as f32 + z as f32;
+                    }
+                }
+            }
+        };
+        for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
+            let input = VoxelRasterizerGLSL {
+                metadata: crate::array::VolumeMetaData {
+                    dimensions: size,
+                    chunk_size: chunk_size.into(),
+                },
+                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z);"#.to_owned(),
+            };
+            let input = input.operate();
+            let output = rechunk(input, LocalVoxelPosition::from(chunk_size));
             compare_volume(output, size, fill_expected);
         }
     }
