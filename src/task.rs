@@ -14,6 +14,7 @@ use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::vulkan::DeviceContext;
 use crate::Error;
+use crevice::std430::Std430;
 use futures::stream::StreamExt;
 use futures::Stream;
 use pin_project::pin_project;
@@ -520,12 +521,8 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
     }
 }
 
-impl<
-        'cref,
-        'inv,
-        ItemDescriptor: std::hash::Hash,
-        Output: Copy + ?Sized + crevice::std430::Std430,
-    > TaskContext<'cref, 'inv, ItemDescriptor, Output>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std430>
+    TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot_gpu<'a>(
         &'a self,
@@ -545,5 +542,14 @@ impl<'cref, 'inv, Output: Copy> TaskContext<'cref, 'inv, (), Output> {
         unsafe { slot.initialized() };
 
         Ok(())
+    }
+}
+impl<'cref, 'inv, Output: Copy + Std430> TaskContext<'cref, 'inv, (), Output> {
+    pub fn alloc_scalar_gpu<'a>(
+        &'a self,
+        device: &'a DeviceContext,
+    ) -> Result<WriteHandle<'a>, Error> {
+        let id = DataId::new(self.current_op(), &());
+        device.storage.alloc_slot::<Output>(device, id, 1)
     }
 }

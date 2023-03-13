@@ -8,7 +8,7 @@ use operators::{
 };
 use runtime::RunTime;
 
-use crate::operators::{tensor, volume, volume_gpu};
+use crate::operators::{volume, volume_gpu};
 
 mod array;
 mod data;
@@ -155,7 +155,7 @@ fn eval_network(
     let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
     let scaled2 = volume_gpu::linear_rescale(scaled2, (-1.0).into(), 0.0.into());
 
-    let mean = volume::mean(scaled2);
+    let mean = volume_gpu::mean(scaled2);
     let mean_unscaled = volume::mean(rechunked);
 
     let mut c = runtime.context_anchor();

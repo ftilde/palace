@@ -1035,6 +1035,169 @@ pub fn separable_convolution<'op>(
     v
 }
 
+pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
+    #[derive(Copy, Clone, AsStd140)]
+    struct PushConstants {
+        mem_dim: mint::Vector3<u32>,
+        logical_dim: mint::Vector3<u32>,
+        norm_factor: f32,
+        num_chunk_elems: u32,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    float values[];
+} sourceData;
+
+layout(std430, binding = 1) buffer OutputBuffer{
+    uint value;
+} sum;
+
+layout(std140, push_constant) uniform PushConstants
+{
+    uvec3 mem_dim;
+    uvec3 logical_dim;
+    float norm_factor;
+    uint num_chunk_elems;
+} consts;
+
+uvec3 from_linear(uint linear_pos, uvec3 size) {
+    uvec3 vec_pos;
+    vec_pos.x = linear_pos % size.x;
+    linear_pos /= size.x;
+    vec_pos.y = linear_pos % size.y;
+    linear_pos /= size.y;
+    vec_pos.z = linear_pos;
+
+    return vec_pos;
+}
+
+void main()
+{
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < consts.num_chunk_elems) {
+        uvec3 local = from_linear(gID, consts.mem_dim);
+
+        if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
+            float val = sourceData.values[gID] * consts.norm_factor;
+
+            uint initial = 0;
+            uint new = 0;
+            do {
+                initial = sum.value;
+                new = floatBitsToUint(uintBitsToFloat(initial) + val);
+                if (new == initial) {
+                    break;
+                }
+            } while(atomicCompSwap(sum.value, initial, new) != initial);
+        }
+    }
+}
+"#;
+
+    crate::operators::scalar::scalar(
+        OperatorId::new("volume_mean_gpu").dependent_on(&input),
+        input,
+        move |ctx, input, _| {
+            async move {
+                let device = ctx.vulkan_device();
+
+                let m = ctx.submit(input.metadata.request_scalar()).await;
+
+                let to_request = m.brick_positions().collect::<Vec<_>>();
+                let batch_size = 1024;
+
+                let pipeline = device
+                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(device, SHADER)
+                    });
+
+                let sum = ctx.alloc_scalar_gpu(device)?;
+
+                let normalization_factor = 1.0 / (crate::data::hmul(m.dimensions) as f32);
+
+                let memory_barriers = &[vk::MemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::HOST)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                    .build()];
+                let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device.device.cmd_update_buffer(
+                        cmd.raw(),
+                        sum.buffer,
+                        0,
+                        bytemuck::cast_slice(&[0f32]),
+                    );
+                    cmd.pipeline_barrier(&barrier_info);
+                });
+
+                for chunk in to_request.chunks(batch_size) {
+                    let mut stream = ctx.submit_unordered_with_data(
+                        chunk
+                            .iter()
+                            .map(|pos| (input.bricks.request_gpu(device.id, *pos), *pos)),
+                    );
+                    while let Some((gpu_brick_in, pos)) = stream.next().await {
+                        let brick_info = m.chunk_info(pos);
+
+                        device.with_cmd_buffer(|cmd| {
+                            let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
+                            let descriptor_writes = descriptor_config.writes();
+
+                            let local_size = pipeline.local_size();
+
+                            let global_size = brick_info.mem_elements();
+                            let num_wgs = crate::util::div_round_up(global_size, local_size);
+
+                            unsafe {
+                                pipeline.bind(device, cmd.raw());
+                                pipeline.push_constant(
+                                    device,
+                                    cmd.raw(),
+                                    PushConstants {
+                                        mem_dim: brick_info
+                                            .mem_dimensions
+                                            .into_elem::<u32>()
+                                            .into(),
+                                        logical_dim: brick_info
+                                            .logical_dimensions
+                                            .into_elem::<u32>()
+                                            .into(),
+                                        norm_factor: normalization_factor,
+                                        num_chunk_elems: m.num_elements().try_into().unwrap(),
+                                    },
+                                );
+                                pipeline.push_descriptor_set(
+                                    device,
+                                    cmd.raw(),
+                                    0,
+                                    &descriptor_writes,
+                                );
+                                device.device.cmd_dispatch(
+                                    cmd.raw(),
+                                    num_wgs.try_into().unwrap(),
+                                    1,
+                                    1,
+                                );
+                            }
+                        });
+                    }
+                }
+                unsafe { sum.initialized() };
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
 pub struct VoxelRasterizerGLSL {
     pub body: String,
     pub metadata: VolumeMetaData,
