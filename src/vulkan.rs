@@ -30,7 +30,7 @@ impl RessourceId {
         RessourceId(id)
     }
     pub fn of(self, op: OperatorId) -> Self {
-        RessourceId(Id::combine(&[self.0, op.inner()]))
+        RessourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
     }
     pub fn dependent_on(self, id: impl Into<Id>) -> Self {
         RessourceId(Id::combine(&[self.0, id.into()]))

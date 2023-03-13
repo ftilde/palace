@@ -61,7 +61,19 @@ impl ShaderSource for (&str, ShaderDefines) {
         }
         let mut compiler = compiler.build().unwrap();
         let kind = ShaderKind::Compute;
-        compiler.compile_from_string(&source, kind).unwrap()
+        match compiler.compile_from_string(&source, kind) {
+            Ok(r) => r,
+            Err(CompilerError::Log(e)) => {
+                panic!(
+                    "Compilation error for shader (source {:?}):\n{}",
+                    e.file, e.description
+                )
+            }
+            Err(CompilerError::LoadError(e)) => panic!("Load error while compiling shader: {}", e),
+            Err(CompilerError::WriteError(e)) => {
+                panic!("Write error while compiling shader: {}", e)
+            }
+        }
     }
 }
 
@@ -104,6 +116,7 @@ struct ComputePipeline {
     pipeline: vk::Pipeline,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     local_size: usize,
+    push_constant_size: Option<usize>,
 }
 
 impl ComputePipeline {
@@ -128,6 +141,7 @@ impl ComputePipeline {
 
         let mut descriptor_bindings: BTreeMap<u32, Vec<_>> = BTreeMap::new();
         let mut push_constant = None;
+        let mut push_constant_size = None;
         let mut local_size = None;
         let stage = vk::ShaderStageFlags::COMPUTE;
 
@@ -179,6 +193,7 @@ impl ComputePipeline {
                         .size(ty.nbyte().unwrap().try_into().unwrap())
                         .stage_flags(stage)
                         .build();
+                    push_constant_size = Some(c.size as _);
                     let prev = push_constant.replace(c);
                     assert!(prev.is_none(), "Should only have on push constant");
                 }
@@ -250,6 +265,7 @@ impl ComputePipeline {
             pipeline_layout,
             descriptor_set_layouts,
             local_size,
+            push_constant_size,
         }
     }
 
@@ -281,12 +297,21 @@ impl ComputePipeline {
         cmd: vk::CommandBuffer,
         val: T,
     ) {
+        let v = val.as_std140();
+        let bytes = v.as_bytes();
+
+        // HACK: Match up sizes:
+        // - The reflect library/c compiler appears to be of the opinion that the size of the push
+        // constant struct is simply the difference between the begin of the first member and the
+        // end of the last, while...
+        // - crevice appears to think that the size is rounded up to the alignment of the struct.
+        let bytes = &bytes[..self.push_constant_size.unwrap()];
         device.device.cmd_push_constants(
             cmd,
             self.pipeline_layout,
             vk::ShaderStageFlags::COMPUTE,
             0,
-            val.as_std140().as_bytes(),
+            bytes,
         );
     }
     fn local_size(&self) -> usize {
@@ -525,13 +550,12 @@ pub fn rechunk<'op>(
     }
     const SHADER: &'static str = r#"
 #version 450
-#extension GL_EXT_nonuniform_qualifier : require
 
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[];
-} sourceData [NUM_BRICKS];
+} sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
     float values[];
@@ -574,7 +598,7 @@ void main() {
         uint in_index = to_linear(in_pos, constants.mem_size_in);
         uint out_index = to_linear(out_pos, constants.mem_size_out);
 
-        outputData.values[out_index] = sourceData[NUM_BRICKS-1].values[in_index];
+        outputData.values[out_index] = sourceData.values[in_index];
     }
 }
 "#;
@@ -598,22 +622,10 @@ void main() {
             async move {
                 let device = ctx.vulkan_device();
 
-                let num_bricks = (positions.first().unwrap().x().raw % 29) as usize + 1;
-
-                let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
-                        .of(ctx.current_op())
-                        .dependent_on(Id::hash(&num_bricks)),
-                    || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new().add("NUM_BRICKS", num_bricks.to_string()),
-                            ),
-                        )
-                    },
-                );
+                let pipeline = device
+                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(device, SHADER)
+                    });
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
                 let m_out = {
@@ -678,9 +690,8 @@ void main() {
 
                             let out_chunk_begin = out_info.in_chunk(overlap_begin);
 
-                            let in_bricks = vec![gpu_brick_in; num_bricks];
                             let descriptor_config =
-                                DescriptorConfig::new([&in_bricks.as_slice(), &gpu_brick_out]);
+                                DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
                             let descriptor_writes = descriptor_config.writes();
 
                             let local_size = pipeline.local_size();
@@ -728,247 +739,294 @@ void main() {
     )
 }
 
-///// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
-///// only supported (and thus always applied) border handling routine.
-//pub fn convolution_1d<'op, const DIM: usize>(
-//    input: VolumeOperator<'op>,
-//    kernel: &'op [f32],
-//) -> VolumeOperator<'op> {
-//    #[derive(Copy, Clone, AsStd140)]
-//    struct PushConstants {
-//        mem_size_in: mint::Vector3<u32>,
-//        mem_size_out: mint::Vector3<u32>,
-//        begin_in: mint::Vector3<u32>,
-//        begin_out: mint::Vector3<u32>,
-//        region_size: mint::Vector3<u32>,
-//        global_size: u32,
-//    }
-//    const SHADER: &'static str = r#"
-//#version 450
-//
-//layout (local_size_x = 256) in;
-//
-//layout(std430, binding = 0) readonly buffer InputBuffer{
-//    float values[];
-//} sourceData[MAX_BRICKS];
-//
-//layout(std430, binding = 1) readonly buffer InputBuffer{
-//    float values[];
-//} kernel;
-//
-//layout(std430, binding = 2) buffer OutputBuffer{
-//    float values[];
-//} outputData;
-//
-//layout(std140, push_constant) uniform PushConstants
-//{
-//    uvec3 mem_size_in;
-//    uvec3 mem_size_out;
-//    uvec3 begin_in;
-//    uvec3 begin_out;
-//    uvec3 region_size;
-//    uint in_brick_pos_begin;
-//    uint in_brick_pos_end;
-//    uint kernel_range;
-//    uint global_size;
-//} constants;
-//
-//uvec3 from_linear(uint linear_pos, uvec3 size) {
-//    uvec3 vec_pos;
-//    vec_pos.x = linear_pos % size.x;
-//    linear_pos /= size.x;
-//    vec_pos.y = linear_pos % size.y;
-//    linear_pos /= size.y;
-//    vec_pos.z = linear_pos;
-//
-//    return vec_pos;
-//}
-//
-//uint to_linear(uvec3 vec_pos, uvec3 size) {
-//    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
-//}
-//
-//void main() {
-//    uint gID = gl_GlobalInvocationID.x;
-//
-//    if(gID < constants.global_size) {
-//        uvec3 region_pos = from_linear(gID, constants.region_size);
-//
-//        uvec3 in_pos = constants.begin_in + region_pos;
-//        uvec3 out_pos = constants.begin_out + region_pos;
-//
-//        uint in_index = to_linear(in_pos, constants.mem_size_in);
-//        uint out_index = to_linear(out_pos, constants.mem_size_out);
-//
-//        outputData.values[out_index] = sourceData.values[in_index];
-//    }
-//}
-//"#;
-//    let kernel_size = kernel.len() as u32;
-//    assert!(kernel_size % 2 == 1, "Kernel size must be odd");
-//    let extent = kernel_size / 2;
-//    VolumeOperator::with_state(
-//        OperatorId::new("convolution_1d_gpu")
-//            .dependent_on(&input)
-//            .dependent_on(bytemuck::cast_slice(kernel)),
-//        input.clone(),
-//        input,
-//        move |ctx, input, _| {
-//            async move {
-//                let req = input.metadata.request_scalar();
-//                let m = ctx.submit(req).await;
-//                ctx.write(m)
-//            }
-//            .into()
-//        },
-//        move |ctx, positions, input, _| {
-//            // TODO: optimize case where input.brick_size == output.brick_size
-//            async move {
-//                let device = ctx.vulkan_device();
-//
-//                let m_in = ctx.submit(input.metadata.request_scalar()).await;
-//                let m_out = m_in;
-//
-//                let requests = positions.into_iter().map(|pos| {
-//                    let out_info = m_out.chunk_info(pos);
-//                    let out_begin = out_info.begin();
-//                    let out_end = out_info.end();
-//
-//                    let in_begin = out_begin
-//                        .map_element(DIM, |v| (v.raw.saturating_sub(extent as u32)).into());
-//                    let in_end = out_end
-//                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions.0[DIM]));
-//
-//                    let in_begin_brick = m_in.chunk_pos(in_begin);
-//                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
-//
-//                    let in_brick_positions = itertools::iproduct! {
-//                        in_begin_brick.z().raw..=in_end_brick.z().raw,
-//                        in_begin_brick.y().raw..=in_end_brick.y().raw,
-//                        in_begin_brick.x().raw..=in_end_brick.x().raw
-//                    }
-//                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
-//                    .collect::<Vec<_>>();
-//                    let intersecting_bricks = ctx.group(
-//                        in_brick_positions
-//                            .iter()
-//                            .map(|pos| input.bricks.request_gpu(device.id, *pos)),
-//                    );
-//
-//                    (intersecting_bricks, (pos, in_brick_positions))
-//                });
-//
-//                let mut stream = ctx.submit_unordered_with_data(requests);
-//                while let Some((intersecting_bricks, (pos, in_brick_positions))) =
-//                    stream.next().await
-//                {
-//                    let out_info = m_out.chunk_info(pos);
-//                    let brick_handle = ctx
-//                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-//                        .unwrap();
-//
-//                    let out_begin = out_info.begin();
-//                    let out_end = out_info.end();
-//
-//                    for (in_data_handle, in_brick_pos) in intersecting_bricks
-//                        .iter()
-//                        .zip(in_brick_positions.into_iter())
-//                    {
-//                        let in_data = &*in_data_handle;
-//                        let in_info = m_in.chunk_info(in_brick_pos);
-//
-//                        // Logical dimensions should be equal except possibly in DIM (if we
-//                        // are at the border)
-//                        assert!(out_info
-//                            .logical_dimensions
-//                            .zip_enumerate(in_info.logical_dimensions, |i, a, b| {
-//                                i == DIM || a.raw == b.raw
-//                            })
-//                            .fold(true, std::ops::BitAnd::bitand));
-//
-//                        let in_begin = in_info.begin();
-//                        let in_end = in_info.end();
-//
-//                        let begin_i_global = in_begin.0[DIM].raw as i32;
-//                        let end_i_global = in_end.0[DIM].raw as i32;
-//                        let begin_o_global = out_begin.0[DIM].raw as i32;
-//                        let end_o_global = out_end.0[DIM].raw as i32;
-//                        let extent = extent as i32;
-//
-//                        let begin_ext = (begin_i_global - end_o_global).max(-extent);
-//                        let end_ext = (end_i_global - begin_o_global).min(extent);
-//
-//                        for offset in begin_ext..=end_ext {
-//                            let kernel_buf_index = (extent - offset) as usize;
-//                            let kernel_val = kernel[kernel_buf_index];
-//
-//                            let begin_i_local = (begin_o_global + offset) - begin_i_global;
-//                            let end_i_local = (end_o_global + offset) - begin_i_global;
-//
-//                            let iter_i_begin = Vector::<3, i32>::fill(0)
-//                                .map_element(DIM, |a| a.max(begin_i_local))
-//                                .map(|v| v as usize);
-//                            let iter_i_end = in_info
-//                                .logical_dimensions
-//                                .map(|v| v.raw as i32)
-//                                .map_element(DIM, |a| a.min(end_i_local))
-//                                .map(|v| v as usize);
-//
-//                            let begin_o_local = (begin_i_global - offset) - begin_o_global;
-//                            let end_o_local = (end_i_global - offset) - begin_o_global;
-//
-//                            let iter_o_begin = Vector::<3, i32>::fill(0)
-//                                .map_element(DIM, |a| a.max(begin_o_local))
-//                                .map(|v| v as usize);
-//                            let iter_o_end = out_info
-//                                .logical_dimensions
-//                                .map(|v| v.raw as i32)
-//                                .map_element(DIM, |a| a.min(end_o_local))
-//                                .map(|v| v as usize);
-//
-//                            assert!(iter_i_end - iter_i_begin == iter_o_end - iter_o_begin);
-//
-//                            let in_chunk_active =
-//                                in_chunk.slice(slice_range(iter_i_begin, iter_i_end));
-//                            let in_lines = in_chunk_active.rows();
-//
-//                            let mut out_chunk_active =
-//                                out_chunk.slice_mut(slice_range(iter_o_begin, iter_o_end));
-//                            let out_lines = out_chunk_active.rows_mut();
-//
-//                            for (mut ol, il) in out_lines.into_iter().zip(in_lines.into_iter()) {
-//                                let ol = ol.as_slice_mut().unwrap();
-//                                let il = il.as_slice().unwrap();
-//                                for (o, i) in ol.iter_mut().zip(il.iter()) {
-//                                    let v = kernel_val * i;
-//                                    *o += v;
-//                                }
-//                            }
-//                        }
-//                    }
-//                }
-//
-//                Ok(())
-//            }
-//            .into()
-//        },
-//    )
-//    .into()
-//}
-
+/// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
+/// only supported (and thus always applied) border handling routine.
 pub fn convolution_1d<'op, const DIM: usize>(
     input: VolumeOperator<'op>,
     kernel: &'op [f32],
 ) -> VolumeOperator<'op> {
     #[derive(Copy, Clone, AsStd140)]
+    #[repr(C)]
     struct PushConstants {
-        mem_size: mint::Vector3<u32>,
-        logical_size_out: mint::Vector3<u32>,
-        global_size: mint::Vector3<u32>,
+        mem_dim: mint::Vector3<u32>,
+        logical_dim_out: mint::Vector3<u32>,
+        out_begin: mint::Vector3<u32>,
+        global_dim: mint::Vector3<u32>,
         num_chunks: u32,
         first_chunk_pos: u32,
         extent: i32,
-        //global_size: u32,
+        global_size: u32,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    float values[];
+} sourceData[MAX_BRICKS];
+
+layout(std430, binding = 1) readonly buffer KernelBuffer{
+    float values[];
+} kernel;
+
+layout(std430, binding = 2) buffer OutputBuffer{
+    float values[];
+} outputData;
+
+layout(std140, push_constant) uniform PushConstants {
+    uvec3 mem_dim;
+    uvec3 logical_dim_out;
+    uvec3 out_begin;
+    uvec3 global_dim;
+    uint num_chunks;
+    uint first_chunk_pos;
+    int extent;
+    uint global_size;
+} consts;
+
+uvec3 from_linear(uint linear_pos, uvec3 size) {
+    uvec3 vec_pos;
+    vec_pos.x = linear_pos % size.x;
+    linear_pos /= size.x;
+    vec_pos.y = linear_pos % size.y;
+    linear_pos /= size.y;
+    vec_pos.z = linear_pos;
+
+    return vec_pos;
+}
+
+uint to_linear(uvec3 vec_pos, uvec3 size) {
+    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
+}
+
+void main() {
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < consts.global_size) {
+        uvec3 out_local = from_linear(gID, consts.mem_dim);
+        float acc = 0.0;
+
+        if(out_local.x < consts.logical_dim_out.x && out_local.y < consts.logical_dim_out.y && out_local.z < consts.logical_dim_out.z) {
+            for (int i = 0; i<consts.num_chunks; ++i) {
+                int chunk_pos = int(consts.first_chunk_pos) + i;
+                int global_begin_pos_in = chunk_pos * int(consts.mem_dim[DIM]);
+
+                int logical_dim_in = min(
+                    global_begin_pos_in + int(consts.mem_dim[DIM]),
+                    int(consts.global_dim[DIM])
+                ) - global_begin_pos_in;
+
+                int out_chunk_to_in_chunk = int(consts.out_begin[DIM]) - global_begin_pos_in;
+                int out_pos_rel_to_in_pos_rel = int(out_local[DIM]) + out_chunk_to_in_chunk;
+
+                int begin_ext = -consts.extent;
+                int end_ext = consts.extent;
+
+                int local_end = logical_dim_in;
+
+                int l_begin = max(begin_ext + out_pos_rel_to_in_pos_rel, 0);
+                int l_end = min(end_ext + out_pos_rel_to_in_pos_rel, local_end - 1);
+
+                for (int local=l_begin; local<=l_end; ++local) {
+                    int kernel_offset = local - out_pos_rel_to_in_pos_rel;
+                    int kernel_buf_index = consts.extent - kernel_offset;
+                    float kernel_val = kernel.values[kernel_buf_index];
+
+                    uvec3 pos = out_local;
+                    pos[DIM] = local;
+
+                    uint local_index = to_linear(pos, consts.mem_dim);
+                    float local_val = sourceData[i].values[local_index];
+
+                    acc += kernel_val * local_val;
+                }
+            }
+        } else {
+            acc = 123.456;
+        }
+
+        outputData.values[gID] = acc;
+    }
+}
+"#;
+    let kernel_size = kernel.len() as u32;
+    assert!(kernel_size % 2 == 1, "Kernel size must be odd");
+    let extent = kernel_size / 2;
+    VolumeOperator::with_state(
+        OperatorId::new("convolution_1d_gpu")
+            .dependent_on(&input)
+            .dependent_on(bytemuck::cast_slice(kernel)),
+        input.clone(),
+        input,
+        move |ctx, input, _| {
+            async move {
+                let req = input.metadata.request_scalar();
+                let m = ctx.submit(req).await;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, input, _| {
+            // TODO: optimize case where input.brick_size == output.brick_size
+            async move {
+                let device = ctx.vulkan_device();
+
+                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let m_out = m_in;
+
+                let requests = positions.into_iter().map(|pos| {
+                    let out_info = m_out.chunk_info(pos);
+                    let out_begin = out_info.begin();
+                    let out_end = out_info.end();
+
+                    let in_begin = out_begin
+                        .map_element(DIM, |v| (v.raw.saturating_sub(extent as u32)).into());
+                    let in_end = out_end
+                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions.0[DIM]));
+
+                    let in_begin_brick = m_in.chunk_pos(in_begin);
+                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
+
+                    let in_brick_positions = itertools::iproduct! {
+                        in_begin_brick.z().raw..=in_end_brick.z().raw,
+                        in_begin_brick.y().raw..=in_end_brick.y().raw,
+                        in_begin_brick.x().raw..=in_end_brick.x().raw
+                    }
+                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
+                    .collect::<Vec<_>>();
+
+                    let intersecting_bricks = ctx.group(
+                        in_brick_positions
+                            .iter()
+                            .map(|pos| input.bricks.request_gpu(device.id, *pos)),
+                    );
+
+                    (intersecting_bricks, (pos, in_brick_positions))
+                });
+
+                let max_bricks =
+                    2 * crate::util::div_round_up(extent, m_in.chunk_size.0[DIM].raw) + 1;
+
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(Id::hash(&max_bricks))
+                        .dependent_on(Id::hash(&DIM)),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new()
+                                    .add("MAX_BRICKS", max_bricks.to_string())
+                                    .add("DIM", DIM.to_string()),
+                            ),
+                        )
+                    },
+                );
+
+                let mut stream = ctx.submit_unordered_with_data(requests);
+                while let Some((intersecting_bricks, (pos, in_brick_positions))) =
+                    stream.next().await
+                {
+                    let out_info = m_out.chunk_info(pos);
+                    let gpu_brick_out = ctx
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                        .unwrap();
+
+                    let out_begin = out_info.begin();
+
+                    let kernel_buf = &gpu_brick_out; //TODO: This is obviously not correct;
+
+                    for window in in_brick_positions.windows(2) {
+                        for d in 0..3 {
+                            if d == DIM {
+                                assert_eq!(window[0].0[d] + 1u32, window[1].0[d]);
+                            } else {
+                                assert_eq!(window[0].0[d], window[1].0[d]);
+                            }
+                        }
+                    }
+
+                    let num_chunks = in_brick_positions.len();
+                    assert!(num_chunks > 1);
+
+                    assert_eq!(num_chunks, intersecting_bricks.len());
+
+                    let first_chunk_pos = in_brick_positions.first().unwrap().0[DIM].raw;
+                    let global_size = m_out.num_elements();
+
+                    let consts = PushConstants {
+                        mem_dim: m_out.chunk_size.into_elem::<u32>().into(),
+                        logical_dim_out: out_info.logical_dimensions.into_elem::<u32>().into(),
+                        out_begin: out_begin.into_elem::<u32>().into(),
+                        global_dim: m_out.dimensions.into_elem::<u32>().into(),
+                        num_chunks: num_chunks as _,
+                        first_chunk_pos,
+                        extent: extent as i32,
+                        global_size: global_size.try_into().unwrap(),
+                    };
+
+                    // TODO: This padding to max_bricks is necessary since the descriptor array in
+                    // the shader has a static since. Once we use dynamic ssbos this can go away.
+                    let intersecting_bricks = (0..max_bricks)
+                        .map(|i| {
+                            intersecting_bricks
+                                .get(i as usize)
+                                .unwrap_or(intersecting_bricks.get(0).unwrap())
+                        })
+                        .collect::<Vec<_>>();
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([
+                            &intersecting_bricks.as_slice(),
+                            kernel_buf,
+                            &gpu_brick_out,
+                        ]);
+                        let descriptor_writes = descriptor_config.writes();
+
+                        let local_size = pipeline.local_size();
+
+                        let num_wgs = crate::util::div_round_up(global_size, local_size);
+
+                        unsafe {
+                            pipeline.bind(device, cmd.raw());
+                            pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
+                            pipeline.push_constant(device, cmd.raw(), consts);
+                            device.device.cmd_dispatch(
+                                cmd.raw(),
+                                num_wgs.try_into().unwrap(),
+                                1,
+                                1,
+                            );
+                        }
+                    });
+
+                    unsafe { gpu_brick_out.initialized() };
+                }
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+    .into()
+}
+
+//TODO: Remove once gpu version works
+pub fn convolution_1d_prototyp<'op, const DIM: usize>(
+    input: VolumeOperator<'op>,
+    kernel: &'op [f32],
+) -> VolumeOperator<'op> {
+    #[derive(Copy, Clone, AsStd140)]
+    struct PushConstants {
+        mem_dim: mint::Vector3<u32>,
+        logical_dim_out: mint::Vector3<u32>,
+        global_dim: mint::Vector3<u32>,
+        num_chunks: u32,
+        first_chunk_pos: u32,
+        extent: i32,
+        global_size: u32,
     }
 
     let kernel_size = kernel.len() as u32;
@@ -1050,12 +1108,13 @@ pub fn convolution_1d<'op, const DIM: usize>(
                         let first_chunk_pos = in_brick_positions.first().unwrap().0[DIM].raw;
 
                         let consts = PushConstants {
-                            mem_size: m_out.chunk_size.into_elem::<u32>().into(),
-                            logical_size_out: out_info.logical_dimensions.into_elem::<u32>().into(),
-                            global_size: m_out.dimensions.into_elem::<u32>().into(),
+                            mem_dim: m_out.chunk_size.into_elem::<u32>().into(),
+                            logical_dim_out: out_info.logical_dimensions.into_elem::<u32>().into(),
+                            global_dim: m_out.dimensions.into_elem::<u32>().into(),
                             num_chunks: num_chunks as _,
                             first_chunk_pos,
                             extent: extent as i32,
+                            global_size: 0,
                         };
 
                         fn access<T>(v: mint::Vector3<T>, i: usize) -> T {
@@ -1090,11 +1149,11 @@ pub fn convolution_1d<'op, const DIM: usize>(
 
                                             let chunk_pos = first_chunk_pos + i as u32;
                                             let global_begin_pos_in =
-                                                chunk_pos * access(consts.mem_size, DIM);
+                                                chunk_pos * access(consts.mem_dim, DIM);
 
                                             let logical_dim_in = u32::min(
-                                                global_begin_pos_in + access(consts.mem_size, DIM),
-                                                access(consts.global_size, DIM),
+                                                global_begin_pos_in + access(consts.mem_dim, DIM),
+                                                access(consts.global_dim, DIM),
                                             ) - global_begin_pos_in;
 
                                             let out_chunk_to_in_chunk = out_begin.0[DIM].raw as i32

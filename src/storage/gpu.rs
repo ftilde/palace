@@ -43,6 +43,12 @@ pub struct AccessToken<'a> {
     device: &'a DeviceContext,
     pub id: DataId,
 }
+
+impl std::fmt::Debug for AccessToken<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AccessToken {{ {:?} }}", self.id)
+    }
+}
 impl<'a> AccessToken<'a> {
     fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
         let mut index = storage.index.borrow_mut();
@@ -143,6 +149,8 @@ impl<'a> WriteHandle<'a> {
         });
     }
 }
+
+#[derive(Debug)]
 pub struct ReadHandle<'a> {
     pub buffer: ash::vk::Buffer,
     pub layout: Layout,
