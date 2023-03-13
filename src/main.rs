@@ -8,7 +8,7 @@ use operators::{
 };
 use runtime::RunTime;
 
-use crate::operators::{volume, volume_gpu};
+use crate::operators::{tensor, volume, volume_gpu};
 
 mod array;
 mod data;
@@ -129,7 +129,7 @@ fn eval_network(
         rechunked.clone(),
         [smoothing_kernel, smoothing_kernel, smoothing_kernel],
     );
-    let mapped = volume::map(convolved, |v| v.min(0.5));
+    let mapped = tensor::map(convolved, |v| v.min(0.5));
 
     let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
     let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
