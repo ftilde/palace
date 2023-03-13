@@ -38,12 +38,12 @@ impl<const N: usize> ChunkInfo<N> {
 
 #[repr(C)]
 #[derive(Copy, Clone, Hash)]
-pub struct ArrayMetaData<const N: usize> {
+pub struct TensorMetaData<const N: usize> {
     pub dimensions: Vector<N, GlobalVoxelCoordinate>,
     pub chunk_size: Vector<N, LocalVoxelCoordinate>,
 }
 
-impl<const N: usize> ArrayMetaData<N> {
+impl<const N: usize> TensorMetaData<N> {
     pub fn num_elements(&self) -> usize {
         hmul(self.dimensions)
     }
@@ -75,7 +75,7 @@ impl<const N: usize> ArrayMetaData<N> {
     }
 }
 
-pub type VolumeMetaData = ArrayMetaData<3>;
+pub type VolumeMetaData = TensorMetaData<3>;
 impl VolumeMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
         let bp = self.dimension_in_bricks();
@@ -88,7 +88,7 @@ impl VolumeMetaData {
 mod unused {
     use super::*;
 
-    pub type ImageMetaData = ArrayMetaData<2>;
+    pub type ImageMetaData = TensorMetaData<2>;
     impl ImageMetaData {
         pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
             let bp = self.dimension_in_bricks();
@@ -101,8 +101,8 @@ mod unused {
             }
         }
     }
-    pub type ArrayMetaData1D = ArrayMetaData<1>;
-    impl ArrayMetaData1D {
+    pub type ArrayMetaData = TensorMetaData<1>;
+    impl ArrayMetaData {
         pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
             let bp = self.dimension_in_bricks();
             (0..bp.0[0].raw).into_iter().map(|x| Vector::from([x]))
