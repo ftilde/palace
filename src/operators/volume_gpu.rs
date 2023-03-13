@@ -9,6 +9,7 @@ use crate::{
     data::{chunk, chunk_mut, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition},
     id::Id,
     operator::OperatorId,
+    operators::tensor::TensorOperator,
     storage::gpu::{ReadHandle, WriteHandle},
     task::RequestStream,
     vulkan::{DeviceContext, RessourceId, VulkanState},
@@ -446,7 +447,7 @@ void main()
 }
 "#;
 
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("volume_scale_gpu")
             .dependent_on(&input)
             .dependent_on(&scale)
@@ -602,7 +603,7 @@ void main() {
     }
 }
 "#;
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("volume_rechunk_gpu")
             .dependent_on(&input)
             .dependent_on(Id::hash(&brick_size)),
@@ -853,7 +854,7 @@ void main() {
     let kernel_size = kernel.len() as u32;
     assert!(kernel_size % 2 == 1, "Kernel size must be odd");
     let extent = kernel_size / 2;
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("convolution_1d_gpu")
             .dependent_on(&input)
             .dependent_on(bytemuck::cast_slice(kernel)),
@@ -1032,7 +1033,7 @@ pub fn convolution_1d_prototyp<'op, const DIM: usize>(
     let kernel_size = kernel.len() as u32;
     assert!(kernel_size % 2 == 1, "Kernel size must be odd");
     let extent = kernel_size / 2;
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("convolution_1d")
             .dependent_on(&input)
             .dependent_on(bytemuck::cast_slice(kernel)),

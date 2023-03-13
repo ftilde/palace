@@ -6,7 +6,10 @@ use crate::{
     array::VolumeMetaData,
     data::{LocalVoxelCoordinate, VoxelPosition},
     operator::OperatorId,
-    operators::volume::{VolumeOperator, VolumeOperatorState},
+    operators::{
+        tensor::TensorOperator,
+        volume::{VolumeOperator, VolumeOperatorState},
+    },
     Error,
 };
 
@@ -81,7 +84,7 @@ impl NiftiVolumeSourceState {
 
 impl VolumeOperatorState for NiftiVolumeSourceState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        VolumeOperator::new(
+        TensorOperator::new(
             match &self.type_ {
                 Type::Single(path) => OperatorId::new("NiftiVolumeSourceState::operate")
                     .dependent_on(path.to_string_lossy().as_bytes()),

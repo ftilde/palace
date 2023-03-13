@@ -7,7 +7,10 @@ use crate::{
     array::VolumeMetaData,
     data::{LocalVoxelPosition, VoxelPosition},
     operator::OperatorId,
-    operators::volume::{VolumeOperator, VolumeOperatorState},
+    operators::{
+        tensor::TensorOperator,
+        volume::{VolumeOperator, VolumeOperatorState},
+    },
     Error,
 };
 
@@ -41,7 +44,7 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
 
 impl VolumeOperatorState for VvdVolumeSourceState {
     fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        VolumeOperator::new(
+        TensorOperator::new(
             OperatorId::new("VvdVolumeSourceState::operate")
                 .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
             move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),

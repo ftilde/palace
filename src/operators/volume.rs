@@ -1,7 +1,6 @@
 use futures::stream::StreamExt;
 
 use crate::{
-    array::VolumeMetaData,
     data::{
         chunk, chunk_mut, slice_range, BrickPosition, LocalVoxelCoordinate, LocalVoxelPosition,
         Vector,
@@ -9,79 +8,16 @@ use crate::{
     id::Id,
     operator::{Operator, OperatorId},
     storage::ram::{InplaceResult, ThreadInplaceResult},
-    task::{RequestStream, Task, TaskContext},
+    task::{RequestStream, TaskContext},
 };
 
-use super::scalar::ScalarOperator;
+use super::{scalar::ScalarOperator, tensor::TensorOperator};
 
 pub trait VolumeOperatorState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a>;
 }
 
-#[derive(Clone)]
-pub struct VolumeOperator<'op> {
-    pub metadata: Operator<'op, (), VolumeMetaData>,
-    pub bricks: Operator<'op, BrickPosition, f32>,
-}
-
-impl<'op> VolumeOperator<'op> {
-    pub fn new<
-        M: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, (), VolumeMetaData>,
-                &'inv (),
-                crate::operator::OutlivesMarker<'op, 'inv>,
-            ) -> Task<'cref>
-            + 'op,
-        B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, BrickPosition, f32>,
-                Vec<BrickPosition>,
-                &'inv (),
-                crate::operator::OutlivesMarker<'op, 'inv>,
-            ) -> Task<'cref>
-            + 'op,
-    >(
-        base_id: OperatorId,
-        metadata: M,
-        bricks: B,
-    ) -> Self {
-        Self::with_state(base_id, (), (), metadata, bricks)
-    }
-
-    pub fn with_state<
-        SM: 'op,
-        SB: 'op,
-        M: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, (), VolumeMetaData>,
-                &'inv SM,
-                crate::operator::OutlivesMarker<'op, 'inv>,
-            ) -> Task<'cref>
-            + 'op,
-        B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, BrickPosition, f32>,
-                Vec<BrickPosition>,
-                &'inv SB,
-                crate::operator::OutlivesMarker<'op, 'inv>,
-            ) -> Task<'cref>
-            + 'op,
-    >(
-        base_id: OperatorId,
-        state_metadata: SM,
-        state_bricks: SB,
-        metadata: M,
-        bricks: B,
-    ) -> Self {
-        Self {
-            metadata: crate::operators::scalar::scalar(base_id.slot(0), state_metadata, metadata),
-            bricks: Operator::with_state(base_id.slot(1), state_bricks, bricks),
-        }
-    }
-}
-
-impl Into<Id> for &VolumeOperator<'_> {
-    fn into(self) -> Id {
-        Id::combine(&[(&self.metadata).into(), (&self.bricks).into()])
-    }
-}
+pub type VolumeOperator<'op> = TensorOperator<'op, 3>;
 
 pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'static>(
     ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
@@ -129,7 +65,7 @@ pub async fn map_values<'op, 'cref, 'inv, F: Fn(f32) -> f32 + Send + Copy + 'sta
 }
 
 pub fn map<'op>(input: VolumeOperator<'op>, f: fn(f32) -> f32) -> VolumeOperator<'op> {
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("volume_scale")
             .dependent_on(&input)
             .dependent_on(Id::hash(&f)),
@@ -159,7 +95,7 @@ pub fn linear_rescale<'op>(
     factor: ScalarOperator<'op, f32>,
     offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("volume_scale")
             .dependent_on(&input)
             .dependent_on(&factor)
@@ -240,7 +176,7 @@ pub fn rechunk<'op>(
     input: VolumeOperator<'op>,
     brick_size: LocalVoxelPosition,
 ) -> VolumeOperator<'op> {
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("volume_rechunk")
             .dependent_on(&input)
             .dependent_on(Id::hash(&brick_size)),
@@ -364,7 +300,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
     let kernel_size = kernel.len() as u32;
     assert!(kernel_size % 2 == 1, "Kernel size must be odd");
     let extent = kernel_size / 2;
-    VolumeOperator::with_state(
+    TensorOperator::with_state(
         OperatorId::new("convolution_1d")
             .dependent_on(&input)
             .dependent_on(bytemuck::cast_slice(kernel)),

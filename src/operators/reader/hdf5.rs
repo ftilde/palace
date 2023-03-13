@@ -4,7 +4,10 @@ use crate::{
     array::VolumeMetaData,
     data::{Coordinate, CoordinateType, LocalVoxelPosition, Vector, VoxelPosition},
     operator::OperatorId,
-    operators::volume::{VolumeOperator, VolumeOperatorState},
+    operators::{
+        tensor::TensorOperator,
+        volume::{VolumeOperator, VolumeOperatorState},
+    },
     Error,
 };
 
@@ -39,7 +42,7 @@ fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hypersla
 
 impl VolumeOperatorState for Hdf5VolumeSourceState {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        VolumeOperator::new(
+        TensorOperator::new(
             OperatorId::new("Hdf5VolumeSourceState::operate")
                 .dependent_on(self.path.to_string_lossy().as_bytes())
                 .dependent_on(self.volume_location.as_bytes()),

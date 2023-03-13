@@ -9,7 +9,10 @@ use crate::{
     Error,
 };
 
-use super::volume::{VolumeOperator, VolumeOperatorState};
+use super::{
+    tensor::TensorOperator,
+    volume::{VolumeOperator, VolumeOperatorState},
+};
 
 pub struct VoxelPosRasterizer<F> {
     function: F,
@@ -83,7 +86,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 
 impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync> VolumeOperatorState for VoxelPosRasterizer<F> {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        VolumeOperator::new(
+        TensorOperator::new(
             OperatorId::new("ImplicitFunctionRasterizer::operate")
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
