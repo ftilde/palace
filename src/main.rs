@@ -156,7 +156,7 @@ fn eval_network(
     let scaled2 = volume_gpu::linear_rescale(scaled2, (-1.0).into(), 0.0.into());
 
     let mean = volume_gpu::mean(scaled2);
-    let mean_unscaled = volume::mean(rechunked);
+    let mean_unscaled = volume_gpu::mean(rechunked);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
@@ -178,35 +178,17 @@ fn eval_network(
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
     let tasks_executed_prev = executor.statistics().tasks_executed;
-    let id = executor.resolve(|ctx| {
-        async move {
-            let req = mean_unscaled_ref.request_scalar();
-            let id = req.id().unwrap_data();
-            *muv_ref = ctx.submit(req).await;
-            Ok(id)
-        }
-        .into()
-    })?;
-    let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
-    println!(
-        "Computed unscaled mean val: {} ({} tasks)",
-        mean_val_unscaled, tasks_executed
-    );
-
-    executor.data.storage.try_free(id.id).unwrap();
-
-    let tasks_executed_prev = executor.statistics().tasks_executed;
-    let muv_ref = &mut mean_val_unscaled;
     executor.resolve(|ctx| {
         async move {
-            *muv_ref = ctx.submit(mean_unscaled_ref.request_scalar()).await;
+            let req = mean_unscaled_ref.request_scalar();
+            *muv_ref = ctx.submit(req).await;
             Ok(())
         }
         .into()
     })?;
     let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
     println!(
-        "Computed unscaled mean val again, after deletion: {} ({} tasks)",
+        "Computed unscaled mean val: {} ({} tasks)",
         mean_val_unscaled, tasks_executed
     );
 

@@ -1046,7 +1046,9 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     const SHADER: &'static str = r#"
 #version 450
 
-layout (local_size_x = 256) in;
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout (local_size_x = 1024) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[];
@@ -1075,26 +1077,51 @@ uvec3 from_linear(uint linear_pos, uvec3 size) {
     return vec_pos;
 }
 
+#define atomic_add(mem, value) {\
+    uint initial = 0;\
+    uint new = 0;\
+    do {\
+        initial = mem;\
+        new = floatBitsToUint(uintBitsToFloat(initial) + (value));\
+        if (new == initial) {\
+            break;\
+        }\
+    } while(atomicCompSwap(mem, initial, new) != initial);\
+}
+
+shared uint shared_sum;
+
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
+    if(gl_LocalInvocationIndex == 0) {
+        shared_sum = floatBitsToUint(0.0);
+    }
+    barrier();
 
+    float val;
     if(gID < consts.num_chunk_elems) {
         uvec3 local = from_linear(gID, consts.mem_dim);
 
         if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
-            float val = sourceData.values[gID] * consts.norm_factor;
-
-            uint initial = 0;
-            uint new = 0;
-            do {
-                initial = sum.value;
-                new = floatBitsToUint(uintBitsToFloat(initial) + val);
-                if (new == initial) {
-                    break;
-                }
-            } while(atomicCompSwap(sum.value, initial, new) != initial);
+            val = sourceData.values[gID] * consts.norm_factor;
+        } else {
+            val = 0.0;
         }
+    } else {
+        val = 0.0;
+    }
+
+    float sg_sum = subgroupAdd(val);
+
+    if(gl_SubgroupInvocationID == 0) {
+        atomic_add(shared_sum, sg_sum);
+    }
+
+    barrier();
+
+    if(gl_LocalInvocationIndex == 0) {
+        atomic_add(sum.value, uintBitsToFloat(shared_sum));
     }
 }
 "#;
@@ -1188,6 +1215,7 @@ void main()
                             }
                         });
                     }
+                    ctx.submit(device.wait_for_cmd_buffer_completion()).await;
                 }
                 unsafe { sum.initialized() };
 
