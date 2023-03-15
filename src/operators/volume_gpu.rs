@@ -962,7 +962,7 @@ void main() {
                     }
 
                     let num_chunks = in_brick_positions.len();
-                    assert!(num_chunks > 1);
+                    assert!(num_chunks > 0);
 
                     assert_eq!(num_chunks, intersecting_bricks.len());
 
