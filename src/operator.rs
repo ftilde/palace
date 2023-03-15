@@ -204,6 +204,41 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     }
 
     #[must_use]
+    pub fn request_inplace<'req, 'inv: 'req>(
+        &'inv self,
+        item: ItemDescriptor,
+        write_id: OperatorId,
+    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, f32>, Error>> {
+        let read_id = DataId::new(self.id, &item);
+        let write_id = DataId::new(write_id, &item);
+
+        Request {
+            type_: RequestType::Data(DataRequest {
+                id: LocatedDataId {
+                    id: read_id,
+                    location: DataLocation::Ram,
+                },
+                source: self,
+                item: TypeErased::pack(item),
+            }),
+            gen_poll: Box::new(move |ctx| {
+                let mut access = Some(ctx.storage.register_access(read_id));
+                Box::new(move || unsafe {
+                    access = match ctx
+                        .storage
+                        .try_update_inplace(access.take().unwrap(), write_id)
+                    {
+                        Ok(v) => return Some(v),
+                        Err(access) => Some(access),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
+    #[must_use]
     pub fn request_gpu<'req, 'inv: 'req>(
         &'inv self,
         gpu: DeviceId,
@@ -236,11 +271,12 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     }
 
     #[must_use]
-    pub fn request_inplace<'req, 'inv: 'req>(
+    pub fn request_inplace_gpu<'req, 'inv: 'req>(
         &'inv self,
+        gpu: DeviceId,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, f32>, Error>> {
+    ) -> Request<'req, 'inv, Result<gpu::InplaceResult<'req>, Error>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
@@ -248,22 +284,26 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             type_: RequestType::Data(DataRequest {
                 id: LocatedDataId {
                     id: read_id,
-                    location: DataLocation::Ram,
+                    location: DataLocation::VRam(gpu),
                 },
                 source: self,
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_access(read_id));
-                Box::new(move || unsafe {
-                    access = match ctx
-                        .storage
-                        .try_update_inplace(access.take().unwrap(), write_id)
-                    {
-                        Ok(v) => return Some(v),
-                        Err(access) => Some(access),
-                    };
-                    None
+                let device = &ctx.device_contexts[gpu];
+                let mut access = Some(device.storage.register_access(device, read_id));
+                Box::new(move || {
+                    match device.storage.try_update_inplace(
+                        device,
+                        access.take().unwrap(),
+                        write_id,
+                    ) {
+                        Ok(r) => Some(r),
+                        Err(t) => {
+                            access = Some(t);
+                            None
+                        }
+                    }
                 })
             }),
             _marker: Default::default(),

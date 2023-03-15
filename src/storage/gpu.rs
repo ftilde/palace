@@ -158,6 +158,11 @@ pub struct ReadHandle<'a> {
     access: AccessToken<'a>,
 }
 
+pub enum InplaceResult<'a> {
+    Inplace(WriteHandle<'a>),
+    New(ReadHandle<'a>, WriteHandle<'a>),
+}
+
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
     lru_manager: RefCell<super::LRUManager>,
@@ -364,6 +369,75 @@ impl Storage {
             layout: info.layout,
             access,
         })
+    }
+
+    pub fn try_update_inplace<'b, 't: 'b>(
+        &'b self,
+        device: &'b DeviceContext,
+        old_access: AccessToken<'t>,
+        new_key: DataId,
+    ) -> Result<Result<InplaceResult<'b>, Error>, AccessToken<'t>> {
+        let old_key = old_access.id;
+
+        let mut index = self.index.borrow_mut();
+        let Some(entry) = index.get(&old_access.id) else {
+            return Err(old_access);
+        };
+        let StorageEntryState::Initialized(info) = &entry.state else {
+            return Err(old_access)
+        };
+
+        // Only allow inplace if we are EXACTLY the one reader
+        let in_place_possible = matches!(entry.access, AccessState::Some(1));
+
+        Ok(Ok(if in_place_possible {
+            let layout = info.layout;
+            let buffer = info.allocation.buffer;
+
+            let old_entry = index.remove(&old_key).unwrap();
+
+            // Repurpose access key for the read/write handle
+            let mut new_access = old_access;
+            new_access.id = new_key;
+
+            let new_entry = index.entry(new_key).or_insert_with(|| Entry {
+                state: StorageEntryState::Registered,
+                access: AccessState::Some(0),
+            });
+
+            let StorageEntryState::Initialized(info) = old_entry.state else {
+                panic!("We already checked that it is initialized and are just moving out now");
+            };
+            new_entry.state = StorageEntryState::Initializing(info);
+
+            new_entry.access = match new_entry.access {
+                AccessState::Some(n) => AccessState::Some(n + 1),
+                AccessState::None(..) => panic!("If present, entry should have accessors"),
+            };
+
+            InplaceResult::Inplace(WriteHandle {
+                buffer,
+                size: layout.size() as _,
+                drop_handler: DropError,
+                access: new_access,
+            })
+        } else {
+            let layout = info.layout;
+            let buffer = info.allocation.buffer;
+
+            std::mem::drop(index); // Release borrow for alloc
+
+            let w = match self.alloc_slot_raw(device, new_key, layout) {
+                Ok(w) => w,
+                Err(e) => return Ok(Err(e)),
+            };
+            let r = ReadHandle {
+                buffer,
+                layout,
+                access: old_access,
+            };
+            InplaceResult::New(r, w)
+        }))
     }
 
     pub fn deinitialize(&mut self) {

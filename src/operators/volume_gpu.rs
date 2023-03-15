@@ -11,7 +11,7 @@ use crate::{
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
-    storage::gpu::{ReadHandle, WriteHandle},
+    storage::gpu::{self, ReadHandle, WriteHandle},
     vulkan::{DeviceContext, RessourceId, VulkanState},
 };
 
@@ -423,6 +423,8 @@ layout(std430, binding = 1) readonly buffer InputOffset{
     float value;
 } offset;
 
+// Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
+// outputData in the inplace update case.
 layout(std430, binding = 2) readonly buffer InputBuffer{
     float values[];
 } sourceData;
@@ -477,24 +479,32 @@ void main()
                         ComputePipeline::new(device, SHADER)
                     });
 
-                let mut brick_stream = ctx.submit_unordered_with_data(
-                    positions
-                        .iter()
-                        .map(|pos| (input.bricks.request_gpu(device.id, *pos), *pos)),
-                );
+                let mut brick_stream =
+                    ctx.submit_unordered_with_data(positions.iter().map(|pos| {
+                        (
+                            input
+                                .bricks
+                                .request_inplace_gpu(device.id, *pos, ctx.current_op()),
+                            *pos,
+                        )
+                    }));
 
-                while let Some((gpu_brick_in, pos)) = brick_stream.next().await {
+                while let Some((inplace, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
+                    let inplace = inplace?;
 
-                    let gpu_brick_out =
-                        ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
+                    let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
+                        match &inplace {
+                            gpu::InplaceResult::Inplace(rw) => (rw, rw),
+                            gpu::InplaceResult::New(r, w) => (r, w),
+                        };
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &scale_gpu,
                             &offset_gpu,
-                            &gpu_brick_in,
-                            &gpu_brick_out,
+                            gpu_brick_in,
+                            gpu_brick_out,
                         ]);
                         let descriptor_writes = descriptor_config.writes();
 
@@ -526,7 +536,10 @@ void main()
                     // TODO: Maybe to allow more parallel access we want to postpone this,
                     // since this involves a memory barrier
                     // Possible alternative: Only insert barriers before use/download
-                    unsafe { gpu_brick_out.initialized() };
+                    match inplace {
+                        gpu::InplaceResult::Inplace(rw) => unsafe { rw.initialized() },
+                        gpu::InplaceResult::New(_r, w) => unsafe { w.initialized() },
+                    };
                 }
 
                 Ok(())
