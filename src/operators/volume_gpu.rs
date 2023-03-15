@@ -843,7 +843,7 @@ void main() {
                 }
             }
         } else {
-            acc = 123.456;
+            acc = intBitsToFloat(int(0xFFC00000u)); //NaN
         }
 
         outputData.values[gID] = acc;
@@ -1041,7 +1041,6 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
         mem_dim: mint::Vector3<u32>,
         logical_dim: mint::Vector3<u32>,
         norm_factor: f32,
-        num_chunk_elems: u32,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -1063,7 +1062,6 @@ layout(std140, push_constant) uniform PushConstants
     uvec3 mem_dim;
     uvec3 logical_dim;
     float norm_factor;
-    uint num_chunk_elems;
 } consts;
 
 uvec3 from_linear(uint linear_pos, uvec3 size) {
@@ -1100,14 +1098,11 @@ void main()
     barrier();
 
     float val;
-    if(gID < consts.num_chunk_elems) {
-        uvec3 local = from_linear(gID, consts.mem_dim);
 
-        if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
-            val = sourceData.values[gID] * consts.norm_factor;
-        } else {
-            val = 0.0;
-        }
+    uvec3 local = from_linear(gID, consts.mem_dim);
+
+    if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
+        val = sourceData.values[gID] * consts.norm_factor;
     } else {
         val = 0.0;
     }
@@ -1197,7 +1192,6 @@ void main()
                                             .into_elem::<u32>()
                                             .into(),
                                         norm_factor: normalization_factor,
-                                        num_chunk_elems: m.num_elements().try_into().unwrap(),
                                     },
                                 );
                                 pipeline.push_descriptor_set(
@@ -1294,7 +1288,7 @@ void main()
             self.body,
             r#"
         } else {
-            result = 123.456;
+            result = intBitsToFloat(int(0xFFC00000u)); //NaN
         }
 
         outputData.values[gID] = result;
