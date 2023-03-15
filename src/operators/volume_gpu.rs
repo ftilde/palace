@@ -1333,7 +1333,6 @@ void main()
                                     device,
                                     cmd.raw(),
                                     PushConstants {
-                                        num_chunk_elems: m.num_elements().try_into().unwrap(),
                                         offset: brick_info.begin.into_elem::<u32>().into(),
                                         logical_dim: brick_info
                                             .logical_dimensions
@@ -1341,6 +1340,7 @@ void main()
                                             .into(),
                                         mem_dim: m.chunk_size.into_elem::<u32>().into(),
                                         vol_dim: m.dimensions.into_elem::<u32>().into(),
+                                        num_chunk_elems: global_size as u32,
                                     },
                                 );
                                 pipeline.push_descriptor_set(
