@@ -12,7 +12,10 @@ use crate::{
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::gpu::{self, ReadHandle, WriteHandle},
-    vulkan::{CommandBuffer, DeviceContext, DeviceFunctions, RessourceId, VulkanState},
+    vulkan::{
+        state::{RessourceId, VulkanState},
+        CommandBuffer, DeviceContext, DeviceFunctions,
+    },
 };
 
 use super::{array::ArrayOperator, scalar::ScalarOperator, volume::VolumeOperator};

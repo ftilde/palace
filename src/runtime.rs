@@ -13,7 +13,7 @@ use crate::{
     task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
-    vulkan::{DeviceContext, VulkanManager},
+    vulkan::{DeviceContext, VulkanContext},
     Error,
 };
 
@@ -107,7 +107,7 @@ impl<'inv> RequestBatcher<'inv> {
 
 pub struct RunTime {
     pub ram: crate::storage::ram::Storage,
-    pub vulkan: VulkanManager,
+    pub vulkan: VulkanContext,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
@@ -117,7 +117,7 @@ impl RunTime {
     pub fn new(storage_size: usize, num_compute_threads: Option<usize>) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
-        let vulkan = VulkanManager::new()?;
+        let vulkan = VulkanContext::new()?;
         let ram = crate::storage::ram::Storage::new(storage_size)?;
         Ok(RunTime {
             ram,
@@ -213,7 +213,7 @@ pub struct Executor<'cref, 'inv> {
     task_manager: TaskManager<'cref>,
     request_batcher: RequestBatcher<'inv>,
     task_graph: TaskGraph,
-    transfer_manager: crate::vulkan::TransferManager,
+    transfer_manager: crate::vulkan::memory::TransferManager,
     statistics: Statistics,
     waker: Waker,
 }

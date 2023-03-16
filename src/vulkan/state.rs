@@ -1,0 +1,71 @@
+use std::{
+    any::Any,
+    cell::{RefCell, UnsafeCell},
+    collections::BTreeMap,
+};
+
+use crate::{id::Id, operator::OperatorId};
+
+use super::DeviceContext;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct RessourceId(Id);
+impl RessourceId {
+    pub fn new(name: &'static str) -> Self {
+        let id = Id::from_data(name.as_bytes());
+        RessourceId(id)
+    }
+    pub fn of(self, op: OperatorId) -> Self {
+        RessourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
+    }
+    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
+        RessourceId(Id::combine(&[self.0, id.into()]))
+    }
+    pub fn inner(&self) -> Id {
+        self.0
+    }
+}
+
+#[derive(Default)]
+pub struct Cache {
+    values: RefCell<BTreeMap<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
+}
+
+impl Cache {
+    pub fn get<'a, V: VulkanState, F: FnOnce() -> V>(
+        &'a self,
+        id: RessourceId,
+        generate: F,
+    ) -> &'a V {
+        let mut m = self.values.borrow_mut();
+        let raw = m.entry(id).or_insert_with(|| {
+            let v = generate();
+            UnsafeCell::new(Box::new(v))
+        });
+        // Safety: We only ever hand out immutable references (thus no conflict with mutability)
+        // and never allow removal of elements.
+        unsafe { (*raw.get()).downcast_ref().unwrap() }
+    }
+
+    pub fn drain(&mut self) -> impl Iterator<Item = Box<dyn VulkanState>> {
+        std::mem::take(self.values.get_mut())
+            .into_values()
+            .map(|v| v.into_inner())
+    }
+}
+
+pub trait VulkanState: Any {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext);
+}
+
+impl dyn VulkanState {
+    // This is required as long as trait upcasting is still unstable:
+    // https://github.com/rust-lang/rust/issues/65991
+    fn downcast_ref<T: VulkanState>(&self) -> Option<&T> {
+        if self.type_id() == std::any::TypeId::of::<T>() {
+            Some(unsafe { &*(self as *const Self as *const T) })
+        } else {
+            None
+        }
+    }
+}

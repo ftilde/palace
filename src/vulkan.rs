@@ -1,68 +1,23 @@
-use crate::id::Id;
-use crate::operator::OperatorId;
-use crate::storage::gpu::Allocation;
 use crate::storage::gpu::Allocator;
 use crate::storage::gpu::MemoryLocation;
-use crate::task::OpaqueTaskContext;
 use crate::task::Request;
-use crate::task::Task;
-use crate::task_graph::TaskId;
 use crate::Error;
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
 use ash::vk;
-use std::alloc::Layout;
-use std::any::Any;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::time::Duration;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct RessourceId(Id);
-impl RessourceId {
-    pub fn new(name: &'static str) -> Self {
-        let id = Id::from_data(name.as_bytes());
-        RessourceId(id)
-    }
-    pub fn of(self, op: OperatorId) -> Self {
-        RessourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
-    }
-    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
-        RessourceId(Id::combine(&[self.0, id.into()]))
-    }
-    pub fn inner(&self) -> Id {
-        self.0
-    }
-}
+use self::state::RessourceId;
+use self::state::VulkanState;
 
-#[derive(Default)]
-struct Cache {
-    values: RefCell<BTreeMap<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
-}
-
-impl Cache {
-    fn get<'a, V: VulkanState, F: FnOnce() -> V>(&'a self, id: RessourceId, generate: F) -> &'a V {
-        let mut m = self.values.borrow_mut();
-        let raw = m.entry(id).or_insert_with(|| {
-            let v = generate();
-            UnsafeCell::new(Box::new(v))
-        });
-        // Safety: We only ever hand out immutable references (thus no conflict with mutability)
-        // and never allow removal of elements.
-        unsafe { (*raw.get()).downcast_ref().unwrap() }
-    }
-
-    fn drain(&mut self) -> impl Iterator<Item = Box<dyn VulkanState>> {
-        std::mem::take(self.values.get_mut())
-            .into_values()
-            .map(|v| v.into_inner())
-    }
-}
+pub mod memory;
+pub mod pipeline;
+pub mod state;
 
 const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[DebugUtils::name().as_ptr()];
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
@@ -102,7 +57,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 }
 
 #[allow(dead_code)]
-pub struct VulkanManager {
+pub struct VulkanContext {
     entry: ash::Entry,
 
     instance: ash::Instance,
@@ -112,7 +67,7 @@ pub struct VulkanManager {
     device_contexts: Vec<DeviceContext>,
 }
 
-impl VulkanManager {
+impl VulkanContext {
     pub fn new() -> Result<Self, Error> {
         unsafe {
             let entry = ash::Entry::load()?;
@@ -194,7 +149,7 @@ impl VulkanManager {
             // Return VulkanManager
             println!("Finished initializing Vulkan!");
 
-            Ok(VulkanManager {
+            Ok(VulkanContext {
                 entry,
 
                 instance,
@@ -211,7 +166,7 @@ impl VulkanManager {
     }
 }
 
-impl Drop for VulkanManager {
+impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
             for device_context in self.device_contexts.drain(..) {
@@ -221,66 +176,6 @@ impl Drop for VulkanManager {
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
-        }
-    }
-}
-
-pub struct StagingBufferStash {
-    buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
-    buf_type: gpu_allocator::MemoryLocation,
-    flags: vk::BufferUsageFlags,
-}
-
-pub struct CachedAllocation {
-    inner: Allocation,
-    requested_layout: Layout, //May differ from layout of the allocation, at least in size
-}
-
-impl std::ops::Deref for CachedAllocation {
-    type Target = Allocation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl StagingBufferStash {
-    fn new(buf_type: gpu_allocator::MemoryLocation, flags: vk::BufferUsageFlags) -> Self {
-        Self {
-            buffers: Default::default(),
-            buf_type,
-            flags,
-        }
-    }
-    fn request(&self, device: &DeviceContext, layout: Layout) -> CachedAllocation {
-        let mut buffers = self.buffers.borrow_mut();
-        let buffers = buffers.entry(layout).or_default();
-        let inner = buffers.pop().unwrap_or_else(|| {
-            device
-                .storage
-                .allocate(device, layout, self.flags, self.buf_type)
-        });
-        CachedAllocation {
-            inner,
-            requested_layout: layout,
-        }
-    }
-    /// Safety: The buffer must have previously been allocated from this stash
-    unsafe fn return_buf(&self, allocation: CachedAllocation) {
-        let mut buffers = self.buffers.borrow_mut();
-        buffers
-            .get_mut(&allocation.requested_layout)
-            .unwrap()
-            .push(allocation.inner);
-    }
-
-    /// Safety: The device must be the same that was used for all `request`s.
-    unsafe fn deinitialize(&self, device: &DeviceContext) {
-        let mut buffers = self.buffers.borrow_mut();
-        for (_, b) in buffers.drain() {
-            for b in b {
-                device.storage.deallocate(b);
-            }
         }
     }
 }
@@ -301,30 +196,6 @@ impl std::ops::Deref for DeviceFunctions {
     fn deref(&self) -> &Self::Target {
         &self.device
     }
-}
-
-#[allow(unused)]
-pub struct DeviceContext {
-    physical_device: vk::PhysicalDevice,
-    physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-    queue_family_index: u32,
-    queue_count: u32,
-
-    functions: DeviceFunctions,
-    queues: Vec<vk::Queue>,
-
-    command_pool: vk::CommandPool,
-    available_command_buffers: RefCell<Vec<RawCommandBuffer>>,
-    waiting_command_buffers: RefCell<BTreeMap<CmdBufferEpoch, RawCommandBuffer>>,
-    current_command_buffer: RefCell<CommandBuffer>,
-
-    pub id: DeviceId,
-    submission_count: Cell<usize>,
-
-    vulkan_states: Cache,
-    pub storage: crate::storage::gpu::Storage,
-    staging_to_gpu: StagingBufferStash,
-    staging_to_cpu: StagingBufferStash,
 }
 
 pub struct RawCommandBuffer {
@@ -360,142 +231,6 @@ impl CommandBuffer {
     }
 }
 
-pub struct TransferManager {
-    transfer_count: Cell<usize>,
-    op_id: OperatorId,
-}
-
-impl Default for TransferManager {
-    fn default() -> Self {
-        Self {
-            transfer_count: Cell::new(0),
-            op_id: OperatorId::new("builtin::TransferManager"),
-        }
-    }
-}
-
-impl TransferManager {
-    pub fn next_id(&self) -> TaskId {
-        let count = self.transfer_count.get();
-        self.transfer_count.set(count + 1);
-        TaskId::new(self.op_id, count)
-    }
-    pub fn transfer_to_gpu<'cref, 'inv>(
-        &self,
-        ctx: OpaqueTaskContext<'cref, 'inv>,
-        device: &'cref DeviceContext,
-        access: crate::storage::ram::AccessToken<'cref>,
-    ) -> Task<'cref> {
-        async move {
-            let storage = ctx.storage;
-            let key = access.id;
-            let Ok(input_buf) = storage.read_raw(access) else {
-                panic!("Data should already be in ram");
-            };
-            let layout = input_buf.info.layout;
-            let staging_buf = device.staging_to_gpu.request(&device, layout);
-            let out_ptr = staging_buf.mapped_ptr().unwrap();
-
-            // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    input_buf.info.data,
-                    out_ptr.as_ptr().cast(),
-                    layout.size(),
-                )
-            };
-
-            let gpu_buf_out = device.storage.alloc_slot_raw(device, key, layout)?;
-            device.with_cmd_buffer(|cmd| {
-                let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
-                unsafe {
-                    device.functions().cmd_copy_buffer(
-                        cmd.raw(),
-                        staging_buf.buffer,
-                        gpu_buf_out.buffer,
-                        &[*copy_info],
-                    );
-                }
-
-                Ok::<(), crate::Error>(())
-            })?;
-            unsafe { gpu_buf_out.initialized() };
-
-            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
-
-            // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
-            // in copying anymore and can be freed.
-            unsafe {
-                device.staging_to_gpu.return_buf(staging_buf);
-            }
-            Ok(())
-        }
-        .into()
-    }
-
-    pub fn transfer_to_cpu<'cref, 'inv>(
-        &self,
-        ctx: OpaqueTaskContext<'cref, 'inv>,
-        device: &'cref DeviceContext,
-        access: crate::storage::gpu::AccessToken<'cref>,
-    ) -> Task<'cref> {
-        async move {
-            let key = access.id;
-            let storage = ctx.storage;
-            let Ok(gpu_buf_in) = device.storage.read(access) else {
-                panic!("Data should already be in vram");
-            };
-            let layout = gpu_buf_in.layout;
-
-            let staging_buf = device.staging_to_cpu.request(&device, layout);
-
-            device.with_cmd_buffer(|cmd| {
-                let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
-                unsafe {
-                    device.functions().cmd_copy_buffer(
-                        cmd.raw(),
-                        gpu_buf_in.buffer,
-                        staging_buf.buffer,
-                        &[*copy_info],
-                    );
-                }
-
-                Ok::<(), crate::Error>(())
-            })?;
-
-            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
-
-            let out_buf = storage.alloc_slot_raw(key, layout).unwrap();
-
-            // Safety: Both buffers have `layout` as their layout. Staging buf data is now valid
-            // since we have waited for the command buffer to finish. This content has also reached
-            // the mapped region of the staging_buf allocation since it was allocated with
-            // HOST_VISIBLE and HOST_COHERENT.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    staging_buf.mapped_ptr().unwrap().as_ptr().cast(),
-                    out_buf.data,
-                    layout.size(),
-                )
-            };
-
-            // Safety: We have just written the complete buffer using a memcpy
-            unsafe {
-                out_buf.initialized();
-            }
-
-            // Safety: This is exactly the buffer that we requested above and it is no longer used
-            // in the compute pipeline since we have waited for the command buffer to finish.
-            unsafe {
-                device.staging_to_cpu.return_buf(staging_buf);
-            }
-
-            Ok(())
-        }
-        .into()
-    }
-}
-
 pub type DeviceId = usize;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -505,6 +240,30 @@ pub struct CmdBufferEpoch(usize);
 pub struct CmdBufferSubmissionId {
     pub device: DeviceId,
     pub epoch: CmdBufferEpoch,
+}
+
+#[allow(unused)]
+pub struct DeviceContext {
+    physical_device: vk::PhysicalDevice,
+    physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    queue_family_index: u32,
+    queue_count: u32,
+
+    functions: DeviceFunctions,
+    queues: Vec<vk::Queue>,
+
+    command_pool: vk::CommandPool,
+    available_command_buffers: RefCell<Vec<RawCommandBuffer>>,
+    waiting_command_buffers: RefCell<BTreeMap<CmdBufferEpoch, RawCommandBuffer>>,
+    current_command_buffer: RefCell<CommandBuffer>,
+
+    pub id: DeviceId,
+    submission_count: Cell<usize>,
+
+    vulkan_states: state::Cache,
+    pub storage: crate::storage::gpu::Storage,
+    staging_to_gpu: memory::StagingBufferStash,
+    staging_to_cpu: memory::StagingBufferStash,
 }
 
 impl DeviceContext {
@@ -568,15 +327,15 @@ impl DeviceContext {
                 .expect("Command pool creation failed.");
             let command_buffers = RefCell::new(Vec::new());
 
-            let vulkan_states = Cache::default();
+            let vulkan_states = state::Cache::default();
 
             let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
 
-            let staging_to_cpu = StagingBufferStash::new(
+            let staging_to_cpu = memory::StagingBufferStash::new(
                 MemoryLocation::GpuToCpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             );
-            let staging_to_gpu = StagingBufferStash::new(
+            let staging_to_gpu = memory::StagingBufferStash::new(
                 MemoryLocation::CpuToGpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
             );
@@ -902,22 +661,6 @@ impl Drop for DeviceContext {
 
             self.functions.destroy_command_pool(self.command_pool, None);
             self.functions.destroy_device(None);
-        }
-    }
-}
-
-pub trait VulkanState: Any {
-    unsafe fn deinitialize(&mut self, context: &DeviceContext);
-}
-
-impl dyn VulkanState {
-    // This is required as long as trait upcasting is still unstable:
-    // https://github.com/rust-lang/rust/issues/65991
-    fn downcast_ref<T: VulkanState>(&self) -> Option<&T> {
-        if self.type_id() == std::any::TypeId::of::<T>() {
-            Some(unsafe { &*(self as *const Self as *const T) })
-        } else {
-            None
         }
     }
 }
