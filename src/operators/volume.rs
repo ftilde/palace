@@ -17,6 +17,7 @@ pub trait VolumeOperatorState {
 
 pub type VolumeOperator<'op> = TensorOperator<'op, 3>;
 
+#[allow(unused)]
 pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     crate::operators::scalar::scalar(
         OperatorId::new("volume_mean").dependent_on(&input),
@@ -63,6 +64,7 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     )
 }
 
+#[allow(unused)]
 pub fn rechunk<'op>(
     input: VolumeOperator<'op>,
     brick_size: LocalVoxelPosition,
@@ -184,6 +186,7 @@ pub fn rechunk<'op>(
 
 /// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
 /// only supported (and thus always applied) border handling routine.
+#[allow(unused)]
 pub fn convolution_1d<'op, const DIM: usize>(
     input: VolumeOperator<'op>,
     kernel: ArrayOperator<'op>,
@@ -371,6 +374,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
     .into()
 }
 
+#[allow(unused)]
 pub fn separable_convolution<'op>(
     v: VolumeOperator<'op>,
     [k0, k1, k2]: [ArrayOperator<'op>; 3],

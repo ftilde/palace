@@ -76,6 +76,7 @@ impl<const N: usize> Into<Id> for &TensorOperator<'_, N> {
     }
 }
 
+#[allow(unused)]
 pub async fn map_values<
     'op,
     'cref,
@@ -127,6 +128,7 @@ pub async fn map_values<
     }
 }
 
+#[allow(unused)]
 pub fn map<'op, const N: usize>(
     input: TensorOperator<'op, N>,
     f: fn(f32) -> f32,
@@ -156,6 +158,7 @@ pub fn map<'op, const N: usize>(
     )
 }
 
+#[allow(unused)]
 pub fn linear_rescale<'op, const N: usize>(
     input: TensorOperator<'op, N>,
     factor: ScalarOperator<'op, f32>,

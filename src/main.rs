@@ -8,7 +8,7 @@ use operators::{
 };
 use runtime::RunTime;
 
-use crate::operators::{volume, volume_gpu};
+use crate::operators::volume_gpu;
 
 mod array;
 mod data;

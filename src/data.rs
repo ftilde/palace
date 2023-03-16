@@ -333,6 +333,7 @@ pub fn stride_shape<T: CoordinateType>(
     size.strides(stride)
 }
 
+#[allow(unused)]
 pub fn slice_range<T: Into<usize> + Copy>(
     begin: Vector<3, T>,
     end: Vector<3, T>,
@@ -344,6 +345,7 @@ pub fn slice_range<T: Into<usize> + Copy>(
     ]
 }
 
+#[allow(unused)]
 pub fn chunk<'a, T>(data: &'a [T], brick_info: &ChunkInfo<3>) -> ndarray::ArrayView3<'a, T> {
     if brick_info.is_contiguous() {
         ndarray::ArrayView3::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
@@ -406,6 +408,7 @@ where
     unsafe { slice_assume_init_mut(this) }
 }
 
+#[allow(unused)]
 pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
     for v in data.iter_mut() {
         v.write(val.clone());
