@@ -17,6 +17,7 @@ use self::state::VulkanState;
 
 pub mod memory;
 pub mod pipeline;
+pub mod shader;
 pub mod state;
 
 const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[DebugUtils::name().as_ptr()];
