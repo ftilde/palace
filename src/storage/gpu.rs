@@ -162,6 +162,16 @@ pub enum InplaceResult<'a> {
     Inplace(WriteHandle<'a>),
     New(ReadHandle<'a>, WriteHandle<'a>),
 }
+impl<'a> InplaceResult<'a> {
+    /// Safety: The corresponding slot (either rw inplace or separate w) has to have been
+    /// completely written to.
+    pub unsafe fn initialized(self) {
+        match self {
+            InplaceResult::Inplace(rw) => unsafe { rw.initialized() },
+            InplaceResult::New(_r, w) => unsafe { w.initialized() },
+        };
+    }
+}
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,

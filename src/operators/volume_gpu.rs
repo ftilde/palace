@@ -540,10 +540,7 @@ void main()
                     // TODO: Maybe to allow more parallel access we want to postpone this,
                     // since this involves a memory barrier
                     // Possible alternative: Only insert barriers before use/download
-                    match inplace {
-                        gpu::InplaceResult::Inplace(rw) => unsafe { rw.initialized() },
-                        gpu::InplaceResult::New(_r, w) => unsafe { w.initialized() },
-                    };
+                    unsafe { inplace.initialized() };
                 }
 
                 Ok(())
