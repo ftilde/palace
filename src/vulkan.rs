@@ -289,6 +289,20 @@ unsafe fn strcmp(v1: *const std::ffi::c_char, v2: *const std::ffi::c_char) -> bo
     CStr::from_ptr(v1) == CStr::from_ptr(v2)
 }
 
+#[derive(Clone)]
+pub struct DeviceFunctions {
+    pub device: ash::Device,
+    pub push_descriptor_ext: PushDescriptor,
+}
+
+impl std::ops::Deref for DeviceFunctions {
+    type Target = ash::Device;
+
+    fn deref(&self) -> &Self::Target {
+        &self.device
+    }
+}
+
 #[allow(unused)]
 pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
@@ -296,8 +310,7 @@ pub struct DeviceContext {
     queue_family_index: u32,
     queue_count: u32,
 
-    pub device: ash::Device,
-    pub push_descriptor_ext: PushDescriptor,
+    functions: DeviceFunctions,
     queues: Vec<vk::Queue>,
 
     command_pool: vk::CommandPool,
@@ -322,7 +335,7 @@ pub struct CommandBuffer {
     buffer: vk::CommandBuffer,
     fence: vk::Fence,
     id: CmdBufferSubmissionId,
-    device: ash::Device,
+    functions: DeviceFunctions,
     used: Cell<bool>,
 }
 
@@ -335,9 +348,13 @@ impl CommandBuffer {
         self.id
     }
 
+    pub fn functions(&self) -> &DeviceFunctions {
+        &self.functions
+    }
+
     pub fn pipeline_barrier(&self, barrier_info: &vk::DependencyInfo) {
         unsafe {
-            self.device
+            self.functions
                 .cmd_pipeline_barrier2(self.buffer, &barrier_info)
         };
     }
@@ -392,7 +409,7 @@ impl TransferManager {
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
-                    device.device.cmd_copy_buffer(
+                    device.functions().cmd_copy_buffer(
                         cmd.raw(),
                         staging_buf.buffer,
                         gpu_buf_out.buffer,
@@ -435,7 +452,7 @@ impl TransferManager {
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
-                    device.device.cmd_copy_buffer(
+                    device.functions().cmd_copy_buffer(
                         cmd.raw(),
                         gpu_buf_in.buffer,
                         staging_buf.buffer,
@@ -569,15 +586,20 @@ impl DeviceContext {
 
             let submission_count = Cell::new(0);
 
-            let current_command_buffer = Self::create_command_buffer(command_pool, &device);
+            let functions = DeviceFunctions {
+                device,
+                push_descriptor_ext,
+            };
+
+            let current_command_buffer = Self::create_command_buffer(command_pool, &functions);
             let begin_info = vk::CommandBufferBeginInfo::builder()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            device
+            functions
                 .begin_command_buffer(current_command_buffer.buffer, &begin_info)
                 .expect("Failed to begin command buffer.");
 
             let current_command_buffer = RefCell::new(Self::pack_cmd_buffer(
-                device.clone(),
+                functions.clone(),
                 current_command_buffer,
                 id,
                 &submission_count,
@@ -591,7 +613,7 @@ impl DeviceContext {
                 queue_family_index,
                 queue_count,
 
-                device,
+                functions,
                 queues,
 
                 command_pool,
@@ -602,14 +624,16 @@ impl DeviceContext {
                 id,
                 submission_count,
 
-                push_descriptor_ext,
-
                 vulkan_states,
                 storage,
                 staging_to_cpu,
                 staging_to_gpu,
             })
         }
+    }
+
+    pub fn functions(&self) -> &DeviceFunctions {
+        &self.functions
     }
 
     pub fn request_state<'a, T: VulkanState + 'static>(
@@ -650,14 +674,14 @@ impl DeviceContext {
 
     fn create_command_buffer(
         command_pool: vk::CommandPool,
-        device: &ash::Device,
+        functions: &DeviceFunctions,
     ) -> RawCommandBuffer {
         // Create command buffer
         let create_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .command_buffer_count(1);
         let command_buffer = unsafe {
-            *device
+            *functions
                 .allocate_command_buffers(&create_info)
                 .expect("Failed to allocate command buffer.")
                 .first()
@@ -667,7 +691,7 @@ impl DeviceContext {
         // Create fence
         let create_info = vk::FenceCreateInfo::default();
         let fence = unsafe {
-            device
+            functions
                 .create_fence(&create_info, None)
                 .expect("Failed to create fence.")
         };
@@ -679,7 +703,7 @@ impl DeviceContext {
     }
 
     fn pack_cmd_buffer(
-        device: ash::Device,
+        functions: DeviceFunctions,
         RawCommandBuffer { buffer, fence }: RawCommandBuffer,
         id: DeviceId,
         submission_count: &Cell<usize>,
@@ -696,7 +720,7 @@ impl DeviceContext {
             buffer,
             fence,
             id,
-            device,
+            functions,
             used: Cell::new(false),
         }
     }
@@ -712,24 +736,24 @@ impl DeviceContext {
             .available_command_buffers
             .borrow_mut()
             .pop()
-            .unwrap_or_else(|| Self::create_command_buffer(self.command_pool, &self.device));
+            .unwrap_or_else(|| Self::create_command_buffer(self.command_pool, &self.functions));
 
         let next_cmd_buffer = Self::pack_cmd_buffer(
-            self.device.clone(),
+            self.functions.clone(),
             next_cmd_buffer,
             self.id,
             &self.submission_count,
         );
 
         assert_eq!(
-            unsafe { self.device.get_fence_status(next_cmd_buffer.fence) },
+            unsafe { self.functions.get_fence_status(next_cmd_buffer.fence) },
             Ok(false)
         );
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
-            self.device
+            self.functions
                 .begin_command_buffer(next_cmd_buffer.buffer, &begin_info)
                 .expect("Failed to begin command buffer.")
         };
@@ -739,14 +763,14 @@ impl DeviceContext {
 
         // Submit current
         unsafe {
-            self.device
+            self.functions
                 .end_command_buffer(prev_cmd_buffer.buffer)
                 .unwrap()
         };
         let bufs = [prev_cmd_buffer.buffer];
         let submit = vk::SubmitInfo::builder().command_buffers(&bufs);
         unsafe {
-            self.device
+            self.functions
                 .queue_submit(
                     *self.queues.first().unwrap(),
                     &[submit.build()],
@@ -797,7 +821,7 @@ impl DeviceContext {
 
         let wait_nanos = timeout.as_nanos().min(u64::max_value() as _) as u64;
         match unsafe {
-            self.device
+            self.functions
                 .wait_for_fences(&waiting_fences[..], true, wait_nanos)
         } {
             Ok(()) => {}
@@ -811,15 +835,15 @@ impl DeviceContext {
             .into_iter()
             .filter_map(|(epoch, command_buffer)| {
                 if unsafe {
-                    self.device
+                    self.functions
                         .get_fence_status(command_buffer.fence)
                         .unwrap_or(false)
                 } {
                     unsafe {
-                        self.device
+                        self.functions
                             .reset_fences(&[command_buffer.fence])
                             .expect("Failed to reset fence.");
-                        self.device
+                        self.functions
                             .reset_command_buffer(
                                 command_buffer.buffer,
                                 vk::CommandBufferResetFlags::empty(),
@@ -845,11 +869,11 @@ impl DeviceContext {
         result
     }
 
-    pub fn with_cmd_buffer<R, F: FnOnce(&CommandBuffer) -> R>(&self, f: F) -> R {
-        let cmd_buf = self.current_command_buffer.borrow();
+    pub fn with_cmd_buffer<R, F: FnOnce(&mut CommandBuffer) -> R>(&self, f: F) -> R {
+        let mut cmd_buf = self.current_command_buffer.borrow_mut();
         cmd_buf.used.set(true);
 
-        f(&cmd_buf)
+        f(&mut cmd_buf)
     }
 }
 
@@ -871,13 +895,13 @@ impl Drop for DeviceContext {
 
         unsafe {
             for cb in self.available_command_buffers.get_mut().drain(..) {
-                self.device.destroy_fence(cb.fence, None);
+                self.functions.destroy_fence(cb.fence, None);
             }
-            self.device
+            self.functions
                 .destroy_fence(self.current_command_buffer.borrow().fence, None);
 
-            self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_device(None);
+            self.functions.destroy_command_pool(self.command_pool, None);
+            self.functions.destroy_device(None);
         }
     }
 }

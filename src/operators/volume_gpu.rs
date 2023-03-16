@@ -12,7 +12,7 @@ use crate::{
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::gpu::{self, ReadHandle, WriteHandle},
-    vulkan::{DeviceContext, RessourceId, VulkanState},
+    vulkan::{CommandBuffer, DeviceContext, DeviceFunctions, RessourceId, VulkanState},
 };
 
 use super::{array::ArrayOperator, scalar::ScalarOperator, volume::VolumeOperator};
@@ -85,7 +85,7 @@ impl ShaderSource for &str {
 }
 
 impl Shader {
-    fn from_compiled(device: &DeviceContext, code: &[u32]) -> Self {
+    fn from_compiled(f: &DeviceFunctions, code: &[u32]) -> Self {
         let info = vk::ShaderModuleCreateInfo::builder().code(&code);
 
         let entry_points = ReflectConfig::new()
@@ -94,21 +94,26 @@ impl Shader {
             .reflect()
             .unwrap();
 
-        let module = unsafe { device.device.create_shader_module(&info, None) }.unwrap();
+        let module = unsafe { f.device.create_shader_module(&info, None) }.unwrap();
 
         Self {
             module,
             entry_points,
         }
     }
-    fn from_source(device: &DeviceContext, source: impl ShaderSource) -> Self {
-        Self::from_compiled(device, &source.build())
+    fn from_source(f: &DeviceFunctions, source: impl ShaderSource) -> Self {
+        Self::from_compiled(f, &source.build())
     }
 }
 
 impl VulkanState for Shader {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
-        unsafe { context.device.destroy_shader_module(self.module, None) };
+        unsafe {
+            context
+                .functions()
+                .device
+                .destroy_shader_module(self.module, None)
+        };
     }
 }
 
@@ -122,7 +127,8 @@ struct ComputePipeline {
 
 impl ComputePipeline {
     fn new(device: &DeviceContext, shader: impl ShaderSource) -> Self {
-        let mut shader = Shader::from_source(device, shader);
+        let df = device.functions();
+        let mut shader = Shader::from_source(df, shader);
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -224,7 +230,7 @@ impl ComputePipeline {
                 let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder()
                     .bindings(&bindings)
                     .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
-                unsafe { device.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap()
+                unsafe { df.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap()
             })
             .collect::<Vec<_>>();
 
@@ -237,8 +243,7 @@ impl ComputePipeline {
             .push_constant_ranges(push_constant_ranges);
 
         let pipeline_layout = unsafe {
-            device
-                .device
+            df.device
                 .create_pipeline_layout(&pipeline_layout_info, None)
         }
         .unwrap();
@@ -248,11 +253,8 @@ impl ComputePipeline {
             .layout(pipeline_layout);
 
         let pipelines = unsafe {
-            device.device.create_compute_pipelines(
-                vk::PipelineCache::null(),
-                &[*pipeline_info],
-                None,
-            )
+            df.device
+                .create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)
         }
         .unwrap();
 
@@ -270,34 +272,54 @@ impl ComputePipeline {
         }
     }
 
-    unsafe fn bind(&self, device: &DeviceContext, cmd: vk::CommandBuffer) {
-        device
-            .device
-            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
-    }
-
-    unsafe fn push_descriptor_set(
-        &self,
-        device: &DeviceContext,
-        cmd: vk::CommandBuffer,
-        bind_set: u32,
-        writes: &[vk::WriteDescriptorSet],
-    ) {
-        device.push_descriptor_ext.cmd_push_descriptor_set(
+    unsafe fn bind<'a>(&'a self, cmd: &'a mut CommandBuffer) -> BoundPipeline<'a> {
+        cmd.functions()
+            .cmd_bind_pipeline(cmd.raw(), vk::PipelineBindPoint::COMPUTE, self.pipeline);
+        BoundPipeline {
+            pipeline: self,
             cmd,
-            vk::PipelineBindPoint::COMPUTE,
-            self.pipeline_layout,
-            bind_set,
-            writes,
-        );
+        }
+    }
+}
+
+impl VulkanState for ComputePipeline {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        let df = context.functions();
+        unsafe {
+            for descriptor_set_layout in &self.descriptor_set_layouts {
+                df.device
+                    .destroy_descriptor_set_layout(*descriptor_set_layout, None);
+            }
+            df.device.destroy_pipeline(self.pipeline, None);
+            df.device
+                .destroy_pipeline_layout(self.pipeline_layout, None)
+        };
+    }
+}
+
+struct BoundPipeline<'a> {
+    pipeline: &'a ComputePipeline,
+    cmd: &'a mut CommandBuffer, //Note: Since we take a mutable reference to the command buffer
+                                //here, we ensure that this pipeline is bound for the remainder of
+                                //the BoundPipeline's lifetime (barring unsafe operations).
+}
+impl<'a> BoundPipeline<'a> {
+    fn push_descriptor_set(&self, bind_set: u32, writes: &[vk::WriteDescriptorSet]) {
+        unsafe {
+            self.cmd
+                .functions()
+                .push_descriptor_ext
+                .cmd_push_descriptor_set(
+                    self.cmd.raw(),
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.pipeline.pipeline_layout,
+                    bind_set,
+                    writes,
+                );
+        }
     }
 
-    unsafe fn push_constant<T: AsStd140>(
-        &self,
-        device: &DeviceContext,
-        cmd: vk::CommandBuffer,
-        val: T,
-    ) {
+    fn push_constant<T: AsStd140>(&self, val: T) {
         let v = val.as_std140();
         let bytes = v.as_bytes();
 
@@ -306,33 +328,26 @@ impl ComputePipeline {
         // constant struct is simply the difference between the begin of the first member and the
         // end of the last, while...
         // - crevice appears to think that the size is rounded up to the alignment of the struct.
-        let bytes = &bytes[..self.push_constant_size.unwrap()];
-        device.device.cmd_push_constants(
-            cmd,
-            self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
-            0,
-            bytes,
-        );
-    }
-    fn local_size(&self) -> usize {
-        self.local_size
-    }
-}
-
-impl VulkanState for ComputePipeline {
-    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
         unsafe {
-            for descriptor_set_layout in &self.descriptor_set_layouts {
-                context
-                    .device
-                    .destroy_descriptor_set_layout(*descriptor_set_layout, None);
-            }
-            context.device.destroy_pipeline(self.pipeline, None);
-            context
-                .device
-                .destroy_pipeline_layout(self.pipeline_layout, None)
-        };
+            self.cmd.functions().cmd_push_constants(
+                self.cmd.raw(),
+                self.pipeline.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                bytes,
+            );
+        }
+    }
+
+    unsafe fn dispatch(&self, global_size: usize) {
+        let local_size = self.pipeline.local_size;
+
+        let num_wgs = crate::util::div_round_up(global_size, local_size);
+
+        self.cmd
+            .functions()
+            .cmd_dispatch(self.cmd.raw(), num_wgs.try_into().unwrap(), 1, 1);
     }
 }
 
@@ -508,28 +523,17 @@ void main()
                         ]);
                         let descriptor_writes = descriptor_config.writes();
 
-                        let local_size = pipeline.local_size();
-
                         let global_size = brick_info.mem_elements();
-                        let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                         unsafe {
-                            pipeline.bind(device, cmd.raw());
-                            pipeline.push_constant(
-                                device,
-                                cmd.raw(),
-                                PushConstants {
-                                    chunk_pos: pos.into_elem::<u32>().into(),
-                                    num_chunk_elems: global_size.try_into().unwrap(),
-                                },
-                            );
-                            pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
-                            device.device.cmd_dispatch(
-                                cmd.raw(),
-                                num_wgs.try_into().unwrap(),
-                                1,
-                                1,
-                            );
+                            let pipeline = pipeline.bind(cmd);
+
+                            pipeline.push_constant(PushConstants {
+                                chunk_pos: pos.into_elem::<u32>().into(),
+                                num_chunk_elems: global_size.try_into().unwrap(),
+                            });
+                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.dispatch(global_size);
                         }
                     });
 
@@ -708,38 +712,22 @@ void main() {
                                 DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
                             let descriptor_writes = descriptor_config.writes();
 
-                            let local_size = pipeline.local_size();
-
                             let global_size = crate::data::hmul(overlap_size);
-                            let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                             //TODO initialization of outside regions
                             unsafe {
-                                pipeline.bind(device, cmd.raw());
-                                pipeline.push_constant(
-                                    device,
-                                    cmd.raw(),
-                                    PushConstants {
-                                        mem_size_in: m_in.chunk_size.into_elem::<u32>().into(),
-                                        mem_size_out: m_out.chunk_size.into_elem::<u32>().into(),
-                                        begin_in: in_chunk_begin.into_elem::<u32>().into(),
-                                        begin_out: out_chunk_begin.into_elem::<u32>().into(),
-                                        region_size: overlap_size.into_elem::<u32>().into(),
-                                        global_size: global_size as _,
-                                    },
-                                );
-                                pipeline.push_descriptor_set(
-                                    device,
-                                    cmd.raw(),
-                                    0,
-                                    &descriptor_writes,
-                                );
-                                device.device.cmd_dispatch(
-                                    cmd.raw(),
-                                    num_wgs.try_into().unwrap(),
-                                    1,
-                                    1,
-                                );
+                                let pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant(PushConstants {
+                                    mem_size_in: m_in.chunk_size.into_elem::<u32>().into(),
+                                    mem_size_out: m_out.chunk_size.into_elem::<u32>().into(),
+                                    begin_in: in_chunk_begin.into_elem::<u32>().into(),
+                                    begin_out: out_chunk_begin.into_elem::<u32>().into(),
+                                    region_size: overlap_size.into_elem::<u32>().into(),
+                                    global_size: global_size as _,
+                                });
+                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.dispatch(global_size);
                             }
                         }
                     });
@@ -1010,20 +998,12 @@ void main() {
                         ]);
                         let descriptor_writes = descriptor_config.writes();
 
-                        let local_size = pipeline.local_size();
-
-                        let num_wgs = crate::util::div_round_up(global_size, local_size);
-
                         unsafe {
-                            pipeline.bind(device, cmd.raw());
-                            pipeline.push_descriptor_set(device, cmd.raw(), 0, &descriptor_writes);
-                            pipeline.push_constant(device, cmd.raw(), consts);
-                            device.device.cmd_dispatch(
-                                cmd.raw(),
-                                num_wgs.try_into().unwrap(),
-                                1,
-                                1,
-                            );
+                            let pipeline = pipeline.bind(cmd);
+
+                            pipeline.push_constant(consts);
+                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.dispatch(global_size);
                         }
                     });
 
@@ -1162,13 +1142,15 @@ void main()
                     .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                     .build()];
                 let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
-                device.with_cmd_buffer(|cmd| unsafe {
-                    device.device.cmd_update_buffer(
-                        cmd.raw(),
-                        sum.buffer,
-                        0,
-                        bytemuck::cast_slice(&[0f32]),
-                    );
+                device.with_cmd_buffer(|cmd| {
+                    unsafe {
+                        device.functions().cmd_update_buffer(
+                            cmd.raw(),
+                            sum.buffer,
+                            0,
+                            bytemuck::cast_slice(&[0f32]),
+                        )
+                    };
                     cmd.pipeline_barrier(&barrier_info);
                 });
 
@@ -1185,40 +1167,21 @@ void main()
                             let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
                             let descriptor_writes = descriptor_config.writes();
 
-                            let local_size = pipeline.local_size();
-
                             let global_size = brick_info.mem_elements();
-                            let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                             unsafe {
-                                pipeline.bind(device, cmd.raw());
-                                pipeline.push_constant(
-                                    device,
-                                    cmd.raw(),
-                                    PushConstants {
-                                        mem_dim: brick_info
-                                            .mem_dimensions
-                                            .into_elem::<u32>()
-                                            .into(),
-                                        logical_dim: brick_info
-                                            .logical_dimensions
-                                            .into_elem::<u32>()
-                                            .into(),
-                                        norm_factor: normalization_factor,
-                                    },
-                                );
-                                pipeline.push_descriptor_set(
-                                    device,
-                                    cmd.raw(),
-                                    0,
-                                    &descriptor_writes,
-                                );
-                                device.device.cmd_dispatch(
-                                    cmd.raw(),
-                                    num_wgs.try_into().unwrap(),
-                                    1,
-                                    1,
-                                );
+                                let pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant(PushConstants {
+                                    mem_dim: brick_info.mem_dimensions.into_elem::<u32>().into(),
+                                    logical_dim: brick_info
+                                        .logical_dimensions
+                                        .into_elem::<u32>()
+                                        .into(),
+                                    norm_factor: normalization_factor,
+                                });
+                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.dispatch(global_size);
                             }
                         });
                     }
@@ -1335,39 +1298,23 @@ void main()
                             let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
                             let descriptor_writes = descriptor_config.writes();
 
-                            let local_size = pipeline.local_size();
-
                             let global_size = brick_info.mem_elements();
-                            let num_wgs = crate::util::div_round_up(global_size, local_size);
 
                             unsafe {
-                                pipeline.bind(device, cmd.raw());
-                                pipeline.push_constant(
-                                    device,
-                                    cmd.raw(),
-                                    PushConstants {
-                                        offset: brick_info.begin.into_elem::<u32>().into(),
-                                        logical_dim: brick_info
-                                            .logical_dimensions
-                                            .into_elem::<u32>()
-                                            .into(),
-                                        mem_dim: m.chunk_size.into_elem::<u32>().into(),
-                                        vol_dim: m.dimensions.into_elem::<u32>().into(),
-                                        num_chunk_elems: global_size as u32,
-                                    },
-                                );
-                                pipeline.push_descriptor_set(
-                                    device,
-                                    cmd.raw(),
-                                    0,
-                                    &descriptor_writes,
-                                );
-                                device.device.cmd_dispatch(
-                                    cmd.raw(),
-                                    num_wgs.try_into().unwrap(),
-                                    1,
-                                    1,
-                                );
+                                let pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant(PushConstants {
+                                    offset: brick_info.begin.into_elem::<u32>().into(),
+                                    logical_dim: brick_info
+                                        .logical_dimensions
+                                        .into_elem::<u32>()
+                                        .into(),
+                                    mem_dim: m.chunk_size.into_elem::<u32>().into(),
+                                    vol_dim: m.dimensions.into_elem::<u32>().into(),
+                                    num_chunk_elems: global_size as u32,
+                                });
+                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.dispatch(global_size);
                             }
                         });
 
