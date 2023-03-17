@@ -213,6 +213,11 @@ impl<const N: usize> Vector<N, LocalCoordinate> {
         self.map(GlobalCoordinate::interpret_as)
     }
 }
+impl<const N: usize> Vector<N, u32> {
+    pub fn global(self) -> Vector<N, GlobalCoordinate> {
+        self.map(|v| v.into())
+    }
+}
 impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
     pub fn raw(self) -> Vector<N, u32> {
         self.map(|v| v.raw)
@@ -287,13 +292,87 @@ impl<const N: usize, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<
     }
 }
 
-impl<T: Copy> Into<mint::Vector3<T>> for Vector<3, T> {
-    fn into(self) -> mint::Vector3<T> {
+impl<T: Copy> From<Vector<3, T>> for mint::Vector3<T> {
+    fn from(value: Vector<3, T>) -> Self {
         mint::Vector3 {
-            x: self.x(),
-            y: self.y(),
-            z: self.z(),
+            x: value.x(),
+            y: value.y(),
+            z: value.z(),
         }
+    }
+}
+
+impl<T: Copy> From<mint::Vector3<T>> for Vector<3, T> {
+    fn from(value: mint::Vector3<T>) -> Self {
+        Self::from([value.z, value.y, value.x])
+    }
+}
+
+impl std::ops::Mul<Vector<3, f32>> for mint::ColumnMatrix3<f32> {
+    type Output = Vector<3, f32>;
+
+    fn mul(self, rhs: Vector<3, f32>) -> Self::Output {
+        let m = cgmath::Matrix3::from(self);
+        let v = cgmath::Vector3::from(mint::Vector3::from(rhs));
+        let ret: mint::Vector3<f32> = (m * v).into();
+        ret.into()
+    }
+}
+
+impl Vector<2, f32> {
+    pub fn to_homogeneous_coord(self) -> Vector<3, f32> {
+        Vector::from([self.y(), self.x(), 1.0])
+    }
+}
+
+impl<T: Copy> Vector<3, T> {
+    pub fn drop_dim(self, dim: usize) -> Vector<2, T> {
+        Vector(std::array::from_fn(|i| {
+            if i < dim {
+                self.0[i]
+            } else {
+                self.0[i + 1]
+            }
+        }))
+    }
+}
+
+pub struct AABB<const N: usize, T> {
+    min: Vector<N, T>,
+    max: Vector<N, T>,
+}
+
+fn partial_ord_min<T: PartialOrd>(v1: T, v2: T) -> T {
+    if v1.lt(&v2) {
+        v1
+    } else {
+        v2
+    }
+}
+fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
+    if v1.lt(&v2) {
+        v2
+    } else {
+        v1
+    }
+}
+
+impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
+    pub fn new(p1: Vector<N, T>, p2: Vector<N, T>) -> Self {
+        Self {
+            min: p1.zip(p2, partial_ord_min),
+            max: p1.zip(p2, partial_ord_max),
+        }
+    }
+
+    pub fn contains(&self, p: Vector<N, T>) -> bool {
+        let bigger_than_min = self.min.zip(p, |v1, v2| v1.le(&v2));
+        let smaller_than_max = p.zip(self.max, |v1, v2| v1.lt(&v2));
+        bigger_than_min
+            .0
+            .iter()
+            .chain(smaller_than_max.0.iter())
+            .all(|v| *v)
     }
 }
 

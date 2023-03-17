@@ -81,23 +81,23 @@ impl VolumeMetaData {
     }
 }
 
+pub type ImageMetaData = TensorMetaData<2>;
+impl ImageMetaData {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
+        let bp = self.dimension_in_bricks();
+        itertools::iproduct! { 0..bp.y().raw, 0..bp.x().raw }.map(|(y, x)| [y, x].into())
+    }
+    pub fn as_vol(&self) -> VolumeMetaData {
+        VolumeMetaData {
+            dimensions: [1.into(), self.dimensions.y(), self.dimensions.x()].into(),
+            chunk_size: [1.into(), self.chunk_size.y(), self.chunk_size.x()].into(),
+        }
+    }
+}
+
 #[allow(unused)]
 mod unused {
     use super::*;
-
-    pub type ImageMetaData = TensorMetaData<2>;
-    impl ImageMetaData {
-        pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
-            let bp = self.dimension_in_bricks();
-            itertools::iproduct! { 0..bp.y().raw, 0..bp.x().raw }.map(|(y, x)| [y, x].into())
-        }
-        pub fn as_vol(&self) -> VolumeMetaData {
-            VolumeMetaData {
-                dimensions: [1.into(), self.dimensions.y(), self.dimensions.x()].into(),
-                chunk_size: [1.into(), self.chunk_size.y(), self.chunk_size.x()].into(),
-            }
-        }
-    }
     pub type ArrayMetaData = TensorMetaData<1>;
     impl ArrayMetaData {
         pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
