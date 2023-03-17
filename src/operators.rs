@@ -1,4 +1,5 @@
 pub mod array;
+pub mod png_writer;
 pub mod rasterize_function;
 pub mod reader;
 pub mod scalar;
