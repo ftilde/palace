@@ -202,8 +202,8 @@ void main()
 
                         let out_begin = out_info.begin();
                         let out_end = out_info.end();
-                        for y in out_begin.y().raw..out_end.0[0].raw {
-                            for x in out_begin.x().raw..out_end.0[1].raw {
+                        for y in out_begin.0[0].raw..out_end.0[0].raw {
+                            for x in out_begin.0[1].raw..out_end.0[1].raw {
                                 let pos = Vector::from([y as f32, x as f32]).to_homogeneous_coord();
                                 let sample_pos = transform * pos;
 
@@ -234,8 +234,11 @@ void main()
                                 };
 
                                 for channel in 0..4 {
-                                    let p: Vector<3, LocalCoordinate> =
-                                        Vector::from([y, x, channel]);
+                                    let p: Vector<3, LocalCoordinate> = Vector::from([
+                                        y - out_begin.0[0].raw,
+                                        x - out_begin.0[1].raw,
+                                        channel,
+                                    ]);
                                     tile[p.as_index()].write(c.0[channel as usize]);
                                 }
                             }

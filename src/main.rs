@@ -123,15 +123,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
                 result = sqrt(d_sq);
-                if(pos_normalized.x > 0.5) {
-                    result += 0.5;
-                }
 
             }"#
             .to_owned(),
         }),
     };
-    let sliceviewer = SliceViewerState::new([100, 100].into(), [100, 100].into());
+    let sliceviewer = SliceViewerState::new([100, 100].into(), [25, 25].into());
 
     eval_network(&mut runtime, &*vol_state, &sliceviewer, args.factor)
 }
@@ -165,6 +162,7 @@ fn eval_network(
     let mean_unscaled = volume_gpu::mean(rechunked);
 
     let slice = sliceviewer.operate(scaled2);
+    let slice_one_chunk = volume_gpu::rechunk(slice, [100, 100, 4].into());
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
@@ -172,7 +170,7 @@ fn eval_network(
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
-    let slice_ref = &slice;
+    let slice_ref = &slice_one_chunk;
     let mean_val = executor.resolve(|ctx| {
         async move {
             operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
