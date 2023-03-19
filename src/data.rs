@@ -321,7 +321,7 @@ impl std::ops::Mul<Vector<3, f32>> for mint::ColumnMatrix3<f32> {
 
 impl Vector<2, f32> {
     pub fn to_homogeneous_coord(self) -> Vector<3, f32> {
-        Vector::from([self.y(), self.x(), 1.0])
+        Vector::from([1.0, self.y(), self.x()])
     }
 }
 

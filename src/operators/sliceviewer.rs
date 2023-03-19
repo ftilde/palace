@@ -13,11 +13,11 @@ use crate::{
 use super::volume::VolumeOperator;
 
 pub struct SliceViewerState {
-    pub metadata: VolumeMetaData,
+    metadata: VolumeMetaData,
 }
 
 impl SliceViewerState {
-    fn new(size: Vector<2, GlobalCoordinate>, chunk_size: Vector<2, LocalCoordinate>) -> Self {
+    pub fn new(size: Vector<2, GlobalCoordinate>, chunk_size: Vector<2, LocalCoordinate>) -> Self {
         let n_channels = 4;
         Self {
             metadata: VolumeMetaData {
@@ -27,9 +27,25 @@ impl SliceViewerState {
         }
     }
     fn projection_mat(&self) -> mint::ColumnMatrix3<f32> {
-        todo!()
+        mint::ColumnMatrix3 {
+            x: mint::Vector3 {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            y: mint::Vector3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            z: mint::Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 50.0,
+            },
+        }
     }
-    fn operate<'a>(&'a self, input: VolumeOperator<'a>) -> VolumeOperator<'a> {
+    pub fn operate<'a, 's: 'a>(&'s self, input: VolumeOperator<'a>) -> VolumeOperator<'a> {
         #[derive(Copy, Clone, AsStd140)]
         struct PushConstants {
             offset: mint::Vector3<u32>,
@@ -145,20 +161,19 @@ void main()
 
                         let out_begin_voxel = transform * out_begin_pixel.to_homogeneous_coord();
                         let out_end_voxel = transform * out_end_pixel.to_homogeneous_coord();
-
-                        let out_begin_voxel: Vector<3, f32> =
-                            mint::Vector3::from(out_begin_voxel).into();
-
-                        let out_end_voxel: Vector<3, f32> =
-                            mint::Vector3::from(out_end_voxel).into();
-
                         let llb =
                             out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
                         let urb =
                             out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
 
-                        let llb_brick = m.chunk_pos(llb.global()).raw();
-                        let urb_brick = m.chunk_pos(urb.global()).raw();
+                        let llb_brick = m_in.chunk_pos(llb.global()).raw();
+                        // Clamp to valid range:
+                        let urb_brick = m_in
+                            .chunk_pos(urb.global())
+                            .zip(m_in.dimension_in_bricks() - Vector::fill(1u32), |a, b| {
+                                a.min(b)
+                            })
+                            .raw();
 
                         let in_brick_positions = itertools::iproduct! {
                             llb_brick.z()..=urb_brick.z(),
@@ -187,8 +202,8 @@ void main()
 
                         let out_begin = out_info.begin();
                         let out_end = out_info.end();
-                        for y in out_begin.y().raw..out_end.y().raw {
-                            for x in out_begin.x().raw..out_end.x().raw {
+                        for y in out_begin.y().raw..out_end.0[0].raw {
+                            for x in out_begin.x().raw..out_end.0[1].raw {
                                 let pos = Vector::from([y as f32, x as f32]).to_homogeneous_coord();
                                 let sample_pos = transform * pos;
 

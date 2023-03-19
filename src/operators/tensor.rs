@@ -11,8 +11,6 @@ use crate::{
 
 use super::scalar::ScalarOperator;
 
-pub type ImageOperator<'op> = TensorOperator<'op, 2>;
-
 #[derive(Clone)]
 pub struct TensorOperator<'op, const N: usize> {
     pub metadata: Operator<'op, (), TensorMetaData<N>>,

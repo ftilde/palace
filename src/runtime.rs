@@ -9,7 +9,7 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation},
-    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task, TaskContext},
+    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
     task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
@@ -483,7 +483,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    pub fn resolve<'call, R, F: FnOnce(TaskContext<'cref, 'inv, (), Never>) -> Task<'call, R>>(
+    pub fn resolve<'call, R, F: FnOnce(OpaqueTaskContext<'cref, 'inv>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {
@@ -492,7 +492,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         // `Never`.
         let op_id = OperatorId::new("RunTime::resolve");
         let task_id = self.request_batcher.task_id_manager.gen_id(op_id);
-        let mut task = task(TaskContext::new(self.context(task_id)));
+        let mut task = task(self.context(task_id));
 
         loop {
             let mut ctx = Context::from_waker(&self.waker);
@@ -509,9 +509,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 }
-
-// TODO: Use ! when stable
-pub enum Never {}
 
 fn dummy_raw_waker() -> RawWaker {
     fn no_op(_: *const ()) {}

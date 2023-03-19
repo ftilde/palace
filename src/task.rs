@@ -103,12 +103,12 @@ pub struct PollContext<'cref> {
 
 #[derive(Copy, Clone)]
 pub struct OpaqueTaskContext<'cref, 'inv> {
-    pub requests: &'cref RequestQueue<'inv>,
-    pub storage: &'cref Storage,
-    pub hints: &'cref TaskHints,
-    pub thread_pool: &'cref ThreadSpawner,
-    pub device_contexts: &'cref [DeviceContext],
-    pub current_task: TaskId,
+    pub(crate) requests: &'cref RequestQueue<'inv>,
+    pub(crate) storage: &'cref Storage,
+    pub(crate) hints: &'cref TaskHints,
+    pub(crate) thread_pool: &'cref ThreadSpawner,
+    pub(crate) device_contexts: &'cref [DeviceContext],
+    pub(crate) current_task: TaskId,
 }
 
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
@@ -153,6 +153,129 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 }
             }
         }
+    }
+    /// Spawn a job on the io pool. This job is allowed to hold locks/do IO, but should not do
+    /// excessive computation.
+    pub fn spawn_io<'req, R: Send + 'req>(
+        &'req self,
+        f: impl FnOnce() -> R + Send + 'req,
+    ) -> Request<'req, 'inv, R> {
+        self.thread_pool.spawn(JobType::Io, self.current_task, f)
+    }
+
+    /// Spawn a job on the compute pool. This job is assumed to not block (i.e., do IO or hold
+    /// locks), but instead to fully utilize the compute capabilities of the core it is running on.
+    pub fn spawn_compute<'req, R: Send + 'req>(
+        &'req self,
+        f: impl FnOnce() -> R + Send + 'req,
+    ) -> Request<'req, 'inv, R> {
+        self.thread_pool
+            .spawn(JobType::Compute, self.current_task, f)
+    }
+
+    pub fn current_op(&self) -> OperatorId {
+        self.current_task.operator()
+    }
+
+    pub fn submit_unordered<'req, V: 'req>(
+        &'req self,
+        requests: impl Iterator<Item = Request<'req, 'inv, V>> + 'req,
+    ) -> impl StreamExt<Item = V> + 'req + WeUseThisLifetime<'inv>
+    where
+        'inv: 'req,
+    {
+        self.submit_unordered_with_data(requests.map(|r| (r, ())))
+            .map(|(r, ())| r)
+    }
+
+    pub fn submit_unordered_with_data<'req, V: 'req, D: 'inv>(
+        &'req self,
+        requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
+    ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'inv>
+    where
+        'inv: 'req,
+    {
+        RequestStreamSource::unordered(*self, requests)
+    }
+
+    pub fn group<'req, V: 'req>(
+        &'req self,
+        r: impl IntoIterator<Item = Request<'req, 'inv, V>>,
+    ) -> Request<'req, 'inv, Vec<V>> {
+        let r = r.into_iter();
+        let l = r.size_hint().0;
+        let mut types = Vec::with_capacity(l);
+        let mut polls = Vec::with_capacity(l);
+        let mut ids: Vec<Id> = Vec::with_capacity(l);
+        let mut done = Vec::with_capacity(l);
+
+        for (i, r) in r.into_iter().enumerate() {
+            match r.id() {
+                RequestId::Data(d) => ids.push(Id::hash(&d)),
+                RequestId::Job(i) => ids.push(Id::hash(&i)),
+                RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
+                RequestId::Group(g) => ids.push(g.0),
+            }
+            let mut poll = (r.gen_poll)(PollContext {
+                storage: self.storage,
+                device_contexts: self.device_contexts,
+            });
+            match r.type_ {
+                RequestType::Data(_) | RequestType::Group(_) => {
+                    if let Some(v) = poll() {
+                        done.push(MaybeUninit::new(v));
+                        continue;
+                    }
+                }
+                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
+            }
+            done.push(MaybeUninit::uninit());
+            polls.push((i, poll));
+            types.push(r.type_);
+        }
+        let id = Id::combine(&ids[..]);
+        Request {
+            type_: RequestType::Group(RequestGroup {
+                id: GroupId(id),
+                all: types,
+            }),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    // TODO: possibly add some kind of information which ones are ready?
+                    polls.retain_mut(|(i, poll)| match poll() {
+                        Some(v) => {
+                            done[*i].write(v);
+                            false
+                        }
+                        None => true,
+                    });
+                    if polls.is_empty() {
+                        let ret = std::mem::take(&mut done);
+                        // TODO: The following "should" basically be a noop. Maybe this can be
+                        // optimized, but maybe the compiler already does a good job for this.
+                        let ret = ret
+                            .into_iter()
+                            .map(|v| unsafe { v.assume_init() })
+                            .collect();
+                        Some(ret)
+                    } else {
+                        None
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
+    // TODO: We may not want to expose the storage directly in the future. Currently this is used
+    // for the into_main_handle methods of Thread*Handle (see storage.rs), but we could change them
+    // to take a context argument instead.
+    pub fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
+    pub fn vulkan_device(&self) -> &DeviceContext {
+        self.device_contexts.first().unwrap()
     }
 }
 
@@ -357,6 +480,14 @@ pub struct TaskContext<'cref, 'inv, ItemDescriptor, Output: ?Sized> {
     inner: OpaqueTaskContext<'cref, 'inv>,
     _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
 }
+
+impl<'cref, 'inv, I, O: ?Sized> std::ops::Deref for TaskContext<'cref, 'inv, I, O> {
+    type Target = OpaqueTaskContext<'cref, 'inv>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
 impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
     for TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
@@ -372,139 +503,6 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
             inner,
             _output_marker: Default::default(),
         }
-    }
-    /// Spawn a job on the io pool. This job is allowed to hold locks/do IO, but should not do
-    /// excessive computation.
-    pub fn spawn_io<'req, R: Send + 'req>(
-        &'req self,
-        f: impl FnOnce() -> R + Send + 'req,
-    ) -> Request<'req, 'inv, R> {
-        self.inner
-            .thread_pool
-            .spawn(JobType::Io, self.inner.current_task, f)
-    }
-
-    /// Spawn a job on the compute pool. This job is assumed to not block (i.e., do IO or hold
-    /// locks), but instead to fully utilize the compute capabilities of the core it is running on.
-    pub fn spawn_compute<'req, R: Send + 'req>(
-        &'req self,
-        f: impl FnOnce() -> R + Send + 'req,
-    ) -> Request<'req, 'inv, R> {
-        self.inner
-            .thread_pool
-            .spawn(JobType::Compute, self.inner.current_task, f)
-    }
-
-    pub fn current_op(&self) -> OperatorId {
-        self.inner.current_task.operator()
-    }
-
-    pub fn submit<'req, V: 'req>(
-        &'req self,
-        request: Request<'req, 'inv, V>,
-    ) -> impl Future<Output = V> + 'req + WeUseThisLifetime<'inv> {
-        self.inner.submit(request)
-    }
-
-    pub fn submit_unordered<'req, V: 'req>(
-        &'req self,
-        requests: impl Iterator<Item = Request<'req, 'inv, V>> + 'req,
-    ) -> impl StreamExt<Item = V> + 'req + WeUseThisLifetime<'inv>
-    where
-        'inv: 'req,
-    {
-        self.submit_unordered_with_data(requests.map(|r| (r, ())))
-            .map(|(r, ())| r)
-    }
-
-    pub fn submit_unordered_with_data<'req, V: 'req, D: 'inv>(
-        &'req self,
-        requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
-    ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'inv>
-    where
-        'inv: 'req,
-    {
-        RequestStreamSource::unordered(self.inner, requests)
-    }
-
-    pub fn group<'req, V: 'req>(
-        &'req self,
-        r: impl IntoIterator<Item = Request<'req, 'inv, V>>,
-    ) -> Request<'req, 'inv, Vec<V>> {
-        let r = r.into_iter();
-        let l = r.size_hint().0;
-        let mut types = Vec::with_capacity(l);
-        let mut polls = Vec::with_capacity(l);
-        let mut ids: Vec<Id> = Vec::with_capacity(l);
-        let mut done = Vec::with_capacity(l);
-
-        for (i, r) in r.into_iter().enumerate() {
-            match r.id() {
-                RequestId::Data(d) => ids.push(Id::hash(&d)),
-                RequestId::Job(i) => ids.push(Id::hash(&i)),
-                RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
-                RequestId::Group(g) => ids.push(g.0),
-            }
-            let mut poll = (r.gen_poll)(PollContext {
-                storage: self.inner.storage,
-                device_contexts: self.inner.device_contexts,
-            });
-            match r.type_ {
-                RequestType::Data(_) | RequestType::Group(_) => {
-                    if let Some(v) = poll() {
-                        done.push(MaybeUninit::new(v));
-                        continue;
-                    }
-                }
-                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
-            }
-            done.push(MaybeUninit::uninit());
-            polls.push((i, poll));
-            types.push(r.type_);
-        }
-        let id = Id::combine(&ids[..]);
-        Request {
-            type_: RequestType::Group(RequestGroup {
-                id: GroupId(id),
-                all: types,
-            }),
-            gen_poll: Box::new(move |_ctx| {
-                Box::new(move || {
-                    // TODO: possibly add some kind of information which ones are ready?
-                    polls.retain_mut(|(i, poll)| match poll() {
-                        Some(v) => {
-                            done[*i].write(v);
-                            false
-                        }
-                        None => true,
-                    });
-                    if polls.is_empty() {
-                        let ret = std::mem::take(&mut done);
-                        // TODO: The following "should" basically be a noop. Maybe this can be
-                        // optimized, but maybe the compiler already does a good job for this.
-                        let ret = ret
-                            .into_iter()
-                            .map(|v| unsafe { v.assume_init() })
-                            .collect();
-                        Some(ret)
-                    } else {
-                        None
-                    }
-                })
-            }),
-            _marker: Default::default(),
-        }
-    }
-
-    // TODO: We may not want to expose the storage directly in the future. Currently this is used
-    // for the into_main_handle methods of Thread*Handle (see storage.rs), but we could change them
-    // to take a context argument instead.
-    pub fn storage(&self) -> &Storage {
-        &self.inner.storage
-    }
-
-    pub fn vulkan_device(&self) -> &DeviceContext {
-        self.inner.device_contexts.first().unwrap()
     }
 }
 

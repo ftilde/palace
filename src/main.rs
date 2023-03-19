@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use data::{LocalVoxelPosition, VoxelPosition};
 use operators::{
     reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
+    sliceviewer::SliceViewerState,
     volume::VolumeOperatorState,
 };
 use runtime::RunTime;
@@ -122,18 +123,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
                 result = sqrt(d_sq);
+                if(pos_normalized.x > 0.5) {
+                    result += 0.5;
+                }
 
             }"#
             .to_owned(),
         }),
     };
+    let sliceviewer = SliceViewerState::new([100, 100].into(), [100, 100].into());
 
-    eval_network(&mut runtime, &*vol_state, args.factor)
+    eval_network(&mut runtime, &*vol_state, &sliceviewer, args.factor)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
     vol: &dyn VolumeOperatorState,
+    sliceviewer: &SliceViewerState,
     factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
@@ -153,10 +159,12 @@ fn eval_network(
 
     let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
     let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
-    let scaled2 = volume_gpu::linear_rescale(scaled2, (-1.0).into(), 0.0.into());
+    let scaled3 = volume_gpu::linear_rescale(scaled2.clone(), (-1.0).into(), 0.0.into());
 
-    let mean = volume_gpu::mean(scaled2);
+    let mean = volume_gpu::mean(scaled3);
     let mean_unscaled = volume_gpu::mean(rechunked);
+
+    let slice = sliceviewer.operate(scaled2);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
@@ -164,8 +172,14 @@ fn eval_network(
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
-    let mean_val = executor
-        .resolve(|ctx| async move { Ok(ctx.submit(mean_ref.request_scalar()).await) }.into())?;
+    let slice_ref = &slice;
+    let mean_val = executor.resolve(|ctx| {
+        async move {
+            operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
+            Ok(ctx.submit(mean_ref.request_scalar()).await)
+        }
+        .into()
+    })?;
 
     let tasks_executed = executor.statistics().tasks_executed;
     println!(
