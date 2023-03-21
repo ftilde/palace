@@ -1,7 +1,9 @@
 use crate::{
+    id::Id,
     operator::{Operator, OperatorId},
     task::{Task, TaskContext},
 };
+use std::hash::Hash;
 
 pub type ScalarOperator<'op, T> = Operator<'op, (), T>;
 
@@ -26,7 +28,7 @@ pub fn scalar<
     })
 }
 
-pub fn constant<'op, T: bytemuck::Pod>(val: T) -> ScalarOperator<'op, T> {
+pub fn constant_pod<'op, T: bytemuck::Pod>(val: T) -> ScalarOperator<'op, T> {
     let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(bytemuck::bytes_of(&val));
     scalar(op_id, (), move |ctx, _, _| {
         async move { ctx.write(val) }.into()
@@ -35,6 +37,13 @@ pub fn constant<'op, T: bytemuck::Pod>(val: T) -> ScalarOperator<'op, T> {
 
 impl<'op, T: bytemuck::Pod> From<T> for ScalarOperator<'op, T> {
     fn from(value: T) -> Self {
-        constant(value)
+        constant_pod(value)
     }
+}
+
+pub fn constant_hash<'op, T: Copy + Hash + 'op>(val: T) -> ScalarOperator<'op, T> {
+    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(Id::hash(&val));
+    scalar(op_id, (), move |ctx, _, _| {
+        async move { ctx.write(val) }.into()
+    })
 }

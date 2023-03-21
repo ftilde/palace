@@ -1,15 +1,14 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use data::{LocalVoxelPosition, VoxelPosition};
+use data::{GlobalCoordinate, LocalVoxelPosition, VoxelPosition};
 use operators::{
     reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
-    sliceviewer::SliceViewerState,
     volume::VolumeOperatorState,
 };
 use runtime::RunTime;
 
-use crate::operators::volume_gpu;
+use crate::{array::ImageMetaData, operators::volume_gpu};
 
 mod array;
 mod data;
@@ -56,6 +55,9 @@ struct CliArgs {
 
     #[arg(short, long, default_value = "1.0")]
     factor: f32,
+
+    #[arg(short, long, default_value = "0")]
+    slice_num: u32,
 
     /// Size of the memory pool that will be allocated in gigabytes.
     #[arg(short, long, default_value = "8")]
@@ -128,15 +130,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .to_owned(),
         }),
     };
-    let sliceviewer = SliceViewerState::new([100, 100].into(), [25, 25].into());
-
-    eval_network(&mut runtime, &*vol_state, &sliceviewer, args.factor)
+    eval_network(
+        &mut runtime,
+        &*vol_state,
+        args.slice_num.into(),
+        args.factor,
+    )
 }
 
 fn eval_network(
     runtime: &mut RunTime,
     vol: &dyn VolumeOperatorState,
-    sliceviewer: &SliceViewerState,
+    slice_num: GlobalCoordinate,
     factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
@@ -161,8 +166,30 @@ fn eval_network(
     let mean = volume_gpu::mean(scaled3);
     let mean_unscaled = volume_gpu::mean(rechunked);
 
-    let slice = sliceviewer.operate(scaled2);
-    let slice_one_chunk = volume_gpu::rechunk(slice, [100, 100, 4].into());
+    let slice_metadata = ImageMetaData {
+        dimensions: [100, 100].into(),
+        chunk_size: [25, 25].into(),
+    };
+
+    let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
+        scaled2.metadata.clone(),
+        crate::operators::scalar::constant_hash(slice_metadata),
+        crate::operators::scalar::constant_hash(slice_num),
+    );
+    let slice = crate::operators::sliceviewer::render_slice(
+        scaled2,
+        crate::operators::scalar::constant_hash(slice_metadata),
+        slice_proj,
+    );
+    let slice_one_chunk = volume_gpu::rechunk(
+        slice,
+        [
+            slice_metadata.dimensions.local().0[0],
+            slice_metadata.dimensions.local().0[1],
+            4.into(),
+        ]
+        .into(),
+    );
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
