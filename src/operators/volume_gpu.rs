@@ -736,10 +736,10 @@ void main()
                 let normalization_factor = 1.0 / (crate::data::hmul(m.dimensions) as f32);
 
                 let memory_barriers = &[vk::MemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::HOST)
-                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                     .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                     .build()];
                 let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
                 device.with_cmd_buffer(|cmd| {
