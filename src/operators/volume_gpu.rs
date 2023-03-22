@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{
     array::VolumeMetaData,
-    data::{BrickPosition, LocalCoordinate, LocalVoxelPosition},
+    data::{BrickPosition, LocalCoordinate, Vector},
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -16,7 +16,11 @@ use crate::{
     },
 };
 
-use super::{array::ArrayOperator, scalar::ScalarOperator, volume::VolumeOperator};
+use super::{
+    array::ArrayOperator,
+    scalar::ScalarOperator,
+    volume::{ChunkSize, VolumeOperator},
+};
 
 pub fn linear_rescale<'op>(
     input: VolumeOperator<'op>,
@@ -155,7 +159,7 @@ void main()
 
 pub fn rechunk<'op>(
     input: VolumeOperator<'op>,
-    brick_size: LocalVoxelPosition,
+    brick_size: Vector<3, ChunkSize>,
 ) -> VolumeOperator<'op> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
@@ -230,7 +234,7 @@ void main() {
             async move {
                 let req = input.metadata.request_scalar();
                 let mut m = ctx.submit(req).await;
-                m.chunk_size = brick_size;
+                m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
                 ctx.write(m)
             }
             .into()
@@ -248,7 +252,7 @@ void main() {
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
                 let m_out = {
                     let mut m_out = m_in;
-                    m_out.chunk_size = brick_size;
+                    m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
 
@@ -936,7 +940,7 @@ void main()
 mod test {
     use super::*;
     use crate::{
-        data::{GlobalCoordinate, Vector, VoxelPosition},
+        data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition},
         operators::volume::VolumeOperatorState,
         test_util::*,
     };
@@ -965,7 +969,7 @@ mod test {
         let offset = (1.0).into();
         let input = point_vol.operate();
         let output = linear_rescale(input, scale, offset);
-        compare_volume(output, size, fill_expected);
+        compare_volume(output, fill_expected);
     }
 
     #[test]
@@ -990,8 +994,11 @@ mod test {
         };
         let input = input.operate();
         for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
-            let output = rechunk(input.clone(), LocalVoxelPosition::from(chunk_size));
-            compare_volume(output, size, fill_expected);
+            let output = rechunk(
+                input.clone(),
+                LocalVoxelPosition::from(chunk_size).into_elem(),
+            );
+            compare_volume(output, fill_expected);
         }
     }
 
@@ -1018,20 +1025,19 @@ mod test {
                 body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z);"#.to_owned(),
             };
             let input = input.operate();
-            let output = rechunk(input, LocalVoxelPosition::from(chunk_size));
-            compare_volume(output, size, fill_expected);
+            let output = rechunk(input, LocalVoxelPosition::from(chunk_size).into_elem());
+            compare_volume(output, fill_expected);
         }
     }
 
     fn compare_convolution_1d<const DIM: usize>(
         input: &dyn VolumeOperatorState,
-        size: VoxelPosition,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {
         let input = input.operate();
         let output = convolution_1d::<DIM>(input, crate::operators::array::from_static(kernel));
-        compare_volume(output, size, fill_expected);
+        compare_volume(output, fill_expected);
     }
 
     fn test_convolution_1d_generic<const DIM: usize>() {
@@ -1040,7 +1046,7 @@ mod test {
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let (point_vol, center) = center_point_vol(size, brick_size);
-        compare_convolution_1d::<DIM>(&point_vol, size, &[1.0, -1.0, 2.0], |comp| {
+        compare_convolution_1d::<DIM>(&point_vol, &[1.0, -1.0, 2.0], |comp| {
             comp[center.map_element(DIM, |v| v - 1u32).as_index()] = 1.0;
             comp[center.map_element(DIM, |v| v).as_index()] = -1.0;
             comp[center.map_element(DIM, |v| v + 1u32).as_index()] = 2.0;
@@ -1058,7 +1064,7 @@ mod test {
         kernel[1] = -2.0;
         kernel[kernel_size - 1] = 1.0;
         kernel[kernel_size - 2] = 2.0;
-        compare_convolution_1d::<DIM>(&point_vol, size, &kernel, |comp| {
+        compare_convolution_1d::<DIM>(&point_vol, &kernel, |comp| {
             comp[center.map_element(DIM, |v| v - extent).as_index()] = -1.0;
             comp[center.map_element(DIM, |v| v - extent + 1u32).as_index()] = -2.0;
             comp[center.map_element(DIM, |v| v + extent).as_index()] = 1.0;
@@ -1089,7 +1095,7 @@ mod test {
         let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
         let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
         let output = separable_convolution(point_vol.operate(), kernels);
-        compare_volume(output, size, |comp| {
+        compare_volume(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {
                     for dx in -1..=1 {

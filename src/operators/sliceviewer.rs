@@ -350,7 +350,7 @@ mod test {
                 crate::operators::scalar::constant_hash(img_meta),
                 slice_proj,
             );
-            compare_volume(slice, img_size_c, fill_expected); //TODO: get rid of img_size argument
+            compare_volume(slice, fill_expected);
         }
     }
     #[test]

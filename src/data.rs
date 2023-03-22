@@ -82,6 +82,16 @@ impl<T: CoordinateType> Into<usize> for Coordinate<T> {
         self.raw as usize
     }
 }
+impl GlobalCoordinate {
+    pub fn local(self) -> LocalCoordinate {
+        self.raw.into()
+    }
+}
+impl LocalCoordinate {
+    pub fn local(self) -> GlobalCoordinate {
+        self.raw.into()
+    }
+}
 
 macro_rules! impl_coordinate_ops {
     ($rhs_ty:ty, $rhs_access:expr) => {

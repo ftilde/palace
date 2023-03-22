@@ -8,7 +8,11 @@ use operators::{
 };
 use runtime::RunTime;
 
-use crate::{array::ImageMetaData, operators::volume_gpu};
+use crate::{
+    array::ImageMetaData,
+    data::Vector,
+    operators::{volume::ChunkSize, volume_gpu},
+};
 
 mod array;
 mod data;
@@ -146,7 +150,7 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()));
+    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
     let convolved = volume_gpu::separable_convolution(
@@ -181,15 +185,7 @@ fn eval_network(
         crate::operators::scalar::constant_hash(slice_metadata),
         slice_proj,
     );
-    let slice_one_chunk = volume_gpu::rechunk(
-        slice,
-        [
-            slice_metadata.dimensions.local().0[0],
-            slice_metadata.dimensions.local().0[1],
-            4.into(),
-        ]
-        .into(),
-    );
+    let slice_one_chunk = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
