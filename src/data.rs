@@ -259,6 +259,9 @@ impl<T: Copy> Vector<2, T> {
     pub fn y(&self) -> T {
         self.0[0]
     }
+    pub fn push_dim(self, extra: T) -> Vector<3, T> {
+        [self.0[0], self.0[1], extra].into()
+    }
 }
 impl<const N: usize, T> IntoIterator for Vector<N, T> {
     type Item = T;
@@ -299,6 +302,21 @@ impl<const N: usize, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<
     type Output = Vector<N, O>;
     fn div(self, rhs: Vector<N, U>) -> Self::Output {
         self.zip(rhs, Div::div)
+    }
+}
+
+impl<T: Copy> From<Vector<2, T>> for mint::Vector2<T> {
+    fn from(value: Vector<2, T>) -> Self {
+        mint::Vector2 {
+            x: value.x(),
+            y: value.y(),
+        }
+    }
+}
+
+impl<T: Copy> From<mint::Vector2<T>> for Vector<2, T> {
+    fn from(value: mint::Vector2<T>) -> Self {
+        Self::from([value.y, value.x])
     }
 }
 

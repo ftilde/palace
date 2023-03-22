@@ -150,7 +150,8 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let rechunked =
+        crate::operators::volume::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
     let convolved = volume_gpu::separable_convolution(
@@ -168,11 +169,11 @@ fn eval_network(
     let scaled3 = volume_gpu::linear_rescale(scaled2.clone(), (-1.0).into(), 0.0.into());
 
     let mean = volume_gpu::mean(scaled3);
-    let mean_unscaled = volume_gpu::mean(rechunked);
+    let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
     let slice_metadata = ImageMetaData {
-        dimensions: [100, 100].into(),
-        chunk_size: [25, 25].into(),
+        dimensions: [40, 40].into(),
+        chunk_size: [40, 40].into(),
     };
 
     let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
@@ -185,7 +186,7 @@ fn eval_network(
         crate::operators::scalar::constant_hash(slice_metadata),
         slice_proj,
     );
-    let slice_one_chunk = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice_one_chunk = crate::operators::volume::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
@@ -197,7 +198,8 @@ fn eval_network(
     let mean_val = executor.resolve(|ctx| {
         async move {
             operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
-            Ok(ctx.submit(mean_ref.request_scalar()).await)
+            //Ok(ctx.submit(mean_ref.request_scalar()).await)
+            Ok(1.0)
         }
         .into()
     })?;
@@ -216,7 +218,7 @@ fn eval_network(
     executor.resolve(|ctx| {
         async move {
             let req = mean_unscaled_ref.request_scalar();
-            *muv_ref = ctx.submit(req).await;
+            *muv_ref = 1.0; //ctx.submit(req).await;
             Ok(())
         }
         .into()

@@ -4,6 +4,7 @@ use ash::vk;
 use crevice::std140::{AsStd140, Std140};
 
 use crate::{
+    data::Vector,
     storage::gpu::{ReadHandle, WriteHandle},
     vulkan::shader::Shader,
 };
@@ -14,7 +15,7 @@ pub struct ComputePipeline {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
-    local_size: usize,
+    local_size: Vector<3, u32>,
     push_constant_size: Option<usize>,
 }
 
@@ -42,7 +43,7 @@ impl ComputePipeline {
         let mut descriptor_bindings: BTreeMap<u32, Vec<_>> = BTreeMap::new();
         let mut push_constant = None;
         let mut push_constant_size = None;
-        let mut local_size = None;
+        let mut local_size: Option<Vector<3, u32>> = None;
         let stage = vk::ShaderStageFlags::COMPUTE;
 
         for var in &entry_point.vars {
@@ -104,8 +105,10 @@ impl ComputePipeline {
         for e in &entry_point.exec_modes {
             match e.exec_mode {
                 spirv::ExecutionMode::LocalSize => {
-                    let ls = e.operands.first().unwrap().value.to_u32();
-                    let prev = local_size.replace(ls);
+                    let x = e.operands[0].value.to_u32();
+                    let y = e.operands[1].value.to_u32();
+                    let z = e.operands[2].value.to_u32();
+                    let prev = local_size.replace([z, y, x].into());
                     assert!(prev.is_none());
                 }
                 _ => {}
@@ -234,13 +237,19 @@ impl<'a> BoundPipeline<'a> {
     }
 
     pub unsafe fn dispatch(&self, global_size: usize) {
-        let local_size = self.pipeline.local_size;
+        self.dispatch3d([1u32, 1, global_size.try_into().unwrap()].into())
+    }
 
-        let num_wgs = crate::util::div_round_up(global_size, local_size);
+    pub unsafe fn dispatch3d(&self, global_size: Vector<3, u32>) {
+        let num_wgs = crate::util::div_round_up(global_size, self.pipeline.local_size);
+
+        println!("num_wgs: {:?}", num_wgs);
+        println!("localsize: {:?}", self.pipeline.local_size);
+        println!("global_size: {:?}", global_size);
 
         self.cmd
             .functions()
-            .cmd_dispatch(self.cmd.raw(), num_wgs.try_into().unwrap(), 1, 1);
+            .cmd_dispatch(self.cmd.raw(), num_wgs.x(), num_wgs.y(), num_wgs.z());
     }
 }
 
@@ -250,6 +259,7 @@ trait AsDescriptor {
 
 impl<'a> AsDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        println!("RSize: {}", self.layout.size());
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
             .range(self.layout.size() as _)
@@ -259,6 +269,7 @@ impl<'a> AsDescriptor for ReadHandle<'a> {
 
 impl<'a> AsDescriptor for WriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        println!("WSize: {}", self.size);
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
             .range(self.size as _)

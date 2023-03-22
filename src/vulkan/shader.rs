@@ -38,6 +38,8 @@ impl ShaderSource for (&str, ShaderDefines) {
 
         let mut compiler = CompilerBuilder::new()
             .with_source_language(SourceLanguage::GLSL)
+            .generate_debug_info()
+            .with_opt_level(OptimizationLevel::Performance)
             .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_2);
 
         for (k, v) in defines.defines.into_iter() {

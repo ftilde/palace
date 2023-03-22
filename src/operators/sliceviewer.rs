@@ -3,10 +3,14 @@ use futures::StreamExt;
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{BrickPosition, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
+    data::{BrickPosition, GlobalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
-    vulkan::{pipeline::ComputePipeline, state::RessourceId},
+    vulkan::{
+        pipeline::{ComputePipeline, DescriptorConfig},
+        shader::ShaderDefines,
+        state::RessourceId,
+    },
 };
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
@@ -62,82 +66,91 @@ pub fn render_slice<'a>(
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, mint::ColumnMatrix3<f32>>,
 ) -> VolumeOperator<'a> {
+    #[derive(Copy, Clone, AsStd140)]
+    struct PushConstants {
+        transform: mint::ColumnMatrix3<f32>,
+        vol_dim: mint::Vector3<u32>,
+        chunk_dim: mint::Vector3<u32>,
+        brick_region_size: mint::Vector3<u32>,
+        llb_brick: mint::Vector3<u32>,
+        out_begin: mint::Vector2<u32>,
+        out_mem_dim: mint::Vector2<u32>,
+    }
     const SHADER: &'static str = r#"
 #version 450
 
-#extension GL_KHR_shader_subgroup_arithmetic : require
+layout (local_size_x = 32, local_size_y = 32) in;
 
-layout (local_size_x = 1024) in;
+layout(std430, binding = 0) buffer OutputBuffer{
+    float values[];
+} outputData;
 
-layout(std430, binding = 0) readonly buffer InputBuffer{
-float values[];
-} sourceData;
-
-layout(std430, binding = 1) buffer OutputBuffer{
-uint value;
-} sum;
+layout(std430, binding = 1) readonly buffer InputBuffer{
+    float values[];
+} sourceData[MAX_BRICKS];
 
 layout(std140, push_constant) uniform PushConstants
 {
-uvec3 mem_dim;
-uvec3 logical_dim;
-float norm_factor;
+    mat3 transform;
+    uvec3 vol_dim;
+    uvec3 chunk_dim;
+    uvec3 brick_region_size;
+    uvec3 llb_brick;
+    uvec2 out_begin;
+    uvec2 out_mem_dim;
 } consts;
 
-uvec3 from_linear(uint linear_pos, uvec3 size) {
-uvec3 vec_pos;
-vec_pos.x = linear_pos % size.x;
-linear_pos /= size.x;
-vec_pos.y = linear_pos % size.y;
-linear_pos /= size.y;
-vec_pos.z = linear_pos;
+uvec2 from_linear(uint linear_pos, uvec2 size) {
+    uvec2 vec_pos;
+    vec_pos.x = linear_pos % size.x;
+    linear_pos /= size.x;
+    vec_pos.y = linear_pos % size.y;
 
-return vec_pos;
+    return vec_pos;
 }
 
-#define atomic_add(mem, value) {\
-uint initial = 0;\
-uint new = 0;\
-do {\
-    initial = mem;\
-    new = floatBitsToUint(uintBitsToFloat(initial) + (value));\
-    if (new == initial) {\
-        break;\
-    }\
-} while(atomicCompSwap(mem, initial, new) != initial);\
+uint to_linear(uvec3 vec_pos, uvec3 size) {
+    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
 }
-
-shared uint shared_sum;
 
 void main()
 {
-uint gID = gl_GlobalInvocationID.x;
-if(gl_LocalInvocationIndex == 0) {
-    shared_sum = floatBitsToUint(0.0);
-}
-barrier();
+    uvec2 out_pos = gl_GlobalInvocationID.xy;
+    uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
+    if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
+        vec4 val;
 
-float val;
+        //TODO: Maybe revisit this +0.5 -0.5 business.
+        vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 1);
+        vec3 sample_pos_f = consts.transform * pos - vec3(0.5);
+        uvec3 sample_pos = uvec3(round(sample_pos_f));
 
-uvec3 local = from_linear(gID, consts.mem_dim);
+        if(sample_pos.x < consts.vol_dim.x && sample_pos.y < consts.vol_dim.y && sample_pos.z < consts.vol_dim.z) {
+            uvec3 sample_brick = sample_pos / consts.chunk_dim;
+            uvec3 urb_brick = consts.brick_region_size + consts.llb_brick;
+            if(    consts.llb_brick.x <= sample_brick.x && sample_brick.x < urb_brick.x
+                && consts.llb_brick.y <= sample_brick.y && sample_brick.y < urb_brick.y
+                && consts.llb_brick.z <= sample_brick.z && sample_brick.z < urb_brick.z)
+            {
+                uvec3 sample_brick_region = sample_brick - consts.llb_brick;
+                uint sample_brick_pos_linear = to_linear(sample_brick_region, consts.brick_region_size);
 
-if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
-    val = sourceData.values[gID] * consts.norm_factor;
-} else {
-    val = 0.0;
-}
+                uvec3 brick_begin = sample_brick * consts.chunk_dim;
+                uvec3 local = sample_pos - brick_begin;
+                uint local_index = to_linear(local, consts.chunk_dim);
+                float v = sourceData[sample_brick_pos_linear].values[local_index];
+                val = vec4(v, v, v, 1.0);
+            } else {
+                val = vec4(1.0, 0.0, 0.0, 1.0);
+            }
+        } else {
+            val = vec4(0.0, 1.0, 0.0, 1.0);
+        }
 
-float sg_sum = subgroupAdd(val);
-
-if(gl_SubgroupInvocationID == 0) {
-    atomic_add(shared_sum, sg_sum);
-}
-
-barrier();
-
-if(gl_LocalInvocationIndex == 0) {
-    atomic_add(sum.value, uintBitsToFloat(shared_sum));
-}
+        for(int c=0; c<4; ++c) {
+            outputData.values[4*gID+c] = val[c];
+        }
+    }
 }
 "#;
 
@@ -170,141 +183,121 @@ if(gl_LocalInvocationIndex == 0) {
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
 
-                let _pipeline = device
-                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER)
-                    });
-
-                let (m, transform) = futures::join! {
+                let (m2d, transform) = futures::join! {
                     ctx.submit(result_metadata.request_scalar()),
                     ctx.submit(projection_mat.request_scalar()),
                 };
-                let m = full_info(m);
+                let m = full_info(m2d);
 
-                let requests = positions.into_iter().map(|pos| {
-                    let out_info = m.chunk_info(pos);
-                    let out_begin_pixel = out_info.begin().raw().map(|v| v as f32).drop_dim(2);
-                    let out_end_pixel = out_info.end().raw().map(|v| v as f32).drop_dim(2);
+                let mut max_bricks = 0;
+                let requests = positions
+                    .into_iter()
+                    .map(|pos| {
+                        let out_info = m.chunk_info(pos);
+                        let out_begin_pixel = out_info.begin().raw().map(|v| v as f32).drop_dim(2);
+                        let out_end_pixel = out_info.end().raw().map(|v| v as f32).drop_dim(2);
 
-                    let out_begin_voxel = transform * out_begin_pixel.to_homogeneous_coord();
-                    let out_end_voxel = transform * out_end_pixel.to_homogeneous_coord();
-                    let llb = out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
-                    let urb = out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
+                        let out_begin_voxel = transform * out_begin_pixel.to_homogeneous_coord();
+                        let out_end_voxel = transform * out_end_pixel.to_homogeneous_coord();
+                        let llb =
+                            out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
+                        let urb =
+                            out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
 
-                    let llb_brick = m_in.chunk_pos(llb.global());
-                    // Clamp to valid range:
-                    let urb_brick = m_in
-                        .chunk_pos(urb.global())
-                        .zip(m_in.dimension_in_bricks() - Vector::fill(1u32), |a, b| {
-                            a.min(b)
-                        });
+                        let llb_brick = m_in.chunk_pos(llb.global());
+                        // Clamp to valid range:
+                        let urb_brick = m_in
+                            .chunk_pos(urb.global())
+                            .zip(m_in.dimension_in_bricks() - Vector::fill(1u32), |a, b| {
+                                a.min(b)
+                            });
 
-                    let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
+                        let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
 
-                    let low = llb_brick.raw();
-                    let high = urb_brick.raw();
+                        max_bricks = max_bricks.max(crate::data::hmul(brick_region_size));
 
-                    let in_brick_positions = itertools::iproduct! {
-                        low.z()..=high.z(),
-                        low.y()..=high.y(),
-                        low.x()..=high.x()
-                    }
-                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
+                        let low = llb_brick.raw();
+                        let high = urb_brick.raw();
+
+                        let in_brick_positions = itertools::iproduct! {
+                            low.z()..=high.z(),
+                            low.y()..=high.y(),
+                            low.x()..=high.x()
+                        }
+                        .map(|(z, y, x)| BrickPosition::from([z, y, x]))
+                        .collect::<Vec<_>>();
+                        let intersecting_bricks = ctx.group(
+                            in_brick_positions
+                                .iter()
+                                .map(|pos| input.bricks.request_gpu(device.id, *pos)),
+                        );
+
+                        (intersecting_bricks, (pos, llb_brick, brick_region_size))
+                    })
                     .collect::<Vec<_>>();
-                    let intersecting_bricks = ctx.group(
-                        in_brick_positions
-                            .iter()
-                            .map(|pos| input.bricks.request(*pos)),
-                    );
 
-                    (intersecting_bricks, (pos, llb_brick, brick_region_size))
-                });
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().add("MAX_BRICKS", max_bricks.to_string()),
+                            ),
+                        )
+                    });
 
-                let mut stream = ctx.submit_unordered_with_data(requests);
+                let mut stream = ctx.submit_unordered_with_data(requests.into_iter());
                 while let Some((intersecting_bricks, (pos, llb_brick, brick_region_size))) =
                     stream.next().await
                 {
                     let out_info = m.chunk_info(pos);
+                    let gpu_brick_out = ctx
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                        .unwrap();
 
-                    let mut tile_out = ctx.alloc_slot(pos, out_info.mem_elements()).unwrap();
-                    let mut tile = crate::data::chunk_mut(&mut tile_out, &out_info);
+                    let chunk_size = m2d.chunk_size.raw();
+                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
-                    #[derive(Copy, Clone, AsStd140)]
-                    struct PushConstants {
-                        transform: mint::ColumnMatrix3<f32>,
-                        vol_dim: mint::Vector3<u32>,
-                        chunk_dim: mint::Vector3<u32>,
-                        brick_region_size: mint::Vector3<u32>,
-                        llb_brick: mint::Vector3<u32>,
-                        //num_chunk_elems: u32,
-                    }
-
-                    let out_begin = out_info.begin();
-                    let out_end = out_info.end();
                     let consts = PushConstants {
                         transform,
                         vol_dim: m_in.dimensions.raw().into(),
                         chunk_dim: m_in.chunk_size.raw().into(),
                         brick_region_size: brick_region_size.raw().into(),
                         llb_brick: llb_brick.raw().into(),
+                        out_begin: out_info.begin.drop_dim(2).raw().into(),
+                        out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
                     };
-                    for y in out_begin.0[0].raw..out_end.0[0].raw {
-                        for x in out_begin.0[1].raw..out_end.0[1].raw {
-                            //TODO: Maybe revisit this +0.5 -0.5 business.
-                            let pos = (Vector::<2, f32>::from([y as f32, x as f32])
-                                + Vector::fill(0.5))
-                            .to_homogeneous_coord();
-                            let sample_pos = consts.transform * pos - Vector::fill(0.5);
-                            let sample_pos = sample_pos.map(|v| v.round() as u32).global();
+                    println!("s {:?}", gpu_brick_out.size);
+                    println!("brs {:?}", consts.brick_region_size);
+                    println!("llb {:?}", consts.llb_brick);
 
-                            let c = if sample_pos.x().raw < consts.vol_dim.x
-                                && sample_pos.y().raw < consts.vol_dim.y
-                                && sample_pos.z().raw < consts.vol_dim.z
-                            {
-                                let sample_brick = sample_pos.raw() / consts.chunk_dim.into();
-                                let llb_brick: Vector<3, u32> = consts.llb_brick.into();
-                                let brick_region_size: Vector<3, u32> =
-                                    consts.brick_region_size.into();
-                                let urb_brick: Vector<3, u32> =
-                                    brick_region_size + consts.llb_brick.into();
-                                if llb_brick.x() <= sample_brick.x()
-                                    && sample_brick.x() < urb_brick.x()
-                                    && llb_brick.y() <= sample_brick.y()
-                                    && sample_brick.y() < urb_brick.y()
-                                    && llb_brick.z() <= sample_brick.z()
-                                    && sample_brick.z() < urb_brick.z()
-                                {
-                                    let sample_brick_region = sample_brick - llb_brick;
-                                    let sample_brick_pos_linear = crate::data::to_linear(
-                                        sample_brick_region.into_elem::<ChunkCoordinate>(),
-                                        brick_region_size.into_elem(),
-                                    );
+                    // TODO: This padding to max_bricks is necessary since the descriptor array in
+                    // the shader has a static since. Once we use dynamic ssbos this can go away.
+                    let intersecting_bricks = (0..max_bricks)
+                        .map(|i| {
+                            intersecting_bricks
+                                .get(i as usize)
+                                .unwrap_or(intersecting_bricks.get(0).unwrap())
+                        })
+                        .collect::<Vec<_>>();
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([
+                            &gpu_brick_out,
+                            &intersecting_bricks.as_slice(),
+                        ]);
+                        let descriptor_writes = descriptor_config.writes();
 
-                                    let brick_begin = sample_brick * m_in.chunk_size.raw();
-                                    let brick = &intersecting_bricks[sample_brick_pos_linear];
-                                    let local = (sample_pos - brick_begin).local();
-                                    let local_index =
-                                        crate::data::to_linear(local, m_in.chunk_size);
-                                    let v = brick[local_index];
-                                    Vector::from([v, v, v, 1.0])
-                                } else {
-                                    Vector::from([0.0, 0.0, 0.0, 0.0])
-                                }
-                            } else {
-                                Vector::from([0.0, 0.0, 0.0, 0.0])
-                            };
+                        unsafe {
+                            let pipeline = pipeline.bind(cmd);
 
-                            for channel in 0..4 {
-                                let p: Vector<3, LocalCoordinate> = Vector::from([
-                                    y - out_begin.0[0].raw,
-                                    x - out_begin.0[1].raw,
-                                    channel,
-                                ]);
-                                tile[p.as_index()].write(c.0[channel as usize]);
-                            }
+                            pipeline.push_constant(consts);
+                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.dispatch3d(global_size);
                         }
-                    }
-                    unsafe { tile_out.initialized() };
+                    });
+
+                    unsafe { gpu_brick_out.initialized() };
                 }
 
                 Ok(())
