@@ -3,7 +3,7 @@ use futures::StreamExt;
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{BrickPosition, GlobalCoordinate, LocalCoordinate, Vector, AABB},
+    data::{BrickPosition, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
     vulkan::{pipeline::ComputePipeline, state::RessourceId},
@@ -62,15 +62,6 @@ pub fn render_slice<'a>(
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, mint::ColumnMatrix3<f32>>,
 ) -> VolumeOperator<'a> {
-    #[derive(Copy, Clone, AsStd140)]
-    struct PushConstants {
-        offset: mint::Vector3<u32>,
-        mem_dim: mint::Vector3<u32>,
-        logical_dim: mint::Vector3<u32>,
-        vol_dim: mint::Vector3<u32>,
-        num_chunk_elems: u32,
-    }
-
     const SHADER: &'static str = r#"
 #version 450
 
@@ -238,43 +229,67 @@ if(gl_LocalInvocationIndex == 0) {
                     let mut tile_out = ctx.alloc_slot(pos, out_info.mem_elements()).unwrap();
                     let mut tile = crate::data::chunk_mut(&mut tile_out, &out_info);
 
+                    #[derive(Copy, Clone, AsStd140)]
+                    struct PushConstants {
+                        transform: mint::ColumnMatrix3<f32>,
+                        vol_dim: mint::Vector3<u32>,
+                        chunk_dim: mint::Vector3<u32>,
+                        brick_region_size: mint::Vector3<u32>,
+                        llb_brick: mint::Vector3<u32>,
+                        //num_chunk_elems: u32,
+                    }
+
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
+                    let consts = PushConstants {
+                        transform,
+                        vol_dim: m_in.dimensions.raw().into(),
+                        chunk_dim: m_in.chunk_size.raw().into(),
+                        brick_region_size: brick_region_size.raw().into(),
+                        llb_brick: llb_brick.raw().into(),
+                    };
                     for y in out_begin.0[0].raw..out_end.0[0].raw {
                         for x in out_begin.0[1].raw..out_end.0[1].raw {
                             //TODO: Maybe revisit this +0.5 -0.5 business.
                             let pos = (Vector::<2, f32>::from([y as f32, x as f32])
                                 + Vector::fill(0.5))
                             .to_homogeneous_coord();
-                            let sample_pos = transform * (pos) - Vector::fill(0.5);
+                            let sample_pos = consts.transform * pos - Vector::fill(0.5);
                             let sample_pos = sample_pos.map(|v| v.round() as u32).global();
-                            let val = if sample_pos.x() < m_in.dimensions.x()
-                                && sample_pos.y() < m_in.dimensions.y()
-                                && sample_pos.z() < m_in.dimensions.z()
+
+                            let c = if sample_pos.x().raw < consts.vol_dim.x
+                                && sample_pos.y().raw < consts.vol_dim.y
+                                && sample_pos.z().raw < consts.vol_dim.z
                             {
-                                let sample_brick = m_in.chunk_pos(sample_pos);
-                                let bb = AABB::new(llb_brick, brick_region_size + llb_brick);
-                                if bb.contains(sample_brick) {
+                                let sample_brick = sample_pos.raw() / consts.chunk_dim.into();
+                                let llb_brick: Vector<3, u32> = consts.llb_brick.into();
+                                let brick_region_size: Vector<3, u32> =
+                                    consts.brick_region_size.into();
+                                let urb_brick: Vector<3, u32> =
+                                    brick_region_size + consts.llb_brick.into();
+                                if llb_brick.x() <= sample_brick.x()
+                                    && sample_brick.x() < urb_brick.x()
+                                    && llb_brick.y() <= sample_brick.y()
+                                    && sample_brick.y() < urb_brick.y()
+                                    && llb_brick.z() <= sample_brick.z()
+                                    && sample_brick.z() < urb_brick.z()
+                                {
                                     let sample_brick_region = sample_brick - llb_brick;
                                     let sample_brick_pos_linear = crate::data::to_linear(
-                                        sample_brick_region,
-                                        brick_region_size,
+                                        sample_brick_region.into_elem::<ChunkCoordinate>(),
+                                        brick_region_size.into_elem(),
                                     );
 
-                                    let in_info = m_in.chunk_info(sample_brick);
+                                    let brick_begin = sample_brick * m_in.chunk_size.raw();
                                     let brick = &intersecting_bricks[sample_brick_pos_linear];
-                                    let chunk = crate::data::chunk(brick, &in_info);
-                                    let local = sample_pos - in_info.begin();
-                                    Some(chunk[local.as_index()])
+                                    let local = (sample_pos - brick_begin).local();
+                                    let local_index =
+                                        crate::data::to_linear(local, m_in.chunk_size);
+                                    let v = brick[local_index];
+                                    Vector::from([v, v, v, 1.0])
                                 } else {
-                                    None
+                                    Vector::from([0.0, 0.0, 0.0, 0.0])
                                 }
-                            } else {
-                                None
-                            };
-
-                            let c = if let Some(v) = val {
-                                Vector::from([v, v, v, 1.0])
                             } else {
                                 Vector::from([0.0, 0.0, 0.0, 0.0])
                             };
