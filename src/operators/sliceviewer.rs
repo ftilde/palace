@@ -200,19 +200,23 @@ if(gl_LocalInvocationIndex == 0) {
                     let llb = out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
                     let urb = out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
 
-                    let llb_brick = m_in.chunk_pos(llb.global()).raw();
+                    let llb_brick = m_in.chunk_pos(llb.global());
                     // Clamp to valid range:
                     let urb_brick = m_in
                         .chunk_pos(urb.global())
                         .zip(m_in.dimension_in_bricks() - Vector::fill(1u32), |a, b| {
                             a.min(b)
-                        })
-                        .raw();
+                        });
+
+                    let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
+
+                    let low = llb_brick.raw();
+                    let high = urb_brick.raw();
 
                     let in_brick_positions = itertools::iproduct! {
-                        llb_brick.z()..=urb_brick.z(),
-                        llb_brick.y()..=urb_brick.y(),
-                        llb_brick.x()..=urb_brick.x()
+                        low.z()..=high.z(),
+                        low.y()..=high.y(),
+                        low.x()..=high.x()
                     }
                     .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                     .collect::<Vec<_>>();
@@ -222,11 +226,11 @@ if(gl_LocalInvocationIndex == 0) {
                             .map(|pos| input.bricks.request(*pos)),
                     );
 
-                    (intersecting_bricks, (pos, in_brick_positions))
+                    (intersecting_bricks, (pos, llb_brick, brick_region_size))
                 });
 
                 let mut stream = ctx.submit_unordered_with_data(requests);
-                while let Some((intersecting_bricks, (pos, in_brick_positions))) =
+                while let Some((intersecting_bricks, (pos, llb_brick, brick_region_size))) =
                     stream.next().await
                 {
                     let out_info = m.chunk_info(pos);
@@ -244,25 +248,31 @@ if(gl_LocalInvocationIndex == 0) {
                             .to_homogeneous_coord();
                             let sample_pos = transform * (pos) - Vector::fill(0.5);
                             let sample_pos = sample_pos.map(|v| v.round() as u32).global();
-
-                            let mut val = None;
-                            for (brick, b_pos) in
-                                intersecting_bricks.iter().zip(&in_brick_positions)
+                            let val = if sample_pos.x() < m_in.dimensions.x()
+                                && sample_pos.y() < m_in.dimensions.y()
+                                && sample_pos.z() < m_in.dimensions.z()
                             {
-                                let in_info = m_in.chunk_info(*b_pos);
-                                let begin = in_info.begin();
-                                let end = in_info.end();
-                                let bb = AABB::new(begin, end);
+                                let sample_brick = m_in.chunk_pos(sample_pos);
+                                let bb = AABB::new(llb_brick, brick_region_size + llb_brick);
+                                if bb.contains(sample_brick) {
+                                    let sample_brick_region = sample_brick - llb_brick;
+                                    let sample_brick_pos_linear = crate::data::to_linear(
+                                        sample_brick_region,
+                                        brick_region_size,
+                                    );
 
-                                if bb.contains(sample_pos) {
-                                    let local = sample_pos - begin;
-
+                                    let in_info = m_in.chunk_info(sample_brick);
+                                    let brick = &intersecting_bricks[sample_brick_pos_linear];
                                     let chunk = crate::data::chunk(brick, &in_info);
-                                    val = Some(chunk[local.as_index()]);
-
-                                    break;
+                                    let local = sample_pos - in_info.begin();
+                                    Some(chunk[local.as_index()])
+                                } else {
+                                    None
                                 }
-                            }
+                            } else {
+                                None
+                            };
+
                             let c = if let Some(v) = val {
                                 Vector::from([v, v, v, 1.0])
                             } else {
