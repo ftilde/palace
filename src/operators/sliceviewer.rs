@@ -47,7 +47,7 @@ pub fn slice_projection_mat_z<'a>(
                     z: mint::Vector3 {
                         x: 0.0,
                         y: 0.0,
-                        z: selected_slice.raw as f32,
+                        z: selected_slice.raw as f32 + 0.5, //For +0.5 see below
                     },
                 };
                 ctx.write(out)
@@ -238,21 +238,24 @@ if(gl_LocalInvocationIndex == 0) {
                     let out_end = out_info.end();
                     for y in out_begin.0[0].raw..out_end.0[0].raw {
                         for x in out_begin.0[1].raw..out_end.0[1].raw {
-                            let pos = Vector::from([y as f32, x as f32]).to_homogeneous_coord();
-                            let sample_pos = transform * pos;
+                            //TODO: Maybe revisit this +0.5 -0.5 business.
+                            let pos = (Vector::<2, f32>::from([y as f32, x as f32])
+                                + Vector::fill(0.5))
+                            .to_homogeneous_coord();
+                            let sample_pos = transform * (pos) - Vector::fill(0.5);
+                            let sample_pos = sample_pos.map(|v| v.round() as u32).global();
 
                             let mut val = None;
                             for (brick, b_pos) in
                                 intersecting_bricks.iter().zip(&in_brick_positions)
                             {
                                 let in_info = m_in.chunk_info(*b_pos);
-                                let begin = in_info.begin().map(|v| v.raw as f32);
-                                let end = in_info.end().map(|v| v.raw as f32);
+                                let begin = in_info.begin();
+                                let end = in_info.end();
                                 let bb = AABB::new(begin, end);
 
                                 if bb.contains(sample_pos) {
-                                    let local =
-                                        (sample_pos - begin).map(|v| (v.round() as u32)).global();
+                                    let local = sample_pos - begin;
 
                                     let chunk = crate::data::chunk(brick, &in_info);
                                     val = Some(chunk[local.as_index()]);
@@ -284,4 +287,78 @@ if(gl_LocalInvocationIndex == 0) {
             .into()
         },
     )
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        array::ImageMetaData,
+        data::{GlobalCoordinate, Vector, VoxelPosition},
+        operators::{volume::VolumeOperatorState, volume_gpu::VoxelRasterizerGLSL},
+        test_util::compare_volume,
+    };
+
+    fn test_sliceviewer_configuration(
+        img_size: Vector<2, GlobalCoordinate>,
+        vol_size: Vector<3, GlobalCoordinate>,
+    ) {
+        let num_channels = 4;
+        let img_size_c = VoxelPosition::from([img_size.y(), img_size.x(), num_channels.into()]);
+        for z in 0..vol_size.z().raw {
+            let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+                for y in 0..img_size_c.0[0].raw {
+                    for x in 0..img_size_c.0[1].raw {
+                        for c in 0..img_size_c.0[2].raw {
+                            let pos = VoxelPosition::from([y, x, c]);
+                            let voxel_y = (y as f32 + 0.5) / img_size.y().raw as f32
+                                * vol_size.y().raw as f32
+                                - 0.5;
+                            let voxel_x = (x as f32 + 0.5) / img_size.x().raw as f32
+                                * vol_size.x().raw as f32
+                                - 0.5;
+                            let val = if c == num_channels - 1 {
+                                1.0
+                            } else {
+                                voxel_x.round() + voxel_y.round() + z as f32
+                            };
+                            comp[pos.as_index()] = val;
+                        }
+                    }
+                }
+            };
+
+            let input = VoxelRasterizerGLSL {
+                metadata: crate::array::VolumeMetaData {
+                    dimensions: vol_size,
+                    chunk_size: (vol_size / Vector::fill(2u32)).local(),
+                },
+                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z);"#.to_owned(),
+            };
+
+            let img_meta = ImageMetaData {
+                dimensions: img_size,
+                chunk_size: (img_size / Vector::fill(3u32)).local(),
+            };
+            let input = input.operate();
+            let slice_proj = super::slice_projection_mat_z(
+                input.metadata.clone(),
+                crate::operators::scalar::constant_hash(img_meta),
+                crate::operators::scalar::constant_hash(z.into()),
+            );
+            let slice = super::render_slice(
+                input,
+                crate::operators::scalar::constant_hash(img_meta),
+                slice_proj,
+            );
+            compare_volume(slice, img_size_c, fill_expected); //TODO: get rid of img_size argument
+        }
+    }
+    #[test]
+    fn test_sliceviewer() {
+        for img_size in [[5, 3], [6, 6], [10, 20]] {
+            for vol_size in [[5, 3, 2], [6, 6, 6], [2, 10, 20]] {
+                test_sliceviewer_configuration(img_size.into(), vol_size.into())
+            }
+        }
+    }
 }
