@@ -215,6 +215,7 @@ void main()
                         let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
 
                         max_bricks = max_bricks.max(crate::data::hmul(brick_region_size));
+                        assert!(max_bricks > 0);
 
                         let low = llb_brick.raw();
                         let high = urb_brick.raw();
@@ -244,6 +245,7 @@ void main()
                                 SHADER,
                                 ShaderDefines::new().add("MAX_BRICKS", max_bricks.to_string()),
                             ),
+                            false,
                         )
                     });
 
@@ -268,9 +270,6 @@ void main()
                         out_begin: out_info.begin.drop_dim(2).raw().into(),
                         out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
                     };
-                    println!("s {:?}", gpu_brick_out.size);
-                    println!("brs {:?}", consts.brick_region_size);
-                    println!("llb {:?}", consts.llb_brick);
 
                     // TODO: This padding to max_bricks is necessary since the descriptor array in
                     // the shader has a static since. Once we use dynamic ssbos this can go away.
@@ -286,13 +285,12 @@ void main()
                             &gpu_brick_out,
                             &intersecting_bricks.as_slice(),
                         ]);
-                        let descriptor_writes = descriptor_config.writes();
 
                         unsafe {
                             let pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(consts);
-                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.write_descriptor_set(0, descriptor_config);
                             pipeline.dispatch3d(global_size);
                         }
                     });

@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, VecDeque},
+};
 
 use ash::vk;
 use crevice::std140::{AsStd140, Std140};
@@ -9,18 +12,24 @@ use crate::{
     vulkan::shader::Shader,
 };
 
-use super::{shader::ShaderSource, state::VulkanState, CommandBuffer, DeviceContext};
+use super::{
+    shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext,
+};
 
 pub struct ComputePipeline {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
+    ds_pools: Vec<RefCell<DynamicDescriptorSetPool>>,
     local_size: Vector<3, u32>,
     push_constant_size: Option<usize>,
 }
 
 impl ComputePipeline {
-    pub fn new(device: &DeviceContext, shader: impl ShaderSource) -> Self {
+    pub fn new(
+        device: &DeviceContext,
+        shader: impl ShaderSource,
+        use_push_descriptor: bool,
+    ) -> Self {
         let df = device.functions();
         let mut shader = Shader::from_source(df, shader);
 
@@ -120,13 +129,26 @@ impl ComputePipeline {
             .try_into()
             .unwrap();
 
+        let mut ds_pools = Vec::new();
         let descriptor_set_layouts = descriptor_bindings
             .into_iter()
             .map(|(_, bindings)| {
-                let dsl_info = vk::DescriptorSetLayoutCreateInfo::builder()
-                    .bindings(&bindings)
-                    .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
-                unsafe { df.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap()
+                let mut type_counts: BTreeMap<vk::DescriptorType, u32> = BTreeMap::new();
+                for b in &bindings {
+                    *type_counts.entry(b.descriptor_type).or_default() += b.descriptor_count;
+                }
+                let mut dsl_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+                if use_push_descriptor {
+                    dsl_info =
+                        dsl_info.flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
+                }
+                let layout =
+                    unsafe { df.device.create_descriptor_set_layout(&dsl_info, None) }.unwrap();
+                ds_pools.push(RefCell::new(DynamicDescriptorSetPool::new(
+                    layout,
+                    type_counts,
+                )));
+                layout
             })
             .collect::<Vec<_>>();
 
@@ -162,7 +184,7 @@ impl ComputePipeline {
         Self {
             pipeline,
             pipeline_layout,
-            descriptor_set_layouts,
+            ds_pools,
             local_size,
             push_constant_size,
         }
@@ -182,14 +204,103 @@ impl VulkanState for ComputePipeline {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         let df = context.functions();
         unsafe {
-            for descriptor_set_layout in &self.descriptor_set_layouts {
-                df.device
-                    .destroy_descriptor_set_layout(*descriptor_set_layout, None);
+            for pool in &mut self.ds_pools {
+                pool.get_mut().deinitialize(context);
             }
             df.device.destroy_pipeline(self.pipeline, None);
             df.device
                 .destroy_pipeline_layout(self.pipeline_layout, None)
         };
+    }
+}
+
+struct DynamicDescriptorSetPool {
+    layout: vk::DescriptorSetLayout,
+    type_counts: BTreeMap<vk::DescriptorType, u32>,
+    used_pools: Vec<vk::DescriptorPool>,
+    available: Vec<vk::DescriptorSet>,
+    in_use: VecDeque<(CmdBufferEpoch, Vec<vk::DescriptorSet>)>,
+}
+
+impl DynamicDescriptorSetPool {
+    fn new(
+        layout: vk::DescriptorSetLayout,
+        type_counts: BTreeMap<vk::DescriptorType, u32>,
+    ) -> Self {
+        Self {
+            layout,
+            type_counts,
+            used_pools: Vec::new(),
+            available: Vec::new(),
+            in_use: VecDeque::new(),
+        }
+    }
+
+    // Safety: Only use this set for the current epoch of the device
+    unsafe fn use_set(&mut self, cmd: &CommandBuffer) -> vk::DescriptorSet {
+        // Make returned available again if it is safe to do so (their use epoch is finished)
+        while self
+            .in_use
+            .front()
+            .map(|v| v.0 <= cmd.oldest_finished_epoch)
+            .unwrap_or(false)
+        {
+            let (_, no_longer_used) = self.in_use.pop_front().unwrap();
+            self.available.extend(no_longer_used);
+        }
+
+        if self.available.is_empty() {
+            let num = 1 << self.used_pools.len();
+
+            let pool_sizes = self
+                .type_counts
+                .iter()
+                .map(|(ty, count)| {
+                    vk::DescriptorPoolSize::builder()
+                        .ty(*ty)
+                        .descriptor_count(count * num)
+                        .build()
+                })
+                .collect::<Vec<_>>();
+
+            let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+                .pool_sizes(&pool_sizes)
+                .max_sets(num as _);
+
+            let descriptor_pool = unsafe {
+                cmd.functions
+                    .create_descriptor_pool(&descriptor_pool_info, None)
+            }
+            .unwrap();
+
+            let layouts = vec![self.layout; num as usize];
+
+            let ds_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(descriptor_pool)
+                .set_layouts(&layouts);
+            let new_ds = unsafe { cmd.functions.allocate_descriptor_sets(&ds_info) }.unwrap();
+            self.available.extend(new_ds);
+
+            self.used_pools.push(descriptor_pool);
+        }
+        let ret = self.available.pop().unwrap();
+
+        let current_epoch = cmd.id.epoch;
+        if self.in_use.back().map(|(epoch, _)| *epoch) == Some(current_epoch) {
+            self.in_use.back_mut().unwrap().1.push(ret);
+        } else {
+            self.in_use.push_back((current_epoch, vec![ret]));
+        }
+        ret
+    }
+
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        let df = context.functions();
+        df.device.destroy_descriptor_set_layout(self.layout, None);
+
+        for pool in &self.used_pools {
+            df.device.destroy_descriptor_pool(*pool, None);
+        }
     }
 }
 
@@ -200,7 +311,8 @@ pub struct BoundPipeline<'a> {
                                 //the BoundPipeline's lifetime (barring unsafe operations).
 }
 impl<'a> BoundPipeline<'a> {
-    pub fn push_descriptor_set(&self, bind_set: u32, writes: &[vk::WriteDescriptorSet]) {
+    pub fn push_descriptor_set<const N: usize>(&self, bind_set: u32, config: DescriptorConfig<N>) {
+        let writes = config.writes_for_push();
         unsafe {
             self.cmd
                 .functions()
@@ -210,8 +322,29 @@ impl<'a> BoundPipeline<'a> {
                     vk::PipelineBindPoint::COMPUTE,
                     self.pipeline.pipeline_layout,
                     bind_set,
-                    writes,
+                    &writes,
                 );
+        }
+    }
+
+    pub fn write_descriptor_set<const N: usize>(&self, bind_set: u32, config: DescriptorConfig<N>) {
+        let ds_pool = self.pipeline.ds_pools.get(bind_set as usize).unwrap();
+        let mut ds_pool = ds_pool.borrow_mut();
+        // Safety: We only use `ds` with the current cmdbuffer
+        let ds = unsafe { ds_pool.use_set(self.cmd) };
+
+        let writes = config.writes_for_set(ds);
+        unsafe {
+            self.cmd.functions().update_descriptor_sets(&writes, &[]);
+
+            self.cmd.functions().cmd_bind_descriptor_sets(
+                self.cmd.raw(),
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline.pipeline_layout,
+                bind_set,
+                &[ds],
+                &[],
+            );
         }
     }
 
@@ -243,10 +376,6 @@ impl<'a> BoundPipeline<'a> {
     pub unsafe fn dispatch3d(&self, global_size: Vector<3, u32>) {
         let num_wgs = crate::util::div_round_up(global_size, self.pipeline.local_size);
 
-        println!("num_wgs: {:?}", num_wgs);
-        println!("localsize: {:?}", self.pipeline.local_size);
-        println!("global_size: {:?}", global_size);
-
         self.cmd
             .functions()
             .cmd_dispatch(self.cmd.raw(), num_wgs.x(), num_wgs.y(), num_wgs.z());
@@ -259,7 +388,6 @@ trait AsDescriptor {
 
 impl<'a> AsDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        println!("RSize: {}", self.layout.size());
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
             .range(self.layout.size() as _)
@@ -269,7 +397,6 @@ impl<'a> AsDescriptor for ReadHandle<'a> {
 
 impl<'a> AsDescriptor for WriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        println!("WSize: {}", self.size);
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
             .range(self.size as _)
@@ -307,11 +434,16 @@ impl<const N: usize> DescriptorConfig<N> {
         let buffer_infos = std::array::from_fn(|i| buffers[i].gen_buffer_info());
         Self { buffer_infos }
     }
-    pub fn writes(&self) -> [vk::WriteDescriptorSet; N] {
+    pub fn writes_for_push(&self) -> [vk::WriteDescriptorSet; N] {
+        self.writes_for_set(vk::DescriptorSet::null())
+    }
+
+    pub fn writes_for_set(&self, set: vk::DescriptorSet) -> [vk::WriteDescriptorSet; N] {
         std::array::from_fn(|i| {
             vk::WriteDescriptorSet::builder()
                 .dst_binding(i as u32)
                 .dst_array_element(0)
+                .dst_set(set)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&self.buffer_infos[i])
                 .build()

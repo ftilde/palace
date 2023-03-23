@@ -148,7 +148,10 @@ impl VulkanContext {
             );
 
             // Return VulkanManager
-            println!("Finished initializing Vulkan!");
+            println!(
+                "Finished initializing Vulkan! ({} devices)",
+                device_contexts.len()
+            );
 
             Ok(VulkanContext {
                 entry,
@@ -208,6 +211,7 @@ pub struct CommandBuffer {
     fence: vk::Fence,
     id: CmdBufferSubmissionId,
     functions: DeviceFunctions,
+    oldest_finished_epoch: CmdBufferEpoch,
     used: Cell<bool>,
 }
 
@@ -257,6 +261,7 @@ pub struct DeviceContext {
     available_command_buffers: RefCell<Vec<RawCommandBuffer>>,
     waiting_command_buffers: RefCell<BTreeMap<CmdBufferEpoch, RawCommandBuffer>>,
     current_command_buffer: RefCell<CommandBuffer>,
+    oldest_finished: Cell<CmdBufferEpoch>,
 
     pub id: DeviceId,
     submission_count: Cell<usize>,
@@ -344,7 +349,10 @@ impl DeviceContext {
             let physical_device_memory_properties =
                 instance.get_physical_device_memory_properties(physical_device);
 
-            let submission_count = Cell::new(0);
+            // We start epochs at one so that oldest_finished (with value 0) means that none are
+            // finished, yet.
+            let oldest_finished = Cell::new(CmdBufferEpoch(0));
+            let submission_count = Cell::new(1);
 
             let functions = DeviceFunctions {
                 device,
@@ -363,6 +371,7 @@ impl DeviceContext {
                 current_command_buffer,
                 id,
                 &submission_count,
+                oldest_finished.get(),
             ));
 
             let storage = crate::storage::gpu::Storage::new(id, allocator);
@@ -380,6 +389,7 @@ impl DeviceContext {
                 available_command_buffers: command_buffers,
                 waiting_command_buffers: RefCell::new(Default::default()),
                 current_command_buffer,
+                oldest_finished,
 
                 id,
                 submission_count,
@@ -432,6 +442,10 @@ impl DeviceContext {
         self.current_command_buffer.borrow().id.epoch
     }
 
+    pub fn oldest_finished_epoch(&self) -> CmdBufferEpoch {
+        self.oldest_finished.get()
+    }
+
     fn create_command_buffer(
         command_pool: vk::CommandPool,
         functions: &DeviceFunctions,
@@ -467,6 +481,7 @@ impl DeviceContext {
         RawCommandBuffer { buffer, fence }: RawCommandBuffer,
         id: DeviceId,
         submission_count: &Cell<usize>,
+        oldest_finished_epoch: CmdBufferEpoch,
     ) -> CommandBuffer {
         let submission_id = submission_count.get();
         submission_count.set(submission_id + 1);
@@ -481,6 +496,7 @@ impl DeviceContext {
             fence,
             id,
             functions,
+            oldest_finished_epoch,
             used: Cell::new(false),
         }
     }
@@ -503,6 +519,7 @@ impl DeviceContext {
             next_cmd_buffer,
             self.id,
             &self.submission_count,
+            self.oldest_finished_epoch(),
         );
 
         assert_eq!(
@@ -577,6 +594,7 @@ impl DeviceContext {
         if waiting_ref.is_empty() {
             return result;
         }
+        let oldest_waiting_epoch = *waiting_ref.first_key_value().unwrap().0;
         let waiting_fences = waiting_ref.iter().map(|v| v.1.fence).collect::<Vec<_>>();
 
         let wait_nanos = timeout.as_nanos().min(u64::max_value() as _) as u64;
@@ -609,6 +627,13 @@ impl DeviceContext {
                                 vk::CommandBufferResetFlags::empty(),
                             )
                             .expect("Failed to reset command buffer.");
+                    }
+
+                    // TODO: This is not perfect (since self.oldest_finished is only set to the
+                    // oldest waiting even though newer ones may be done as well), but still
+                    // ensures that the oldest_waiting_epoch is updated eventually.
+                    if epoch == oldest_waiting_epoch {
+                        self.oldest_finished.set(epoch);
                     }
 
                     self.available_command_buffers

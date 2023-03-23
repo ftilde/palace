@@ -98,7 +98,7 @@ void main()
 
                 let pipeline = device
                     .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER)
+                        ComputePipeline::new(device, SHADER, true)
                     });
 
                 let mut brick_stream =
@@ -128,7 +128,6 @@ void main()
                             gpu_brick_in,
                             gpu_brick_out,
                         ]);
-                        let descriptor_writes = descriptor_config.writes();
 
                         let global_size = brick_info.mem_elements();
 
@@ -139,7 +138,7 @@ void main()
                                 chunk_pos: pos.into_elem::<u32>().into(),
                                 num_chunk_elems: global_size.try_into().unwrap(),
                             });
-                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
                         }
                     });
@@ -246,7 +245,7 @@ void main() {
 
                 let pipeline = device
                     .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER)
+                        ComputePipeline::new(device, SHADER, true)
                     });
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
@@ -314,7 +313,6 @@ void main() {
 
                             let descriptor_config =
                                 DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
-                            let descriptor_writes = descriptor_config.writes();
 
                             let global_size = crate::data::hmul(overlap_size);
 
@@ -330,7 +328,7 @@ void main() {
                                     region_size: overlap_size.into_elem::<u32>().into(),
                                     global_size: global_size as _,
                                 });
-                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
                             }
                         }
@@ -541,6 +539,7 @@ void main() {
                                     .add("MAX_BRICKS", max_bricks.to_string())
                                     .add("DIM", shader_dimension.to_string()),
                             ),
+                            true,
                         )
                     },
                 );
@@ -600,13 +599,12 @@ void main() {
                             &kernel_handle,
                             &gpu_brick_out,
                         ]);
-                        let descriptor_writes = descriptor_config.writes();
 
                         unsafe {
                             let pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(consts);
-                            pipeline.push_descriptor_set(0, &descriptor_writes);
+                            pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
                         }
                     });
@@ -732,7 +730,7 @@ void main()
 
                 let pipeline = device
                     .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER)
+                        ComputePipeline::new(device, SHADER, true)
                     });
 
                 let sum = ctx.alloc_scalar_gpu(device)?;
@@ -769,7 +767,6 @@ void main()
 
                         device.with_cmd_buffer(|cmd| {
                             let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
-                            let descriptor_writes = descriptor_config.writes();
 
                             let global_size = brick_info.mem_elements();
 
@@ -784,7 +781,7 @@ void main()
                                         .into(),
                                     norm_factor: normalization_factor,
                                 });
-                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
                             }
                         });
@@ -890,7 +887,7 @@ void main()
 
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                            ComputePipeline::new(device, shader.as_str())
+                            ComputePipeline::new(device, shader.as_str(), true)
                         });
 
                     for pos in positions {
@@ -900,7 +897,6 @@ void main()
                             ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
                         device.with_cmd_buffer(|cmd| {
                             let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
-                            let descriptor_writes = descriptor_config.writes();
 
                             let global_size = brick_info.mem_elements();
 
@@ -917,7 +913,7 @@ void main()
                                     vol_dim: m.dimensions.into_elem::<u32>().into(),
                                     num_chunk_elems: global_size as u32,
                                 });
-                                pipeline.push_descriptor_set(0, &descriptor_writes);
+                                pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
                             }
                         });
