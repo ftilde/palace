@@ -171,8 +171,8 @@ fn eval_network(
     let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
     let slice_metadata = ImageMetaData {
-        dimensions: [40, 40].into(),
-        chunk_size: [40, 40].into(),
+        dimensions: [100, 100].into(),
+        chunk_size: [20, 20].into(),
     };
 
     let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
