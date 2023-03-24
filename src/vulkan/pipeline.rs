@@ -13,7 +13,8 @@ use crate::{
 };
 
 use super::{
-    shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext,
+    memory::TempBuffer, shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer,
+    DeviceContext,
 };
 
 pub struct ComputePipeline {
@@ -384,6 +385,15 @@ impl<'a> BoundPipeline<'a> {
 
 trait AsDescriptor {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
+}
+
+impl AsDescriptor for TempBuffer {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::builder()
+            .buffer(self.allocation.buffer)
+            .range(self.size)
+            .build()
+    }
 }
 
 impl<'a> AsDescriptor for ReadHandle<'a> {

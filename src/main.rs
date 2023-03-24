@@ -150,8 +150,7 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let rechunked =
-        crate::operators::volume::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
     let convolved = volume_gpu::separable_convolution(
@@ -198,8 +197,7 @@ fn eval_network(
     let mean_val = executor.resolve(|ctx| {
         async move {
             operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
-            //Ok(ctx.submit(mean_ref.request_scalar()).await)
-            Ok(1.0)
+            Ok(ctx.submit(mean_ref.request_scalar()).await)
         }
         .into()
     })?;
@@ -218,7 +216,7 @@ fn eval_network(
     executor.resolve(|ctx| {
         async move {
             let req = mean_unscaled_ref.request_scalar();
-            *muv_ref = 1.0; //ctx.submit(req).await;
+            *muv_ref = ctx.submit(req).await;
             Ok(())
         }
         .into()

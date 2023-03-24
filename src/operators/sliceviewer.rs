@@ -1,3 +1,4 @@
+use ash::vk;
 use crevice::std140::AsStd140;
 use futures::StreamExt;
 
@@ -8,7 +9,6 @@ use crate::{
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
         state::RessourceId,
     },
 };
@@ -79,15 +79,22 @@ pub fn render_slice<'a>(
     const SHADER: &'static str = r#"
 #version 450
 
+#extension GL_EXT_buffer_reference : require
+
 layout (local_size_x = 32, local_size_y = 32) in;
+
+layout(buffer_reference, std430) buffer BrickType {
+    float values[];
+};
+
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std430, binding = 1) readonly buffer InputBuffer{
-    float values[];
-} sourceData[MAX_BRICKS];
+layout(std430, binding = 1) buffer RefBuffer {
+    BrickType values[];
+} bricks;
 
 layout(std140, push_constant) uniform PushConstants
 {
@@ -123,7 +130,7 @@ void main()
         //TODO: Maybe revisit this +0.5 -0.5 business.
         vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 1);
         vec3 sample_pos_f = consts.transform * pos - vec3(0.5);
-        uvec3 sample_pos = uvec3(round(sample_pos_f));
+        uvec3 sample_pos = uvec3(floor(sample_pos_f + vec3(0.5)));
 
         if(sample_pos.x < consts.vol_dim.x && sample_pos.y < consts.vol_dim.y && sample_pos.z < consts.vol_dim.z) {
             uvec3 sample_brick = sample_pos / consts.chunk_dim;
@@ -138,13 +145,13 @@ void main()
                 uvec3 brick_begin = sample_brick * consts.chunk_dim;
                 uvec3 local = sample_pos - brick_begin;
                 uint local_index = to_linear(local, consts.chunk_dim);
-                float v = sourceData[sample_brick_pos_linear].values[local_index];
+                float v = bricks.values[sample_brick_pos_linear].values[local_index];
                 val = vec4(v, v, v, 1.0);
             } else {
-                val = vec4(1.0, 0.0, 0.0, 1.0);
+                val = vec4(1.0, 1.0, 1.0, 0.0);
             }
         } else {
-            val = vec4(0.0, 1.0, 0.0, 1.0);
+            val = vec4(1.0, 1.0, 1.0, 0.0);
         }
 
         for(int c=0; c<4; ++c) {
@@ -215,7 +222,6 @@ void main()
                         let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
 
                         max_bricks = max_bricks.max(crate::data::hmul(brick_region_size));
-                        assert!(max_bricks > 0);
 
                         let low = llb_brick.raw();
                         let high = urb_brick.raw();
@@ -237,16 +243,9 @@ void main()
                     })
                     .collect::<Vec<_>>();
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new().add("MAX_BRICKS", max_bricks.to_string()),
-                            ),
-                            false,
-                        )
+                let pipeline = device
+                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(device, SHADER, false)
                     });
 
                 let mut stream = ctx.submit_unordered_with_data(requests.into_iter());
@@ -258,8 +257,40 @@ void main()
                         .alloc_slot_gpu(device, pos, out_info.mem_elements())
                         .unwrap();
 
+                    let brick_index_layout = std::alloc::Layout::array::<u64>(max_bricks).unwrap();
+                    let brick_index = device.tmp_buffers.request(device, brick_index_layout);
+
                     let chunk_size = m2d.chunk_size.raw();
                     let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                    let addrs = intersecting_bricks
+                        .iter()
+                        .map(|brick| {
+                            let info =
+                                ash::vk::BufferDeviceAddressInfo::builder().buffer(brick.buffer);
+                            unsafe { device.functions().get_buffer_device_address(&info) }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let memory_barriers = &[vk::MemoryBarrier2::builder()
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                        .build()];
+                    let barrier_info =
+                        vk::DependencyInfo::builder().memory_barriers(memory_barriers);
+                    device.with_cmd_buffer(|cmd| {
+                        unsafe {
+                            device.functions().cmd_update_buffer(
+                                cmd.raw(),
+                                brick_index.allocation.buffer,
+                                0,
+                                bytemuck::cast_slice(&addrs),
+                            )
+                        };
+                        cmd.pipeline_barrier(&barrier_info);
+                    });
 
                     let consts = PushConstants {
                         transform,
@@ -271,20 +302,9 @@ void main()
                         out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
                     };
 
-                    // TODO: This padding to max_bricks is necessary since the descriptor array in
-                    // the shader has a static since. Once we use dynamic ssbos this can go away.
-                    let intersecting_bricks = (0..max_bricks)
-                        .map(|i| {
-                            intersecting_bricks
-                                .get(i as usize)
-                                .unwrap_or(intersecting_bricks.get(0).unwrap())
-                        })
-                        .collect::<Vec<_>>();
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([
-                            &gpu_brick_out,
-                            &intersecting_bricks.as_slice(),
-                        ]);
+                        let descriptor_config =
+                            DescriptorConfig::new([&gpu_brick_out, &brick_index]);
 
                         unsafe {
                             let pipeline = pipeline.bind(cmd);
@@ -294,6 +314,9 @@ void main()
                             pipeline.dispatch3d(global_size);
                         }
                     });
+
+                    // Safety: The buffer was requested above from the same device
+                    unsafe { device.tmp_buffers.return_buf(device, brick_index) };
 
                     unsafe { gpu_brick_out.initialized() };
                 }

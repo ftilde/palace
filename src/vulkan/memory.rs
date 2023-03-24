@@ -2,7 +2,7 @@ use ash::vk;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
 };
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
     task_graph::TaskId,
 };
 
-use super::DeviceContext;
+use super::{CmdBufferEpoch, DeviceContext};
 
 pub struct CachedAllocation {
     inner: Allocation,
@@ -27,13 +27,59 @@ impl std::ops::Deref for CachedAllocation {
     }
 }
 
-pub struct StagingBufferStash {
+pub struct TempBuffer {
+    pub allocation: Allocation,
+    pub size: u64,
+}
+
+#[derive(Default)]
+pub struct TempBuffers {
+    returns: RefCell<BTreeMap<CmdBufferEpoch, Vec<Allocation>>>,
+}
+
+impl TempBuffers {
+    pub fn request(&self, device: &DeviceContext, layout: Layout) -> TempBuffer {
+        let flags = vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::STORAGE_BUFFER;
+        let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
+        TempBuffer {
+            allocation: device.storage.allocate(device, layout, flags, buf_type),
+            size: layout.size() as u64,
+        }
+    }
+
+    /// Safety: The buffer must have previously been allocated from tmp buffer manager
+    pub unsafe fn return_buf(&self, device: &DeviceContext, buf: TempBuffer) {
+        let mut returns = self.returns.borrow_mut();
+        returns
+            .entry(device.current_epoch())
+            .or_default()
+            .push(buf.allocation);
+    }
+
+    pub fn collect_returns(&self, device: &DeviceContext) {
+        let mut returns = self.returns.borrow_mut();
+        while returns
+            .first_key_value()
+            .map(|(epoch, _)| *epoch <= device.oldest_finished_epoch())
+            .unwrap_or(false)
+        {
+            let (_, allocs) = returns.pop_first().unwrap();
+            for alloc in allocs {
+                unsafe { device.storage.deallocate(alloc) };
+            }
+        }
+    }
+}
+
+pub struct BufferStash {
     buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
     buf_type: gpu_allocator::MemoryLocation,
     flags: vk::BufferUsageFlags,
 }
 
-impl StagingBufferStash {
+impl BufferStash {
     pub fn new(buf_type: gpu_allocator::MemoryLocation, flags: vk::BufferUsageFlags) -> Self {
         Self {
             buffers: Default::default(),

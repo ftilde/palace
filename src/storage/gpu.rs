@@ -486,7 +486,7 @@ impl Allocator {
                 device: device.clone(),
                 physical_device,
                 debug_settings: Default::default(),
-                buffer_device_address: false, // TODO: check the BufferDeviceAddressFeatures struct.
+                buffer_device_address: true,
             })
             .unwrap(),
         ));
@@ -506,7 +506,7 @@ impl Allocator {
         // Setup vulkan info
         let vk_info = vk::BufferCreateInfo::builder()
             .size(layout.size() as u64)
-            .usage(use_flags);
+            .usage(use_flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
 
         let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
         let mut requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };

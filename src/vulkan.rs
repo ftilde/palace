@@ -268,8 +268,9 @@ pub struct DeviceContext {
 
     vulkan_states: state::Cache,
     pub storage: crate::storage::gpu::Storage,
-    staging_to_gpu: memory::StagingBufferStash,
-    staging_to_cpu: memory::StagingBufferStash,
+    staging_to_gpu: memory::BufferStash,
+    staging_to_cpu: memory::BufferStash,
+    pub tmp_buffers: memory::TempBuffers,
 }
 
 impl DeviceContext {
@@ -307,11 +308,16 @@ impl DeviceContext {
             let mut enabled_features_13 = vk::PhysicalDeviceVulkan13Features::builder()
                 .synchronization2(true)
                 .build();
+            let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::builder()
+                .buffer_device_address(true)
+                .runtime_descriptor_array(true)
+                .build();
             let enabled_features = vk::PhysicalDeviceFeatures::builder();
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
                 .enabled_features(&enabled_features)
+                .push_next(&mut enabled_features_12)
                 .push_next(&mut enabled_features_13);
             let device = instance
                 .create_device(physical_device, &create_info, None)
@@ -337,11 +343,11 @@ impl DeviceContext {
 
             let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
 
-            let staging_to_cpu = memory::StagingBufferStash::new(
+            let staging_to_cpu = memory::BufferStash::new(
                 MemoryLocation::GpuToCpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             );
-            let staging_to_gpu = memory::StagingBufferStash::new(
+            let staging_to_gpu = memory::BufferStash::new(
                 MemoryLocation::CpuToGpu,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
             );
@@ -398,6 +404,7 @@ impl DeviceContext {
                 storage,
                 staging_to_cpu,
                 staging_to_gpu,
+                tmp_buffers: Default::default(),
             })
         }
     }
@@ -651,6 +658,11 @@ impl DeviceContext {
             .collect();
 
         *waiting_ref = new_waiting;
+
+        // Now that we have marked some cmd buffers as finished, try to collect garbage tmp
+        // buffers.
+        self.tmp_buffers.collect_returns(self);
+
         result
     }
 
