@@ -676,6 +676,9 @@ impl DeviceContext {
 
 impl Drop for DeviceContext {
     fn drop(&mut self) {
+        // Try to return tmp buffers a final time
+        self.tmp_buffers.collect_returns(self);
+
         for mut vulkan_state in self.vulkan_states.drain() {
             unsafe { vulkan_state.deinitialize(self) };
         }
