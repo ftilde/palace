@@ -4,6 +4,10 @@ use crate::task::Request;
 use crate::Error;
 use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
+use ash::extensions::khr::Surface as SurfaceExt;
+use ash::extensions::khr::Swapchain;
+use ash::extensions::khr::{WaylandSurface, XlibSurface};
+
 use ash::vk;
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -19,10 +23,16 @@ pub mod memory;
 pub mod pipeline;
 pub mod shader;
 pub mod state;
+pub mod window;
 
-const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[DebugUtils::name().as_ptr()];
+const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
+    DebugUtils::name().as_ptr(),
+    SurfaceExt::name().as_ptr(),
+    XlibSurface::name().as_ptr(),
+    WaylandSurface::name().as_ptr(),
+];
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
-    &[PushDescriptor::name().as_ptr()];
+    &[PushDescriptor::name().as_ptr(), Swapchain::name().as_ptr()];
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -57,13 +67,19 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+#[derive(Clone)]
+pub struct GlobalFunctions {
+    debug_utils_ext: DebugUtils,
+    surface_ext: SurfaceExt,
+}
+
 #[allow(dead_code)]
 pub struct VulkanContext {
     entry: ash::Entry,
 
     instance: ash::Instance,
-    debug_utils_loader: DebugUtils,
     debug_callback: vk::DebugUtilsMessengerEXT,
+    functions: GlobalFunctions,
 
     device_contexts: Vec<DeviceContext>,
 }
@@ -106,8 +122,14 @@ impl VulkanContext {
                         | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
                 )
                 .pfn_user_callback(Some(vulkan_debug_callback));
-            let debug_utils_loader = DebugUtils::new(&entry, &instance);
-            let debug_callback = debug_utils_loader
+            let debug_utils_ext = DebugUtils::new(&entry, &instance);
+            let surface_ext = SurfaceExt::new(&entry, &instance);
+            let functions = GlobalFunctions {
+                surface_ext,
+                debug_utils_ext,
+            };
+            let debug_callback = functions
+                .debug_utils_ext
                 .create_debug_utils_messenger(&create_info, None)
                 .unwrap();
 
@@ -157,8 +179,8 @@ impl VulkanContext {
                 entry,
 
                 instance,
-                debug_utils_loader,
                 debug_callback,
+                functions,
 
                 device_contexts,
             })
@@ -177,7 +199,8 @@ impl Drop for VulkanContext {
                 std::mem::drop(device_context);
             }
 
-            self.debug_utils_loader
+            self.functions
+                .debug_utils_ext
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
@@ -192,6 +215,7 @@ unsafe fn strcmp(v1: *const std::ffi::c_char, v2: *const std::ffi::c_char) -> bo
 pub struct DeviceFunctions {
     pub device: ash::Device,
     pub push_descriptor_ext: PushDescriptor,
+    pub swap_chain_ext: Swapchain, //TODO: Make optional?
 }
 
 impl std::ops::Deref for DeviceFunctions {
@@ -324,6 +348,7 @@ impl DeviceContext {
                 .expect("Device creation failed.");
 
             let push_descriptor_ext = PushDescriptor::new(instance, &device);
+            let swap_chain_ext = Swapchain::new(instance, &device);
 
             // Get device queues
             let queues: Vec<vk::Queue> = (0..queue_count)
@@ -363,6 +388,7 @@ impl DeviceContext {
             let functions = DeviceFunctions {
                 device,
                 push_descriptor_ext,
+                swap_chain_ext,
             };
 
             let current_command_buffer = Self::create_command_buffer(command_pool, &functions);

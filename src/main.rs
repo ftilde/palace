@@ -7,6 +7,8 @@ use operators::{
     volume::VolumeOperatorState,
 };
 use runtime::RunTime;
+use vulkan::window::Window;
+use winit::event::{Event, WindowEvent};
 
 use crate::{
     array::ImageMetaData,
@@ -134,16 +136,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .to_owned(),
         }),
     };
-    eval_network(
-        &mut runtime,
-        &*vol_state,
-        args.slice_num.into(),
-        args.factor,
-    )
+
+    let event_loop = EventLoop::new();
+
+    let window = Window::new(&runtime.vulkan, &event_loop).unwrap();
+
+    event_loop.run(move |event, _, control_flow| {
+        //control_flow.set_poll();
+        control_flow.set_wait();
+
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                println!("The close button was pressed; stopping");
+                control_flow.set_exit();
+                // TODO: This is not a particularly nice way to handle this. See if we can hold a
+                // reference to the present device etc. in window.
+                // TODO: This does not work since winit still renders another frame after pressing
+                // the close button
+                //unsafe { window.deinitialize(&runtime.vulkan) };
+            }
+            Event::MainEventsCleared => {
+                // Application update code.
+                window.inner().request_redraw();
+            }
+            Event::WindowEvent {
+                window_id: _,
+                event: winit::event::WindowEvent::Resized(_new_size),
+            } => {
+                //vulkan_app.recreate_swap_chain(new_size);
+            }
+            Event::RedrawRequested(_) => {
+                // Redraw the application.
+                //
+                // It's preferable for applications that do not render continuously to render in
+                // this event rather than in MainEventsCleared, since rendering in here allows
+                // the program to gracefully handle redraws requested by the OS.
+                eval_network(
+                    &mut runtime,
+                    &window,
+                    &*vol_state,
+                    args.slice_num.into(),
+                    args.factor,
+                )
+                .unwrap();
+            }
+            _ => (),
+        }
+    });
 }
+
+pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn eval_network(
     runtime: &mut RunTime,
+    window: &Window,
     vol: &dyn VolumeOperatorState,
     slice_num: GlobalCoordinate,
     factor: f32,
@@ -196,7 +245,8 @@ fn eval_network(
     let slice_ref = &slice_one_chunk;
     let mean_val = executor.resolve(|ctx| {
         async move {
-            operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
+            window.render(ctx, slice_ref).await?;
+            //operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
             Ok(ctx.submit(mean_ref.request_scalar()).await)
         }
         .into()

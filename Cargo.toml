@@ -41,3 +41,4 @@ spirq = "0.6.3"
 spirv = "0.2.0"
 png = "0.17.7"
 cgmath = { version="0.18.0", features=["mint"] }
+winit = "0.28"
