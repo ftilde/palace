@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_loop = EventLoop::new();
 
-    let window = Window::new(&runtime.vulkan, &event_loop).unwrap();
+    let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
 
     event_loop.run(move |event, _, control_flow| {
         //control_flow.set_poll();
@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // the program to gracefully handle redraws requested by the OS.
                 eval_network(
                     &mut runtime,
-                    &window,
+                    &mut window,
                     &*vol_state,
                     args.slice_num.into(),
                     args.factor,
@@ -192,7 +192,7 @@ pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn eval_network(
     runtime: &mut RunTime,
-    window: &Window,
+    window: &mut Window,
     vol: &dyn VolumeOperatorState,
     slice_num: GlobalCoordinate,
     factor: f32,

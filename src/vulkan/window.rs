@@ -475,6 +475,43 @@ impl SwapChainConfiguration {
     }
 }
 
+fn create_sync_objects(device: &DeviceContext) -> SyncObjects {
+    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    //let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+
+    SyncObjects {
+        image_available_semaphore: unsafe {
+            device.functions().create_semaphore(&semaphore_info, None)
+        }
+        .unwrap(),
+        render_finished_semaphore: unsafe {
+            device.functions().create_semaphore(&semaphore_info, None)
+        }
+        .unwrap(),
+        //in_flight_fence: unsafe { device.functions().create_fence(&fence_info, None) }.unwrap(),
+    }
+}
+
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
+struct SyncObjects {
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
+    //in_flight_fence: vk::Fence,
+}
+
+impl SyncObjects {
+    unsafe fn deinitialize(&mut self, device: &DeviceContext) {
+        //device.functions.destroy_fence(self.in_flight_fence, None);
+        device
+            .functions
+            .destroy_semaphore(self.render_finished_semaphore, None);
+        device
+            .functions
+            .destroy_semaphore(self.image_available_semaphore, None);
+    }
+}
+
 pub struct Window {
     winit_win: winit::window::Window,
     surface: vk::SurfaceKHR,
@@ -482,6 +519,8 @@ pub struct Window {
     pipeline: GraphicsPipeline,
     swap_chain: SwapChainConfiguration,
     render_pass: vk::RenderPass,
+    sync_objects: [SyncObjects; MAX_FRAMES_IN_FLIGHT],
+    current_frame: usize,
 }
 
 impl Window {
@@ -489,6 +528,9 @@ impl Window {
     pub unsafe fn deinitialize(&mut self, context: &crate::vulkan::VulkanContext) {
         let device = &context.device_contexts[self.device_id];
 
+        for s in &mut self.sync_objects {
+            s.deinitialize(device);
+        }
         self.pipeline.deinitialize(device);
         self.swap_chain.deinitialize(device);
         device.functions.destroy_render_pass(self.render_pass, None);
@@ -539,6 +581,8 @@ impl Window {
         let pipeline =
             GraphicsPipeline::new(device, VERTEX_SHADER, FRAG_SHADER, &render_pass, false);
 
+        let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
+
         Ok(Self {
             winit_win,
             surface,
@@ -546,6 +590,8 @@ impl Window {
             swap_chain,
             pipeline,
             render_pass,
+            sync_objects,
+            current_frame: 0,
         })
     }
     pub fn inner(&self) -> &winit::window::Window {
@@ -553,7 +599,7 @@ impl Window {
     }
 
     pub async fn render<'cref, 'inv: 'cref, 'op: 'inv>(
-        &self,
+        &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         input: &'inv VolumeOperator<'op>,
     ) -> Result<(), crate::Error> {
@@ -574,6 +620,26 @@ impl Window {
         // The rendering part:
         let device = &ctx.device_contexts[self.device_id];
 
+        let f = self.current_frame;
+        self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
+        let sync_object = &self.sync_objects[f];
+        // Make sure previous frames are finished
+
+        //TODO: see if this is required at all
+        //unsafe {
+        //    device
+        //        .functions
+        //        .wait_for_fences(
+        //            &[self.sync_objects[f].in_flight_fence],
+        //            true,
+        //            u64::max_value(),
+        //        )
+        //        .unwrap();
+        //    device
+        //        .functions
+        //        .reset_fences(&[self.sync_objects[f].in_flight_fence]);
+        //}
+
         // TODO: properly use semaphores here
         let image_index = unsafe {
             device
@@ -582,7 +648,7 @@ impl Window {
                 .acquire_next_image(
                     self.swap_chain.swap_chain.swap_chain,
                     u64::max_value(),
-                    vk::Semaphore::null(),
+                    sync_object.image_available_semaphore,
                     vk::Fence::null(),
                 )
                 .unwrap()
@@ -640,13 +706,20 @@ impl Window {
             device.functions().cmd_draw(cmd.raw(), 3, 1, 0, 0);
 
             device.functions().cmd_end_render_pass(cmd.raw());
+
+            cmd.wait_semaphore(sync_object.image_available_semaphore);
+            cmd.signal_semaphore(sync_object.render_finished_semaphore);
         });
+
+        ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
         let swap_chains = &[self.swap_chain.swap_chain.swap_chain];
         let image_indices = &[image_index];
+        let wait_sem = &[sync_object.render_finished_semaphore];
         let present_info = vk::PresentInfoKHR::builder()
             .swapchains(swap_chains)
-            .image_indices(image_indices);
+            .image_indices(image_indices)
+            .wait_semaphores(wait_sem);
 
         unsafe {
             device

@@ -237,6 +237,8 @@ pub struct CommandBuffer {
     functions: DeviceFunctions,
     oldest_finished_epoch: CmdBufferEpoch,
     used: Cell<bool>,
+    wait_semaphores: RefCell<Vec<vk::Semaphore>>,
+    signal_semaphores: RefCell<Vec<vk::Semaphore>>,
 }
 
 impl CommandBuffer {
@@ -257,6 +259,14 @@ impl CommandBuffer {
             self.functions
                 .cmd_pipeline_barrier2(self.buffer, &barrier_info)
         };
+    }
+
+    pub fn wait_semaphore(&self, s: vk::Semaphore) {
+        self.wait_semaphores.borrow_mut().push(s);
+    }
+
+    pub fn signal_semaphore(&self, s: vk::Semaphore) {
+        self.signal_semaphores.borrow_mut().push(s);
     }
 }
 
@@ -531,6 +541,8 @@ impl DeviceContext {
             functions,
             oldest_finished_epoch,
             used: Cell::new(false),
+            wait_semaphores: Default::default(),
+            signal_semaphores: Default::default(),
         }
     }
 
@@ -578,7 +590,12 @@ impl DeviceContext {
                 .unwrap()
         };
         let bufs = [prev_cmd_buffer.buffer];
-        let submit = vk::SubmitInfo::builder().command_buffers(&bufs);
+        let wait_semaphores = prev_cmd_buffer.wait_semaphores.borrow();
+        let signal_semaphores = prev_cmd_buffer.signal_semaphores.borrow();
+        let submit = vk::SubmitInfo::builder()
+            .command_buffers(&bufs)
+            .wait_semaphores(&wait_semaphores)
+            .signal_semaphores(&signal_semaphores);
         unsafe {
             self.functions
                 .queue_submit(

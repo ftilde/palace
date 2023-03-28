@@ -242,6 +242,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
+        self.wait_for_async_results();
+
         enum StuckState {
             Not,
             Reported,
