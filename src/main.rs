@@ -164,9 +164,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::WindowEvent {
                 window_id: _,
-                event: winit::event::WindowEvent::Resized(_new_size),
+                event: winit::event::WindowEvent::Resized(new_size),
             } => {
-                //vulkan_app.recreate_swap_chain(new_size);
+                window.resize(new_size, &runtime.vulkan);
             }
             Event::RedrawRequested(_) => {
                 // Redraw the application.

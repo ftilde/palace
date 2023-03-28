@@ -75,37 +75,53 @@ struct SwapChainSupportDetails {
     present_modes: Vec<vk::PresentModeKHR>,
 }
 
-fn query_swap_chain_support(
-    ctx: &super::VulkanContext,
-    device: vk::PhysicalDevice,
-    surface: vk::SurfaceKHR,
-) -> SwapChainSupportDetails {
-    let capabilities = unsafe {
-        ctx.functions
-            .surface_ext
-            .get_physical_device_surface_capabilities(device, surface)
-    }
-    .unwrap();
+impl SwapChainSupportDetails {
+    fn query(
+        ctx: &super::VulkanContext,
+        device: vk::PhysicalDevice,
+        surface: vk::SurfaceKHR,
+    ) -> Self {
+        let capabilities = unsafe {
+            ctx.functions
+                .surface_ext
+                .get_physical_device_surface_capabilities(device, surface)
+        }
+        .unwrap();
 
-    let formats = unsafe {
-        ctx.functions
-            .surface_ext
-            .get_physical_device_surface_formats(device, surface)
-    }
-    .unwrap();
+        let formats = unsafe {
+            ctx.functions
+                .surface_ext
+                .get_physical_device_surface_formats(device, surface)
+        }
+        .unwrap();
 
-    let present_modes = unsafe {
-        ctx.functions
-            .surface_ext
-            .get_physical_device_surface_present_modes(device, surface)
-    }
-    .unwrap();
+        let present_modes = unsafe {
+            ctx.functions
+                .surface_ext
+                .get_physical_device_surface_present_modes(device, surface)
+        }
+        .unwrap();
 
-    SwapChainSupportDetails {
-        capabilities,
-        formats,
-        present_modes,
+        SwapChainSupportDetails {
+            capabilities,
+            formats,
+            present_modes,
+        }
     }
+
+    fn default_config(&self) -> SwapChainConfiguration {
+        let format = select_swap_surface_format(self.formats.as_slice());
+        let present_mode = select_swap_present_mode(self.present_modes.as_slice());
+        SwapChainConfiguration {
+            format,
+            present_mode,
+        }
+    }
+}
+
+struct SwapChainConfiguration {
+    format: vk::SurfaceFormatKHR,
+    present_mode: vk::PresentModeKHR,
 }
 
 fn select_swap_surface_format(available: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
@@ -149,14 +165,11 @@ fn select_swap_extent(
 
 fn create_swap_chain(
     device: &DeviceContext,
-    support: SwapChainSupportDetails,
+    support: &SwapChainSupportDetails,
+    config: &SwapChainConfiguration,
     surface: vk::SurfaceKHR,
-    window_size: WindowSize,
-) -> SwapChainData {
-    let format = select_swap_surface_format(support.formats.as_slice());
-    let present_mode = select_swap_present_mode(support.present_modes.as_slice());
-    let extent = select_swap_extent(&support.capabilities, window_size);
-
+    extent: vk::Extent2D,
+) -> vk::SwapchainKHR {
     let image_count = support.capabilities.min_image_count + 1;
     let image_count = if support.capabilities.max_image_count > 0 {
         image_count.min(support.capabilities.max_image_count)
@@ -167,12 +180,12 @@ fn create_swap_chain(
     let sc_info = vk::SwapchainCreateInfoKHR::builder()
         .surface(surface)
         .min_image_count(image_count)
-        .image_format(format.format)
+        .image_format(config.format.format)
         .image_extent(extent)
         .image_array_layers(1)
         .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
         .pre_transform(support.capabilities.current_transform)
-        .present_mode(present_mode)
+        .present_mode(config.present_mode)
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
         .clipped(true);
 
@@ -187,47 +200,15 @@ fn create_swap_chain(
             .create_swapchain(&sc_info, None)
     }
     .unwrap();
-    let images = unsafe {
-        device
-            .functions
-            .swap_chain_ext
-            .get_swapchain_images(swap_chain)
-    }
-    .unwrap();
-    SwapChainData {
-        swap_chain,
-        images,
-        extent,
-        format: format.format,
-    }
+    swap_chain
 }
 
-fn create_image_views(device: &DeviceContext, swap_chain: &SwapChainData) -> Vec<vk::ImageView> {
-    swap_chain
-        .images
-        .iter()
-        .map(|img| {
-            let info = vk::ImageViewCreateInfo::builder()
-                .image(*img)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(swap_chain.format)
-                .components(vk::ComponentMapping::builder().build())
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .build(),
-                );
-            unsafe { device.functions.create_image_view(&info, None) }.unwrap()
-        })
-        .collect::<Vec<_>>()
-}
-fn create_render_pass(device: &DeviceContext, swap_chain: &SwapChainData) -> vk::RenderPass {
+fn create_render_pass(
+    device: &DeviceContext,
+    swap_chain_config: &SwapChainConfiguration,
+) -> vk::RenderPass {
     let color_attachment = vk::AttachmentDescription::builder()
-        .format(swap_chain.format)
+        .format(swap_chain_config.format.format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
@@ -268,7 +249,7 @@ fn create_framebuffers(
     device: &DeviceContext,
     image_views: &Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
-    swap_chain: &SwapChainData,
+    extent: vk::Extent2D,
 ) -> Vec<vk::Framebuffer> {
     image_views
         .iter()
@@ -277,20 +258,13 @@ fn create_framebuffers(
             let framebuffer_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(render_pass)
                 .attachments(&attachments)
-                .width(swap_chain.extent.width)
-                .height(swap_chain.extent.height)
+                .width(extent.width)
+                .height(extent.height)
                 .layers(1);
 
             unsafe { device.functions.create_framebuffer(&framebuffer_info, None) }.unwrap()
         })
         .collect::<Vec<_>>()
-}
-
-struct SwapChainData {
-    swap_chain: vk::SwapchainKHR,
-    images: Vec<vk::Image>,
-    extent: vk::Extent2D,
-    format: vk::Format,
 }
 
 struct GraphicsPipeline {
@@ -444,20 +418,59 @@ impl GraphicsPipeline {
     }
 }
 
-struct SwapChainConfiguration {
-    swap_chain: SwapChainData,
+struct SwapChainData {
+    inner: vk::SwapchainKHR,
     image_views: Vec<vk::ImageView>,
     framebuffers: Vec<vk::Framebuffer>,
+    extent: vk::Extent2D,
 }
-impl SwapChainConfiguration {
-    fn new(device: &DeviceContext, swap_chain: SwapChainData, render_pass: vk::RenderPass) -> Self {
-        let image_views = create_image_views(device, &swap_chain);
-        let framebuffers = create_framebuffers(&device, &image_views, render_pass, &swap_chain);
+impl SwapChainData {
+    fn new(
+        device: &DeviceContext,
+        support: &SwapChainSupportDetails,
+        config: &SwapChainConfiguration,
+        render_pass: vk::RenderPass,
+        surface: vk::SurfaceKHR,
+        window_size: WindowSize,
+    ) -> Self {
+        let extent = select_swap_extent(&support.capabilities, window_size);
+        let swap_chain = create_swap_chain(device, support, config, surface, extent);
+        let images = unsafe {
+            device
+                .functions
+                .swap_chain_ext
+                .get_swapchain_images(swap_chain)
+        }
+        .unwrap();
+
+        let image_views = images
+            .iter()
+            .map(|img| {
+                let info = vk::ImageViewCreateInfo::builder()
+                    .image(*img)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(config.format.format)
+                    .components(vk::ComponentMapping::builder().build())
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    );
+                unsafe { device.functions.create_image_view(&info, None) }.unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let framebuffers = create_framebuffers(&device, &image_views, render_pass, extent);
 
         Self {
-            swap_chain,
+            inner: swap_chain,
             image_views,
             framebuffers,
+            extent,
         }
     }
 
@@ -471,7 +484,7 @@ impl SwapChainConfiguration {
         device
             .functions
             .swap_chain_ext
-            .destroy_swapchain(self.swap_chain.swap_chain, None);
+            .destroy_swapchain(self.inner, None);
     }
 }
 
@@ -515,7 +528,9 @@ pub struct Window {
     surface: vk::SurfaceKHR,
     device_id: DeviceId,
     pipeline: GraphicsPipeline,
-    swap_chain: SwapChainConfiguration,
+    swap_chain_support: SwapChainSupportDetails,
+    swap_chain_config: SwapChainConfiguration,
+    swap_chain: SwapChainData,
     render_pass: vk::RenderPass,
     sync_objects: [SyncObjects; MAX_FRAMES_IN_FLIGHT],
     current_frame: usize,
@@ -544,11 +559,11 @@ impl Window {
     ) -> Result<Self, crate::Error> {
         let winit_win = WindowBuilder::new().build(&target).unwrap();
         let surface = create_surface(&ctx.entry, &ctx.instance, &winit_win);
-        let (device, support) = ctx
+        let (device, swap_chain_support) = ctx
             .device_contexts
             .iter()
             .find_map(|device| {
-                let details = query_swap_chain_support(ctx, device.physical_device, surface);
+                let support = SwapChainSupportDetails::query(ctx, device.physical_device, surface);
                 let surface_support = unsafe {
                     ctx.functions
                         .surface_ext
@@ -559,22 +574,29 @@ impl Window {
                         )
                         .unwrap()
                 };
-                if !details.formats.is_empty()
-                    && !details.present_modes.is_empty()
+                if !support.formats.is_empty()
+                    && !support.present_modes.is_empty()
                     && surface_support
                 {
-                    Some((device, details))
+                    Some((device, support))
                 } else {
                     None
                 }
             })
             .ok_or_else(|| "Could not find any device with present capabilities")?;
 
-        let swap_chain = create_swap_chain(device, support, surface, winit_win.inner_size());
+        let swap_chain_config = swap_chain_support.default_config();
 
-        let render_pass = create_render_pass(&device, &swap_chain);
+        let render_pass = create_render_pass(&device, &swap_chain_config);
 
-        let swap_chain = SwapChainConfiguration::new(device, swap_chain, render_pass);
+        let swap_chain = SwapChainData::new(
+            device,
+            &swap_chain_support,
+            &swap_chain_config,
+            render_pass,
+            surface,
+            winit_win.inner_size(),
+        );
 
         let pipeline =
             GraphicsPipeline::new(device, VERTEX_SHADER, FRAG_SHADER, &render_pass, false);
@@ -584,7 +606,9 @@ impl Window {
         Ok(Self {
             winit_win,
             surface,
+            swap_chain_config,
             device_id: device.id,
+            swap_chain_support,
             swap_chain,
             pipeline,
             render_pass,
@@ -594,6 +618,23 @@ impl Window {
     }
     pub fn inner(&self) -> &winit::window::Window {
         &self.winit_win
+    }
+    pub fn resize(&mut self, size: WindowSize, ctx: &VulkanContext) {
+        let device = &ctx.device_contexts[self.device_id];
+
+        unsafe {
+            device.functions.device_wait_idle().unwrap();
+            self.swap_chain.deinitialize(device);
+
+            self.swap_chain = SwapChainData::new(
+                device,
+                &self.swap_chain_support,
+                &self.swap_chain_config,
+                self.render_pass,
+                self.surface,
+                size,
+            );
+        }
     }
 
     pub async fn render<'cref, 'inv: 'cref, 'op: 'inv>(
@@ -627,7 +668,7 @@ impl Window {
                 .functions
                 .swap_chain_ext
                 .acquire_next_image(
-                    self.swap_chain.swap_chain.swap_chain,
+                    self.swap_chain.inner,
                     u64::max_value(),
                     sync_object.image_available_semaphore,
                     vk::Fence::null(),
@@ -648,7 +689,7 @@ impl Window {
             .render_area(
                 vk::Rect2D::builder()
                     .offset(vk::Offset2D::builder().x(0).y(0).build())
-                    .extent(self.swap_chain.swap_chain.extent)
+                    .extent(self.swap_chain.extent)
                     .build(),
             )
             .clear_values(&clear_values);
@@ -656,14 +697,14 @@ impl Window {
         let viewport = vk::Viewport::builder()
             .x(0.0)
             .y(0.0)
-            .width(self.swap_chain.swap_chain.extent.width as f32)
-            .height(self.swap_chain.swap_chain.extent.height as f32)
+            .width(self.swap_chain.extent.width as f32)
+            .height(self.swap_chain.extent.height as f32)
             .min_depth(0.0)
             .max_depth(1.0);
 
         let scissor = vk::Rect2D::builder()
             .offset(vk::Offset2D::builder().x(0).y(0).build())
-            .extent(self.swap_chain.swap_chain.extent);
+            .extent(self.swap_chain.extent);
 
         device.with_cmd_buffer(|cmd| unsafe {
             cmd.functions().cmd_bind_pipeline(
@@ -697,7 +738,7 @@ impl Window {
         // is safe for now but leaves some performance on the table.
         ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
-        let swap_chains = &[self.swap_chain.swap_chain.swap_chain];
+        let swap_chains = &[self.swap_chain.inner];
         let image_indices = &[image_index];
         let wait_sem = &[sync_object.render_finished_semaphore];
         let present_info = vk::PresentInfoKHR::builder()
