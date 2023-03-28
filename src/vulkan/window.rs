@@ -497,12 +497,10 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 struct SyncObjects {
     image_available_semaphore: vk::Semaphore,
     render_finished_semaphore: vk::Semaphore,
-    //in_flight_fence: vk::Fence,
 }
 
 impl SyncObjects {
     unsafe fn deinitialize(&mut self, device: &DeviceContext) {
-        //device.functions.destroy_fence(self.in_flight_fence, None);
         device
             .functions
             .destroy_semaphore(self.render_finished_semaphore, None);
@@ -623,24 +621,7 @@ impl Window {
         let f = self.current_frame;
         self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
         let sync_object = &self.sync_objects[f];
-        // Make sure previous frames are finished
 
-        //TODO: see if this is required at all
-        //unsafe {
-        //    device
-        //        .functions
-        //        .wait_for_fences(
-        //            &[self.sync_objects[f].in_flight_fence],
-        //            true,
-        //            u64::max_value(),
-        //        )
-        //        .unwrap();
-        //    device
-        //        .functions
-        //        .reset_fences(&[self.sync_objects[f].in_flight_fence]);
-        //}
-
-        // TODO: properly use semaphores here
         let image_index = unsafe {
             device
                 .functions
@@ -711,6 +692,9 @@ impl Window {
             cmd.signal_semaphore(sync_object.render_finished_semaphore);
         });
 
+        // TODO: What we actually want here is to wait for the cmd_buffer to be submitted (i
+        // think), but then we also need for it be finished to reuse the semaphores. In short: This
+        // is safe for now but leaves some performance on the table.
         ctx.submit(device.wait_for_cmd_buffer_completion()).await;
 
         let swap_chains = &[self.swap_chain.swap_chain.swap_chain];
