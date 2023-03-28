@@ -7,7 +7,7 @@ use winit::platform::wayland::WindowExtWayland;
 use winit::platform::x11::WindowExtX11;
 use winit::window::WindowBuilder;
 
-use crate::data::BrickPosition;
+use crate::data::{BrickPosition, GlobalCoordinate, Vector};
 use crate::operators::volume::VolumeOperator;
 use crate::task::OpaqueTaskContext;
 use crate::vulkan::shader::Shader;
@@ -615,6 +615,9 @@ impl Window {
             sync_objects,
             current_frame: 0,
         })
+    }
+    pub fn size(&self) -> Vector<2, GlobalCoordinate> {
+        [self.swap_chain.extent.height, self.swap_chain.extent.width].into()
     }
     pub fn inner(&self) -> &winit::window::Window {
         &self.winit_win
