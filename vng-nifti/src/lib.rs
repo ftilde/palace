@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 
-use crate::{
+use vng_core::{
     array::VolumeMetaData,
-    data::{LocalCoordinate, VoxelPosition},
+    data::{self, LocalCoordinate, VoxelPosition},
     operator::OperatorId,
     operators::{
         tensor::TensorOperator,
@@ -130,7 +130,7 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                             let s = (s.z().raw as usize, s.y().raw as usize, s.x().raw as usize);
                             let in_chunk = in_chunk.to_shape(s).unwrap();
 
-                            let mut out_chunk = crate::data::chunk_mut(brick_data, &chunk);
+                            let mut out_chunk = data::chunk_mut(brick_data, &chunk);
 
                             ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
                         }))

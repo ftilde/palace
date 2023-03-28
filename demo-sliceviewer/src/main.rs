@@ -4,13 +4,12 @@ use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, VoxelPosition};
 use vng_core::operators::volume::ChunkSize;
 use vng_core::operators::volume_gpu;
-use vng_core::operators::{
-    self,
-    reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
-    volume::VolumeOperatorState,
-};
+use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
 use vng_core::vulkan::window::Window;
+use vng_hdf5::Hdf5VolumeSourceState;
+use vng_nifti::NiftiVolumeSourceState;
+use vng_vvd::VvdVolumeSourceState;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 
 use vng_core::{array, data::Vector};

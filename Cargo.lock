@@ -431,6 +431,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "vng-core",
+ "vng-hdf5",
+ "vng-nifti",
+ "vng-vvd",
 ]
 
 [[package]]
@@ -439,6 +442,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "vng-core",
+ "vng-hdf5",
+ "vng-nifti",
+ "vng-vvd",
  "winit",
 ]
 
@@ -2110,12 +2116,10 @@ dependencies = [
  "good_memory_allocator",
  "gpu-allocator",
  "graphviz-rust",
- "hdf5",
  "itertools",
  "memmap",
  "mint",
  "ndarray",
- "nifti",
  "num_cpus",
  "oneshot",
  "pin-project",
@@ -2124,11 +2128,36 @@ dependencies = [
  "spirq",
  "spirv",
  "spirv-compiler",
- "sxd-document",
- "sxd-xpath",
  "winit",
  "work-queue",
  "xxhash-rust",
+]
+
+[[package]]
+name = "vng-hdf5"
+version = "0.1.0"
+dependencies = [
+ "hdf5",
+ "ndarray",
+ "vng-core",
+]
+
+[[package]]
+name = "vng-nifti"
+version = "0.1.0"
+dependencies = [
+ "ndarray",
+ "nifti",
+ "vng-core",
+]
+
+[[package]]
+name = "vng-vvd"
+version = "0.1.0"
+dependencies = [
+ "sxd-document",
+ "sxd-xpath",
+ "vng-core",
 ]
 
 [[package]]

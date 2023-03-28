@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::{
+use vng_core::{
     array::VolumeMetaData,
-    data::{Coordinate, CoordinateType, LocalVoxelPosition, Vector, VoxelPosition},
+    data::{self, Coordinate, CoordinateType, LocalVoxelPosition, Vector, VoxelPosition},
     operator::OperatorId,
     operators::{
         tensor::TensorOperator,
@@ -18,14 +18,12 @@ pub struct Hdf5VolumeSourceState {
     volume_location: String,
 }
 
-impl<C: CoordinateType> TryFrom<Vec<hdf5::Ix>> for Vector<3, Coordinate<C>> {
-    type Error = crate::Error;
-
-    fn try_from(value: Vec<hdf5::Ix>) -> Result<Self, Self::Error> {
-        match *value {
-            [z, y, x] => Ok([(z as u32), (y as u32), (x as u32)].into()),
-            _ => Err("Invalid number of dimensions".into()),
-        }
+fn to_vector<C: CoordinateType>(
+    value: Vec<hdf5::Ix>,
+) -> Result<Vector<3, Coordinate<C>>, vng_core::Error> {
+    match *value {
+        [z, y, x] => Ok([(z as u32), (y as u32), (x as u32)].into()),
+        _ => Err("Invalid number of dimensions".into()),
     }
 }
 
@@ -54,12 +52,12 @@ impl VolumeOperatorState for Hdf5VolumeSourceState {
 
                         let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());
 
-                        let num_voxels = crate::data::hmul(self.metadata.chunk_size);
+                        let num_voxels = data::hmul(self.metadata.chunk_size);
 
                         let mut brick_handle = ctx.alloc_slot(pos, num_voxels)?;
                         let brick_data = &mut *brick_handle;
                         ctx.submit(ctx.spawn_io(|| {
-                            crate::data::init_non_full(brick_data, &chunk, f32::NAN);
+                            vng_core::data::init_non_full(brick_data, &chunk, f32::NAN);
 
                             let out_info = self.metadata.chunk_info(pos);
                             let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
@@ -87,9 +85,8 @@ impl Hdf5VolumeSourceState {
     pub fn open(path: PathBuf, volume_location: String) -> Result<Self, Error> {
         let file = hdf5::File::open(&path)?;
         let vol = file.dataset(&volume_location)?;
-        let dimensions: VoxelPosition = vol.shape().try_into()?;
-        let brick_size: LocalVoxelPosition =
-            vol.chunk().unwrap_or_else(|| vol.shape()).try_into()?;
+        let dimensions: VoxelPosition = to_vector(vol.shape())?;
+        let brick_size: LocalVoxelPosition = to_vector(vol.chunk().unwrap_or_else(|| vol.shape()))?;
 
         let dtype = vol.dtype()?;
         if !dtype.is::<f32>() {

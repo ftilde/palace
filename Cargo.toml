@@ -2,6 +2,9 @@
 
 members = [
     "vng-core",
+    "vng-hdf5",
+    "vng-vvd",
+    "vng-nifti",
     "demo-sliceviewer",
     "demo-mean",
 ]

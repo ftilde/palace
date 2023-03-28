@@ -1,7 +1,7 @@
 pub mod array;
 pub mod png_writer;
 pub mod rasterize_function;
-pub mod reader;
+pub mod raw;
 pub mod scalar;
 pub mod sliceviewer;
 pub mod tensor;

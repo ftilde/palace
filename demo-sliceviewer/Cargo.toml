@@ -5,5 +5,8 @@ edition = "2021"
 
 [dependencies]
 vng-core = { path = "../vng-core" }
+vng-hdf5 = { path = "../vng-hdf5" }
+vng-vvd = { path = "../vng-vvd" }
+vng-nifti = { path = "../vng-nifti" }
 winit = "0.28"
 clap = { version = "4.0", features = ["derive"] }

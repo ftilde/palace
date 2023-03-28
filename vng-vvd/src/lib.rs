@@ -3,18 +3,17 @@ use sxd_xpath::evaluate_xpath;
 
 use std::path::{Path, PathBuf};
 
-use crate::{
+use vng_core::{
     array::VolumeMetaData,
     data::{LocalVoxelPosition, VoxelPosition},
     operator::OperatorId,
     operators::{
+        raw::RawVolumeSourceState,
         tensor::TensorOperator,
         volume::{VolumeOperator, VolumeOperatorState},
     },
     Error,
 };
-
-use super::RawVolumeSourceState;
 
 pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
