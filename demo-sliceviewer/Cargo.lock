@@ -426,14 +426,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "demo-mean"
-version = "0.1.0"
-dependencies = [
- "clap",
- "vng-core",
-]
-
-[[package]]
 name = "demo-sliceviewer"
 version = "0.1.0"
 dependencies = [

@@ -1,39 +1,19 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use data::{LocalVoxelPosition, VoxelPosition};
-use operators::{
+use vng_core::data::{LocalVoxelPosition, VoxelPosition};
+use vng_core::operators::volume::ChunkSize;
+use vng_core::operators::volume_gpu;
+use vng_core::operators::{
+    self,
     reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
     volume::VolumeOperatorState,
 };
-use runtime::RunTime;
-use vulkan::window::Window;
+use vng_core::runtime::RunTime;
+use vng_core::vulkan::window::Window;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 
-use crate::{
-    array::ImageMetaData,
-    data::Vector,
-    operators::{volume::ChunkSize, volume_gpu},
-};
-
-mod array;
-mod data;
-mod id;
-mod operator;
-mod operators;
-mod runtime;
-mod storage;
-mod task;
-mod task_graph;
-mod task_manager;
-#[cfg(test)]
-mod test_util;
-mod threadpool;
-mod util;
-mod vulkan;
-
-// TODO look into thiserror/anyhow
-type Error = Box<(dyn std::error::Error + 'static)>;
+use vng_core::{array, data::Vector};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -245,9 +225,8 @@ fn eval_network(
     let scaled3 = volume_gpu::linear_rescale(scaled2.clone(), (-1.0).into(), 0.0.into());
 
     let mean = volume_gpu::mean(scaled3);
-    let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
-    let slice_metadata = ImageMetaData {
+    let slice_metadata = array::ImageMetaData {
         dimensions: window.size(),
         chunk_size: [128, 128].into(),
     };
@@ -271,39 +250,15 @@ fn eval_network(
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
     let slice_ref = &slice_one_chunk;
-    let mean_val = executor.resolve(|ctx| {
+    executor.resolve(|ctx| {
         async move {
             window.render(ctx, slice_ref).await?;
-            //operators::png_writer::write(ctx, slice_ref, "foo.png".into()).await?;
             Ok(ctx.submit(mean_ref.request_scalar()).await)
         }
         .into()
     })?;
-
     let tasks_executed = executor.statistics().tasks_executed;
-    //println!(
-    //    "Computed scaled mean val: {} ({} tasks)",
-    //    mean_val, tasks_executed
-    //);
-
-    // Neat: We can even write to references in the closure/future below to get results out.
-    let mean_unscaled_ref = &mean_unscaled;
-    let mut mean_val_unscaled = 0.0;
-    let muv_ref = &mut mean_val_unscaled;
-    let tasks_executed_prev = executor.statistics().tasks_executed;
-    executor.resolve(|ctx| {
-        async move {
-            let req = mean_unscaled_ref.request_scalar();
-            *muv_ref = ctx.submit(req).await;
-            Ok(())
-        }
-        .into()
-    })?;
-    let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
-    //println!(
-    //    "Computed unscaled mean val: {} ({} tasks)",
-    //    mean_val_unscaled, tasks_executed
-    //);
+    println!("Rendering done ({} tasks)", tasks_executed);
 
     Ok(())
 }
