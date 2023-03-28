@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
 use ash::vk;
+use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
 use winit::platform::wayland::WindowExtWayland;
 use winit::platform::x11::WindowExtX11;
@@ -12,7 +13,7 @@ use crate::operators::volume::VolumeOperator;
 use crate::task::OpaqueTaskContext;
 use crate::vulkan::shader::Shader;
 
-use super::pipeline::DynamicDescriptorSetPool;
+use super::pipeline::{DescriptorConfig, DynamicDescriptorSetPool};
 use super::shader::ShaderSource;
 use super::state::VulkanState;
 use super::{DeviceContext, DeviceId, VulkanContext};
@@ -599,7 +600,7 @@ impl Window {
         );
 
         let pipeline =
-            GraphicsPipeline::new(device, VERTEX_SHADER, FRAG_SHADER, &render_pass, false);
+            GraphicsPipeline::new(device, VERTEX_SHADER, FRAG_SHADER, &render_pass, true);
 
         let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
 
@@ -655,12 +656,20 @@ impl Window {
             return Err("Image must have exactly four channels".into());
         }
 
-        let _img = ctx
-            .submit(input.bricks.request(BrickPosition::fill(0.into())))
+        let device = &ctx.device_contexts[self.device_id];
+
+        let img = ctx
+            .submit(
+                input
+                    .bricks
+                    .request_gpu(device.id, BrickPosition::fill(0.into())),
+            )
             .await;
 
+        let descriptor_config = DescriptorConfig::new([&img]);
+        let writes = descriptor_config.writes_for_push();
+
         // The rendering part:
-        let device = &ctx.device_contexts[self.device_id];
 
         let f = self.current_frame;
         self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
@@ -709,6 +718,10 @@ impl Window {
             .offset(vk::Offset2D::builder().x(0).y(0).build())
             .extent(self.swap_chain.extent);
 
+        let push_constans = PushConstants {
+            size: m.dimensions.drop_dim(2).try_into_elem().unwrap().into(),
+        };
+
         device.with_cmd_buffer(|cmd| unsafe {
             cmd.functions().cmd_bind_pipeline(
                 cmd.raw(),
@@ -727,6 +740,31 @@ impl Window {
             device
                 .functions()
                 .cmd_set_scissor(cmd.raw(), 0, &[*scissor]);
+
+            device
+                .functions()
+                .push_descriptor_ext
+                .cmd_push_descriptor_set(
+                    cmd.raw(),
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipeline.pipeline_layout,
+                    0,
+                    &writes,
+                );
+
+            {
+                let v = push_constans.as_std140();
+                let bytes = v.as_bytes();
+
+                let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
+                device.functions().cmd_push_constants(
+                    cmd.raw(),
+                    self.pipeline.pipeline_layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytes,
+                );
+            }
 
             device.functions().cmd_draw(cmd.raw(), 3, 1, 0, 0);
 
@@ -760,23 +798,27 @@ impl Window {
         Ok(())
     }
 }
+#[derive(Copy, Clone, AsStd140)]
+struct PushConstants {
+    size: mint::Vector2<u32>,
+}
 
 const VERTEX_SHADER: &str = "
 #version 450
 
 vec2 positions[3] = vec2[](
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5)
+    vec2(-1.0, -3.0),
+    vec2(3.0, 1.0),
+    vec2(-1.0, 1.0)
 );
 
-vec3 colors[3] = vec3[](
-    vec3(1.0, 0.0, 0.0),
-    vec3(0.0, 1.0, 0.0),
-    vec3(0.0, 0.0, 1.0)
+vec2 colors[3] = vec2[](
+    vec2(0.0, 2.0),
+    vec2(2.0, 0.0),
+    vec2(0.0, 0.0)
 );
 
-layout(location = 0) out vec3 fragColor;
+layout(location = 0) out vec2 fragColor;
 
 void main() {
     gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
@@ -787,10 +829,25 @@ void main() {
 const FRAG_SHADER: &str = "
 #version 450
 
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    float values[];
+} sourceData;
+
+layout(std140, push_constant) uniform PushConstants
+{
+    uvec2 size;
+} constants;
+
 layout(location = 0) out vec4 outColor;
-layout(location = 0) in vec3 fragColor;
+layout(location = 0) in vec2 fragColor;
 
 void main() {
-    outColor = vec4(fragColor, 1.0);
+    vec2 norm_pos = fragColor;
+    uvec2 buffer_pos = uvec2(norm_pos * vec2(constants.size));
+    uint buffer_index = buffer_pos.x + buffer_pos.y * constants.size.x;
+
+    for(int c = 0; c < 4; ++c) {
+        outColor[c] = sourceData.values[4*buffer_index + c];
+    }
 }
 ";
