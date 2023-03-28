@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use data::{GlobalCoordinate, LocalVoxelPosition, VoxelPosition};
+use data::{LocalVoxelPosition, VoxelPosition};
 use operators::{
     reader::{Hdf5VolumeSourceState, NiftiVolumeSourceState, VvdVolumeSourceState},
     volume::VolumeOperatorState,
 };
 use runtime::RunTime;
 use vulkan::window::Window;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 
 use crate::{
     array::ImageMetaData,
@@ -137,9 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     };
 
+    let mut slice_num = args.slice_num as i32;
+
     let event_loop = EventLoop::new();
 
     let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
+    //event_loop.set_device_event_filter(winit::event_loop::DeviceEventFilter::Never);
 
     event_loop.run(move |event, _, control_flow| {
         //control_flow.set_poll();
@@ -152,11 +155,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 println!("The close button was pressed; stopping");
                 control_flow.set_exit();
+            }
+            Event::LoopDestroyed => {
                 // TODO: This is not a particularly nice way to handle this. See if we can hold a
                 // reference to the present device etc. in window.
-                // TODO: This does not work since winit still renders another frame after pressing
-                // the close button
-                //unsafe { window.deinitialize(&runtime.vulkan) };
+                unsafe { window.deinitialize(&runtime.vulkan) };
             }
             Event::MainEventsCleared => {
                 // Application update code.
@@ -168,6 +171,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 window.resize(new_size, &runtime.vulkan);
             }
+            Event::WindowEvent {
+                window_id: _,
+                event: winit::event::WindowEvent::MouseWheel { delta, .. },
+            } => {
+                let motion = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y.signum(),
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y.signum() as f32,
+                };
+                slice_num += motion as i32;
+            }
+            Event::WindowEvent {
+                window_id: _,
+                event: winit::event::WindowEvent::KeyboardInput { input, .. },
+            } => {
+                if input.state == ElementState::Released {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::R) => {
+                            slice_num = args.slice_num as i32;
+                        }
+                        _ => (),
+                    }
+                }
+            }
             Event::RedrawRequested(_) => {
                 // Redraw the application.
                 //
@@ -178,7 +204,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut runtime,
                     &mut window,
                     &*vol_state,
-                    args.slice_num.into(),
+                    slice_num,
                     args.factor,
                 )
                 .unwrap();
@@ -194,10 +220,12 @@ fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
     vol: &dyn VolumeOperatorState,
-    slice_num: GlobalCoordinate,
+    slice_num: i32,
     factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
+
+    let slice_num = (slice_num.max(0) as u32).into();
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
@@ -253,10 +281,10 @@ fn eval_network(
     })?;
 
     let tasks_executed = executor.statistics().tasks_executed;
-    println!(
-        "Computed scaled mean val: {} ({} tasks)",
-        mean_val, tasks_executed
-    );
+    //println!(
+    //    "Computed scaled mean val: {} ({} tasks)",
+    //    mean_val, tasks_executed
+    //);
 
     // Neat: We can even write to references in the closure/future below to get results out.
     let mean_unscaled_ref = &mean_unscaled;
@@ -272,10 +300,10 @@ fn eval_network(
         .into()
     })?;
     let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
-    println!(
-        "Computed unscaled mean val: {} ({} tasks)",
-        mean_val_unscaled, tasks_executed
-    );
+    //println!(
+    //    "Computed unscaled mean val: {} ({} tasks)",
+    //    mean_val_unscaled, tasks_executed
+    //);
 
     Ok(())
 }
