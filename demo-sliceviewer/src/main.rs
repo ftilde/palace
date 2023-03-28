@@ -39,12 +39,6 @@ struct CliArgs {
     #[command(subcommand)]
     input: Input,
 
-    #[arg(short, long, default_value = "1.0")]
-    factor: f32,
-
-    #[arg(short, long, default_value = "0")]
-    slice_num: u32,
-
     /// Size of the memory pool that will be allocated in gigabytes.
     #[arg(short, long, default_value = "8")]
     mem_size: usize,
@@ -117,7 +111,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     };
 
-    let mut slice_num = args.slice_num as i32;
+    let mut slice_num = 0;
+    let mut scale = 1.0;
+    let mut offset: f32 = 0.0;
 
     let event_loop = EventLoop::new();
 
@@ -160,17 +156,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y.signum() as f32,
                 };
                 slice_num += motion as i32;
+                println!("Slice: {}", slice_num);
             }
             Event::WindowEvent {
                 window_id: _,
                 event: winit::event::WindowEvent::KeyboardInput { input, .. },
             } => {
-                if input.state == ElementState::Released {
-                    match input.virtual_keycode {
-                        Some(VirtualKeyCode::R) => {
-                            slice_num = args.slice_num as i32;
+                if input.state == ElementState::Pressed {
+                    if let Some(k) = input.virtual_keycode {
+                        let mut something_happened = true;
+                        match k {
+                            VirtualKeyCode::R => {
+                                slice_num = 0;
+                            }
+                            VirtualKeyCode::Key1 => {
+                                scale += 0.01;
+                            }
+                            VirtualKeyCode::Key2 => {
+                                scale -= 0.01;
+                            }
+                            VirtualKeyCode::Key3 => {
+                                offset = (offset + 0.01).clamp(0.0, 1.0);
+                            }
+                            VirtualKeyCode::Key4 => {
+                                offset = (offset - 0.01).clamp(0.0, 1.0);
+                            }
+                            _ => {
+                                something_happened = false;
+                            }
                         }
-                        _ => (),
+                        if something_happened {
+                            println!("Scale: {}, Offset: {}", scale, offset);
+                        }
                     }
                 }
             }
@@ -185,7 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut window,
                     &*vol_state,
                     slice_num,
-                    args.factor,
+                    scale,
+                    offset,
                 )
                 .unwrap();
             }
@@ -201,7 +219,8 @@ fn eval_network(
     window: &mut Window,
     vol: &dyn VolumeOperatorState,
     slice_num: i32,
-    factor: f32,
+    scale: f32,
+    offset: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
@@ -209,35 +228,20 @@ fn eval_network(
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
-    let convolved = volume_gpu::separable_convolution(
-        rechunked.clone(),
-        [
-            smoothing_kernel.clone(),
-            smoothing_kernel.clone(),
-            smoothing_kernel,
-        ],
-    );
-    let mapped = convolved; //tensor::map(convolved, |v| v.min(0.5));
-
-    let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
-    let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
-    let scaled3 = volume_gpu::linear_rescale(scaled2.clone(), (-1.0).into(), 0.0.into());
-
-    let mean = volume_gpu::mean(scaled3);
-
     let slice_metadata = array::ImageMetaData {
         dimensions: window.size(),
         chunk_size: [128, 128].into(),
     };
 
+    let slice_input = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
+
     let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
-        scaled2.metadata.clone(),
+        slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(slice_metadata),
         crate::operators::scalar::constant_hash(slice_num),
     );
     let slice = crate::operators::sliceviewer::render_slice(
-        scaled2,
+        slice_input,
         crate::operators::scalar::constant_hash(slice_metadata),
         slice_proj,
     );
@@ -246,19 +250,10 @@ fn eval_network(
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
 
-    // TODO: it's slightly annoying that we have to construct the reference here (because of async
-    // move). Is there a better way, i.e. to only move some values into the future?
-    let mean_ref = &mean;
     let slice_ref = &slice_one_chunk;
-    executor.resolve(|ctx| {
-        async move {
-            window.render(ctx, slice_ref).await?;
-            Ok(ctx.submit(mean_ref.request_scalar()).await)
-        }
-        .into()
-    })?;
-    let tasks_executed = executor.statistics().tasks_executed;
-    println!("Rendering done ({} tasks)", tasks_executed);
+    executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
+    //let tasks_executed = executor.statistics().tasks_executed;
+    //println!("Rendering done ({} tasks)", tasks_executed);
 
     Ok(())
 }
