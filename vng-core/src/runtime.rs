@@ -443,6 +443,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 }
             }
             RequestType::CmdBufferCompletion(_id) => {}
+            RequestType::CmdBufferSubmission(_id) => {}
             RequestType::ThreadPoolJob(job, type_) => {
                 self.task_manager.spawn_job(job, type_).unwrap();
             }
@@ -469,13 +470,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn wait_for_async_results(&mut self) {
         for device in self.data.device_contexts {
-            device.try_submit_and_cycle_command_buffer();
+            if let Some(submitted) = device.try_submit_and_cycle_command_buffer() {
+                self.task_graph
+                    .resolved_implied(RequestId::CmdBufferSubmission(submitted));
+            }
         }
 
         let timeout = Duration::from_micros(100);
         for device in self.data.device_contexts {
             for done in device.wait_for_cmd_buffers(timeout) {
-                self.task_graph.resolved_implied(done.into());
+                self.task_graph
+                    .resolved_implied(RequestId::CmdBufferCompletion(done.into()));
             }
         }
 

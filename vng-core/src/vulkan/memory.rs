@@ -181,7 +181,8 @@ impl TransferManager {
             })?;
             unsafe { gpu_buf_out.initialized() };
 
-            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
+            ctx.submit(device.wait_for_current_cmd_buffer_completion())
+                .await;
 
             // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
             // in copying anymore and can be freed.
@@ -223,7 +224,8 @@ impl TransferManager {
                 Ok::<(), crate::Error>(())
             })?;
 
-            ctx.submit(device.wait_for_cmd_buffer_completion()).await;
+            ctx.submit(device.wait_for_current_cmd_buffer_completion())
+                .await;
 
             let out_buf = storage.alloc_slot_raw(key, layout).unwrap();
 

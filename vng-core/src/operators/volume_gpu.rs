@@ -786,7 +786,8 @@ void main()
                             }
                         });
                     }
-                    ctx.submit(device.wait_for_cmd_buffer_completion()).await;
+                    ctx.submit(device.wait_for_current_cmd_buffer_completion())
+                        .await;
                 }
                 unsafe { sum.initialized() };
 

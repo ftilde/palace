@@ -16,7 +16,7 @@ use crate::vulkan::shader::Shader;
 use super::pipeline::{DescriptorConfig, DynamicDescriptorSetPool};
 use super::shader::ShaderSource;
 use super::state::VulkanState;
-use super::{DeviceContext, DeviceId, VulkanContext};
+use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 
 type WindowSize = winit::dpi::PhysicalSize<u32>;
 
@@ -491,7 +491,6 @@ impl SwapChainData {
 
 fn create_sync_objects(device: &DeviceContext) -> SyncObjects {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
-    //let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
 
     SyncObjects {
         image_available_semaphore: unsafe {
@@ -502,7 +501,7 @@ fn create_sync_objects(device: &DeviceContext) -> SyncObjects {
             device.functions().create_semaphore(&semaphore_info, None)
         }
         .unwrap(),
-        //in_flight_fence: unsafe { device.functions().create_fence(&fence_info, None) }.unwrap(),
+        last_use_epoch: CmdBufferEpoch::ancient(),
     }
 }
 
@@ -511,6 +510,7 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 struct SyncObjects {
     image_available_semaphore: vk::Semaphore,
     render_finished_semaphore: vk::Semaphore,
+    last_use_epoch: CmdBufferEpoch,
 }
 
 impl SyncObjects {
@@ -673,7 +673,10 @@ impl Window {
 
         let f = self.current_frame;
         self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
-        let sync_object = &self.sync_objects[f];
+        let sync_object = &mut self.sync_objects[f];
+
+        ctx.submit(device.wait_for_cmd_buffer_completion(sync_object.last_use_epoch))
+            .await;
 
         let image_index = unsafe {
             device
@@ -723,6 +726,8 @@ impl Window {
         };
 
         device.with_cmd_buffer(|cmd| unsafe {
+            sync_object.last_use_epoch = cmd.id().epoch;
+
             cmd.functions().cmd_bind_pipeline(
                 cmd.raw(),
                 vk::PipelineBindPoint::GRAPHICS,
@@ -774,10 +779,8 @@ impl Window {
             cmd.signal_semaphore(sync_object.render_finished_semaphore);
         });
 
-        // TODO: What we actually want here is to wait for the cmd_buffer to be submitted (i
-        // think), but then we also need for it be finished to reuse the semaphores. In short: This
-        // is safe for now but leaves some performance on the table.
-        ctx.submit(device.wait_for_cmd_buffer_completion()).await;
+        ctx.submit(device.wait_for_current_cmd_buffer_submission())
+            .await;
 
         let swap_chains = &[self.swap_chain.inner];
         let image_indices = &[image_index];

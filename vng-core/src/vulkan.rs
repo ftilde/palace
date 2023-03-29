@@ -275,6 +275,14 @@ pub type DeviceId = usize;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferEpoch(usize);
 
+impl CmdBufferEpoch {
+    /// An epoch that definitely lies in the past
+    fn ancient() -> Self {
+        // Since works because we start the first commandbuffer with epoch 1
+        Self(0)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferSubmissionId {
     pub device: DeviceId,
@@ -392,7 +400,7 @@ impl DeviceContext {
 
             // We start epochs at one so that oldest_finished (with value 0) means that none are
             // finished, yet.
-            let oldest_finished = Cell::new(CmdBufferEpoch(0));
+            let oldest_finished = Cell::new(CmdBufferEpoch::ancient());
             let submission_count = Cell::new(1);
 
             let functions = DeviceFunctions {
@@ -546,10 +554,10 @@ impl DeviceContext {
         }
     }
 
-    pub(crate) fn try_submit_and_cycle_command_buffer(&self) {
+    pub(crate) fn try_submit_and_cycle_command_buffer(&self) -> Option<CmdBufferSubmissionId> {
         let mut current = self.current_command_buffer.borrow_mut();
         if !current.used.get() {
-            return;
+            return None;
         }
 
         // Create new
@@ -614,10 +622,56 @@ impl DeviceContext {
         self.waiting_command_buffers
             .borrow_mut()
             .insert(epoch, RawCommandBuffer { buffer, fence });
+        Some(id)
+    }
+
+    #[must_use]
+    pub fn wait_for_current_cmd_buffer_submission<'req, 'irrelevant>(
+        &'req self,
+    ) -> Request<'req, 'irrelevant, ()> {
+        let current = self.current_command_buffer.borrow();
+        let id = current.id;
+        Request {
+            type_: crate::task::RequestType::CmdBufferSubmission(id),
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || {
+                    if ctx.device_contexts[id.device].current_epoch() > id.epoch {
+                        Some(())
+                    } else {
+                        None
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
     }
 
     #[must_use]
     pub fn wait_for_cmd_buffer_completion<'req, 'irrelevant>(
+        &'req self,
+        epoch: CmdBufferEpoch,
+    ) -> Request<'req, 'irrelevant, ()> {
+        let id = CmdBufferSubmissionId {
+            device: self.id,
+            epoch,
+        };
+        Request {
+            type_: crate::task::RequestType::CmdBufferCompletion(id),
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || {
+                    if ctx.device_contexts[id.device].cmd_buffer_completed(id.epoch) {
+                        Some(())
+                    } else {
+                        None
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn wait_for_current_cmd_buffer_completion<'req, 'irrelevant>(
         &'req self,
     ) -> Request<'req, 'irrelevant, ()> {
         let current = self.current_command_buffer.borrow();

@@ -19,7 +19,7 @@ use futures::stream::StreamExt;
 use futures::Stream;
 use pin_project::pin_project;
 
-use derive_more::{Constructor, Deref, DerefMut, From};
+use derive_more::{Constructor, Deref, DerefMut};
 
 #[derive(Deref, DerefMut)]
 pub struct Task<'a, R = ()>(Pin<Box<dyn Future<Output = Result<R, Error>> + 'a>>);
@@ -58,11 +58,11 @@ pub struct RequestGroup<'inv> {
     pub all: Vec<RequestType<'inv>>,
 }
 
-#[derive(From)]
 pub enum RequestType<'inv> {
     Data(DataRequest<'inv>),
     ThreadPoolJob(ThreadPoolJob, JobType),
     CmdBufferCompletion(crate::vulkan::CmdBufferSubmissionId),
+    CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
     Group(RequestGroup<'inv>),
 }
 
@@ -70,6 +70,7 @@ impl RequestType<'_> {
     pub fn id(&self) -> RequestId {
         match self {
             RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
+            RequestType::CmdBufferSubmission(d) => RequestId::CmdBufferSubmission(*d),
             RequestType::Data(d) => RequestId::Data(d.id),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
@@ -123,12 +124,15 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 device_contexts: self.device_contexts,
             });
             match request.type_ {
-                RequestType::Data(_) | RequestType::Group(_) => {
+                RequestType::Data(_)
+                | RequestType::Group(_)
+                | RequestType::CmdBufferCompletion(_)
+                | RequestType::CmdBufferSubmission(_) => {
                     if let Some(res) = poll() {
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
+                RequestType::ThreadPoolJob(_, _) => {}
             };
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
@@ -210,10 +214,13 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         let mut done = Vec::with_capacity(l);
 
         for (i, r) in r.into_iter().enumerate() {
+            //TODO: Try to remove the hack with hash ids and ESPECIALLY the differenciation of
+            //CmdBufferSubmission/Completion.
             match r.id() {
                 RequestId::Data(d) => ids.push(Id::hash(&d)),
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
-                RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&i)),
+                RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&(0, i))),
+                RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
                 RequestId::Group(g) => ids.push(g.0),
             }
             let mut poll = (r.gen_poll)(PollContext {
@@ -221,13 +228,16 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 device_contexts: self.device_contexts,
             });
             match r.type_ {
-                RequestType::Data(_) | RequestType::Group(_) => {
+                RequestType::Data(_)
+                | RequestType::Group(_)
+                | RequestType::CmdBufferCompletion(_)
+                | RequestType::CmdBufferSubmission(_) => {
                     if let Some(v) = poll() {
                         done.push(MaybeUninit::new(v));
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
+                RequestType::ThreadPoolJob(_, _) => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, poll));
@@ -406,13 +416,16 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             device_contexts: self.task_context.device_contexts,
         });
         match req.type_ {
-            RequestType::Data(_) | RequestType::Group(_) => {
+            RequestType::Data(_)
+            | RequestType::Group(_)
+            | RequestType::CmdBufferCompletion(_)
+            | RequestType::CmdBufferSubmission(_) => {
                 if let Some(r) = poll() {
                     self.ready.push_back((r, data));
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) | RequestType::CmdBufferCompletion(_) => {}
+            RequestType::ThreadPoolJob(_, _) => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();

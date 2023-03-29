@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use derive_more::From;
-
 use crate::{
     id::Id,
     operator::{DataId, OperatorId},
@@ -16,12 +14,29 @@ pub struct LocatedDataId {
     pub location: DataLocation,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, From)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
+    CmdBufferSubmission(CmdBufferSubmissionId),
     Data(LocatedDataId),
     Job(JobId),
     Group(GroupId),
+}
+
+impl From<LocatedDataId> for RequestId {
+    fn from(value: LocatedDataId) -> Self {
+        RequestId::Data(value)
+    }
+}
+impl From<JobId> for RequestId {
+    fn from(value: JobId) -> Self {
+        RequestId::Job(value)
+    }
+}
+impl From<GroupId> for RequestId {
+    fn from(value: GroupId) -> Self {
+        RequestId::Group(value)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -35,6 +50,9 @@ impl RequestId {
             RequestId::Group(_) => panic!("Tried to unwrap DataId from RequestId::Group"),
             RequestId::CmdBufferCompletion(_) => {
                 panic!("Tried to unwrap DataId from RequestId::CmdBufferCompletion")
+            }
+            RequestId::CmdBufferSubmission(_) => {
+                panic!("Tried to unwrap DataId from RequestId::CmdBufferSubmission")
             }
         }
     }
