@@ -5,7 +5,7 @@ use vng_core::data::{LocalVoxelPosition, VoxelPosition};
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
 use vng_core::{array, operators::volume_gpu};
-use vng_hdf5::Hdf5VolumeSourceState;
+//use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
 
@@ -65,7 +65,7 @@ fn open_volume(
             let data = path.with_extension("img");
             Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
         }
-        [.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
+        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
         _ => {
             return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
         }

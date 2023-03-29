@@ -7,7 +7,7 @@ use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
 use vng_core::vulkan::window::Window;
-use vng_hdf5::Hdf5VolumeSourceState;
+//use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -64,7 +64,7 @@ fn open_volume(
             let data = path.with_extension("img");
             Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
         }
-        [.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
+        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
         _ => {
             return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
         }
@@ -225,7 +225,7 @@ fn eval_network(
 
     let slice_num = (slice_num.max(0) as u32).into();
 
-    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let rechunked = vol; //volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let slice_metadata = array::ImageMetaData {
         dimensions: window.size(),
