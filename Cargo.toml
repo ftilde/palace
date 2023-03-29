@@ -2,7 +2,7 @@
 
 members = [
     "vng-core",
-    "vng-hdf5",
+    #"vng-hdf5",
     "vng-vvd",
     "vng-nifti",
     "demo-sliceviewer",
