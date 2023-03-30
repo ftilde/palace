@@ -542,11 +542,15 @@ impl Window {
     pub unsafe fn deinitialize(&mut self, context: &crate::vulkan::VulkanContext) {
         let device = &context.device_contexts[self.device_id];
 
+        // Device must be idle before sync objects can be destroyed to make sure they are not in
+        // use anymore
+        let _ = device.functions.device_wait_idle();
+
+        self.swap_chain.deinitialize(device);
         for s in &mut self.sync_objects {
             s.deinitialize(device);
         }
         self.pipeline.deinitialize(device);
-        self.swap_chain.deinitialize(device);
         device.functions.destroy_render_pass(self.render_pass, None);
         context
             .functions
