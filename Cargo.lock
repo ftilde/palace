@@ -2057,6 +2057,7 @@ dependencies = [
  "spirq",
  "spirv",
  "spirv-compiler",
+ "winapi",
  "winit",
  "work-queue",
  "xxhash-rust",

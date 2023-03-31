@@ -10,6 +10,9 @@ use ash::extensions::khr::Swapchain;
 #[cfg(target_family = "unix")]
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
 
+#[cfg(target_family = "windows")]
+use ash::extensions::khr::Win32Surface;
+
 use ash::vk;
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -34,6 +37,8 @@ const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
     XlibSurface::name().as_ptr(),
     #[cfg(target_family = "unix")]
     WaylandSurface::name().as_ptr(),
+    #[cfg(target_family = "windows")]
+    Win32Surface::name().as_ptr(),
 ];
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
     &[PushDescriptor::name().as_ptr(), Swapchain::name().as_ptr()];

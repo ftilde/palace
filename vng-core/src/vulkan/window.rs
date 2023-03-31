@@ -6,8 +6,6 @@ use ash::extensions::khr::{WaylandSurface, XlibSurface};
 use ash::vk;
 use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
-use winit::platform::wayland::WindowExtWayland;
-use winit::platform::x11::WindowExtX11;
 use winit::window::WindowBuilder;
 
 use crate::data::{BrickPosition, GlobalCoordinate, Vector};
@@ -28,6 +26,7 @@ fn create_surface_wayland(
     instance: &ash::Instance,
     window: &winit::window::Window,
 ) -> Option<vk::SurfaceKHR> {
+    use winit::platform::wayland::WindowExtWayland;
     let loader = WaylandSurface::new(entry, instance);
 
     let create_info = vk::WaylandSurfaceCreateInfoKHR::builder()
@@ -44,6 +43,8 @@ fn create_surface_x11(
     instance: &ash::Instance,
     window: &winit::window::Window,
 ) -> Option<vk::SurfaceKHR> {
+    use winit::platform::x11::WindowExtX11;
+
     let x11_display = window.xlib_display()?;
     let x11_window = window.xlib_window()?;
     let create_info = vk::XlibSurfaceCreateInfoKHR::builder()
@@ -59,7 +60,7 @@ fn create_surface_x11(
 }
 
 #[cfg(target_family = "unix")]
-fn create_surface_unix(
+fn create_surface(
     entry: &ash::Entry,
     instance: &ash::Instance,
     window: &winit::window::Window,
@@ -71,13 +72,23 @@ fn create_surface_unix(
     }
 }
 
+#[cfg(target_family = "windows")]
 fn create_surface(
     entry: &ash::Entry,
     instance: &ash::Instance,
     window: &winit::window::Window,
 ) -> vk::SurfaceKHR {
-    #[cfg(target_family = "unix")]
-    create_surface_unix(entry, instance, window)
+    use std::os::raw::c_void;
+    use std::ptr;
+    use winit::platform::windows::WindowExtWindows;
+
+    let hwnd = window.hwnd() as winapi::shared::windef::HWND;
+    let hinstance = winapi::um::libloaderapi::GetModuleHandleW(ptr::null()) as *const c_void;
+    let win32_create_info = vk::Win32SurfaceCreateInfoKHR::builder()
+        .hinstance(hinstance)
+        .hwnd(hwnd as *const c_void);
+    let win32_surface_loader = Win32Surface::new(entry, instance);
+    win32_surface_loader.create_win32_surface(&win32_create_info, None)
 }
 
 struct SwapChainSupportDetails {
