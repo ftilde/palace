@@ -609,15 +609,18 @@ impl DeviceContext {
         let bufs = [prev_cmd_buffer.buffer];
         let wait_semaphores = prev_cmd_buffer.wait_semaphores.borrow();
         let signal_semaphores = prev_cmd_buffer.signal_semaphores.borrow();
+        let wait_dst_masks = vec![vk::PipelineStageFlags::empty(); wait_semaphores.len()];
         let submit = vk::SubmitInfo::builder()
             .command_buffers(&bufs)
             .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_dst_masks)
             .signal_semaphores(&signal_semaphores);
+        let submits = [submit.build()];
         unsafe {
             self.functions
                 .queue_submit(
                     *self.queues.first().unwrap(),
-                    &[submit.build()],
+                    &submits,
                     prev_cmd_buffer.fence,
                 )
                 .expect("Failed to submit command buffers to queue.")
