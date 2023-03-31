@@ -628,6 +628,10 @@ impl DeviceContext {
         let bufs = [prev_cmd_buffer.buffer];
         let wait_semaphores = prev_cmd_buffer.wait_semaphores.borrow();
         let signal_semaphores = prev_cmd_buffer.signal_semaphores.borrow();
+
+        // We have to supply the dst_masks with the same len as wait_semaphores since both share a
+        // len even though we don't have any useful info here (at the moment)
+        // TODO: Switch to submitinfo2 to avoid the possible pitfall
         let wait_dst_masks = vec![vk::PipelineStageFlags::empty(); wait_semaphores.len()];
         let submit = vk::SubmitInfo::builder()
             .command_buffers(&bufs)
