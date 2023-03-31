@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 
+#[cfg(target_family = "unix")]
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
+
 use ash::vk;
 use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
@@ -20,6 +22,7 @@ use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 
 type WindowSize = winit::dpi::PhysicalSize<u32>;
 
+#[cfg(target_family = "unix")]
 fn create_surface_wayland(
     entry: &ash::Entry,
     instance: &ash::Instance,
@@ -35,6 +38,7 @@ fn create_surface_wayland(
     Some(unsafe { loader.create_wayland_surface(&create_info, None) }.unwrap())
 }
 
+#[cfg(target_family = "unix")]
 fn create_surface_x11(
     entry: &ash::Entry,
     instance: &ash::Instance,
@@ -58,7 +62,8 @@ fn create_surface_x11(
     })
 }
 
-fn create_surface(
+#[cfg(target_family = "unix")]
+fn create_surface_unix(
     entry: &ash::Entry,
     instance: &ash::Instance,
     window: &winit::window::Window,
@@ -68,6 +73,15 @@ fn create_surface(
     } else {
         create_surface_x11(entry, instance, window).unwrap()
     }
+}
+
+fn create_surface(
+    entry: &ash::Entry,
+    instance: &ash::Instance,
+    window: &winit::window::Window,
+) -> vk::SurfaceKHR {
+    #[cfg(target_family = "unix")]
+    create_surface_unix(entry, instance, window)
 }
 
 struct SwapChainSupportDetails {
