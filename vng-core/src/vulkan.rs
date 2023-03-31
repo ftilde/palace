@@ -6,6 +6,8 @@ use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr::PushDescriptor;
 use ash::extensions::khr::Surface as SurfaceExt;
 use ash::extensions::khr::Swapchain;
+
+#[cfg(target_family = "unix")]
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
 
 use ash::vk;
@@ -28,7 +30,9 @@ pub mod window;
 const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
     DebugUtils::name().as_ptr(),
     SurfaceExt::name().as_ptr(),
+    #[cfg(target_family = "unix")]
     XlibSurface::name().as_ptr(),
+    #[cfg(target_family = "unix")]
     WaylandSurface::name().as_ptr(),
 ];
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
