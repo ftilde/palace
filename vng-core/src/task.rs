@@ -6,13 +6,13 @@ use std::task::Poll;
 
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
-use crate::runtime::{RequestQueue, TaskHints};
+use crate::runtime::{CompletedBarrierItems, RequestQueue, TaskHints};
 use crate::storage::gpu::WriteHandle;
 use crate::storage::ram::{Storage, WriteHandleUninit};
-use crate::task_graph::{GroupId, LocatedDataId, ProgressIndicator, RequestId, TaskId};
+use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
-use crate::vulkan::DeviceContext;
+use crate::vulkan::{BarrierInfo, DeviceContext};
 use crate::Error;
 use crevice::std430::Std430;
 use futures::stream::StreamExt;
@@ -48,7 +48,7 @@ impl RequestInfo<'_> {
 type ResultPoll<'a, V> = Box<dyn FnMut() -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
-    pub id: LocatedDataId,
+    pub id: VisibleDataId,
     pub source: &'inv dyn OpaqueOperator,
     pub item: TypeErased,
 }
@@ -63,6 +63,7 @@ pub enum RequestType<'inv> {
     ThreadPoolJob(ThreadPoolJob, JobType),
     CmdBufferCompletion(crate::vulkan::CmdBufferSubmissionId),
     CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
+    Barrier(BarrierInfo),
     Group(RequestGroup<'inv>),
 }
 
@@ -71,6 +72,7 @@ impl RequestType<'_> {
         match self {
             RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
             RequestType::CmdBufferSubmission(d) => RequestId::CmdBufferSubmission(*d),
+            RequestType::Barrier(i) => RequestId::Barrier(*i),
             RequestType::Data(d) => RequestId::Data(d.id),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
@@ -106,6 +108,7 @@ pub struct PollContext<'cref> {
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) requests: &'cref RequestQueue<'inv>,
     pub(crate) storage: &'cref Storage,
+    pub(crate) barrier_completions: &'cref CompletedBarrierItems,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
     pub(crate) device_contexts: &'cref [DeviceContext],
@@ -126,6 +129,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             match request.type_ {
                 RequestType::Data(_)
                 | RequestType::Group(_)
+                | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
                 | RequestType::CmdBufferSubmission(_) => {
                     if let Some(res) = poll() {
@@ -221,6 +225,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
                 RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&(0, i))),
                 RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
+                RequestId::Barrier(b_info) => ids.push(Id::hash(&b_info)),
                 RequestId::Group(g) => ids.push(g.0),
             }
             let mut poll = (r.gen_poll)(PollContext {
@@ -230,6 +235,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             match r.type_ {
                 RequestType::Data(_)
                 | RequestType::Group(_)
+                | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
                 | RequestType::CmdBufferSubmission(_) => {
                     if let Some(v) = poll() {
@@ -418,6 +424,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
         match req.type_ {
             RequestType::Data(_)
             | RequestType::Group(_)
+            | RequestType::Barrier(..)
             | RequestType::CmdBufferCompletion(_)
             | RequestType::CmdBufferSubmission(_) => {
                 if let Some(r) = poll() {

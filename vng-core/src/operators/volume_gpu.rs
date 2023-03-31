@@ -13,6 +13,7 @@ use crate::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
         state::RessourceId,
+        DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -90,9 +91,13 @@ void main()
             async move {
                 let device = ctx.vulkan_device();
 
+                let access_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                };
                 let (scale_gpu, offset_gpu, m) = futures::join! {
-                    ctx.submit(scale.request_gpu(device.id, ())),
-                    ctx.submit(offset.request_gpu(device.id, ())),
+                    ctx.submit(scale.request_gpu(device.id, (), access_info)),
+                    ctx.submit(offset.request_gpu(device.id, (), access_info)),
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
@@ -104,9 +109,12 @@ void main()
                 let mut brick_stream =
                     ctx.submit_unordered_with_data(positions.iter().map(|pos| {
                         (
-                            input
-                                .bricks
-                                .request_inplace_gpu(device.id, *pos, ctx.current_op()),
+                            input.bricks.request_inplace_gpu(
+                                device.id,
+                                *pos,
+                                ctx.current_op(),
+                                access_info,
+                            ),
                             *pos,
                         )
                     }));
@@ -143,10 +151,12 @@ void main()
                         }
                     });
 
-                    // TODO: Maybe to allow more parallel access we want to postpone this,
-                    // since this involves a memory barrier
-                    // Possible alternative: Only insert barriers before use/download
-                    unsafe { inplace.initialized() };
+                    unsafe {
+                        inplace.initialized(SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        })
+                    };
                 }
 
                 Ok(())
@@ -270,11 +280,16 @@ void main() {
                     }
                     .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                     .collect::<Vec<_>>();
-                    let intersecting_bricks = ctx.group(
-                        in_brick_positions
-                            .iter()
-                            .map(|pos| input.bricks.request_gpu(device.id, *pos)),
-                    );
+                    let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
+                        input.bricks.request_gpu(
+                            device.id,
+                            *pos,
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        )
+                    }));
 
                     (intersecting_bricks, (pos, in_brick_positions))
                 });
@@ -333,7 +348,12 @@ void main() {
                             }
                         }
                     });
-                    unsafe { gpu_brick_out.initialized() };
+                    unsafe {
+                        gpu_brick_out.initialized(SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        })
+                    };
                 }
 
                 Ok(())
@@ -474,7 +494,14 @@ void main() {
                 let (m_in, kernel_m, kernel_handle) = futures::join!(
                     ctx.submit(input.metadata.request_scalar()),
                     ctx.submit(kernel.metadata.request_scalar()),
-                    ctx.submit(kernel.bricks.request_gpu(device.id, [0].into())),
+                    ctx.submit(kernel.bricks.request_gpu(
+                        device.id,
+                        [0].into(),
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ,
+                        }
+                    )),
                 );
 
                 let m_out = m_in;
@@ -510,11 +537,16 @@ void main() {
                     .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                     .collect::<Vec<_>>();
 
-                    let intersecting_bricks = ctx.group(
-                        in_brick_positions
-                            .iter()
-                            .map(|pos| input.bricks.request_gpu(device.id, *pos)),
-                    );
+                    let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
+                        input.bricks.request_gpu(
+                            device.id,
+                            *pos,
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        )
+                    }));
 
                     (intersecting_bricks, (pos, in_brick_positions))
                 });
@@ -609,7 +641,12 @@ void main() {
                         }
                     });
 
-                    unsafe { gpu_brick_out.initialized() };
+                    unsafe {
+                        gpu_brick_out.initialized(SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        })
+                    };
                 }
 
                 Ok(())
@@ -757,11 +794,19 @@ void main()
                 });
 
                 for chunk in to_request.chunks(batch_size) {
-                    let mut stream = ctx.submit_unordered_with_data(
-                        chunk
-                            .iter()
-                            .map(|pos| (input.bricks.request_gpu(device.id, *pos), *pos)),
-                    );
+                    let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
+                        (
+                            input.bricks.request_gpu(
+                                device.id,
+                                *pos,
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            ),
+                            *pos,
+                        )
+                    }));
                     while let Some((gpu_brick_in, pos)) = stream.next().await {
                         let brick_info = m.chunk_info(pos);
 
@@ -789,7 +834,12 @@ void main()
                     ctx.submit(device.wait_for_current_cmd_buffer_completion())
                         .await;
                 }
-                unsafe { sum.initialized() };
+                unsafe {
+                    sum.initialized(SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
+                    })
+                };
 
                 Ok(())
             }
@@ -919,10 +969,12 @@ void main()
                             }
                         });
 
-                        // TODO: Maybe to allow more parallel access we want to postpone this,
-                        // since this involves a memory barrier
-                        // Possible alternative: Only insert barriers before use/download
-                        unsafe { gpu_brick_out.initialized() };
+                        unsafe {
+                            gpu_brick_out.initialized(SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            })
+                        };
                     }
 
                     Ok(())

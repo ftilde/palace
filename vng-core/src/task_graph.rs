@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     id::Id,
     operator::{DataId, OperatorId},
-    storage::DataLocation,
+    storage::{DataLocation, VisibleDataLocation},
     threadpool::JobId,
-    vulkan::CmdBufferSubmissionId,
+    vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -14,17 +14,24 @@ pub struct LocatedDataId {
     pub location: DataLocation,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct VisibleDataId {
+    pub id: DataId,
+    pub location: VisibleDataLocation,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
     CmdBufferSubmission(CmdBufferSubmissionId),
-    Data(LocatedDataId),
+    Barrier(BarrierInfo),
+    Data(VisibleDataId),
     Job(JobId),
     Group(GroupId),
 }
 
-impl From<LocatedDataId> for RequestId {
-    fn from(value: LocatedDataId) -> Self {
+impl From<VisibleDataId> for RequestId {
+    fn from(value: VisibleDataId) -> Self {
         RequestId::Data(value)
     }
 }
@@ -43,7 +50,7 @@ impl From<GroupId> for RequestId {
 pub struct GroupId(pub Id);
 
 impl RequestId {
-    pub fn unwrap_data(&self) -> LocatedDataId {
+    pub fn unwrap_data(&self) -> VisibleDataId {
         match self {
             RequestId::Data(d) => *d,
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
@@ -53,6 +60,9 @@ impl RequestId {
             }
             RequestId::CmdBufferSubmission(_) => {
                 panic!("Tried to unwrap DataId from RequestId::CmdBufferSubmission")
+            }
+            RequestId::Barrier(..) => {
+                panic!("Tried to unwrap DataId from RequestId::Barrier")
             }
         }
     }
@@ -88,7 +98,7 @@ pub struct TaskGraph {
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
     in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
     groups: BTreeMap<GroupId, BTreeSet<RequestId>>,
-    requested_locations: BTreeMap<DataId, BTreeSet<DataLocation>>,
+    requested_locations: BTreeMap<DataId, BTreeSet<VisibleDataLocation>>,
 }
 
 impl TaskGraph {
@@ -115,7 +125,7 @@ impl TaskGraph {
         }
     }
 
-    pub fn requested_locations(&self, id: DataId) -> BTreeSet<DataLocation> {
+    pub fn requested_locations(&self, id: DataId) -> BTreeSet<VisibleDataLocation> {
         self.requested_locations.get(&id).unwrap().clone()
     }
 
@@ -185,7 +195,7 @@ impl TaskGraph {
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
 
-        self.will_provide.remove(&id).unwrap();
+        self.will_provide.remove(&id);
 
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
@@ -318,7 +328,7 @@ pub fn export(graph: &TaskGraph) {
         for l in l {
             let mut attributes = Vec::new();
             attributes.push(color::default().into_attr());
-            let r_id = d.in_location(*l).into();
+            let r_id = d.with_visibility(*l).into();
             let edge = Edge {
                 ty: EdgeTy::Pair(
                     Vertex::N(request_nodes.get(&r_id).unwrap().clone()),

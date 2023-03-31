@@ -10,9 +10,75 @@ use gpu_allocator::vulkan::AllocationScheme;
 use crate::{
     operator::DataId,
     task_graph::LocatedDataId,
-    vulkan::{CmdBufferEpoch, DeviceContext, DeviceId},
+    vulkan::{
+        CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
+    },
     Error,
 };
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BarrierEpoch(usize);
+
+pub(crate) struct BarrierManager {
+    current_epoch: Cell<usize>,
+    last_issued_ending: RefCell<BTreeMap<(SrcBarrierInfo, DstBarrierInfo), BarrierEpoch>>,
+}
+
+impl BarrierManager {
+    fn new() -> Self {
+        Self {
+            current_epoch: Cell::new(0),
+            last_issued_ending: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    pub(crate) fn issue(
+        &self,
+        cmd: &CommandBuffer,
+        src: SrcBarrierInfo,
+        dst: DstBarrierInfo,
+    ) -> BarrierEpoch {
+        let ending = self.current_epoch.get();
+        let starting = ending + 1;
+        self.current_epoch.set(starting);
+        let ending = BarrierEpoch(ending);
+
+        let memory_barriers = &[vk::MemoryBarrier2::builder()
+            .src_stage_mask(src.stage)
+            .src_access_mask(src.access)
+            .dst_stage_mask(dst.stage)
+            .dst_access_mask(dst.access)
+            .build()];
+        let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
+
+        unsafe {
+            cmd.functions()
+                .cmd_pipeline_barrier2(cmd.raw(), &barrier_info)
+        };
+
+        let mut last_issued_ending = self.last_issued_ending.borrow_mut();
+        last_issued_ending.insert((src, dst), ending);
+
+        ending
+    }
+
+    pub(crate) fn current_epoch(&self) -> BarrierEpoch {
+        BarrierEpoch(self.current_epoch.get())
+    }
+
+    pub(crate) fn is_visible(
+        &self,
+        src: SrcBarrierInfo,
+        dst: DstBarrierInfo,
+        created: BarrierEpoch,
+    ) -> bool {
+        self.last_issued_ending
+            .borrow()
+            .get(&(src, dst))
+            .map(|e| e >= &created)
+            .unwrap_or(false)
+    }
+}
 
 use super::LRUIndex;
 
@@ -22,10 +88,15 @@ enum AccessState {
     None(LRUIndex, CmdBufferEpoch),
 }
 
+struct Visibility {
+    src: SrcBarrierInfo,
+    created: BarrierEpoch,
+}
+
 enum StorageEntryState {
     Registered,
     Initializing(StorageInfo),
-    Initialized(StorageInfo),
+    Initialized(StorageInfo, Visibility),
 }
 
 struct StorageInfo {
@@ -103,9 +174,8 @@ impl Drop for DropError {
 
 impl<'a> WriteHandle<'a> {
     /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn initialized(self) {
+    pub unsafe fn initialized(self, src: SrcBarrierInfo) {
         let WriteHandle {
-            buffer,
             access,
             drop_handler,
             ..
@@ -125,28 +195,18 @@ impl<'a> WriteHandle<'a> {
                 StorageEntryState::Registered => {
                     panic!("Entry should be in state Initializing, but is in Registered");
                 }
-                StorageEntryState::Initialized(_) => {
+                StorageEntryState::Initialized(..) => {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
-                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(info),
+                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(
+                    info,
+                    Visibility {
+                        src,
+                        created: access.storage.barrier_manager.current_epoch(),
+                    },
+                ),
             };
         }
-
-        // Add pipeline barrier
-        // TODO: This is probably not especially efficient
-        let memory_barriers = &[vk::BufferMemoryBarrier2::builder()
-            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-            .buffer(buffer)
-            .offset(0)
-            .size(vk::WHOLE_SIZE)
-            .build()];
-        let barrier_info = vk::DependencyInfo::builder().buffer_memory_barriers(memory_barriers);
-        access.device.with_cmd_buffer(|cmd| {
-            cmd.pipeline_barrier(&barrier_info);
-        });
     }
 }
 
@@ -165,10 +225,10 @@ pub enum InplaceResult<'a> {
 impl<'a> InplaceResult<'a> {
     /// Safety: The corresponding slot (either rw inplace or separate w) has to have been
     /// completely written to.
-    pub unsafe fn initialized(self) {
+    pub unsafe fn initialized(self, info: SrcBarrierInfo) {
         match self {
-            InplaceResult::Inplace(rw) => unsafe { rw.initialized() },
-            InplaceResult::New(_r, w) => unsafe { w.initialized() },
+            InplaceResult::Inplace(rw) => unsafe { rw.initialized(info) },
+            InplaceResult::New(_r, w) => unsafe { w.initialized(info) },
         };
     }
 }
@@ -176,6 +236,7 @@ impl<'a> InplaceResult<'a> {
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
     lru_manager: RefCell<super::LRUManager>,
+    pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
     id: DeviceId,
@@ -186,6 +247,7 @@ impl Storage {
         Self {
             index: Default::default(),
             lru_manager: Default::default(),
+            barrier_manager: BarrierManager::new(),
             allocator,
             new_data: Default::default(),
             id: device,
@@ -199,7 +261,7 @@ impl Storage {
         for entry in index.values_mut() {
             match std::mem::replace(&mut entry.state, StorageEntryState::Registered) {
                 StorageEntryState::Registered => {}
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
                     self.allocator.deallocate(info.allocation);
                 }
             }
@@ -225,7 +287,7 @@ impl Storage {
 
             let info = match entry.state {
                 StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
                     info
                 }
             };
@@ -254,7 +316,7 @@ impl Storage {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, StorageEntryState::Initialized(_)))
+            .map(|e| matches!(e.state, StorageEntryState::Initialized(_, _)))
             .unwrap_or(false)
     }
 
@@ -362,17 +424,42 @@ impl Storage {
         self.alloc_slot_raw(device, key, layout)
     }
 
+    pub fn is_visible(&self, id: DataId, dst_info: DstBarrierInfo) -> Result<(), SrcBarrierInfo> {
+        let index = self.index.borrow();
+        let Some(entry) = index.get(&id) else {
+            panic!("Should only be called on present, initialized data");
+        };
+        let StorageEntryState::Initialized(_info, visibility) = &entry.state else {
+            panic!("Should only be called on present, initialized data");
+        };
+        if self
+            .barrier_manager
+            .is_visible(visibility.src, dst_info, visibility.created)
+        {
+            Ok(())
+        } else {
+            Err(visibility.src)
+        }
+    }
+
     pub fn read<'b, 't: 'b>(
         &'b self,
         access: AccessToken<'t>,
+        dst_info: DstBarrierInfo,
     ) -> Result<ReadHandle<'b>, AccessToken<'t>> {
         let index = self.index.borrow();
         let Some(entry) = index.get(&access.id) else {
             return Err(access);
         };
-        let StorageEntryState::Initialized(info) = &entry.state else {
+        let StorageEntryState::Initialized(info, visibility) = &entry.state else {
             return Err(access);
         };
+        if !self
+            .barrier_manager
+            .is_visible(visibility.src, dst_info, visibility.created)
+        {
+            return Err(access);
+        }
 
         Ok(ReadHandle {
             buffer: info.allocation.buffer,
@@ -386,6 +473,7 @@ impl Storage {
         device: &'b DeviceContext,
         old_access: AccessToken<'t>,
         new_key: DataId,
+        dst_info: DstBarrierInfo,
     ) -> Result<Result<InplaceResult<'b>, Error>, AccessToken<'t>> {
         let old_key = old_access.id;
 
@@ -393,9 +481,15 @@ impl Storage {
         let Some(entry) = index.get(&old_access.id) else {
             return Err(old_access);
         };
-        let StorageEntryState::Initialized(info) = &entry.state else {
+        let StorageEntryState::Initialized(info, visibility) = &entry.state else {
             return Err(old_access)
         };
+        if !self
+            .barrier_manager
+            .is_visible(visibility.src, dst_info, visibility.created)
+        {
+            return Err(old_access);
+        }
 
         // Only allow inplace if we are EXACTLY the one reader
         let in_place_possible = matches!(entry.access, AccessState::Some(1));
@@ -415,7 +509,7 @@ impl Storage {
                 access: AccessState::Some(0),
             });
 
-            let StorageEntryState::Initialized(info) = old_entry.state else {
+            let StorageEntryState::Initialized(info, _) = old_entry.state else {
                 panic!("We already checked that it is initialized and are just moving out now");
             };
             new_entry.state = StorageEntryState::Initializing(info);

@@ -179,7 +179,12 @@ impl TransferManager {
 
                 Ok::<(), crate::Error>(())
             })?;
-            unsafe { gpu_buf_out.initialized() };
+            unsafe {
+                gpu_buf_out.initialized(super::SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::TRANSFER,
+                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                })
+            };
 
             ctx.submit(device.wait_for_current_cmd_buffer_completion())
                 .await;
@@ -203,8 +208,15 @@ impl TransferManager {
         async move {
             let key = access.id;
             let storage = ctx.storage;
-            let Ok(gpu_buf_in) = device.storage.read(access) else {
-                panic!("Data should already be in vram");
+            let dst_info = super::DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::TRANSFER_READ,
+            };
+            if let Err(src_info) = device.storage.is_visible(access.id, dst_info) {
+                ctx.submit(device.barrier(src_info, dst_info)).await;
+            };
+            let Ok(gpu_buf_in) = device.storage.read(access, dst_info) else {
+                panic!("Data should already be in vram and visible");
             };
             let layout = gpu_buf_in.layout;
 

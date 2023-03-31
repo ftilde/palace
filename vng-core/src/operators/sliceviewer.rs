@@ -10,6 +10,7 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         state::RessourceId,
+        DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -233,11 +234,16 @@ void main()
                         }
                         .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                         .collect::<Vec<_>>();
-                        let intersecting_bricks = ctx.group(
-                            in_brick_positions
-                                .iter()
-                                .map(|pos| input.bricks.request_gpu(device.id, *pos)),
-                        );
+                        let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
+                            input.bricks.request_gpu(
+                                device.id,
+                                *pos,
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            )
+                        }));
 
                         (intersecting_bricks, (pos, llb_brick, brick_region_size))
                     })
@@ -318,7 +324,12 @@ void main()
                     // Safety: The buffer was requested above from the same device
                     unsafe { device.tmp_buffers.return_buf(device, brick_index) };
 
-                    unsafe { gpu_brick_out.initialized() };
+                    unsafe {
+                        gpu_brick_out.initialized(SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        })
+                    };
                 }
 
                 Ok(())

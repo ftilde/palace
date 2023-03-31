@@ -298,6 +298,25 @@ pub struct CmdBufferSubmissionId {
     pub epoch: CmdBufferEpoch,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SrcBarrierInfo {
+    pub stage: vk::PipelineStageFlags2,
+    pub access: vk::AccessFlags2,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DstBarrierInfo {
+    pub stage: vk::PipelineStageFlags2,
+    pub access: vk::AccessFlags2,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BarrierInfo {
+    pub src: SrcBarrierInfo,
+    pub dst: DstBarrierInfo,
+    pub device: DeviceId,
+}
+
 #[allow(unused)]
 pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
@@ -693,6 +712,37 @@ impl DeviceContext {
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
                     if ctx.device_contexts[id.device].cmd_buffer_completed(id.epoch) {
+                        Some(())
+                    } else {
+                        None
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn barrier<'req, 'irrelevant>(
+        &'req self,
+        src: SrcBarrierInfo,
+        dst: DstBarrierInfo,
+    ) -> Request<'req, 'irrelevant, ()> {
+        let barrier_info = BarrierInfo {
+            src,
+            dst,
+            device: self.id,
+        };
+        let initial_epoch = self.storage.barrier_manager.current_epoch();
+        Request {
+            type_: crate::task::RequestType::Barrier(barrier_info),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    if self
+                        .storage
+                        .barrier_manager
+                        .is_visible(src, dst, initial_epoch)
+                    {
                         Some(())
                     } else {
                         None

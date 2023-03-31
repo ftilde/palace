@@ -6,12 +6,21 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use crate::{operator::DataId, vulkan::DeviceId};
+use crate::{
+    operator::DataId,
+    vulkan::{DeviceId, DstBarrierInfo},
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum DataLocation {
     Ram,
     VRam(DeviceId),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum VisibleDataLocation {
+    Ram,
+    VRam(DeviceId, DstBarrierInfo),
 }
 
 type LRUIndex = u64;

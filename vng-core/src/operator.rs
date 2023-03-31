@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use crate::{
     id::Id,
-    storage::{gpu, ram, DataLocation},
+    storage::{gpu, ram, DataLocation, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
-    task_graph::LocatedDataId,
-    vulkan::DeviceId,
+    task_graph::{LocatedDataId, VisibleDataId},
+    vulkan::{DeviceId, DstBarrierInfo},
     Error,
 };
 
@@ -49,6 +49,9 @@ impl DataId {
     }
     pub fn in_location(self, location: DataLocation) -> LocatedDataId {
         LocatedDataId { id: self, location }
+    }
+    pub fn with_visibility(self, location: VisibleDataLocation) -> VisibleDataId {
+        VisibleDataId { id: self, location }
     }
 }
 
@@ -103,9 +106,9 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: LocatedDataId {
+                id: VisibleDataId {
                     id,
-                    location: DataLocation::Ram,
+                    location: VisibleDataLocation::Ram,
                 },
                 source: self,
                 item: TypeErased::pack(item),
@@ -182,9 +185,9 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: LocatedDataId {
+                id: VisibleDataId {
                     id,
-                    location: DataLocation::Ram,
+                    location: VisibleDataLocation::Ram,
                 },
                 source: self,
                 item: TypeErased::pack(item),
@@ -214,9 +217,9 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: LocatedDataId {
+                id: VisibleDataId {
                     id: read_id,
-                    location: DataLocation::Ram,
+                    location: VisibleDataLocation::Ram,
                 },
                 source: self,
                 item: TypeErased::pack(item),
@@ -243,14 +246,15 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         &'inv self,
         gpu: DeviceId,
         item: ItemDescriptor,
+        dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
         let id = DataId::new(self.id, &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: LocatedDataId {
+                id: VisibleDataId {
                     id,
-                    location: DataLocation::VRam(gpu),
+                    location: VisibleDataLocation::VRam(gpu, dst_info),
                 },
                 source: self,
                 item: TypeErased::pack(item),
@@ -258,13 +262,15 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
                 let mut access = Some(device.storage.register_access(device, id));
-                Box::new(move || match device.storage.read(access.take().unwrap()) {
-                    Ok(r) => Some(r),
-                    Err(t) => {
-                        access = Some(t);
-                        None
-                    }
-                })
+                Box::new(
+                    move || match device.storage.read(access.take().unwrap(), dst_info) {
+                        Ok(r) => Some(r),
+                        Err(t) => {
+                            access = Some(t);
+                            None
+                        }
+                    },
+                )
             }),
             _marker: Default::default(),
         }
@@ -276,15 +282,16 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         gpu: DeviceId,
         item: ItemDescriptor,
         write_id: OperatorId,
+        dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, Result<gpu::InplaceResult<'req>, Error>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: LocatedDataId {
+                id: VisibleDataId {
                     id: read_id,
-                    location: DataLocation::VRam(gpu),
+                    location: VisibleDataLocation::VRam(gpu, dst_info),
                 },
                 source: self,
                 item: TypeErased::pack(item),
@@ -297,6 +304,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
                         device,
                         access.take().unwrap(),
                         write_id,
+                        dst_info,
                     ) {
                         Ok(r) => Some(r),
                         Err(t) => {

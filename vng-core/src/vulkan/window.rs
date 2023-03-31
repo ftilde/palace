@@ -684,11 +684,14 @@ impl Window {
         let device = &ctx.device_contexts[self.device_id];
 
         let img = ctx
-            .submit(
-                input
-                    .bricks
-                    .request_gpu(device.id, BrickPosition::fill(0.into())),
-            )
+            .submit(input.bricks.request_gpu(
+                device.id,
+                BrickPosition::fill(0.into()),
+                super::DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                },
+            ))
             .await;
 
         let descriptor_config = DescriptorConfig::new([&img]);

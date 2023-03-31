@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -8,12 +8,12 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
-    storage::{ram::Storage, DataLocation},
+    storage::{ram::Storage, DataLocation, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
-    task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId},
+    task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
-    vulkan::{DeviceContext, VulkanContext},
+    vulkan::{BarrierInfo, DeviceContext, VulkanContext},
     Error,
 };
 
@@ -105,6 +105,82 @@ impl<'inv> RequestBatcher<'inv> {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum BarrierItem {
+    Data(VisibleDataId),
+    Barrier(BarrierInfo),
+}
+
+impl Into<RequestId> for BarrierItem {
+    fn into(self) -> RequestId {
+        match self {
+            BarrierItem::Data(d) => RequestId::Data(d),
+            BarrierItem::Barrier(info) => RequestId::Barrier(info),
+        }
+    }
+}
+
+struct BarrierBatcher {
+    pending: BTreeMap<BarrierInfo, (TaskId, BTreeSet<BarrierItem>)>,
+    pending_inv: BTreeMap<TaskId, BarrierInfo>,
+    transfer_count: usize,
+    op_id: OperatorId,
+}
+
+impl BarrierBatcher {
+    fn new() -> Self {
+        Self {
+            pending: BTreeMap::new(),
+            pending_inv: BTreeMap::new(),
+            transfer_count: 0,
+            op_id: OperatorId::new("BarrierBatcher"),
+        }
+    }
+    fn add(&mut self, info: BarrierInfo, item: BarrierItem) -> BatchAddResult {
+        match self.pending.entry(info) {
+            std::collections::btree_map::Entry::Vacant(o) => {
+                let c = self.transfer_count;
+                self.transfer_count += 1;
+                let task_id = TaskId::new(self.op_id, c);
+                o.insert((task_id, {
+                    let mut s = BTreeSet::new();
+                    s.insert(item);
+                    s
+                }));
+                self.pending_inv.insert(task_id, info);
+                BatchAddResult::New(task_id)
+            }
+            std::collections::btree_map::Entry::Occupied(mut o) => {
+                o.get_mut().1.insert(item);
+                BatchAddResult::Existing(o.get().0)
+            }
+        }
+    }
+
+    fn get<'cref, 'inv>(
+        &mut self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        task_id: TaskId,
+    ) -> Option<Task<'cref>> {
+        if let Some(t) = self.pending_inv.remove(&task_id) {
+            let (_, items) = self.pending.remove(&t).unwrap();
+            Some(
+                async move {
+                    let device = &ctx.device_contexts[t.device];
+                    device.with_cmd_buffer(|cmd| {
+                        let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
+                    });
+                    ctx.barrier_completions.set(items);
+                    Ok(())
+                }
+                .into(),
+            )
+        } else {
+            None
+        }
+    }
+}
+
 pub struct RunTime {
     pub ram: crate::storage::ram::Storage,
     pub vulkan: VulkanContext,
@@ -181,6 +257,7 @@ impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
             statistics: Statistics::new(),
             transfer_manager: Default::default(),
             request_batcher: Default::default(),
+            barrier_batcher: BarrierBatcher::new(),
         }
     }
 }
@@ -188,6 +265,7 @@ impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
 pub struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
+    barrier_completions: CompletedBarrierItems,
     thread_spawner: ThreadSpawner,
     pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
@@ -196,10 +274,12 @@ pub struct ContextData<'cref, 'inv> {
 impl<'cref> ContextData<'cref, '_> {
     pub fn new(storage: &'cref Storage, device_contexts: &'cref [DeviceContext]) -> Self {
         let request_queue = RequestQueue::new();
-        let hints = TaskHints::new();
+        let hints = TaskHints::default();
         let thread_spawner = ThreadSpawner::new();
+        let barrier_completions = Default::default();
         ContextData {
             request_queue,
+            barrier_completions,
             hints,
             thread_spawner,
             storage,
@@ -212,6 +292,7 @@ pub struct Executor<'cref, 'inv> {
     pub data: &'cref ContextData<'cref, 'inv>,
     task_manager: TaskManager<'cref>,
     request_batcher: RequestBatcher<'inv>,
+    barrier_batcher: BarrierBatcher,
     task_graph: TaskGraph,
     transfer_manager: crate::vulkan::memory::TransferManager,
     statistics: Statistics,
@@ -227,6 +308,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             requests: &self.data.request_queue,
             storage: &self.data.storage,
             hints: &self.data.hints,
+            barrier_completions: &self.data.barrier_completions,
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
@@ -234,11 +316,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn construct_task(&mut self, id: TaskId) -> Task<'cref> {
-        let (op, batch) = self.request_batcher.get(id.operator());
-        let context = self.context(id);
-        //Safety: The argument batch is precisely for the returned operator, and thus of the right
-        //type.
-        unsafe { op.compute(context, batch) }
+        if let Some(t) = self.barrier_batcher.get(self.context(id), id) {
+            t
+        } else {
+            let (op, batch) = self.request_batcher.get(id.operator());
+            let context = self.context(id);
+            //Safety: The argument batch is precisely for the returned operator, and thus of the right
+            //type.
+            unsafe { op.compute(context, batch) }
+        }
     }
 
     fn try_resolve_implied(&mut self) -> Result<(), Error> {
@@ -343,13 +429,14 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn register_produced_data_from(&mut self, items: impl Iterator<Item = LocatedDataId>) {
         for available in items {
             for requested in self.task_graph.requested_locations(available.id) {
-                let requested = available.id.in_location(requested);
-                if let Some((task_id, transfer_task)) =
-                    self.transfer_if_required(available.id, available.location, requested.location)
+                let requested = VisibleDataId {
+                    id: available.id,
+                    location: requested,
+                };
+                if let Some(task_id) =
+                    self.try_make_available(available.id, available.location, requested.location)
                 {
-                    self.task_manager.add_task(task_id, transfer_task);
-                    self.task_graph.add_implied(task_id);
-                    self.task_graph.will_provide(task_id, available.id);
+                    self.task_graph.will_provide(task_id, requested.id);
                 } else {
                     self.task_graph.resolved_implied(requested.into());
                 }
@@ -361,21 +448,49 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         for device in self.data.device_contexts {
             self.register_produced_data_from(device.storage.newest_data());
         }
+        for item in self.data.barrier_completions.completed.take() {
+            self.task_graph.resolved_implied(item.into());
+        }
     }
 
-    fn transfer_if_required(
-        &self,
+    fn try_make_available(
+        &mut self,
         data: DataId,
         from: DataLocation,
-        to: DataLocation,
-    ) -> Option<(TaskId, Task<'cref>)> {
+        to: VisibleDataLocation,
+    ) -> Option<TaskId> {
         match (from, to) {
-            (DataLocation::Ram, DataLocation::Ram) => None,
-            (DataLocation::VRam(source), DataLocation::VRam(target)) if target == source => None,
-            (DataLocation::VRam(_source), DataLocation::VRam(_target)) => {
+            (DataLocation::Ram, VisibleDataLocation::Ram) => None,
+            (DataLocation::VRam(source), VisibleDataLocation::VRam(target, dst_info))
+                if target == source =>
+            {
+                let device = &self.data.device_contexts[target];
+                match device.storage.is_visible(data, dst_info) {
+                    Ok(()) => None,
+                    Err(src_info) => {
+                        let b_info = BarrierInfo {
+                            device: device.id,
+                            src: src_info,
+                            dst: dst_info,
+                        };
+                        let task_id = match self
+                            .barrier_batcher
+                            .add(b_info, BarrierItem::Data(data.with_visibility(to)))
+                        {
+                            BatchAddResult::New(t) => {
+                                self.task_graph.add_implied(t);
+                                t
+                            }
+                            BatchAddResult::Existing(t) => t,
+                        };
+                        Some(task_id)
+                    }
+                }
+            }
+            (DataLocation::VRam(_source), VisibleDataLocation::VRam(_target, _)) => {
                 panic!("VRam to VRam transfer not implemented, yet")
             }
-            (DataLocation::Ram, DataLocation::VRam(target_id)) => {
+            (DataLocation::Ram, VisibleDataLocation::VRam(target_id, _)) => {
                 let task_id = self.transfer_manager.next_id();
                 let access = self.data.storage.register_access(data);
                 let transfer_task = self.transfer_manager.transfer_to_gpu(
@@ -383,9 +498,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     &self.data.device_contexts[target_id],
                     access,
                 );
-                Some((task_id, transfer_task))
+                self.task_manager.add_task(task_id, transfer_task);
+                self.task_graph.add_implied(task_id);
+                Some(task_id)
             }
-            (DataLocation::VRam(source_id), DataLocation::Ram) => {
+            (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
                 let access = device.storage.register_access(device, data);
@@ -394,7 +511,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     &self.data.device_contexts[source_id],
                     access,
                 );
-                Some((task_id, transfer_task))
+                self.task_manager.add_task(task_id, transfer_task);
+                self.task_graph.add_implied(task_id);
+                Some(task_id)
             }
         }
     }
@@ -422,14 +541,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let data_id = data_request.id;
                 if !already_requested {
                     if let Some(available) = self.find_available_location(data_id.id) {
-                        // Data should not already be present
-                        assert_ne!(available, data_id.location);
-                        let (task_id, transfer_task) = self
-                            .transfer_if_required(data_id.id, available, data_id.location)
+                        // Data should not already be present => unwrap
+                        let task_id = self
+                            .try_make_available(data_id.id, available, data_id.location)
                             .unwrap();
-                        self.task_manager.add_task(task_id, transfer_task);
-                        self.task_graph.add_implied(task_id);
-                        self.task_graph.will_provide(task_id, data_request.id.id);
+                        self.task_graph.will_provide(task_id, data_id.id);
                     } else {
                         let task_id = match self.request_batcher.add(data_request) {
                             BatchAddResult::New(id) => {
@@ -441,6 +557,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         self.task_graph.will_provide(task_id, data_id.id);
                     }
                 }
+            }
+            RequestType::Barrier(b_info) => {
+                let _task_id = match self
+                    .barrier_batcher
+                    .add(b_info, BarrierItem::Barrier(b_info))
+                {
+                    BatchAddResult::New(id) => {
+                        self.task_graph.add_implied(id);
+                        id
+                    }
+                    BatchAddResult::Existing(id) => id,
+                };
             }
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}
@@ -544,17 +672,22 @@ impl Statistics {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct CompletedBarrierItems {
+    completed: Cell<BTreeSet<BarrierItem>>,
+}
+impl CompletedBarrierItems {
+    fn set(&self, completed: BTreeSet<BarrierItem>) {
+        self.completed.set(completed);
+    }
+}
+
+#[derive(Default)]
 pub struct TaskHints {
     pub completed: RefCell<BTreeSet<RequestId>>,
 }
 
 impl TaskHints {
-    pub fn new() -> Self {
-        TaskHints {
-            completed: RefCell::new(BTreeSet::new()),
-        }
-    }
-
     pub fn noticed_completion(&self, id: RequestId) {
         let mut completed = self.completed.borrow_mut();
         completed.remove(&id);
