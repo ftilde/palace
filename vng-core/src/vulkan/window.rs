@@ -46,13 +46,9 @@ fn create_surface_x11(
 ) -> Option<vk::SurfaceKHR> {
     let x11_display = window.xlib_display()?;
     let x11_window = window.xlib_window()?;
-    let create_info = vk::XlibSurfaceCreateInfoKHR {
-        s_type: vk::StructureType::XLIB_SURFACE_CREATE_INFO_KHR,
-        p_next: std::ptr::null(),
-        flags: Default::default(),
-        window: x11_window as vk::Window,
-        dpy: x11_display as *mut vk::Display,
-    };
+    let create_info = vk::XlibSurfaceCreateInfoKHR::builder()
+        .window(x11_window as vk::Window)
+        .dpy(x11_display as *mut vk::Display);
 
     let xlib_surface_loader = XlibSurface::new(entry, instance);
     Some(unsafe {
