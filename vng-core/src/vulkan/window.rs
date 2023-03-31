@@ -3,6 +3,9 @@ use std::cell::RefCell;
 #[cfg(target_family = "unix")]
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
 
+#[cfg(target_family = "windows")]
+use ash::extensions::khr::Win32Surface;
+
 use ash::vk;
 use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
@@ -79,16 +82,16 @@ fn create_surface(
     window: &winit::window::Window,
 ) -> vk::SurfaceKHR {
     use std::os::raw::c_void;
-    use std::ptr;
     use winit::platform::windows::WindowExtWindows;
 
-    let hwnd = window.hwnd() as winapi::shared::windef::HWND;
-    let hinstance = winapi::um::libloaderapi::GetModuleHandleW(ptr::null()) as *const c_void;
+    let hinstance = window.hinstance();
+    let hwnd = window.hwnd();
     let win32_create_info = vk::Win32SurfaceCreateInfoKHR::builder()
-        .hinstance(hinstance)
+        .hinstance(hinstance as *const c_void)
         .hwnd(hwnd as *const c_void);
+		
     let win32_surface_loader = Win32Surface::new(entry, instance);
-    win32_surface_loader.create_win32_surface(&win32_create_info, None)
+	unsafe{ win32_surface_loader.create_win32_surface(&win32_create_info, None) }.unwrap()
 }
 
 struct SwapChainSupportDetails {
