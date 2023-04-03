@@ -134,6 +134,18 @@ impl Default for TransferManager {
     }
 }
 
+struct SendPointer<T>(*mut T);
+impl<T> SendPointer<T> {
+    // Safety: You may only do thread-safe things in other threads after unpacking
+    unsafe fn pack(p: *mut T) -> Self {
+        Self(p)
+    }
+    fn unpack(self) -> *mut T {
+        self.0
+    }
+}
+unsafe impl<T> Send for SendPointer<T> {}
+
 impl TransferManager {
     pub fn next_id(&self) -> TaskId {
         let count = self.transfer_count.get();
@@ -154,16 +166,17 @@ impl TransferManager {
             };
             let layout = input_buf.info.layout;
             let staging_buf = device.staging_to_gpu.request(&device, layout);
-            let out_ptr = staging_buf.mapped_ptr().unwrap();
+            let out_ptr =
+                unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
+            let in_ptr = unsafe { SendPointer::pack(input_buf.info.data) };
 
             // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    input_buf.info.data,
-                    out_ptr.as_ptr().cast(),
-                    layout.size(),
-                )
-            };
+            ctx.submit(ctx.spawn_compute(|| {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
+                };
+            }))
+            .await;
 
             let gpu_buf_out = device.storage.alloc_slot_raw(device, key, layout)?;
             device.with_cmd_buffer(|cmd| {
@@ -245,13 +258,13 @@ impl TransferManager {
             // since we have waited for the command buffer to finish. This content has also reached
             // the mapped region of the staging_buf allocation since it was allocated with
             // HOST_VISIBLE and HOST_COHERENT.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    staging_buf.mapped_ptr().unwrap().as_ptr().cast(),
-                    out_buf.data,
-                    layout.size(),
-                )
-            };
+            let in_ptr =
+                unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
+            let out_ptr = unsafe { SendPointer::pack(out_buf.data) };
+            ctx.submit(ctx.spawn_compute(|| unsafe {
+                std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
+            }))
+            .await;
 
             // Safety: We have just written the complete buffer using a memcpy
             unsafe {
