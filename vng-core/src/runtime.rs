@@ -22,6 +22,10 @@ const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
 
+const PRIORITY_TRANSFER: u32 = 2;
+const PRIORITY_GENERAL_TASK: u32 = 1;
+const PRIORITY_BARRIER: u32 = 0;
+
 struct DataRequestItem {
     id: DataId,
     item: TypeErased,
@@ -346,41 +350,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             self.cycle_cmd_buffers(CMD_BUF_EAGER_CYCLE_TIME);
 
             let ready = self.task_graph.next_implied_ready();
-            if ready.is_empty() {
-                if self.task_graph.has_open_tasks() {
-                    let stuck_time = match stuck_state {
-                        StuckState::Not => Some(std::time::Instant::now()),
-                        StuckState::WaitingSince(t) => Some(t),
-                        StuckState::Reported => None,
-                    };
-                    if let Some(stuck_time) = stuck_time {
-                        if stuck_time.elapsed() > STUCK_TIMEOUT {
-                            eprintln!("Execution appears to be stuck. Generating dependency file");
-                            crate::task_graph::export(&self.task_graph);
-                            //eprintln!("Device states:");
-                            //for device in self.data.device_contexts {
-                            //    let buf = device.current_command_buffer.borrow();
-                            //    eprintln!("{}: {:?}", device.id, buf.id());
-                            //    let waiting = device.waiting_command_buffers.borrow();
-                            //    eprintln!("Waiting: {}", waiting.len());
-                            //    for w in waiting.iter() {
-                            //        eprintln!("{}: {:?}", device.id, w.0);
-                            //    }
-                            //}
-                            stuck_state = StuckState::Reported;
-                        } else {
-                            stuck_state = StuckState::WaitingSince(stuck_time);
-                        }
-                    }
-                    self.wait_for_async_results();
-                    continue;
-                }
+            if let Some(task_id) = ready {
+                stuck_state = StuckState::Not;
 
-                return Ok(());
-            }
-            stuck_state = StuckState::Not;
-
-            for task_id in ready {
                 let resolved_deps =
                     if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
                         let mut tmp = BTreeSet::new();
@@ -430,6 +402,36 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 };
                 self.register_produced_data();
+            } else {
+                if self.task_graph.has_open_tasks() {
+                    let stuck_time = match stuck_state {
+                        StuckState::Not => Some(std::time::Instant::now()),
+                        StuckState::WaitingSince(t) => Some(t),
+                        StuckState::Reported => None,
+                    };
+                    if let Some(stuck_time) = stuck_time {
+                        if stuck_time.elapsed() > STUCK_TIMEOUT {
+                            eprintln!("Execution appears to be stuck. Generating dependency file");
+                            crate::task_graph::export(&self.task_graph);
+                            //eprintln!("Device states:");
+                            //for device in self.data.device_contexts {
+                            //    let buf = device.current_command_buffer.borrow();
+                            //    eprintln!("{}: {:?}", device.id, buf.id());
+                            //    let waiting = device.waiting_command_buffers.borrow();
+                            //    eprintln!("Waiting: {}", waiting.len());
+                            //    for w in waiting.iter() {
+                            //        eprintln!("{}: {:?}", device.id, w.0);
+                            //    }
+                            //}
+                            stuck_state = StuckState::Reported;
+                        } else {
+                            stuck_state = StuckState::WaitingSince(stuck_time);
+                        }
+                    }
+                    self.wait_for_async_results();
+                } else {
+                    return Ok(());
+                }
             }
         }
     }
@@ -486,7 +488,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             .add(b_info, BarrierItem::Data(data.with_visibility(to)))
                         {
                             BatchAddResult::New(t) => {
-                                self.task_graph.add_implied(t);
+                                self.task_graph.add_implied(t, PRIORITY_BARRIER);
                                 t
                             }
                             BatchAddResult::Existing(t) => t,
@@ -507,7 +509,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                 );
                 self.task_manager.add_task(task_id, transfer_task);
-                self.task_graph.add_implied(task_id);
+                self.task_graph.add_implied(task_id, PRIORITY_TRANSFER);
                 Some(task_id)
             }
             (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
@@ -520,7 +522,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                 );
                 self.task_manager.add_task(task_id, transfer_task);
-                self.task_graph.add_implied(task_id);
+                self.task_graph.add_implied(task_id, PRIORITY_TRANSFER);
                 Some(task_id)
             }
         }
@@ -557,7 +559,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     } else {
                         let task_id = match self.request_batcher.add(data_request) {
                             BatchAddResult::New(id) => {
-                                self.task_graph.add_implied(id);
+                                self.task_graph.add_implied(id, PRIORITY_GENERAL_TASK);
                                 id
                             }
                             BatchAddResult::Existing(id) => id,
@@ -572,7 +574,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .add(b_info, BarrierItem::Barrier(b_info))
                 {
                     BatchAddResult::New(id) => {
-                        self.task_graph.add_implied(id);
+                        self.task_graph.add_implied(id, PRIORITY_BARRIER);
                         id
                     }
                     BatchAddResult::Existing(id) => id,

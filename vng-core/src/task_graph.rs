@@ -88,13 +88,60 @@ impl TaskId {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct ReadyQueueItem {
+    priority: u32,
+    id: TaskId,
+}
+
+impl PartialOrd for ReadyQueueItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.priority.partial_cmp(&other.priority)
+    }
+}
+
+impl Ord for ReadyQueueItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority.cmp(&other.priority)
+    }
+}
+
+#[derive(Default)]
+struct ReadyQueue {
+    actually_ready: BTreeSet<TaskId>,
+    queue: std::collections::BinaryHeap<ReadyQueueItem>,
+}
+
+impl ReadyQueue {
+    fn add(&mut self, id: TaskId, priority: u32) {
+        if self.actually_ready.insert(id) {
+            self.queue.push(ReadyQueueItem { priority, id });
+        }
+    }
+
+    fn remove(&mut self, id: TaskId) {
+        // TODO: It would be nice to be able to remove the item from queue, but I don't have a good
+        // idea on how to do that efficiently at the moment...
+        self.actually_ready.remove(&id);
+    }
+
+    fn pop(&mut self) -> Option<TaskId> {
+        while let Some(candidate) = self.queue.pop() {
+            if self.actually_ready.remove(&candidate.id) {
+                return Some(candidate.id);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Default)]
 pub struct TaskGraph {
-    implied_tasks: BTreeSet<TaskId>,
+    implied_tasks: BTreeMap<TaskId, u32>,
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
     will_provide: BTreeMap<TaskId, BTreeSet<DataId>>,
-    implied_ready: BTreeSet<TaskId>,
+    implied_ready: ReadyQueue,
     resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
     in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
     groups: BTreeMap<GroupId, BTreeSet<RequestId>>,
@@ -117,7 +164,7 @@ impl TaskGraph {
             .entry(wants)
             .or_default()
             .insert(wanted, progress_indicator);
-        self.implied_ready.remove(&wants);
+        self.implied_ready.remove(wants);
 
         if let RequestId::Data(d) = wanted {
             let entry = self.requested_locations.entry(d.id).or_default();
@@ -141,11 +188,11 @@ impl TaskGraph {
         entries.insert(data);
     }
 
-    pub fn add_implied(&mut self, id: TaskId) {
-        let inserted = self.implied_tasks.insert(id);
+    pub fn add_implied(&mut self, id: TaskId, priority: u32) {
+        let inserted = self.implied_tasks.insert(id, priority);
         self.waits_on.insert(id, BTreeMap::new());
-        assert!(inserted, "Tried to insert task twice");
-        self.implied_ready.insert(id);
+        assert!(inserted.is_none(), "Tried to insert task twice");
+        self.implied_ready.add(id, priority);
     }
 
     pub fn already_requested(&self, rid: RequestId) -> bool {
@@ -168,8 +215,8 @@ impl TaskGraph {
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
-                if self.implied_tasks.contains(rev_dep) {
-                    self.implied_ready.insert(*rev_dep);
+                if let Some(prio) = self.implied_tasks.get(rev_dep) {
+                    self.implied_ready.add(*rev_dep, *prio);
                 }
             }
         }
@@ -192,7 +239,7 @@ impl TaskGraph {
 
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
-        self.implied_ready.remove(&id);
+        self.implied_ready.remove(id);
         self.resolved_deps.remove(&id);
 
         self.will_provide.remove(&id);
@@ -202,10 +249,8 @@ impl TaskGraph {
         //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
     }
 
-    pub fn next_implied_ready(&mut self) -> BTreeSet<TaskId> {
-        let mut ready = BTreeSet::new();
-        std::mem::swap(&mut self.implied_ready, &mut ready);
-        ready
+    pub fn next_implied_ready(&mut self) -> Option<TaskId> {
+        self.implied_ready.pop()
     }
 
     pub fn has_open_tasks(&self) -> bool {
