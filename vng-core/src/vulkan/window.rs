@@ -89,9 +89,9 @@ fn create_surface(
     let win32_create_info = vk::Win32SurfaceCreateInfoKHR::builder()
         .hinstance(hinstance as *const c_void)
         .hwnd(hwnd as *const c_void);
-		
+
     let win32_surface_loader = Win32Surface::new(entry, instance);
-	unsafe{ win32_surface_loader.create_win32_surface(&win32_create_info, None) }.unwrap()
+    unsafe { win32_surface_loader.create_win32_surface(&win32_create_info, None) }.unwrap()
 }
 
 struct SwapChainSupportDetails {
@@ -806,8 +806,14 @@ impl Window {
 
             device.functions().cmd_end_render_pass(cmd.raw());
 
-            cmd.wait_semaphore(sync_object.image_available_semaphore);
-            cmd.signal_semaphore(sync_object.render_finished_semaphore);
+            cmd.wait_semaphore(
+                vk::SemaphoreSubmitInfo::builder()
+                    .semaphore(sync_object.image_available_semaphore)
+                    .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
+            );
+            cmd.signal_semaphore(
+                vk::SemaphoreSubmitInfo::builder().semaphore(sync_object.render_finished_semaphore),
+            );
         });
 
         ctx.submit(device.wait_for_current_cmd_buffer_submission())

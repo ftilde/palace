@@ -246,8 +246,8 @@ pub struct CommandBuffer {
     functions: DeviceFunctions,
     oldest_finished_epoch: CmdBufferEpoch,
     used: Cell<bool>,
-    wait_semaphores: RefCell<Vec<vk::Semaphore>>,
-    signal_semaphores: RefCell<Vec<vk::Semaphore>>,
+    wait_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
+    signal_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
 }
 
 impl CommandBuffer {
@@ -270,12 +270,12 @@ impl CommandBuffer {
         };
     }
 
-    pub fn wait_semaphore(&self, s: vk::Semaphore) {
-        self.wait_semaphores.borrow_mut().push(s);
+    pub fn wait_semaphore(&self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
+        self.wait_semaphores.borrow_mut().push(*s);
     }
 
-    pub fn signal_semaphore(&self, s: vk::Semaphore) {
-        self.signal_semaphores.borrow_mut().push(s);
+    pub fn signal_semaphore(&self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
+        self.signal_semaphores.borrow_mut().push(*s);
     }
 }
 
@@ -625,23 +625,20 @@ impl DeviceContext {
                 .end_command_buffer(prev_cmd_buffer.buffer)
                 .unwrap()
         };
-        let bufs = [prev_cmd_buffer.buffer];
         let wait_semaphores = prev_cmd_buffer.wait_semaphores.borrow();
         let signal_semaphores = prev_cmd_buffer.signal_semaphores.borrow();
 
-        // We have to supply the dst_masks with the same len as wait_semaphores since both share a
-        // len even though we don't have any useful info here (at the moment)
-        // TODO: Switch to submitinfo2 to avoid the possible pitfall
-        let wait_dst_masks = vec![vk::PipelineStageFlags::empty(); wait_semaphores.len()];
-        let submit = vk::SubmitInfo::builder()
-            .command_buffers(&bufs)
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_dst_masks)
-            .signal_semaphores(&signal_semaphores);
+        let cmd_infos = [vk::CommandBufferSubmitInfo::builder()
+            .command_buffer(prev_cmd_buffer.buffer)
+            .build()];
+        let submit = vk::SubmitInfo2::builder()
+            .command_buffer_infos(&cmd_infos)
+            .wait_semaphore_infos(&wait_semaphores)
+            .signal_semaphore_infos(&signal_semaphores);
         let submits = [submit.build()];
         unsafe {
             self.functions
-                .queue_submit(
+                .queue_submit2(
                     *self.queues.first().unwrap(),
                     &submits,
                     prev_cmd_buffer.fence,
