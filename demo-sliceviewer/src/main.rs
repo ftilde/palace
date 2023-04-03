@@ -225,7 +225,7 @@ fn eval_network(
 
     let slice_num = (slice_num.max(0) as u32).into();
 
-    let rechunked = vol; //volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let slice_metadata = array::ImageMetaData {
         dimensions: window.size(),
@@ -244,7 +244,7 @@ fn eval_network(
         crate::operators::scalar::constant_hash(slice_metadata),
         slice_proj,
     );
-    let slice_one_chunk = crate::operators::volume::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice_one_chunk = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
