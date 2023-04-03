@@ -43,6 +43,12 @@ const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
     &[PushDescriptor::name().as_ptr(), Swapchain::name().as_ptr()];
 
+#[cfg(debug_assertions)]
+const DEFAULT_LAYER_NAMES: &[&CStr] = &[cstr::cstr!("VK_LAYER_KHRONOS_validation")];
+
+#[cfg(not(debug_assertions))]
+const DEFAULT_LAYER_NAMES: &[&CStr] = &[];
+
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -105,8 +111,7 @@ impl VulkanContext {
                 .engine_name(application_name)
                 .api_version(vk::API_VERSION_1_3);
 
-            let layer_names = [cstr::cstr!("VK_LAYER_KHRONOS_validation")];
-            let layer_names_raw: Vec<*const c_char> = layer_names
+            let layer_names_raw: Vec<*const c_char> = DEFAULT_LAYER_NAMES
                 .iter()
                 .map(|raw_name| raw_name.as_ptr())
                 .collect();
