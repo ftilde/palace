@@ -7,6 +7,7 @@ use crate::{
     data::{BrickPosition, GlobalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
+    task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         state::RessourceId,
@@ -254,61 +255,68 @@ void main()
                         ComputePipeline::new(device, SHADER, false)
                     });
 
-                let mut stream = ctx.submit_unordered_with_data(requests.into_iter());
-                while let Some((intersecting_bricks, (pos, llb_brick, brick_region_size))) =
-                    stream.next().await
-                {
-                    let out_info = m.chunk_info(pos);
-                    let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                let mut stream = ctx
+                    .submit_unordered_with_data(requests.into_iter())
+                    .then_req_with_data(
+                        *ctx,
+                        |(intersecting_bricks, (pos, llb_brick, brick_region_size))| {
+                            let out_info = m.chunk_info(pos);
+                            let gpu_brick_out = ctx
+                                .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                                .unwrap();
 
-                    let brick_index_layout = std::alloc::Layout::array::<u64>(max_bricks).unwrap();
-                    let brick_index = device.tmp_buffers.request(device, brick_index_layout);
+                            let brick_index_layout =
+                                std::alloc::Layout::array::<u64>(max_bricks).unwrap();
+                            let brick_index =
+                                device.tmp_buffers.request(device, brick_index_layout);
 
+                            let addrs = intersecting_bricks
+                                .iter()
+                                .map(|brick| {
+                                    let info = ash::vk::BufferDeviceAddressInfo::builder()
+                                        .buffer(brick.buffer);
+                                    unsafe { device.functions().get_buffer_device_address(&info) }
+                                })
+                                .collect::<Vec<_>>();
+
+                            device.with_cmd_buffer(|cmd| {
+                                unsafe {
+                                    device.functions().cmd_update_buffer(
+                                        cmd.raw(),
+                                        brick_index.allocation.buffer,
+                                        0,
+                                        bytemuck::cast_slice(&addrs),
+                                    )
+                                };
+                            });
+                            let barrier_req = device.barrier(
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                                },
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            );
+
+                            let consts = PushConstants {
+                                transform,
+                                vol_dim: m_in.dimensions.raw().into(),
+                                chunk_dim: m_in.chunk_size.raw().into(),
+                                brick_region_size: brick_region_size.raw().into(),
+                                llb_brick: llb_brick.raw().into(),
+                                out_begin: out_info.begin.drop_dim(2).raw().into(),
+                                out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
+                            };
+
+                            (barrier_req, (consts, brick_index, gpu_brick_out))
+                        },
+                    );
+
+                while let Some(((), (consts, brick_index, gpu_brick_out))) = stream.next().await {
                     let chunk_size = m2d.chunk_size.raw();
                     let global_size = [1, chunk_size.y(), chunk_size.x()].into();
-
-                    let addrs = intersecting_bricks
-                        .iter()
-                        .map(|brick| {
-                            let info =
-                                ash::vk::BufferDeviceAddressInfo::builder().buffer(brick.buffer);
-                            unsafe { device.functions().get_buffer_device_address(&info) }
-                        })
-                        .collect::<Vec<_>>();
-
-                    device.with_cmd_buffer(|cmd| {
-                        unsafe {
-                            device.functions().cmd_update_buffer(
-                                cmd.raw(),
-                                brick_index.allocation.buffer,
-                                0,
-                                bytemuck::cast_slice(&addrs),
-                            )
-                        };
-                    });
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ,
-                        },
-                    ))
-                    .await;
-
-                    let consts = PushConstants {
-                        transform,
-                        vol_dim: m_in.dimensions.raw().into(),
-                        chunk_dim: m_in.chunk_size.raw().into(),
-                        brick_region_size: brick_region_size.raw().into(),
-                        llb_brick: llb_brick.raw().into(),
-                        out_begin: out_info.begin.drop_dim(2).raw().into(),
-                        out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
-                    };
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config =
