@@ -250,13 +250,13 @@ pub struct CommandBuffer {
     id: CmdBufferSubmissionId,
     functions: DeviceFunctions,
     oldest_finished_epoch: CmdBufferEpoch,
-    used: Cell<bool>,
+    used_since: Cell<Option<std::time::Instant>>,
     wait_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
     signal_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
 }
 
 impl CommandBuffer {
-    pub unsafe fn raw(&self) -> vk::CommandBuffer {
+    pub unsafe fn raw(&mut self) -> vk::CommandBuffer {
         self.buffer
     }
 
@@ -268,12 +268,19 @@ impl CommandBuffer {
         &self.functions
     }
 
-    pub fn wait_semaphore(&self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
+    pub fn wait_semaphore(&mut self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
         self.wait_semaphores.borrow_mut().push(*s);
     }
 
-    pub fn signal_semaphore(&self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
+    pub fn signal_semaphore(&mut self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
         self.signal_semaphores.borrow_mut().push(*s);
+    }
+
+    pub fn age(&self) -> std::time::Duration {
+        self.used_since
+            .get()
+            .map(|b| b.elapsed())
+            .unwrap_or(std::time::Duration::from_secs(0))
     }
 }
 
@@ -574,7 +581,7 @@ impl DeviceContext {
             id,
             functions,
             oldest_finished_epoch,
-            used: Cell::new(false),
+            used_since: Cell::new(None),
             wait_semaphores: Default::default(),
             signal_semaphores: Default::default(),
         }
@@ -582,7 +589,7 @@ impl DeviceContext {
 
     pub(crate) fn try_submit_and_cycle_command_buffer(&self) -> Option<CmdBufferSubmissionId> {
         let mut current = self.current_command_buffer.borrow_mut();
-        if !current.used.get() {
+        if current.used_since.get().is_none() {
             return None;
         }
 
@@ -824,9 +831,17 @@ impl DeviceContext {
         result
     }
 
+    pub fn cmd_buffer_age(&self) -> std::time::Duration {
+        self.current_command_buffer.borrow().age()
+    }
     pub fn with_cmd_buffer<R, F: FnOnce(&mut CommandBuffer) -> R>(&self, f: F) -> R {
         let mut cmd_buf = self.current_command_buffer.borrow_mut();
-        cmd_buf.used.set(true);
+        cmd_buf.used_since.set(
+            cmd_buf
+                .used_since
+                .get()
+                .or_else(|| Some(std::time::Instant::now())),
+        );
 
         f(&mut cmd_buf)
     }

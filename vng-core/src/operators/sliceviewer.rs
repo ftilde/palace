@@ -323,7 +323,7 @@ void main()
                             DescriptorConfig::new([&gpu_brick_out, &brick_index]);
 
                         unsafe {
-                            let pipeline = pipeline.bind(cmd);
+                            let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(consts);
                             pipeline.write_descriptor_set(0, descriptor_config);

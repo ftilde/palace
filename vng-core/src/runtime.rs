@@ -17,6 +17,11 @@ use crate::{
     Error,
 };
 
+const CMD_BUF_EAGER_CYCLE_TIME: Duration = Duration::from_millis(10);
+const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
+const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
+const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
+
 struct DataRequestItem {
     id: DataId,
     item: TypeErased,
@@ -169,6 +174,7 @@ impl BarrierBatcher {
                     let device = &ctx.device_contexts[t.device];
                     device.with_cmd_buffer(|cmd| {
                         let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
+                        //println!("barrier: {:?}, {:?}", t.src, t.dst);
                     });
                     ctx.barrier_completions.set(items);
                     Ok(())
@@ -337,6 +343,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
         let mut stuck_state = StuckState::Not;
         loop {
+            self.cycle_cmd_buffers(CMD_BUF_EAGER_CYCLE_TIME);
+
             let ready = self.task_graph.next_implied_ready();
             if ready.is_empty() {
                 if self.task_graph.has_open_tasks() {
@@ -346,7 +354,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         StuckState::Reported => None,
                     };
                     if let Some(stuck_time) = stuck_time {
-                        if stuck_time.elapsed() > std::time::Duration::from_secs(5) {
+                        if stuck_time.elapsed() > STUCK_TIMEOUT {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
                             crate::task_graph::export(&self.task_graph);
                             //eprintln!("Device states:");
@@ -596,23 +604,29 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn wait_for_async_results(&mut self) {
+    fn cycle_cmd_buffers(&mut self, min_age: Duration) {
         for device in self.data.device_contexts {
-            if let Some(submitted) = device.try_submit_and_cycle_command_buffer() {
-                self.task_graph
-                    .resolved_implied(RequestId::CmdBufferSubmission(submitted));
+            if device.cmd_buffer_age() >= min_age {
+                if let Some(submitted) = device.try_submit_and_cycle_command_buffer() {
+                    //println!("Cycling command buffer {:?}", submitted);
+                    self.task_graph
+                        .resolved_implied(RequestId::CmdBufferSubmission(submitted));
+                }
             }
         }
+    }
 
-        let timeout = Duration::from_micros(100);
+    fn wait_for_async_results(&mut self) {
+        self.cycle_cmd_buffers(Duration::from_secs(0));
+
         for device in self.data.device_contexts {
-            for done in device.wait_for_cmd_buffers(timeout) {
+            for done in device.wait_for_cmd_buffers(WAIT_TIMEOUT_GPU) {
                 self.task_graph
                     .resolved_implied(RequestId::CmdBufferCompletion(done.into()));
             }
         }
 
-        let jobs = self.task_manager.wait_for_jobs(timeout);
+        let jobs = self.task_manager.wait_for_jobs(WAIT_TIMEOUT_CPU);
         for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
         }

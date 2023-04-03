@@ -95,8 +95,9 @@ impl ComputePipeline {
     }
 
     pub unsafe fn bind<'a>(&'a self, cmd: &'a mut CommandBuffer) -> BoundPipeline<'a> {
+        let cmd_raw = cmd.raw();
         cmd.functions()
-            .cmd_bind_pipeline(cmd.raw(), vk::PipelineBindPoint::COMPUTE, self.pipeline);
+            .cmd_bind_pipeline(cmd_raw, vk::PipelineBindPoint::COMPUTE, self.pipeline);
         BoundPipeline {
             pipeline: self,
             cmd,
@@ -215,14 +216,19 @@ pub struct BoundPipeline<'a> {
                                 //the BoundPipeline's lifetime (barring unsafe operations).
 }
 impl<'a> BoundPipeline<'a> {
-    pub fn push_descriptor_set<const N: usize>(&self, bind_set: u32, config: DescriptorConfig<N>) {
+    pub fn push_descriptor_set<const N: usize>(
+        &mut self,
+        bind_set: u32,
+        config: DescriptorConfig<N>,
+    ) {
         let writes = config.writes_for_push();
         unsafe {
+            let cmd_raw = self.cmd.raw();
             self.cmd
                 .functions()
                 .push_descriptor_ext
                 .cmd_push_descriptor_set(
-                    self.cmd.raw(),
+                    cmd_raw,
                     vk::PipelineBindPoint::COMPUTE,
                     self.pipeline.pipeline_layout,
                     bind_set,
@@ -231,7 +237,11 @@ impl<'a> BoundPipeline<'a> {
         }
     }
 
-    pub fn write_descriptor_set<const N: usize>(&self, bind_set: u32, config: DescriptorConfig<N>) {
+    pub fn write_descriptor_set<const N: usize>(
+        &mut self,
+        bind_set: u32,
+        config: DescriptorConfig<N>,
+    ) {
         let ds_pool = self.pipeline.ds_pools.get(bind_set as usize).unwrap();
         let mut ds_pool = ds_pool.borrow_mut();
         // Safety: We only use `ds` with the current cmdbuffer
@@ -239,10 +249,11 @@ impl<'a> BoundPipeline<'a> {
 
         let writes = config.writes_for_set(ds);
         unsafe {
+            let cmd_raw = self.cmd.raw();
             self.cmd.functions().update_descriptor_sets(&writes, &[]);
 
             self.cmd.functions().cmd_bind_descriptor_sets(
-                self.cmd.raw(),
+                cmd_raw,
                 vk::PipelineBindPoint::COMPUTE,
                 self.pipeline.pipeline_layout,
                 bind_set,
@@ -252,7 +263,7 @@ impl<'a> BoundPipeline<'a> {
         }
     }
 
-    pub fn push_constant<T: AsStd140>(&self, val: T) {
+    pub fn push_constant<T: AsStd140>(&mut self, val: T) {
         let v = val.as_std140();
         let bytes = v.as_bytes();
 
@@ -263,8 +274,9 @@ impl<'a> BoundPipeline<'a> {
         // - crevice appears to think that the size is rounded up to the alignment of the struct.
         let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
         unsafe {
+            let cmd_raw = self.cmd.raw();
             self.cmd.functions().cmd_push_constants(
-                self.cmd.raw(),
+                cmd_raw,
                 self.pipeline.pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
@@ -273,16 +285,17 @@ impl<'a> BoundPipeline<'a> {
         }
     }
 
-    pub unsafe fn dispatch(&self, global_size: usize) {
+    pub unsafe fn dispatch(&mut self, global_size: usize) {
         self.dispatch3d([1u32, 1, global_size.try_into().unwrap()].into())
     }
 
-    pub unsafe fn dispatch3d(&self, global_size: Vector<3, u32>) {
+    pub unsafe fn dispatch3d(&mut self, global_size: Vector<3, u32>) {
         let num_wgs = crate::util::div_round_up(global_size, self.pipeline.local_size);
 
+        let cmd_raw = self.cmd.raw();
         self.cmd
             .functions()
-            .cmd_dispatch(self.cmd.raw(), num_wgs.x(), num_wgs.y(), num_wgs.z());
+            .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
     }
 }
 

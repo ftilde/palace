@@ -140,7 +140,7 @@ void main()
                         let global_size = brick_info.mem_elements();
 
                         unsafe {
-                            let pipeline = pipeline.bind(cmd);
+                            let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(PushConstants {
                                 chunk_pos: pos.into_elem::<u32>().into(),
@@ -333,7 +333,7 @@ void main() {
 
                             //TODO initialization of outside regions
                             unsafe {
-                                let pipeline = pipeline.bind(cmd);
+                                let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant(PushConstants {
                                     mem_size_in: m_in.chunk_size.into_elem::<u32>().into(),
@@ -633,7 +633,7 @@ void main() {
                         ]);
 
                         unsafe {
-                            let pipeline = pipeline.bind(cmd);
+                            let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(consts);
                             pipeline.push_descriptor_set(0, descriptor_config);
@@ -819,7 +819,7 @@ void main()
                             let global_size = brick_info.mem_elements();
 
                             unsafe {
-                                let pipeline = pipeline.bind(cmd);
+                                let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant(PushConstants {
                                     mem_dim: brick_info.mem_dimensions.into_elem::<u32>().into(),
@@ -955,7 +955,7 @@ void main()
                             let global_size = brick_info.mem_elements();
 
                             unsafe {
-                                let pipeline = pipeline.bind(cmd);
+                                let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant(PushConstants {
                                     offset: brick_info.begin.into_elem::<u32>().into(),

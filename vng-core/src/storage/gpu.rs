@@ -34,7 +34,7 @@ impl BarrierManager {
 
     pub(crate) fn issue(
         &self,
-        cmd: &CommandBuffer,
+        cmd: &mut CommandBuffer,
         src: SrcBarrierInfo,
         dst: DstBarrierInfo,
     ) -> BarrierEpoch {
@@ -52,9 +52,10 @@ impl BarrierManager {
         let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
 
         unsafe {
+            let cmd_raw = cmd.raw();
             cmd.functions()
-                .cmd_pipeline_barrier2(cmd.raw(), &barrier_info)
-        };
+                .cmd_pipeline_barrier2(cmd_raw, &barrier_info);
+        }
 
         let mut last_issued_ending = self.last_issued_ending.borrow_mut();
         last_issued_ending.insert((src, dst), ending);

@@ -759,7 +759,7 @@ impl Window {
         device.with_cmd_buffer(|cmd| unsafe {
             sync_object.last_use_epoch = cmd.id().epoch;
 
-            cmd.functions().cmd_bind_pipeline(
+            device.functions().cmd_bind_pipeline(
                 cmd.raw(),
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline.pipeline,
