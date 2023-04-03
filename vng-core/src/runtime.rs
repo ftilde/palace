@@ -619,14 +619,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn wait_for_async_results(&mut self) {
         self.cycle_cmd_buffers(Duration::from_secs(0));
 
+        let mut gpu_work_done = false;
         for device in self.data.device_contexts {
             for done in device.wait_for_cmd_buffers(WAIT_TIMEOUT_GPU) {
                 self.task_graph
                     .resolved_implied(RequestId::CmdBufferCompletion(done.into()));
+                gpu_work_done = true;
             }
         }
 
-        let jobs = self.task_manager.wait_for_jobs(WAIT_TIMEOUT_CPU);
+        let cpu_wait_timeout = if gpu_work_done {
+            Duration::from_secs(0)
+        } else {
+            WAIT_TIMEOUT_CPU
+        };
+        let jobs = self.task_manager.wait_for_jobs(cpu_wait_timeout);
         for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
         }
