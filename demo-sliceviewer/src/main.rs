@@ -11,6 +11,7 @@ use vng_core::vulkan::window::Window;
 use vng_nifti::NiftiVolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
+use winit::platform::run_return::EventLoopExtRunReturn;
 
 use vng_core::{array, data::Vector};
 
@@ -114,13 +115,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
 
-    let event_loop = EventLoop::new();
+    let mut event_loop = EventLoop::new();
 
     let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
-    //event_loop.set_device_event_filter(winit::event_loop::DeviceEventFilter::Never);
 
-    event_loop.run(move |event, _, control_flow| {
-        //control_flow.set_poll();
+    event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
 
         match event {
@@ -128,13 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                println!("The close button was pressed; stopping");
                 control_flow.set_exit();
-            }
-            Event::LoopDestroyed => {
-                // TODO: This is not a particularly nice way to handle this. See if we can hold a
-                // reference to the present device etc. in window.
-                unsafe { window.deinitialize(&runtime.vulkan) };
             }
             Event::MainEventsCleared => {
                 // Application update code.
@@ -209,6 +202,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => (),
         }
     });
+
+    unsafe { window.deinitialize(&runtime.vulkan) };
+
+    Ok(())
 }
 
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
