@@ -263,13 +263,6 @@ impl CommandBuffer {
         &self.functions
     }
 
-    pub fn pipeline_barrier(&self, barrier_info: &vk::DependencyInfo) {
-        unsafe {
-            self.functions
-                .cmd_pipeline_barrier2(self.buffer, &barrier_info)
-        };
-    }
-
     pub fn wait_semaphore(&self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
         self.wait_semaphores.borrow_mut().push(*s);
     }

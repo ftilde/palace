@@ -278,14 +278,6 @@ void main()
                         })
                         .collect::<Vec<_>>();
 
-                    let memory_barriers = &[vk::MemoryBarrier2::builder()
-                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                        .build()];
-                    let barrier_info =
-                        vk::DependencyInfo::builder().memory_barriers(memory_barriers);
                     device.with_cmd_buffer(|cmd| {
                         unsafe {
                             device.functions().cmd_update_buffer(
@@ -295,8 +287,18 @@ void main()
                                 bytemuck::cast_slice(&addrs),
                             )
                         };
-                        cmd.pipeline_barrier(&barrier_info);
                     });
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ,
+                        },
+                    ))
+                    .await;
 
                     let consts = PushConstants {
                         transform,
