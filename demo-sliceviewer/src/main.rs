@@ -173,12 +173,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             VirtualKeyCode::Key4 => {
                                 offset = (offset - 0.01).clamp(0.0, 1.0);
                             }
+                            VirtualKeyCode::Plus => {
+                                slice_num += 1;
+                            }
+                            VirtualKeyCode::Minus => {
+                                slice_num -= 1;
+                            }
                             _ => {
                                 something_happened = false;
                             }
                         }
                         if something_happened {
-                            println!("Scale: {}, Offset: {}", scale, offset);
+                            println!("Slice: {}, Scale: {}, Offset: {}", slice_num, scale, offset);
                         }
                     }
                 }
