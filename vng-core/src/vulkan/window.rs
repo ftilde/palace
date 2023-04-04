@@ -852,17 +852,17 @@ vec2 positions[3] = vec2[](
     vec2(-1.0, 1.0)
 );
 
-vec2 colors[3] = vec2[](
+vec2 texture_positions[3] = vec2[](
     vec2(0.0, 2.0),
     vec2(2.0, 0.0),
     vec2(0.0, 0.0)
 );
 
-layout(location = 0) out vec2 fragColor;
+layout(location = 0) out vec2 texture_pos;
 
 void main() {
     gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-    fragColor = colors[gl_VertexIndex];
+    texture_pos = texture_positions[gl_VertexIndex];
 }
 ";
 
@@ -878,16 +878,16 @@ layout(std140, push_constant) uniform PushConstants
     uvec2 size;
 } constants;
 
-layout(location = 0) out vec4 outColor;
-layout(location = 0) in vec2 fragColor;
+layout(location = 0) out vec4 out_color;
+layout(location = 0) in vec2 texture_pos;
 
 void main() {
-    vec2 norm_pos = fragColor;
+    vec2 norm_pos = texture_pos;
     uvec2 buffer_pos = uvec2(norm_pos * vec2(constants.size));
     uint buffer_index = buffer_pos.x + buffer_pos.y * constants.size.x;
 
     for(int c = 0; c < 4; ++c) {
-        outColor[c] = sourceData.values[4*buffer_index + c];
+        out_color[c] = sourceData.values[4*buffer_index + c];
     }
 }
 ";
