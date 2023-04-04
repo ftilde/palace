@@ -136,15 +136,13 @@ void main()
         //TODO: Maybe revisit this +0.5 -0.5 business.
         vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 1);
         vec3 sample_pos_f = consts.transform * pos - vec3(0.5);
-        uvec3 sample_pos = uvec3(floor(sample_pos_f + vec3(0.5)));
+        ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
+        ivec3 vol_dim = ivec3(consts.vol_dim);
 
-        if(sample_pos.x < consts.vol_dim.x && sample_pos.y < consts.vol_dim.y && sample_pos.z < consts.vol_dim.z) {
+        if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
             uvec3 sample_brick = sample_pos / consts.chunk_dim;
             uvec3 urb_brick = consts.brick_region_size + consts.llb_brick;
-            if(    consts.llb_brick.x <= sample_brick.x && sample_brick.x < urb_brick.x
-                && consts.llb_brick.y <= sample_brick.y && sample_brick.y < urb_brick.y
-                && consts.llb_brick.z <= sample_brick.z && sample_brick.z < urb_brick.z)
-            {
+            if(all(lessThanEqual(consts.llb_brick, sample_brick)) && all(lessThan(sample_brick, urb_brick))) {
                 uvec3 sample_brick_region = sample_brick - consts.llb_brick;
                 uint sample_brick_pos_linear = to_linear(sample_brick_region, consts.brick_region_size);
 
@@ -154,10 +152,10 @@ void main()
                 float v = bricks.values[sample_brick_pos_linear].values[local_index];
                 val = vec4(v, v, v, 1.0);
             } else {
-                val = vec4(1.0, 1.0, 1.0, 0.0);
+                val = vec4(0.0, 0.0, 0.0, 0.0);
             }
         } else {
-            val = vec4(1.0, 1.0, 1.0, 0.0);
+            val = vec4(0.0, 0.0, 0.0, 0.0);
         }
 
         for(int c=0; c<4; ++c) {
