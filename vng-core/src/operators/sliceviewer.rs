@@ -39,23 +39,27 @@ pub fn slice_projection_mat_z<'a>(
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
                 let img_dim = output_data.dimensions.map(|v| v.raw as f32);
 
-                let out = mint::ColumnMatrix3 {
-                    x: mint::Vector3 {
-                        x: vol_dim.x() / img_dim.x(),
-                        y: 0.0,
-                        z: 0.0,
-                    },
-                    y: mint::Vector3 {
-                        x: 0.0,
-                        y: vol_dim.y() / img_dim.y(),
-                        z: 0.0,
-                    },
-                    z: mint::Vector3 {
-                        x: 0.0,
-                        y: 0.0,
-                        z: selected_slice.raw as f32 + 0.5, //For +0.5 see below
-                    },
+                let aspect_ratio_img = img_dim.x() / img_dim.y();
+                let aspect_ratio_vol = vol_dim.x() / vol_dim.y();
+                let scaling_factor = if aspect_ratio_img > aspect_ratio_vol {
+                    vol_dim.y() / img_dim.y()
+                } else {
+                    vol_dim.x() / img_dim.x()
                 };
+
+                let offset_x = (img_dim.x() - (vol_dim.x() / scaling_factor)).max(0.0) * 0.5;
+                let offset_y = (img_dim.y() - (vol_dim.y() / scaling_factor)).max(0.0) * 0.5;
+
+                let offset_pixel = cgmath::Matrix3::from_translation(cgmath::Vector2 {
+                    x: -offset_x,
+                    y: -offset_y,
+                });
+
+                let scale = cgmath::Matrix3::from_scale(scaling_factor);
+                let mut mat = scale * offset_pixel;
+                mat.z.z = selected_slice.raw as f32 + 0.5; //For +0.5 see below
+
+                let out = mat.into();
                 ctx.write(out)
             }
             .into()
@@ -213,13 +217,14 @@ void main()
                         let urb =
                             out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
 
-                        let llb_brick = m_in.chunk_pos(llb.global());
+                        let max_brick_pos = m_in.dimension_in_bricks() - Vector::fill(1u32);
+                        let llb_brick = m_in
+                            .chunk_pos(llb.global())
+                            .zip(max_brick_pos, |a, b| a.min(b));
                         // Clamp to valid range:
                         let urb_brick = m_in
                             .chunk_pos(urb.global())
-                            .zip(m_in.dimension_in_bricks() - Vector::fill(1u32), |a, b| {
-                                a.min(b)
-                            });
+                            .zip(max_brick_pos, |a, b| a.min(b));
 
                         let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
 
