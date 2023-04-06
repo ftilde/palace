@@ -21,7 +21,7 @@ pub fn slice_projection_mat_z<'a>(
     input_data: ScalarOperator<'a, VolumeMetaData>,
     output_data: ScalarOperator<'a, ImageMetaData>,
     selected_slice: ScalarOperator<'a, GlobalCoordinate>,
-) -> ScalarOperator<'a, mint::ColumnMatrix3<f32>> {
+) -> ScalarOperator<'a, mint::ColumnMatrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
@@ -50,14 +50,19 @@ pub fn slice_projection_mat_z<'a>(
                 let offset_x = (img_dim.x() - (vol_dim.x() / scaling_factor)).max(0.0) * 0.5;
                 let offset_y = (img_dim.y() - (vol_dim.y() / scaling_factor)).max(0.0) * 0.5;
 
-                let offset_pixel = cgmath::Matrix3::from_translation(cgmath::Vector2 {
+                let offset_pixel = cgmath::Matrix4::from_translation(cgmath::Vector3 {
                     x: -offset_x,
                     y: -offset_y,
+                    z: 0.0,
                 });
 
-                let scale = cgmath::Matrix3::from_scale(scaling_factor);
-                let mut mat = scale * offset_pixel;
-                mat.z.z = selected_slice.raw as f32 + 0.5; //For +0.5 see below
+                let scale = cgmath::Matrix4::from_scale(scaling_factor);
+                let slice_select = cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: selected_slice.raw as f32 + 0.5, //For +0.5 see below
+                });
+                let mat = slice_select * scale * offset_pixel;
 
                 let out = mat.into();
                 ctx.write(out)
@@ -70,11 +75,10 @@ pub fn slice_projection_mat_z<'a>(
 pub fn render_slice<'a>(
     input: VolumeOperator<'a>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
-    projection_mat: ScalarOperator<'a, mint::ColumnMatrix3<f32>>,
+    projection_mat: ScalarOperator<'a, mint::ColumnMatrix4<f32>>,
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        transform: mint::ColumnMatrix3<f32>,
         vol_dim: mint::Vector3<u32>,
         chunk_dim: mint::Vector3<u32>,
         brick_region_size: mint::Vector3<u32>,
@@ -98,13 +102,16 @@ layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std430, binding = 1) buffer RefBuffer {
+layout(std430, binding = 1) buffer Transform {
+    mat4 value;
+} transform;
+
+layout(std430, binding = 2) buffer RefBuffer {
     BrickType values[];
 } bricks;
 
 layout(std140, push_constant) uniform PushConstants
 {
-    mat3 transform;
     uvec3 vol_dim;
     uvec3 chunk_dim;
     uvec3 brick_region_size;
@@ -134,8 +141,8 @@ void main()
         vec4 val;
 
         //TODO: Maybe revisit this +0.5 -0.5 business.
-        vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 1);
-        vec3 sample_pos_f = consts.transform * pos - vec3(0.5);
+        vec4 pos = vec4(vec2(out_pos + consts.out_begin) + vec2(0.5), 0, 1);
+        vec3 sample_pos_f = (transform.value * pos).xyz - vec3(0.5);
         ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
         ivec3 vol_dim = ivec3(consts.vol_dim);
 
@@ -152,7 +159,7 @@ void main()
                 float v = bricks.values[sample_brick_pos_linear].values[local_index];
                 val = vec4(v, v, v, 1.0);
             } else {
-                val = vec4(0.0, 0.0, 0.0, 0.0);
+                val = vec4(1.0, 0.0, 0.0, 0.0);
             }
         } else {
             val = vec4(0.0, 0.0, 0.0, 0.0);
@@ -194,9 +201,15 @@ void main()
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
 
-                let (m2d, transform) = futures::join! {
+                let dst_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+
+                let (m2d, transform, transform_gpu) = futures::join! {
                     ctx.submit(result_metadata.request_scalar()),
                     ctx.submit(projection_mat.request_scalar()),
+                    ctx.submit(projection_mat.request_scalar_gpu(device.id, dst_info)),
                 };
                 let m = full_info(m2d);
 
@@ -205,11 +218,23 @@ void main()
                     .into_iter()
                     .map(|pos| {
                         let out_info = m.chunk_info(pos);
-                        let out_begin_pixel = out_info.begin().raw().map(|v| v as f32).drop_dim(2);
-                        let out_end_pixel = out_info.end().raw().map(|v| v as f32).drop_dim(2);
+                        let out_begin_pixel = out_info
+                            .begin()
+                            .raw()
+                            .map(|v| v as f32)
+                            .drop_dim(2)
+                            .add_dim(0, 0.0);
+                        let out_end_pixel = out_info
+                            .end()
+                            .raw()
+                            .map(|v| v as f32)
+                            .drop_dim(2)
+                            .add_dim(0, 0.0);
 
-                        let out_begin_voxel = transform * out_begin_pixel.to_homogeneous_coord();
-                        let out_end_voxel = transform * out_end_pixel.to_homogeneous_coord();
+                        let out_begin_voxel =
+                            (transform * out_begin_pixel.to_homogeneous_coord()).drop_dim(0);
+                        let out_end_voxel =
+                            (transform * out_end_pixel.to_homogeneous_coord()).drop_dim(0);
                         let llb =
                             out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
                         let urb =
@@ -238,16 +263,11 @@ void main()
                         }
                         .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                         .collect::<Vec<_>>();
-                        let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                            input.bricks.request_gpu(
-                                device.id,
-                                *pos,
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            )
-                        }));
+                        let intersecting_bricks = ctx.group(
+                            in_brick_positions
+                                .iter()
+                                .map(|pos| input.bricks.request_gpu(device.id, *pos, dst_info)),
+                        );
 
                         (intersecting_bricks, (pos, llb_brick, brick_region_size))
                     })
@@ -304,7 +324,6 @@ void main()
                             );
 
                             let consts = PushConstants {
-                                transform,
                                 vol_dim: m_in.dimensions.raw().into(),
                                 chunk_dim: m_in.chunk_size.raw().into(),
                                 brick_region_size: brick_region_size.raw().into(),
@@ -323,7 +342,7 @@ void main()
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config =
-                            DescriptorConfig::new([&gpu_brick_out, &brick_index]);
+                            DescriptorConfig::new([&gpu_brick_out, &transform_gpu, &brick_index]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);

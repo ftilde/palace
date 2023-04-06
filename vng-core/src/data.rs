@@ -336,6 +336,23 @@ impl<T: Copy> From<mint::Vector3<T>> for Vector<3, T> {
     }
 }
 
+impl<T: Copy> From<Vector<4, T>> for mint::Vector4<T> {
+    fn from(value: Vector<4, T>) -> Self {
+        mint::Vector4 {
+            x: value.0[3],
+            y: value.0[2],
+            z: value.0[1],
+            w: value.0[0],
+        }
+    }
+}
+
+impl<T: Copy> From<mint::Vector4<T>> for Vector<4, T> {
+    fn from(value: mint::Vector4<T>) -> Self {
+        Self::from([value.w, value.z, value.y, value.x])
+    }
+}
+
 impl std::ops::Mul<Vector<3, f32>> for mint::ColumnMatrix3<f32> {
     type Output = Vector<3, f32>;
 
@@ -347,14 +364,51 @@ impl std::ops::Mul<Vector<3, f32>> for mint::ColumnMatrix3<f32> {
     }
 }
 
+impl std::ops::Mul<Vector<4, f32>> for mint::ColumnMatrix4<f32> {
+    type Output = Vector<4, f32>;
+
+    fn mul(self, rhs: Vector<4, f32>) -> Self::Output {
+        let m = cgmath::Matrix4::from(self);
+        let v = cgmath::Vector4::from(mint::Vector4::from(rhs));
+        let ret: mint::Vector4<f32> = (m * v).into();
+        ret.into()
+    }
+}
+
 impl Vector<2, f32> {
     pub fn to_homogeneous_coord(self) -> Vector<3, f32> {
         Vector::from([1.0, self.y(), self.x()])
     }
 }
 
+impl Vector<3, f32> {
+    pub fn to_homogeneous_coord(self) -> Vector<4, f32> {
+        Vector::from([1.0, self.z(), self.y(), self.x()])
+    }
+}
+
+impl<T: Copy> Vector<2, T> {
+    pub fn add_dim(self, dim: usize, value: T) -> Vector<3, T> {
+        Vector(std::array::from_fn(|i| match i.cmp(&dim) {
+            std::cmp::Ordering::Less => self.0[i],
+            std::cmp::Ordering::Equal => value,
+            std::cmp::Ordering::Greater => self.0[i - 1],
+        }))
+    }
+}
 impl<T: Copy> Vector<3, T> {
     pub fn drop_dim(self, dim: usize) -> Vector<2, T> {
+        Vector(std::array::from_fn(|i| {
+            if i < dim {
+                self.0[i]
+            } else {
+                self.0[i + 1]
+            }
+        }))
+    }
+}
+impl<T: Copy> Vector<4, T> {
+    pub fn drop_dim(self, dim: usize) -> Vector<3, T> {
         Vector(std::array::from_fn(|i| {
             if i < dim {
                 self.0[i]

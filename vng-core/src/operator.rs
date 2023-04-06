@@ -130,6 +130,15 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
             _marker: Default::default(),
         }
     }
+
+    #[must_use]
+    pub fn request_scalar_gpu<'req, 'inv: 'req>(
+        &'inv self,
+        gpu: DeviceId,
+        dst_info: DstBarrierInfo,
+    ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
+        self.request_gpu(gpu, (), dst_info)
+    }
 }
 
 impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
