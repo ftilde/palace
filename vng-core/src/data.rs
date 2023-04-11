@@ -305,24 +305,24 @@ impl<const N: usize, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<
     }
 }
 
-impl<T: Copy> From<Vector<2, T>> for mint::Vector2<T> {
+impl<T: Copy> From<Vector<2, T>> for cgmath::Vector2<T> {
     fn from(value: Vector<2, T>) -> Self {
-        mint::Vector2 {
+        cgmath::Vector2 {
             x: value.x(),
             y: value.y(),
         }
     }
 }
 
-impl<T: Copy> From<mint::Vector2<T>> for Vector<2, T> {
-    fn from(value: mint::Vector2<T>) -> Self {
+impl<T: Copy> From<cgmath::Vector2<T>> for Vector<2, T> {
+    fn from(value: cgmath::Vector2<T>) -> Self {
         Self::from([value.y, value.x])
     }
 }
 
-impl<T: Copy> From<Vector<3, T>> for mint::Vector3<T> {
+impl<T: Copy> From<Vector<3, T>> for cgmath::Vector3<T> {
     fn from(value: Vector<3, T>) -> Self {
-        mint::Vector3 {
+        cgmath::Vector3 {
             x: value.x(),
             y: value.y(),
             z: value.z(),
@@ -330,15 +330,15 @@ impl<T: Copy> From<Vector<3, T>> for mint::Vector3<T> {
     }
 }
 
-impl<T: Copy> From<mint::Vector3<T>> for Vector<3, T> {
-    fn from(value: mint::Vector3<T>) -> Self {
+impl<T: Copy> From<cgmath::Vector3<T>> for Vector<3, T> {
+    fn from(value: cgmath::Vector3<T>) -> Self {
         Self::from([value.z, value.y, value.x])
     }
 }
 
-impl<T: Copy> From<Vector<4, T>> for mint::Vector4<T> {
+impl<T: Copy> From<Vector<4, T>> for cgmath::Vector4<T> {
     fn from(value: Vector<4, T>) -> Self {
-        mint::Vector4 {
+        cgmath::Vector4 {
             x: value.0[3],
             y: value.0[2],
             z: value.0[1],
@@ -347,31 +347,27 @@ impl<T: Copy> From<Vector<4, T>> for mint::Vector4<T> {
     }
 }
 
-impl<T: Copy> From<mint::Vector4<T>> for Vector<4, T> {
-    fn from(value: mint::Vector4<T>) -> Self {
+impl<T: Copy> From<cgmath::Vector4<T>> for Vector<4, T> {
+    fn from(value: cgmath::Vector4<T>) -> Self {
         Self::from([value.w, value.z, value.y, value.x])
     }
 }
 
-impl std::ops::Mul<Vector<3, f32>> for mint::ColumnMatrix3<f32> {
+impl std::ops::Mul<Vector<3, f32>> for cgmath::Matrix3<f32> {
     type Output = Vector<3, f32>;
 
     fn mul(self, rhs: Vector<3, f32>) -> Self::Output {
-        let m = cgmath::Matrix3::from(self);
-        let v = cgmath::Vector3::from(mint::Vector3::from(rhs));
-        let ret: mint::Vector3<f32> = (m * v).into();
-        ret.into()
+        let v = cgmath::Vector3::from(rhs);
+        (self * v).into()
     }
 }
 
-impl std::ops::Mul<Vector<4, f32>> for mint::ColumnMatrix4<f32> {
+impl std::ops::Mul<Vector<4, f32>> for cgmath::Matrix4<f32> {
     type Output = Vector<4, f32>;
 
     fn mul(self, rhs: Vector<4, f32>) -> Self::Output {
-        let m = cgmath::Matrix4::from(self);
-        let v = cgmath::Vector4::from(mint::Vector4::from(rhs));
-        let ret: mint::Vector4<f32> = (m * v).into();
-        ret.into()
+        let v = cgmath::Vector4::from(rhs);
+        (self * v).into()
     }
 }
 

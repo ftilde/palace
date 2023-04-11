@@ -279,7 +279,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a98d30140e3296250832bbaaff83b27dcd6fa3cc70fb6f1f3e5c9c0023b5317"
 dependencies = [
  "approx 0.4.0",
- "mint",
  "num-traits",
 ]
 
@@ -430,6 +429,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb3faad1502613f2bbc3825b9e96d7d604eec2716c4723903d1ad31139d8f05c"
 dependencies = [
  "bytemuck",
+ "cgmath",
  "crevice-derive",
  "mint",
 ]
@@ -2047,7 +2047,6 @@ dependencies = [
  "graphviz-rust",
  "itertools",
  "memmap",
- "mint",
  "ndarray",
  "num_cpus",
  "oneshot",

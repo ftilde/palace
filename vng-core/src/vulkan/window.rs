@@ -840,7 +840,7 @@ impl Window {
 }
 #[derive(Copy, Clone, AsStd140)]
 struct PushConstants {
-    size: mint::Vector2<u32>,
+    size: cgmath::Vector2<u32>,
 }
 
 const VERTEX_SHADER: &str = "

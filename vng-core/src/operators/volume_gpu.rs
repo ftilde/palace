@@ -30,7 +30,7 @@ pub fn linear_rescale<'op>(
 ) -> VolumeOperator<'op> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        chunk_pos: mint::Vector3<u32>,
+        chunk_pos: cgmath::Vector3<u32>,
         num_chunk_elems: u32,
     }
     const SHADER: &'static str = r#"
@@ -172,11 +172,11 @@ pub fn rechunk<'op>(
 ) -> VolumeOperator<'op> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        mem_size_in: mint::Vector3<u32>,
-        mem_size_out: mint::Vector3<u32>,
-        begin_in: mint::Vector3<u32>,
-        begin_out: mint::Vector3<u32>,
-        region_size: mint::Vector3<u32>,
+        mem_size_in: cgmath::Vector3<u32>,
+        mem_size_out: cgmath::Vector3<u32>,
+        begin_in: cgmath::Vector3<u32>,
+        begin_out: cgmath::Vector3<u32>,
+        region_size: cgmath::Vector3<u32>,
         global_size: u32,
     }
     const SHADER: &'static str = r#"
@@ -371,10 +371,10 @@ pub fn convolution_1d<'op, const DIM: usize>(
 ) -> VolumeOperator<'op> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        mem_dim: mint::Vector3<u32>,
-        logical_dim_out: mint::Vector3<u32>,
-        out_begin: mint::Vector3<u32>,
-        global_dim: mint::Vector3<u32>,
+        mem_dim: cgmath::Vector3<u32>,
+        logical_dim_out: cgmath::Vector3<u32>,
+        out_begin: cgmath::Vector3<u32>,
+        global_dim: cgmath::Vector3<u32>,
         num_chunks: u32,
         first_chunk_pos: u32,
         extent: i32,
@@ -670,8 +670,8 @@ pub fn separable_convolution<'op>(
 pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        mem_dim: mint::Vector3<u32>,
-        logical_dim: mint::Vector3<u32>,
+        mem_dim: cgmath::Vector3<u32>,
+        logical_dim: cgmath::Vector3<u32>,
         norm_factor: f32,
     }
     const SHADER: &'static str = r#"
@@ -860,10 +860,10 @@ impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
         #[derive(Copy, Clone, AsStd140)]
         struct PushConstants {
-            offset: mint::Vector3<u32>,
-            mem_dim: mint::Vector3<u32>,
-            logical_dim: mint::Vector3<u32>,
-            vol_dim: mint::Vector3<u32>,
+            offset: cgmath::Vector3<u32>,
+            mem_dim: cgmath::Vector3<u32>,
+            logical_dim: cgmath::Vector3<u32>,
+            vol_dim: cgmath::Vector3<u32>,
             num_chunk_elems: u32,
         }
 

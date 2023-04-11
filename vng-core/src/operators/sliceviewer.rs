@@ -21,7 +21,7 @@ pub fn slice_projection_mat_z<'a>(
     input_data: ScalarOperator<'a, VolumeMetaData>,
     output_data: ScalarOperator<'a, ImageMetaData>,
     selected_slice: ScalarOperator<'a, GlobalCoordinate>,
-) -> ScalarOperator<'a, mint::ColumnMatrix4<f32>> {
+) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
@@ -75,16 +75,16 @@ pub fn slice_projection_mat_z<'a>(
 pub fn render_slice<'a>(
     input: VolumeOperator<'a>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
-    projection_mat: ScalarOperator<'a, mint::ColumnMatrix4<f32>>,
+    projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140)]
     struct PushConstants {
-        vol_dim: mint::Vector3<u32>,
-        chunk_dim: mint::Vector3<u32>,
-        brick_region_size: mint::Vector3<u32>,
-        llb_brick: mint::Vector3<u32>,
-        out_begin: mint::Vector2<u32>,
-        out_mem_dim: mint::Vector2<u32>,
+        vol_dim: cgmath::Vector3<u32>,
+        chunk_dim: cgmath::Vector3<u32>,
+        brick_region_size: cgmath::Vector3<u32>,
+        llb_brick: cgmath::Vector3<u32>,
+        out_begin: cgmath::Vector2<u32>,
+        out_mem_dim: cgmath::Vector2<u32>,
     }
     const SHADER: &'static str = r#"
 #version 450
