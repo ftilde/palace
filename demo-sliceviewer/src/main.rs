@@ -226,8 +226,6 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    //let slice_num = (slice_num.max(0) as u32).into();
-
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let slice_metadata = array::ImageMetaData {
@@ -237,6 +235,7 @@ fn eval_network(
 
     let slice_input = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
 
+    //let slice_num = (slice_num.max(0) as u32).into();
     //let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
     //    slice_input.metadata.clone(),
     //    crate::operators::scalar::constant_hash(slice_metadata),

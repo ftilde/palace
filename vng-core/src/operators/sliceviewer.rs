@@ -17,6 +17,43 @@ use crate::{
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
+pub fn slice_projection_mat_z_scaled_fit<'a>(
+    input_data: ScalarOperator<'a, VolumeMetaData>,
+    output_data: ScalarOperator<'a, ImageMetaData>,
+    selected_slice: ScalarOperator<'a, GlobalCoordinate>,
+) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
+    crate::operators::scalar::scalar(
+        OperatorId::new("slice_projection_mat_z")
+            .dependent_on(&input_data)
+            .dependent_on(&output_data)
+            .dependent_on(&selected_slice),
+        (input_data, output_data, selected_slice),
+        move |ctx, (input_data, output_data, selected_slice), _| {
+            async move {
+                let (input_data, output_data, selected_slice) = futures::join! {
+                    ctx.submit(input_data.request_scalar()),
+                    ctx.submit(output_data.request_scalar()),
+                    ctx.submit(selected_slice.request_scalar()),
+                };
+
+                let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
+                let img_dim = output_data.dimensions.map(|v| v.raw as f32);
+                let out = cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: selected_slice.raw as f32 + 0.5,
+                }) * cgmath::Matrix4::from_nonuniform_scale(
+                    vol_dim.x() / img_dim.x(),
+                    vol_dim.y() / img_dim.y(),
+                    1.0,
+                );
+                ctx.write(out)
+            }
+            .into()
+        },
+    )
+}
+
 pub fn slice_projection_mat_z<'a>(
     input_data: ScalarOperator<'a, VolumeMetaData>,
     output_data: ScalarOperator<'a, ImageMetaData>,
@@ -468,7 +505,7 @@ mod test {
                 chunk_size: (img_size / Vector::fill(3u32)).local(),
             };
             let input = input.operate();
-            let slice_proj = super::slice_projection_mat_z(
+            let slice_proj = super::slice_projection_mat_z_scaled_fit(
                 input.metadata.clone(),
                 crate::operators::scalar::constant_hash(img_meta),
                 crate::operators::scalar::constant_hash(z.into()),
