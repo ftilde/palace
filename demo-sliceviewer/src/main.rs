@@ -226,21 +226,27 @@ fn eval_network(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let vol = vol.operate();
 
-    let slice_num = (slice_num.max(0) as u32).into();
+    //let slice_num = (slice_num.max(0) as u32).into();
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let slice_metadata = array::ImageMetaData {
         dimensions: window.size(),
-        chunk_size: [128, 128].into(),
+        chunk_size: Vector::fill(512.into()),
     };
 
     let slice_input = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
 
-    let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
+    //let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
+    //    slice_input.metadata.clone(),
+    //    crate::operators::scalar::constant_hash(slice_metadata),
+    //    crate::operators::scalar::constant_hash(slice_num),
+    //);
+    let angle = slice_num as f32 * 0.05;
+    let slice_proj = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(slice_metadata),
-        crate::operators::scalar::constant_hash(slice_num),
+        crate::operators::scalar::constant_pod(angle),
     );
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,

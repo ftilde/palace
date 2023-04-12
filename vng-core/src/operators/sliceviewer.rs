@@ -72,6 +72,50 @@ pub fn slice_projection_mat_z<'a>(
     )
 }
 
+pub fn slice_projection_mat_centered_rotate<'a>(
+    input_data: ScalarOperator<'a, VolumeMetaData>,
+    output_data: ScalarOperator<'a, ImageMetaData>,
+    rotation: ScalarOperator<'a, f32>,
+) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
+    crate::operators::scalar::scalar(
+        OperatorId::new("slice_projection_mat_centered_rotate")
+            .dependent_on(&input_data)
+            .dependent_on(&output_data)
+            .dependent_on(&rotation),
+        (input_data, output_data, rotation),
+        move |ctx, (input_data, output_data, rotation), _| {
+            async move {
+                let (input_data, output_data, rotation) = futures::join! {
+                    ctx.submit(input_data.request_scalar()),
+                    ctx.submit(output_data.request_scalar()),
+                    ctx.submit(rotation.request_scalar()),
+                };
+
+                let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
+                let img_dim = output_data.dimensions.map(|v| v.raw as f32);
+
+                let min_dim_img = img_dim.x().min(img_dim.y());
+                let min_dim_vol = vol_dim.fold(f32::INFINITY, |a, b| a.min(b));
+
+                let central_normalized = cgmath::Matrix4::from_scale(2.0 / min_dim_img)
+                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                        x: -img_dim.x() * 0.5,
+                        y: -img_dim.y() * 0.5,
+                        z: 0.0,
+                    });
+
+                let rotation = cgmath::Matrix4::from_angle_y(cgmath::Rad(rotation));
+                let norm_to_vol =
+                    cgmath::Matrix4::from_translation((vol_dim * Vector::fill(0.5)).into())
+                        * cgmath::Matrix4::from_scale(min_dim_vol * 0.5);
+                let out = norm_to_vol * rotation * central_normalized;
+                ctx.write(out)
+            }
+            .into()
+        },
+    )
+}
+
 pub fn render_slice<'a>(
     input: VolumeOperator<'a>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
@@ -162,7 +206,7 @@ void main()
                 val = vec4(1.0, 0.0, 0.0, 0.0);
             }
         } else {
-            val = vec4(0.0, 0.0, 0.0, 0.0);
+            val = vec4(0.0, 0.0, 1.0, 0.0);
         }
 
         for(int c=0; c<4; ++c) {
