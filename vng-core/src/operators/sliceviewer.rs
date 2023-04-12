@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{BrickPosition, GlobalCoordinate, Vector},
+    data::{BrickPosition, GlobalCoordinate, Vector, AABB},
     operator::OperatorId,
     operators::tensor::TensorOperator,
     task::RequestStream,
@@ -231,10 +231,12 @@ void main()
                             .drop_dim(2)
                             .add_dim(0, 0.0);
 
-                        let out_begin_voxel =
-                            (transform * out_begin_pixel.to_homogeneous_coord()).drop_dim(0);
-                        let out_end_voxel =
-                            (transform * out_end_pixel.to_homogeneous_coord()).drop_dim(0);
+                        let pixel_aabb = AABB::new(out_begin_pixel, out_end_pixel);
+
+                        let voxel_aabb = pixel_aabb.transform(&transform);
+
+                        let out_begin_voxel = voxel_aabb.lower();
+                        let out_end_voxel = voxel_aabb.upper();
                         let llb =
                             out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
                         let urb =
