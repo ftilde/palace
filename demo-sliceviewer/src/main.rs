@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, VoxelPosition};
+use vng_core::operators::volume::VolumeOperator;
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
@@ -12,7 +13,7 @@ use vng_vvd::VvdVolumeSourceState;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array;
+use vng_core::array::{self, ImageMetaData};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -215,6 +216,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
+fn slice_viewer_z<'op>(
+    slice_input: VolumeOperator<'op>,
+    md: ImageMetaData,
+    slice_num: i32,
+) -> VolumeOperator<'op> {
+    let slice_num_g = (slice_num.max(0) as u32).into();
+    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
+        slice_input.metadata.clone(),
+        crate::operators::scalar::constant_hash(md),
+        crate::operators::scalar::constant_hash(slice_num_g),
+    );
+    let slice = crate::operators::sliceviewer::render_slice(
+        slice_input,
+        crate::operators::scalar::constant_hash(md),
+        slice_proj_z,
+    );
+    //let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    slice
+}
+
+fn slice_viewer_rot<'op>(
+    slice_input: VolumeOperator<'op>,
+    md: ImageMetaData,
+    angle: f32,
+) -> VolumeOperator<'op> {
+    let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
+        slice_input.metadata.clone(),
+        crate::operators::scalar::constant_hash(md),
+        crate::operators::scalar::constant_pod(angle),
+    );
+    let slice = crate::operators::sliceviewer::render_slice(
+        slice_input,
+        crate::operators::scalar::constant_hash(md),
+        slice_proj_rot,
+    );
+    //let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    slice
+}
+
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
@@ -227,36 +267,14 @@ fn eval_network(
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let slice_input = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
+    let scaled = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
 
     let splitter = operators::splitter::Splitter::new(window.size(), 0.5);
 
-    let slice_num_g = (slice_num.max(0) as u32).into();
-    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
-        slice_input.metadata.clone(),
-        crate::operators::scalar::constant_hash(splitter.metadata_l()),
-        crate::operators::scalar::constant_hash(slice_num_g),
+    let frame = splitter.operate(
+        slice_viewer_z(scaled.clone(), splitter.metadata_l(), slice_num),
+        slice_viewer_rot(scaled, splitter.metadata_r(), slice_num as f32 * 0.05),
     );
-    let angle = slice_num as f32 * 0.05;
-    let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
-        slice_input.metadata.clone(),
-        crate::operators::scalar::constant_hash(splitter.metadata_r()),
-        crate::operators::scalar::constant_pod(angle),
-    );
-    let slice_z = crate::operators::sliceviewer::render_slice(
-        slice_input.clone(),
-        crate::operators::scalar::constant_hash(splitter.metadata_l()),
-        slice_proj_z,
-    );
-    //let slice_z = volume_gpu::rechunk(slice_z, Vector::fill(ChunkSize::Full));
-    let slice_rot = crate::operators::sliceviewer::render_slice(
-        slice_input,
-        crate::operators::scalar::constant_hash(splitter.metadata_r()),
-        slice_proj_rot,
-    );
-    //let slice_rot = volume_gpu::rechunk(slice_rot, Vector::fill(ChunkSize::Full));
-
-    let frame = splitter.operate(slice_z, slice_rot);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
