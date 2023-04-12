@@ -434,9 +434,9 @@ mod test {
         let img_size_c = VoxelPosition::from([img_size.y(), img_size.x(), num_channels.into()]);
         for z in 0..vol_size.z().raw {
             let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
-                for y in 0..img_size_c.0[0].raw {
-                    for x in 0..img_size_c.0[1].raw {
-                        for c in 0..img_size_c.0[2].raw {
+                for y in 0..img_size_c[0].raw {
+                    for x in 0..img_size_c[1].raw {
+                        for c in 0..img_size_c[2].raw {
                             let pos = VoxelPosition::from([y, x, c]);
                             let voxel_y = (y as f32 + 0.5) / img_size.y().raw as f32
                                 * vol_size.y().raw as f32

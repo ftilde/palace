@@ -29,7 +29,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     let file = File::create(path).unwrap();
     let ref mut w = BufWriter::new(file);
 
-    let mut encoder = png::Encoder::new(w, m.dimensions.raw().0[1], m.dimensions.raw().0[0]); // Width is 2 pixels and height is 1.
+    let mut encoder = png::Encoder::new(w, m.dimensions.raw()[1], m.dimensions.raw()[0]); // Width is 2 pixels and height is 1.
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     //encoder.set_source_gamma(png::ScaledFloat::from_scaled(45455)); // 1.0 / 2.2, scaled by 100000

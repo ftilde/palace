@@ -8,7 +8,7 @@ use crate::{
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
-    storage::gpu::{self},
+    storage::gpu,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -524,7 +524,7 @@ void main() {
                     let in_begin = out_begin
                         .map_element(DIM, |v| (v.raw.saturating_sub(extent as u32)).into());
                     let in_end = out_end
-                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions.0[DIM]));
+                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions[DIM]));
 
                     let in_begin_brick = m_in.chunk_pos(in_begin);
                     let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
@@ -552,7 +552,7 @@ void main() {
                 });
 
                 let max_bricks =
-                    2 * crate::util::div_round_up(extent, m_in.chunk_size.0[DIM].raw) + 1;
+                    2 * crate::util::div_round_up(extent, m_in.chunk_size[DIM].raw) + 1;
 
                 //TODO: This is really ugly, we should investigate to use z,y,x ordering in shaders
                 //as well.
@@ -590,9 +590,9 @@ void main() {
                     for window in in_brick_positions.windows(2) {
                         for d in 0..3 {
                             if d == DIM {
-                                assert_eq!(window[0].0[d] + 1u32, window[1].0[d]);
+                                assert_eq!(window[0][d] + 1u32, window[1][d]);
                             } else {
-                                assert_eq!(window[0].0[d], window[1].0[d]);
+                                assert_eq!(window[0][d], window[1][d]);
                             }
                         }
                     }
@@ -602,7 +602,7 @@ void main() {
 
                     assert_eq!(num_chunks, intersecting_bricks.len());
 
-                    let first_chunk_pos = in_brick_positions.first().unwrap().0[DIM].raw;
+                    let first_chunk_pos = in_brick_positions.first().unwrap()[DIM].raw;
                     let global_size = crate::data::hmul(m_out.chunk_size);
 
                     let consts = PushConstants {

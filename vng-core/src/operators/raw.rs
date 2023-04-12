@@ -65,7 +65,7 @@ impl RawVolumeSourceState {
             if current_pos < max_lin_len {
                 if let Some(end) = current_batch.last() {
                     let mut next = *end;
-                    next.0[2] = next.0[2] + 1u32;
+                    next[2] = next[2] + 1u32;
                     if next == pos {
                         current_batch.push(pos);
                         current_pos = 0;

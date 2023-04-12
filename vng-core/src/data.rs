@@ -143,7 +143,7 @@ pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
 #[repr(C)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct Vector<const N: usize, T>(pub [T; N]);
+pub struct Vector<const N: usize, T>([T; N]);
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
     fn from(value: [I; N]) -> Self {
@@ -205,6 +205,18 @@ impl<const N: usize, T: Copy> Vector<N, T> {
         }
         // Safety: We have just initialized all values in the loop above
         Ok(Vector(out.map(|v| unsafe { v.assume_init() })))
+    }
+}
+impl<const N: usize, T> std::ops::Index<usize> for Vector<N, T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+impl<const N: usize, T> std::ops::IndexMut<usize> for Vector<N, T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
     }
 }
 impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {

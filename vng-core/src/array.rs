@@ -8,7 +8,7 @@ pub struct ChunkInfo<const N: usize> {
 impl<const N: usize> ChunkInfo<N> {
     pub fn is_contiguous(&self) -> bool {
         for i in 1..N {
-            if self.mem_dimensions.0[i] != self.logical_dimensions.0[i] {
+            if self.mem_dimensions[i] != self.logical_dimensions[i] {
                 return false;
             }
         }
@@ -102,12 +102,12 @@ mod unused {
     impl ArrayMetaData {
         pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
             let bp = self.dimension_in_bricks();
-            (0..bp.0[0].raw).into_iter().map(|x| Vector::from([x]))
+            (0..bp[0].raw).into_iter().map(|x| Vector::from([x]))
         }
         pub fn as_image(&self) -> ImageMetaData {
             ImageMetaData {
-                dimensions: [1.into(), self.dimensions.0[0]].into(),
-                chunk_size: [1.into(), self.chunk_size.0[0]].into(),
+                dimensions: [1.into(), self.dimensions[0]].into(),
+                chunk_size: [1.into(), self.chunk_size[0]].into(),
             }
         }
     }

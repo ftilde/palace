@@ -253,7 +253,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
                     let in_begin = out_begin
                         .map_element(DIM, |v| (v.raw.saturating_sub(extent as u32)).into());
                     let in_end = out_end
-                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions.0[DIM]));
+                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions[DIM]));
 
                     let in_begin_brick = m_in.chunk_pos(in_begin);
                     let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
@@ -313,10 +313,10 @@ pub fn convolution_1d<'op, const DIM: usize>(
                                 let in_begin = in_info.begin();
                                 let in_end = in_info.end();
 
-                                let begin_i_global = in_begin.0[DIM].raw as i32;
-                                let end_i_global = in_end.0[DIM].raw as i32;
-                                let begin_o_global = out_begin.0[DIM].raw as i32;
-                                let end_o_global = out_end.0[DIM].raw as i32;
+                                let begin_i_global = in_begin[DIM].raw as i32;
+                                let end_i_global = in_end[DIM].raw as i32;
+                                let begin_o_global = out_begin[DIM].raw as i32;
+                                let end_o_global = out_end[DIM].raw as i32;
                                 let extent = extent as i32;
 
                                 let begin_ext = (begin_i_global - end_o_global).max(-extent);
