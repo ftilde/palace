@@ -510,6 +510,8 @@ pub type LocalVoxelPosition = Vector<3, LocalCoordinate>;
 pub type VoxelPosition = Vector<3, GlobalCoordinate>;
 pub type BrickPosition = Vector<3, ChunkCoordinate>;
 
+pub type PixelPosition = Vector<2, GlobalCoordinate>;
+
 fn dimension_order_stride<T: CoordinateType>(
     mem_size: Vector<3, Coordinate<T>>,
 ) -> (usize, usize, usize) {

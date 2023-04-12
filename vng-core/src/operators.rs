@@ -4,6 +4,7 @@ pub mod rasterize_function;
 pub mod raw;
 pub mod scalar;
 pub mod sliceviewer;
+pub mod splitter;
 pub mod tensor;
 pub mod volume;
 pub mod volume_gpu;

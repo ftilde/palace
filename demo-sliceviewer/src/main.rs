@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, VoxelPosition};
-use vng_core::operators::volume::ChunkSize;
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
@@ -13,7 +12,7 @@ use vng_vvd::VvdVolumeSourceState;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::{array, data::Vector};
+use vng_core::array;
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -228,36 +227,41 @@ fn eval_network(
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let slice_metadata = array::ImageMetaData {
-        dimensions: window.size(),
-        chunk_size: Vector::fill(512.into()),
-    };
-
     let slice_input = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
 
-    //let slice_num = (slice_num.max(0) as u32).into();
-    //let slice_proj = crate::operators::sliceviewer::slice_projection_mat_z(
-    //    slice_input.metadata.clone(),
-    //    crate::operators::scalar::constant_hash(slice_metadata),
-    //    crate::operators::scalar::constant_hash(slice_num),
-    //);
-    let angle = slice_num as f32 * 0.05;
-    let slice_proj = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
+    let splitter = operators::splitter::Splitter::new(window.size(), 0.5);
+
+    let slice_num_g = (slice_num.max(0) as u32).into();
+    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
         slice_input.metadata.clone(),
-        crate::operators::scalar::constant_hash(slice_metadata),
+        crate::operators::scalar::constant_hash(splitter.metadata_l()),
+        crate::operators::scalar::constant_hash(slice_num_g),
+    );
+    let angle = slice_num as f32 * 0.05;
+    let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
+        slice_input.metadata.clone(),
+        crate::operators::scalar::constant_hash(splitter.metadata_r()),
         crate::operators::scalar::constant_pod(angle),
     );
-    let slice = crate::operators::sliceviewer::render_slice(
-        slice_input,
-        crate::operators::scalar::constant_hash(slice_metadata),
-        slice_proj,
+    let slice_z = crate::operators::sliceviewer::render_slice(
+        slice_input.clone(),
+        crate::operators::scalar::constant_hash(splitter.metadata_l()),
+        slice_proj_z,
     );
-    let slice_one_chunk = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    //let slice_z = volume_gpu::rechunk(slice_z, Vector::fill(ChunkSize::Full));
+    let slice_rot = crate::operators::sliceviewer::render_slice(
+        slice_input,
+        crate::operators::scalar::constant_hash(splitter.metadata_r()),
+        slice_proj_rot,
+    );
+    //let slice_rot = volume_gpu::rechunk(slice_rot, Vector::fill(ChunkSize::Full));
+
+    let frame = splitter.operate(slice_z, slice_rot);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor();
 
-    let slice_ref = &slice_one_chunk;
+    let slice_ref = &frame;
     executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
     //let tasks_executed = executor.statistics().tasks_executed;
     //println!("Rendering done ({} tasks)", tasks_executed);
