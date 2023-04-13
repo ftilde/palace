@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, VoxelPosition};
+use vng_core::event::{
+    EventStream, Key, MouseButton, MouseDragState, MouseState, OnKeyPress, OnWheelMove,
+};
 use vng_core::operators::volume::VolumeOperator;
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
@@ -10,7 +13,7 @@ use vng_core::vulkan::window::Window;
 //use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
-use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
+use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
 use vng_core::array::{self, ImageMetaData};
@@ -118,10 +121,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop = EventLoop::new();
 
     let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
+    let mut events = EventStream::default();
+
+    let mut click_state = MouseState::default();
+    let mut drag_state = MouseDragState::new(MouseButton::Right);
 
     event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
 
+        let Some(event) = event.to_static() else {
+            return;
+        };
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -141,55 +151,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::WindowEvent {
                 window_id: _,
-                event: winit::event::WindowEvent::MouseWheel { delta, .. },
+                event,
             } => {
-                let motion = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => y.signum(),
-                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y.signum() as f32,
-                };
-                slice_num += motion as i32;
-                println!("Slice: {}", slice_num);
-            }
-            Event::WindowEvent {
-                window_id: _,
-                event: winit::event::WindowEvent::KeyboardInput { input, .. },
-            } => {
-                if input.state == ElementState::Pressed {
-                    if let Some(k) = input.virtual_keycode {
-                        let mut something_happened = true;
-                        match k {
-                            VirtualKeyCode::R => {
-                                slice_num = 0;
-                            }
-                            VirtualKeyCode::Key1 => {
-                                scale += 0.01;
-                            }
-                            VirtualKeyCode::Key2 => {
-                                scale -= 0.01;
-                            }
-                            VirtualKeyCode::Key3 => {
-                                offset = (offset + 0.01).clamp(0.0, 1.0);
-                            }
-                            VirtualKeyCode::Key4 => {
-                                offset = (offset - 0.01).clamp(0.0, 1.0);
-                            }
-                            VirtualKeyCode::Plus => {
-                                slice_num += 1;
-                            }
-                            VirtualKeyCode::Minus => {
-                                slice_num -= 1;
-                            }
-                            _ => {
-                                something_happened = false;
-                            }
-                        }
-                        if something_happened {
-                            println!("Slice: {}, Scale: {}, Offset: {}", slice_num, scale, offset);
-                        }
-                    }
-                }
+                events.add(event);
             }
             Event::RedrawRequested(_) => {
+                let events = std::mem::take(&mut events);
                 // Redraw the application.
                 //
                 // It's preferable for applications that do not render continuously to render in
@@ -199,9 +166,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut runtime,
                     &mut window,
                     &*vol_state,
-                    slice_num,
-                    scale,
-                    offset,
+                    &mut slice_num,
+                    &mut scale,
+                    &mut offset,
+                    events,
+                    &mut click_state,
+                    &mut drag_state,
                 )
                 .unwrap();
             }
@@ -259,21 +229,43 @@ fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
     vol: &dyn VolumeOperatorState,
-    slice_num: i32,
-    scale: f32,
-    offset: f32,
+    slice_num: &mut i32,
+    scale: &mut f32,
+    offset: &mut f32,
+    mut events: EventStream,
+    click_state: &mut MouseState,
+    drag_state: &mut MouseDragState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    events.act(|c| {
+        c.chain(OnKeyPress(Key::Plus, || *slice_num += 1))
+            .chain(OnKeyPress(Key::Minus, || *slice_num -= 1))
+            .chain(OnKeyPress(Key::Key1, || *scale += 0.01))
+            .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
+            .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
+            .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
+            .chain(OnWheelMove(|delta| *slice_num += delta as i32))
+            .chain(
+                click_state.on_click(MouseButton::Left, |pos| println!("Click left!: {:?}", pos)),
+            )
+            .chain(drag_state.while_pressed(|_pos, delta| {
+                *slice_num += delta.y();
+            }))
+            .chain(click_state.on_click(MouseButton::Right, |pos| {
+                println!("Click right!: {:?}", pos)
+            }))
+    });
+
     let vol = vol.operate();
 
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let scaled = volume_gpu::linear_rescale(rechunked, scale.into(), offset.into());
+    let scaled = volume_gpu::linear_rescale(rechunked, (*scale).into(), (*offset).into());
 
     let splitter = operators::splitter::Splitter::new(window.size(), 0.5);
 
     let frame = splitter.operate(
-        slice_viewer_z(scaled.clone(), splitter.metadata_l(), slice_num),
-        slice_viewer_rot(scaled, splitter.metadata_r(), slice_num as f32 * 0.05),
+        slice_viewer_z(scaled.clone(), splitter.metadata_l(), *slice_num),
+        slice_viewer_rot(scaled, splitter.metadata_r(), *slice_num as f32 * 0.05),
     );
 
     let mut c = runtime.context_anchor();
