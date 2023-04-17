@@ -1,16 +1,22 @@
-use winit::event::{ElementState, VirtualKeyCode, WindowEvent};
+use winit::{
+    dpi::PhysicalPosition,
+    event::{ElementState, VirtualKeyCode, WindowEvent},
+};
 
 use crate::data::Vector;
 
-type EventR = winit::event::WindowEvent<'static>;
+pub type Event = winit::event::WindowEvent<'static>;
 
 pub trait Behavior {
-    fn input(&mut self, event: EventR) -> Option<EventR>;
+    fn input(&mut self, event: Event) -> Option<Event>;
 }
 
-pub struct EventChain(Option<EventR>);
+pub struct EventChain(pub Option<Event>);
 
 impl EventChain {
+    pub fn consumed() -> Self {
+        EventChain(None)
+    }
     pub fn chain(self, mut b: impl Behavior) -> Self {
         if let Some(e) = self.0 {
             EventChain(b.input(e))
@@ -20,8 +26,8 @@ impl EventChain {
     }
 }
 
-impl<F: FnMut(EventR) -> Option<EventR>> Behavior for F {
-    fn input(&mut self, event: EventR) -> Option<EventR> {
+impl<F: FnMut(Event) -> Option<Event>> Behavior for F {
+    fn input(&mut self, event: Event) -> Option<Event> {
         self(event)
     }
 }
@@ -30,7 +36,7 @@ pub type Key = VirtualKeyCode;
 pub struct OnKeyPress<F: FnMut()>(pub Key, pub F);
 
 impl<F: FnMut()> Behavior for OnKeyPress<F> {
-    fn input(&mut self, event: EventR) -> Option<EventR> {
+    fn input(&mut self, event: Event) -> Option<Event> {
         if let winit::event::WindowEvent::KeyboardInput { input, .. } = event {
             if input.state == ElementState::Pressed {
                 if matches!(input.virtual_keycode, Some(v) if v == self.0) {
@@ -47,10 +53,20 @@ pub type MouseButton = winit::event::MouseButton;
 pub type MousePosition = Vector<2, i32>;
 pub type MouseDelta = Vector<2, i32>;
 
+impl TryFrom<PhysicalPosition<f64>> for MousePosition {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(position: PhysicalPosition<f64>) -> Result<Self, Self::Error> {
+        let x: i32 = (position.x as i64).try_into()?;
+        let y: i32 = (position.y as i64).try_into()?;
+        Ok(Vector::from([y, x]))
+    }
+}
+
 pub struct OnMouseClick<'a, F: FnMut(MousePosition)>(&'a mut MouseState, MouseButton, F);
 
 impl<'a, F: FnMut(MousePosition)> Behavior for OnMouseClick<'a, F> {
-    fn input(&mut self, event: EventR) -> Option<EventR> {
+    fn input(&mut self, event: Event) -> Option<Event> {
         self.0.update(&event);
         match &event {
             WindowEvent::MouseInput { state, button, .. }
@@ -89,7 +105,7 @@ impl MouseDragState {
         OnMouseDrag(self, f)
     }
 
-    fn update(&mut self, event: &EventR) {
+    fn update(&mut self, event: &Event) {
         self.inner.update(event);
         match &event {
             WindowEvent::MouseInput { state, button, .. } if self.button == *button => {
@@ -109,7 +125,7 @@ impl MouseDragState {
 pub struct OnMouseDrag<'a, F: FnMut(MousePosition, MouseDelta)>(&'a mut MouseDragState, F);
 
 impl<'a, F: FnMut(MousePosition, MouseDelta)> Behavior for OnMouseDrag<'a, F> {
-    fn input(&mut self, event: EventR) -> Option<EventR> {
+    fn input(&mut self, event: Event) -> Option<Event> {
         self.0.update(&event);
         if self.0.down {
             if let (Some(pos), Some(delta)) = (self.0.inner.last_pos, self.0.inner.delta) {
@@ -131,13 +147,11 @@ pub struct MouseState {
 }
 
 impl MouseState {
-    fn update(&mut self, event: &EventR) {
+    pub fn update(&mut self, event: &Event) {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 //TODO: check on highdpi screens
-                let x: i32 = (position.x as i64).try_into().unwrap();
-                let y: i32 = (position.y as i64).try_into().unwrap();
-                let new_pos = Vector::from([y, x]);
+                let new_pos = Vector::try_from(*position).unwrap();
                 if let Some(prev_pos) = self.last_pos {
                     self.delta = Some(new_pos - prev_pos);
                 }
@@ -161,16 +175,16 @@ impl MouseState {
 }
 
 #[derive(Default)]
-pub struct EventStream(Vec<EventR>);
+pub struct EventStream(Vec<Event>);
 
 impl EventStream {
-    pub fn add(&mut self, event: EventR) {
+    pub fn add(&mut self, event: Event) {
         self.0.push(event);
     }
 
     pub fn act(&mut self, mut f: impl FnMut(EventChain) -> EventChain) {
         self.0.retain_mut(|e| {
-            let placeholder = EventR::Destroyed;
+            let placeholder = Event::Destroyed;
             let r = std::mem::replace(e, placeholder);
             if let EventChain(Some(returned)) = f(EventChain(Some(r))) {
                 *e = returned;
@@ -185,7 +199,7 @@ impl EventStream {
 pub struct OnWheelMove<F: FnMut(f32)>(pub F);
 
 impl<F: FnMut(f32)> Behavior for OnWheelMove<F> {
-    fn input(&mut self, event: EventR) -> Option<EventR> {
+    fn input(&mut self, event: Event) -> Option<Event> {
         match event {
             winit::event::WindowEvent::MouseWheel { delta, .. } => {
                 let motion = match delta {
