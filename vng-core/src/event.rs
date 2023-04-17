@@ -105,6 +105,10 @@ impl MouseDragState {
         OnMouseDrag(self, f)
     }
 
+    pub fn drag<'a>(&'a mut self, v: &'a mut Vector<2, i32>) -> Drag<'a> {
+        Drag(self, v)
+    }
+
     fn update(&mut self, event: &Event) {
         self.inner.update(event);
         match &event {
@@ -211,5 +215,14 @@ impl<F: FnMut(f32)> Behavior for OnWheelMove<F> {
             }
             _ => Some(event),
         }
+    }
+}
+
+pub struct Drag<'a>(&'a mut MouseDragState, &'a mut Vector<2, i32>);
+
+impl<'a> Behavior for Drag<'a> {
+    fn input(&mut self, event: Event) -> Option<Event> {
+        let mut f = self.0.while_pressed(|_, delta| *self.1 = *self.1 + delta);
+        f.input(event)
     }
 }

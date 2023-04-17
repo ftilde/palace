@@ -58,19 +58,22 @@ pub fn slice_projection_mat_z<'a>(
     input_data: ScalarOperator<'a, VolumeMetaData>,
     output_data: ScalarOperator<'a, ImageMetaData>,
     selected_slice: ScalarOperator<'a, GlobalCoordinate>,
+    offset: ScalarOperator<'a, Vector<2, i32>>,
 ) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
             .dependent_on(&output_data)
-            .dependent_on(&selected_slice),
-        (input_data, output_data, selected_slice),
-        move |ctx, (input_data, output_data, selected_slice), _| {
+            .dependent_on(&selected_slice)
+            .dependent_on(&offset),
+        (input_data, output_data, selected_slice, offset),
+        move |ctx, (input_data, output_data, selected_slice, offset), _| {
             async move {
-                let (input_data, output_data, selected_slice) = futures::join! {
+                let (input_data, output_data, selected_slice, offset) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
                     ctx.submit(output_data.request_scalar()),
                     ctx.submit(selected_slice.request_scalar()),
+                    ctx.submit(offset.request_scalar()),
                 };
 
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
@@ -88,8 +91,8 @@ pub fn slice_projection_mat_z<'a>(
                 let offset_y = (img_dim.y() - (vol_dim.y() / scaling_factor)).max(0.0) * 0.5;
 
                 let offset_pixel = cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                    x: -offset_x,
-                    y: -offset_y,
+                    x: -offset.x() as f32 - offset_x,
+                    y: -offset.y() as f32 - offset_y,
                     z: 0.0,
                 });
 

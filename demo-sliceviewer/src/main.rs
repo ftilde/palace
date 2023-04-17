@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, VoxelPosition};
+use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventStream, Key, MouseButton, MouseDragState, MouseState, OnKeyPress, OnWheelMove,
 };
@@ -117,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut angle: f32 = 0.0;
     let mut slice_num = 0;
+    let mut slice_offset = [0, 0].into();
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
 
@@ -172,6 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &*vol_state,
                     &mut angle,
                     &mut slice_num,
+                    &mut slice_offset,
                     &mut scale,
                     &mut offset,
                     events,
@@ -197,14 +199,16 @@ fn slice_viewer_z<'op>(
     slice_input: VolumeOperator<'op>,
     md: ImageMetaData,
     slice_num: &mut i32,
+    offset: &mut Vector<2, i32>,
     drag_state: &mut MouseDragState,
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
-        c.chain(drag_state.while_pressed(|_pos, delta| {
-            *slice_num += delta.x();
-        }))
-        .chain(OnWheelMove(|delta| *slice_num += delta as i32))
+        c.chain(drag_state.drag(offset))
+            .chain(drag_state.while_pressed(|_pos, delta| {
+                *slice_num += delta.x();
+            }))
+            .chain(OnWheelMove(|delta| *slice_num += delta as i32))
     });
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
@@ -212,6 +216,7 @@ fn slice_viewer_z<'op>(
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_hash(slice_num_g),
+        crate::operators::scalar::constant_hash(*offset),
     );
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,
@@ -256,6 +261,7 @@ fn eval_network(
     vol: &dyn VolumeOperatorState,
     angle: &mut f32,
     slice_num: &mut i32,
+    slice_offset: &mut Vector<2, i32>,
     scale: &mut f32,
     offset: &mut f32,
     mut events: EventStream,
@@ -291,6 +297,7 @@ fn eval_network(
             scaled.clone(),
             splitter.metadata_l(),
             slice_num,
+            slice_offset,
             drag_state_l,
             events_l,
         ),
