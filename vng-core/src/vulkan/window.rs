@@ -7,6 +7,7 @@ use ash::extensions::khr::{WaylandSurface, XlibSurface};
 use ash::extensions::khr::Win32Surface;
 
 use ash::vk;
+use crevice::glsl::GlslStruct;
 use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
 use winit::window::WindowBuilder;
@@ -17,7 +18,7 @@ use crate::task::OpaqueTaskContext;
 use crate::vulkan::shader::Shader;
 
 use super::pipeline::{DescriptorConfig, DynamicDescriptorSetPool};
-use super::shader::ShaderSource;
+use super::shader::{ShaderDefines, ShaderSource};
 use super::state::VulkanState;
 use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 
@@ -627,8 +628,16 @@ impl Window {
             winit_win.inner_size(),
         );
 
-        let pipeline =
-            GraphicsPipeline::new(device, VERTEX_SHADER, FRAG_SHADER, &render_pass, true);
+        let pipeline = GraphicsPipeline::new(
+            device,
+            VERTEX_SHADER,
+            (
+                FRAG_SHADER,
+                ShaderDefines::new().push_const_block::<PushConstants>(),
+            ),
+            &render_pass,
+            true,
+        );
 
         let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
 
@@ -838,7 +847,7 @@ impl Window {
         Ok(())
     }
 }
-#[derive(Copy, Clone, AsStd140)]
+#[derive(Copy, Clone, AsStd140, GlslStruct)]
 struct PushConstants {
     size: cgmath::Vector2<u32>,
 }
@@ -873,10 +882,7 @@ layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[];
 } sourceData;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec2 size;
-} constants;
+declare_push_consts(constants);
 
 layout(location = 0) out vec4 out_color;
 layout(location = 0) in vec2 texture_pos;

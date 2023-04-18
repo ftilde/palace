@@ -1,5 +1,5 @@
 use ash::vk;
-use crevice::std140::AsStd140;
+use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, TensorMetaData, VolumeMetaData},
@@ -9,6 +9,7 @@ use crate::{
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
+        shader::ShaderDefines,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -90,7 +91,7 @@ impl Splitter {
         input_l: VolumeOperator<'op>,
         input_r: VolumeOperator<'op>,
     ) -> VolumeOperator<'op> {
-        #[derive(Copy, Clone, AsStd140)]
+        #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             dim_out: cgmath::Vector2<u32>,
             dim_l: cgmath::Vector2<u32>,
@@ -113,12 +114,7 @@ layout(std430, binding = 2) buffer OutputBuffer {
     float values[];
 } output_buf;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec2 dim_out;
-    uvec2 dim_l;
-    uvec2 dim_r;
-} consts;
+declare_push_consts(consts);
 
 void main()
 {
@@ -181,7 +177,7 @@ void main()
 
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                            ComputePipeline::new(device, SHADER, true)
+                            ComputePipeline::new(device, (SHADER, ShaderDefines::new().push_const_block::<PushConstants>()), true)
                         });
 
                     assert!(positions.len() == 1);

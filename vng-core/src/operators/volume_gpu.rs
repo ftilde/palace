@@ -1,5 +1,5 @@
 use ash::vk;
-use crevice::std140::AsStd140;
+use crevice::{glsl::GlslStruct, std140::AsStd140};
 use futures::StreamExt;
 
 use crate::{
@@ -28,7 +28,7 @@ pub fn linear_rescale<'op>(
     scale: ScalarOperator<'op, f32>,
     offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
-    #[derive(Copy, Clone, AsStd140)]
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         chunk_pos: cgmath::Vector3<u32>,
         num_chunk_elems: u32,
@@ -58,11 +58,7 @@ layout(std430, binding = 3) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 chunk_pos;
-    uint num_chunk_elems;
-} constants;
+declare_push_consts(constants);
 
 void main()
 {
@@ -103,9 +99,16 @@ void main()
                     ctx.submit(input.metadata.request_scalar()),
                 };
 
-                let pipeline = device
-                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER, true)
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
+                            true,
+                        )
                     });
 
                 let mut brick_stream =
@@ -172,7 +175,7 @@ pub fn rechunk<'op>(
     input: VolumeOperator<'op>,
     brick_size: Vector<3, ChunkSize>,
 ) -> VolumeOperator<'op> {
-    #[derive(Copy, Clone, AsStd140)]
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_size_in: cgmath::Vector3<u32>,
         mem_size_out: cgmath::Vector3<u32>,
@@ -196,15 +199,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 mem_size_in;
-    uvec3 mem_size_out;
-    uvec3 begin_in;
-    uvec3 begin_out;
-    uvec3 region_size;
-    uint global_size;
-} constants;
+declare_push_consts(constants);
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
@@ -242,9 +237,16 @@ void main() {
             async move {
                 let device = ctx.vulkan_device();
 
-                let pipeline = device
-                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER, true)
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
+                            true,
+                        )
                     });
 
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
@@ -358,7 +360,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
     input: VolumeOperator<'op>,
     kernel: ArrayOperator<'op>,
 ) -> VolumeOperator<'op> {
-    #[derive(Copy, Clone, AsStd140)]
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
         logical_dim_out: cgmath::Vector3<u32>,
@@ -388,16 +390,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std140, push_constant) uniform PushConstants {
-    uvec3 mem_dim;
-    uvec3 logical_dim_out;
-    uvec3 out_begin;
-    uvec3 global_dim;
-    uint num_chunks;
-    uint first_chunk_pos;
-    int extent;
-    uint global_size;
-} consts;
+declare_push_consts(consts);
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
@@ -545,7 +538,8 @@ void main() {
                                 SHADER,
                                 ShaderDefines::new()
                                     .add("MAX_BRICKS", max_bricks.to_string())
-                                    .add("DIM", shader_dimension.to_string()),
+                                    .add("DIM", shader_dimension.to_string())
+                                    .push_const_block::<PushConstants>(),
                             ),
                             true,
                         )
@@ -644,7 +638,7 @@ pub fn separable_convolution<'op>(
 }
 
 pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
-    #[derive(Copy, Clone, AsStd140)]
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
         logical_dim: cgmath::Vector3<u32>,
@@ -667,12 +661,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     uint value;
 } sum;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 mem_dim;
-    uvec3 logical_dim;
-    float norm_factor;
-} consts;
+declare_push_consts(consts);
 
 #define atomic_add(mem, value) {\
     uint initial = 0;\
@@ -732,9 +721,16 @@ void main()
                 let to_request = m.brick_positions().collect::<Vec<_>>();
                 let batch_size = 1024;
 
-                let pipeline = device
-                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER, true)
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
+                            true,
+                        )
                     });
 
                 let sum = ctx.alloc_scalar_gpu(device)?;
@@ -825,7 +821,7 @@ pub struct VoxelRasterizerGLSL {
 
 impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        #[derive(Copy, Clone, AsStd140)]
+        #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             offset: cgmath::Vector3<u32>,
             mem_dim: cgmath::Vector3<u32>,
@@ -849,14 +845,7 @@ layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 offset;
-    uvec3 mem_dim;
-    uvec3 logical_dim;
-    uvec3 vol_dim;
-    uint num_chunk_elems;
-} consts;
+declare_push_consts(consts);
 
 void main()
 {
@@ -893,10 +882,19 @@ void main()
                 async move {
                     let device = ctx.vulkan_device();
 
-                    let pipeline = device
-                        .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                            ComputePipeline::new(device, shader.as_str(), true)
-                        });
+                    let pipeline = device.request_state(
+                        RessourceId::new("pipeline").of(ctx.current_op()),
+                        || {
+                            ComputePipeline::new(
+                                device,
+                                (
+                                    shader.as_str(),
+                                    ShaderDefines::new().push_const_block::<PushConstants>(),
+                                ),
+                                true,
+                            )
+                        },
+                    );
 
                     for pos in positions {
                         let brick_info = m.chunk_info(pos);

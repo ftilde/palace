@@ -21,6 +21,18 @@ impl ShaderDefines {
         self.defines.insert(key.into(), value.into());
         self
     }
+
+    pub fn push_const_block<T: crevice::glsl::GlslStruct>(self) -> Self {
+        let mut struct_def = T::glsl_definition().replace("\n", " ");
+        struct_def.pop(); //Remove semicolon
+        let without_leading_struct = &struct_def[7..];
+        let def = format!(
+            "layout(std140, push_constant) uniform {} __name",
+            without_leading_struct
+        );
+        println!("{}", def);
+        self.add("declare_push_consts(__name)", def)
+    }
 }
 
 pub struct Shader {

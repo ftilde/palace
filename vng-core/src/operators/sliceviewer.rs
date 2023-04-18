@@ -1,5 +1,5 @@
 use ash::vk;
-use crevice::std140::AsStd140;
+use crevice::{glsl::GlslStruct, std140::AsStd140};
 use futures::StreamExt;
 
 use crate::{
@@ -10,6 +10,7 @@ use crate::{
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
+        shader::ShaderDefines,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -169,7 +170,7 @@ pub fn render_slice<'a>(
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
 ) -> VolumeOperator<'a> {
-    #[derive(Copy, Clone, AsStd140)]
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         vol_dim: cgmath::Vector3<u32>,
         chunk_dim: cgmath::Vector3<u32>,
@@ -178,6 +179,7 @@ pub fn render_slice<'a>(
         out_begin: cgmath::Vector2<u32>,
         out_mem_dim: cgmath::Vector2<u32>,
     }
+
     const SHADER: &'static str = r#"
 #version 450
 
@@ -204,15 +206,7 @@ layout(std430, binding = 2) buffer RefBuffer {
     BrickType values[];
 } bricks;
 
-layout(std140, push_constant) uniform PushConstants
-{
-    uvec3 vol_dim;
-    uvec3 chunk_dim;
-    uvec3 brick_region_size;
-    uvec3 llb_brick;
-    uvec2 out_begin;
-    uvec2 out_mem_dim;
-} consts;
+declare_push_consts(consts);
 
 void main()
 {
@@ -356,9 +350,17 @@ void main()
                     })
                     .collect::<Vec<_>>();
 
-                let pipeline = device
-                    .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(device, SHADER, false)
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        println!("{}", PushConstants::glsl_definition());
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
+                            false,
+                        )
                     });
 
                 let mut stream = ctx
