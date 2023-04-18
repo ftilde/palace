@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{
     array::VolumeMetaData,
-    data::{BrickPosition, LocalCoordinate, Vector},
+    data::{hmul, BrickPosition, LocalCoordinate, Vector},
     id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -28,11 +28,6 @@ pub fn linear_rescale<'op>(
     scale: ScalarOperator<'op, f32>,
     offset: ScalarOperator<'op, f32>,
 ) -> VolumeOperator<'op> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        chunk_pos: cgmath::Vector3<u32>,
-        num_chunk_elems: u32,
-    }
     const SHADER: &'static str = r#"
 #version 450
 
@@ -51,20 +46,18 @@ layout(std430, binding = 1) readonly buffer InputOffset{
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
 layout(std430, binding = 2) readonly buffer InputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } sourceData;
 
 layout(std430, binding = 3) buffer OutputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } outputData;
-
-declare_push_consts(constants);
 
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
 
-    if(gID < constants.num_chunk_elems) {
+    if(gID < BRICK_MEM_SIZE) {
         outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
     }
 }
@@ -105,7 +98,7 @@ void main()
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                                ShaderDefines::new().add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
                             ),
                             true,
                         )
@@ -147,10 +140,6 @@ void main()
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant(PushConstants {
-                                chunk_pos: pos.into_elem::<u32>().into(),
-                                num_chunk_elems: global_size.try_into().unwrap(),
-                            });
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
                         }
@@ -192,11 +181,11 @@ pub fn rechunk<'op>(
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE_IN];
 } sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE_OUT];
 } outputData;
 
 declare_push_consts(constants);
@@ -237,24 +226,27 @@ void main() {
             async move {
                 let device = ctx.vulkan_device();
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new().push_const_block::<PushConstants>(),
-                            ),
-                            true,
-                        )
-                    });
-
                 let m_in = ctx.submit(input.metadata.request_scalar()).await;
                 let m_out = {
                     let mut m_out = m_in;
                     m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
+
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
+                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size))
+                                    .add("BRICK_MEM_SIZE_OUT", hmul(m_out.chunk_size)),
+                            ),
+                            true,
+                        )
+                    });
 
                 let requests = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
@@ -320,7 +312,7 @@ void main() {
                             let descriptor_config =
                                 DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
 
-                            let global_size = crate::data::hmul(overlap_size);
+                            let global_size = hmul(overlap_size);
 
                             //TODO initialization of outside regions
                             unsafe {
@@ -369,7 +361,6 @@ pub fn convolution_1d<'op, const DIM: usize>(
         num_chunks: u32,
         first_chunk_pos: u32,
         extent: i32,
-        global_size: u32,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -379,15 +370,15 @@ pub fn convolution_1d<'op, const DIM: usize>(
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } sourceData[MAX_BRICKS];
 
 layout(std430, binding = 1) readonly buffer KernelBuffer{
-    float values[];
+    float values[KERNEL_SIZE];
 } kernel;
 
 layout(std430, binding = 2) buffer OutputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } outputData;
 
 declare_push_consts(consts);
@@ -395,7 +386,7 @@ declare_push_consts(consts);
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
-    if(gID < consts.global_size) {
+    if(gID < BRICK_MEM_SIZE) {
         uvec3 out_local = from_linear3(gID, consts.mem_dim);
         float acc = 0.0;
 
@@ -539,6 +530,8 @@ void main() {
                                 ShaderDefines::new()
                                     .add("MAX_BRICKS", max_bricks.to_string())
                                     .add("DIM", shader_dimension.to_string())
+                                    .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
+                                    .add("KERNEL_SIZE", kernel_size)
                                     .push_const_block::<PushConstants>(),
                             ),
                             true,
@@ -573,7 +566,7 @@ void main() {
                     assert_eq!(num_chunks, intersecting_bricks.len());
 
                     let first_chunk_pos = in_brick_positions.first().unwrap()[DIM].raw;
-                    let global_size = crate::data::hmul(m_out.chunk_size);
+                    let global_size = hmul(m_out.chunk_size);
 
                     let consts = PushConstants {
                         mem_dim: m_out.chunk_size.into_elem::<u32>().into(),
@@ -583,7 +576,6 @@ void main() {
                         num_chunks: num_chunks as _,
                         first_chunk_pos,
                         extent: extent as i32,
-                        global_size: global_size.try_into().unwrap(),
                     };
 
                     // TODO: This padding to max_bricks is necessary since the descriptor array in
@@ -655,7 +647,7 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
 layout (local_size_x = 1024) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
@@ -716,7 +708,9 @@ void main()
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
+                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
                             ),
                             true,
                         )
@@ -724,7 +718,7 @@ void main()
 
                 let sum = ctx.alloc_scalar_gpu(device)?;
 
-                let normalization_factor = 1.0 / (crate::data::hmul(m.dimensions) as f32);
+                let normalization_factor = 1.0 / (hmul(m.dimensions) as f32);
 
                 device.with_cmd_buffer(|cmd| {
                     unsafe {
@@ -816,7 +810,6 @@ impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
             mem_dim: cgmath::Vector3<u32>,
             logical_dim: cgmath::Vector3<u32>,
             vol_dim: cgmath::Vector3<u32>,
-            num_chunk_elems: u32,
         }
 
         let m = self.metadata;
@@ -831,7 +824,7 @@ impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) buffer OutputBuffer{
-    float values[];
+    float values[BRICK_MEM_SIZE];
 } outputData;
 
 declare_push_consts(consts);
@@ -840,7 +833,7 @@ void main()
 {
     uint gID = gl_GlobalInvocationID.x;
 
-    if(gID < consts.num_chunk_elems) {
+    if(gID < BRICK_MEM_SIZE) {
         uvec3 out_local = from_linear3(gID, consts.mem_dim);
         float result = 0.0;
         uvec3 pos_voxel = out_local + consts.offset;
@@ -878,7 +871,9 @@ void main()
                                 device,
                                 (
                                     shader.as_str(),
-                                    ShaderDefines::new().push_const_block::<PushConstants>(),
+                                    ShaderDefines::new()
+                                        .push_const_block::<PushConstants>()
+                                        .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
                                 ),
                                 true,
                             )
@@ -906,7 +901,6 @@ void main()
                                         .into(),
                                     mem_dim: m.chunk_size.into_elem::<u32>().into(),
                                     vol_dim: m.dimensions.into_elem::<u32>().into(),
-                                    num_chunk_elems: global_size as u32,
                                 });
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);

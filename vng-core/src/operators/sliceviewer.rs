@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{BrickPosition, GlobalCoordinate, Vector, AABB},
+    data::{hmul, BrickPosition, GlobalCoordinate, Vector, AABB},
     operator::OperatorId,
     operators::tensor::TensorOperator,
     task::RequestStream,
@@ -190,12 +190,12 @@ pub fn render_slice<'a>(
 layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(buffer_reference, std430) buffer BrickType {
-    float values[];
+    float values[BRICK_MEM_SIZE];
 };
 
 
 layout(std430, binding = 0) buffer OutputBuffer{
-    float values[];
+    float values[TILE_MEM_SIZE];
 } outputData;
 
 layout(std430, binding = 1) buffer Transform {
@@ -328,7 +328,7 @@ void main()
 
                         let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
 
-                        max_bricks = max_bricks.max(crate::data::hmul(brick_region_size));
+                        max_bricks = max_bricks.max(hmul(brick_region_size));
 
                         let low = llb_brick.raw();
                         let high = urb_brick.raw();
@@ -356,7 +356,10 @@ void main()
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
+                                    .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
+                                    .add("TILE_MEM_SIZE", hmul(m.chunk_size)),
                             ),
                             false,
                         )

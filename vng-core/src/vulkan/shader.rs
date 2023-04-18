@@ -17,8 +17,8 @@ impl ShaderDefines {
             defines: Default::default(),
         }
     }
-    pub fn add(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.defines.insert(key.into(), value.into());
+    pub fn add(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.defines.insert(key.into(), value.to_string());
         self
     }
 
