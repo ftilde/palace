@@ -385,7 +385,6 @@ impl DeviceContext {
                 .build();
             let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::builder()
                 .buffer_device_address(true)
-                .runtime_descriptor_array(true)
                 .build();
             let enabled_features = vk::PhysicalDeviceFeatures::builder();
             let create_info = vk::DeviceCreateInfo::builder()

@@ -203,7 +203,7 @@ layout(std430, binding = 1) buffer Transform {
 } transform;
 
 layout(std430, binding = 2) buffer RefBuffer {
-    BrickType values[];
+    BrickType values[MAX_BRICKS];
 } bricks;
 
 declare_push_consts(consts);
@@ -359,7 +359,8 @@ void main()
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
                                     .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
-                                    .add("TILE_MEM_SIZE", hmul(m.chunk_size)),
+                                    .add("TILE_MEM_SIZE", hmul(m.chunk_size))
+                                    .add("MAX_BRICKS", max_bricks),
                             ),
                             false,
                         )
