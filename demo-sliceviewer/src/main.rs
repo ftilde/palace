@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
-    EventStream, Key, MouseButton, MouseDragState, MouseState, OnKeyPress, OnWheelMove,
+    Drag, EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseClick, OnMouseDrag,
+    OnWheelMove,
 };
-use vng_core::operators::splitter::SplitterState;
 use vng_core::operators::volume::VolumeOperator;
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
@@ -118,18 +118,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut angle: f32 = 0.0;
     let mut slice_num = 0;
     let mut slice_offset = [0, 0].into();
+    let mut slice_zoom_level = 1.0;
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
 
     let mut event_loop = EventLoop::new();
 
     let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
-    let mut events = EventStream::default();
-
-    let mut click_state = MouseState::default();
-    let mut drag_state_r = MouseDragState::new(MouseButton::Right);
-    let mut drag_state_l = MouseDragState::new(MouseButton::Right);
-    let mut splitter_state = SplitterState::default();
+    let mut events = EventSource::default();
 
     event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
@@ -161,7 +157,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 events.add(event);
             }
             Event::RedrawRequested(_) => {
-                let events = std::mem::take(&mut events);
                 // Redraw the application.
                 //
                 // It's preferable for applications that do not render continuously to render in
@@ -174,13 +169,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut angle,
                     &mut slice_num,
                     &mut slice_offset,
+                    &mut slice_zoom_level,
                     &mut scale,
                     &mut offset,
-                    events,
-                    &mut click_state,
-                    &mut drag_state_l,
-                    &mut drag_state_r,
-                    &mut splitter_state,
+                    events.current_batch(),
                 )
                 .unwrap();
             }
@@ -200,15 +192,16 @@ fn slice_viewer_z<'op>(
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<2, i32>,
-    drag_state: &mut MouseDragState,
+    zoom_level: &mut f32,
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
-        c.chain(drag_state.drag(offset))
-            .chain(drag_state.while_pressed(|_pos, delta| {
+        c.chain(Drag(MouseButton::Left, offset))
+            .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
                 *slice_num += delta.x();
             }))
-            .chain(OnWheelMove(|delta| *slice_num += delta as i32))
+            //.chain(OnWheelMove(|delta| *slice_num += delta as i32))
+            .chain(OnWheelMove(|delta| *zoom_level *= (delta * 0.05).exp()))
     });
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
@@ -217,6 +210,7 @@ fn slice_viewer_z<'op>(
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_hash(slice_num_g),
         crate::operators::scalar::constant_hash(*offset),
+        crate::operators::scalar::constant_pod(*zoom_level),
     );
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,
@@ -231,11 +225,10 @@ fn slice_viewer_rot<'op>(
     slice_input: VolumeOperator<'op>,
     md: ImageMetaData,
     angle: &mut f32,
-    drag_state: &mut MouseDragState,
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
-        c.chain(drag_state.while_pressed(|_pos, delta| {
+        c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             *angle += delta.x() as f32 * 0.05;
         }))
         .chain(OnWheelMove(|delta| *angle += delta * 0.05))
@@ -262,13 +255,10 @@ fn eval_network(
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<2, i32>,
+    slice_zoom_level: &mut f32,
     scale: &mut f32,
     offset: &mut f32,
     mut events: EventStream,
-    click_state: &mut MouseState,
-    drag_state_l: &mut MouseDragState,
-    drag_state_r: &mut MouseDragState,
-    splitter_state: &mut SplitterState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     events.act(|c| {
         c.chain(OnKeyPress(Key::Plus, || *slice_num += 1))
@@ -277,9 +267,9 @@ fn eval_network(
             .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
             .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
-            .chain(
-                click_state.on_click(MouseButton::Left, |pos| println!("Click left!: {:?}", pos)),
-            )
+        //.chain(OnMouseClick(MouseButton::Left, |pos| {
+        //    println!("Click left!: {:?}", pos)
+        //}))
     });
 
     let vol = vol.operate();
@@ -288,7 +278,7 @@ fn eval_network(
 
     let scaled = volume_gpu::linear_rescale(rechunked, (*scale).into(), (*offset).into());
 
-    let mut splitter = operators::splitter::Splitter::new(splitter_state, window.size(), 0.5);
+    let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
 
     let (events_l, events_r) = splitter.split_events(&mut events);
 
@@ -298,10 +288,10 @@ fn eval_network(
             splitter.metadata_l(),
             slice_num,
             slice_offset,
-            drag_state_l,
+            slice_zoom_level,
             events_l,
         ),
-        slice_viewer_rot(scaled, splitter.metadata_r(), angle, drag_state_r, events_r),
+        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r),
     );
 
     let mut c = runtime.context_anchor();

@@ -59,21 +59,24 @@ pub fn slice_projection_mat_z<'a>(
     output_data: ScalarOperator<'a, ImageMetaData>,
     selected_slice: ScalarOperator<'a, GlobalCoordinate>,
     offset: ScalarOperator<'a, Vector<2, i32>>,
+    zoom_level: ScalarOperator<'a, f32>,
 ) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
             .dependent_on(&output_data)
             .dependent_on(&selected_slice)
-            .dependent_on(&offset),
-        (input_data, output_data, selected_slice, offset),
-        move |ctx, (input_data, output_data, selected_slice, offset), _| {
+            .dependent_on(&offset)
+            .dependent_on(&zoom_level),
+        (input_data, output_data, selected_slice, offset, zoom_level),
+        move |ctx, (input_data, output_data, selected_slice, offset, zoom_level), _| {
             async move {
-                let (input_data, output_data, selected_slice, offset) = futures::join! {
+                let (input_data, output_data, selected_slice, offset, zoom_level) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
                     ctx.submit(output_data.request_scalar()),
                     ctx.submit(selected_slice.request_scalar()),
                     ctx.submit(offset.request_scalar()),
+                    ctx.submit(zoom_level.request_scalar()),
                 };
 
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
@@ -96,7 +99,7 @@ pub fn slice_projection_mat_z<'a>(
                     z: 0.0,
                 });
 
-                let scale = cgmath::Matrix4::from_scale(scaling_factor);
+                let scale = cgmath::Matrix4::from_scale(scaling_factor * zoom_level);
                 let slice_select = cgmath::Matrix4::from_translation(cgmath::Vector3 {
                     x: 0.0,
                     y: 0.0,

@@ -4,7 +4,7 @@ use crevice::std140::AsStd140;
 use crate::{
     array::{ImageMetaData, TensorMetaData, VolumeMetaData},
     data::{PixelPosition, Vector},
-    event::{Event, EventChain, EventStream, MousePosition},
+    event::{EventChain, EventStream},
     operator::OperatorId,
     operators::tensor::TensorOperator,
     vulkan::{
@@ -16,34 +16,14 @@ use crate::{
 
 use super::volume::VolumeOperator;
 
-#[derive(Eq, PartialEq, Copy, Clone)]
-enum PaneSelection {
-    Left,
-    Right,
-    None,
-}
-
-pub struct SplitterState {
-    current: PaneSelection,
-}
-
-impl Default for SplitterState {
-    fn default() -> Self {
-        SplitterState {
-            current: PaneSelection::None,
-        }
-    }
-}
-
-pub struct Splitter<'a> {
+pub struct Splitter {
     size: PixelPosition,
     split_pos: f32,
-    state: &'a mut SplitterState,
 }
 
 const NUM_CHANNELS: u32 = 4;
 
-impl<'a> Splitter<'a> {
+impl Splitter {
     #[allow(deprecated)]
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
         let mut left = EventStream::default();
@@ -52,77 +32,25 @@ impl<'a> Splitter<'a> {
         let size_r = self.size_r().x().raw as i32;
         //TODO: This needs some better handling of (for example) CursorLeft/CursorEntered
         //events
-        e.act(|e| match e.0 {
-            Some(Event::CursorMoved {
-                position,
-                device_id,
-                modifiers,
-            }) => {
-                let m_pos = MousePosition::try_from(position).unwrap();
-                let new = if m_pos.x() >= size_r {
-                    PaneSelection::Right
+        e.act(|e| {
+            if let Some(mouse_state) = &e.state.mouse_state {
+                let in_left = mouse_state.pos.x() < size_r;
+                if in_left {
+                    left.add(e);
                 } else {
-                    PaneSelection::Left
+                    right.add(e.transform(|p| p - Vector::<2, i32>::from([0i32, size_r])));
                 };
-
-                if new != self.state.current {
-                    match new {
-                        PaneSelection::Left => left.add(Event::CursorEntered { device_id }),
-                        PaneSelection::Right => right.add(Event::CursorEntered { device_id }),
-                        PaneSelection::None => {}
-                    }
-
-                    match self.state.current {
-                        PaneSelection::Left => left.add(Event::CursorLeft { device_id }),
-                        PaneSelection::Right => right.add(Event::CursorLeft { device_id }),
-                        PaneSelection::None => {}
-                    }
-
-                    self.state.current = new;
-                }
-
-                match self.state.current {
-                    PaneSelection::Left => left.add(Event::CursorMoved {
-                        position,
-                        device_id,
-                        modifiers,
-                    }),
-                    PaneSelection::Right => right.add(Event::CursorMoved {
-                        position: winit::dpi::PhysicalPosition {
-                            x: (m_pos.x() - size_r) as f64,
-                            y: m_pos.y() as f64,
-                        },
-                        device_id,
-                        modifiers,
-                    }),
-                    PaneSelection::None => {}
-                }
-
-                e
+                EventChain::Consumed
+            } else {
+                e.into()
             }
-            Some(o) => match self.state.current {
-                PaneSelection::Left => {
-                    left.add(o);
-                    EventChain::consumed()
-                }
-                PaneSelection::Right => {
-                    right.add(o);
-                    EventChain::consumed()
-                }
-                PaneSelection::None => EventChain(Some(o)),
-            },
-            None => EventChain::consumed(),
         });
         (left, right)
     }
 
-    pub fn new(state: &'a mut SplitterState, size: PixelPosition, split_pos: f32) -> Self {
+    pub fn new(size: PixelPosition, split_pos: f32) -> Self {
         assert!(0.0 <= split_pos && split_pos <= 1.0);
-        Splitter {
-            state,
-            size,
-            split_pos,
-        }
+        Splitter { size, split_pos }
     }
     pub fn size_l(&self) -> PixelPosition {
         self.size.map_element(1, |v| {
