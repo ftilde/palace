@@ -352,7 +352,6 @@ void main()
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                        println!("{}", PushConstants::glsl_definition());
                         ComputePipeline::new(
                             device,
                             (

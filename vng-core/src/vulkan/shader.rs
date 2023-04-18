@@ -30,7 +30,6 @@ impl ShaderDefines {
             "layout(std140, push_constant) uniform {} __name",
             without_leading_struct
         );
-        println!("{}", def);
         self.add("declare_push_consts(__name)", def)
     }
 }
