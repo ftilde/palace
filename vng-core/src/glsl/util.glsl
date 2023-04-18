@@ -21,3 +21,5 @@ uvec3 from_linear3(uint linear_pos, uvec3 size) {
 
     return vec_pos;
 }
+
+#define NaN (intBitsToFloat(int(0xFFC00000u)));

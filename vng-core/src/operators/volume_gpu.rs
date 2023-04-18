@@ -435,7 +435,7 @@ void main() {
                 }
             }
         } else {
-            acc = intBitsToFloat(int(0xFFC00000u)); //NaN
+            acc = NaN;
         }
 
         outputData.values[gID] = acc;
@@ -851,7 +851,7 @@ void main()
             self.body,
             r#"
         } else {
-            result = intBitsToFloat(int(0xFFC00000u)); //NaN
+            result = NaN;
         }
 
         outputData.values[gID] = result;
