@@ -58,7 +58,7 @@ pub fn slice_projection_mat_z<'a>(
     input_data: ScalarOperator<'a, VolumeMetaData>,
     output_data: ScalarOperator<'a, ImageMetaData>,
     selected_slice: ScalarOperator<'a, GlobalCoordinate>,
-    offset: ScalarOperator<'a, Vector<2, i32>>,
+    offset: ScalarOperator<'a, Vector<2, f32>>,
     zoom_level: ScalarOperator<'a, f32>,
 ) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
@@ -93,19 +93,24 @@ pub fn slice_projection_mat_z<'a>(
                 let offset_x = (img_dim.x() - (vol_dim.x() / scaling_factor)).max(0.0) * 0.5;
                 let offset_y = (img_dim.y() - (vol_dim.y() / scaling_factor)).max(0.0) * 0.5;
 
-                let offset_pixel = cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                    x: -offset.x() as f32 - offset_x,
-                    y: -offset.y() as f32 - offset_y,
+                let pixel_transform = cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                    x: -offset_x,
+                    y: -offset_y,
                     z: 0.0,
-                });
+                }) * cgmath::Matrix4::from_scale(zoom_level)
+                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                        x: -offset.x(),
+                        y: -offset.y(),
+                        z: 0.0,
+                    });
 
-                let scale = cgmath::Matrix4::from_scale(scaling_factor * zoom_level);
+                let scale = cgmath::Matrix4::from_scale(scaling_factor);
                 let slice_select = cgmath::Matrix4::from_translation(cgmath::Vector3 {
                     x: 0.0,
                     y: 0.0,
                     z: selected_slice.raw as f32 + 0.5, //For +0.5 see below
                 });
-                let mat = slice_select * scale * offset_pixel;
+                let mat = slice_select * scale * pixel_transform;
 
                 let out = mat.into();
                 ctx.write(out)

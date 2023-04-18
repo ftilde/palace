@@ -141,8 +141,8 @@ pub type LocalCoordinate = Coordinate<LocalCoordinateType>;
 pub type GlobalCoordinate = Coordinate<GlobalCoordinateType>;
 pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
-#[repr(C)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vector<const N: usize, T>([T; N]);
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {

@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
-    Drag, EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseClick, OnMouseDrag,
-    OnWheelMove,
+    Drag, EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::VolumeOperator;
 use vng_core::operators::volume_gpu;
@@ -117,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut angle: f32 = 0.0;
     let mut slice_num = 0;
-    let mut slice_offset = [0, 0].into();
+    let mut slice_offset = [0.0, 0.0].into();
     let mut slice_zoom_level = 1.0;
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
@@ -191,17 +190,26 @@ fn slice_viewer_z<'op>(
     slice_input: VolumeOperator<'op>,
     md: ImageMetaData,
     slice_num: &mut i32,
-    offset: &mut Vector<2, i32>,
+    offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(Drag(MouseButton::Left, offset))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-                *slice_num += delta.x();
+                *slice_num += delta.y();
             }))
             //.chain(OnWheelMove(|delta| *slice_num += delta as i32))
-            .chain(OnWheelMove(|delta| *zoom_level *= (delta * 0.05).exp()))
+            .chain(OnWheelMove(|delta, state| {
+                if let Some(state) = &state.mouse_state {
+                    let zoom_change = (-delta * 0.05).exp();
+                    *zoom_level *= zoom_change;
+
+                    let pos = state.pos.map(|v| v as f32);
+
+                    *offset = (*offset - pos) / Vector::fill(zoom_change) + pos;
+                }
+            }))
     });
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
@@ -209,7 +217,7 @@ fn slice_viewer_z<'op>(
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_hash(slice_num_g),
-        crate::operators::scalar::constant_hash(*offset),
+        crate::operators::scalar::constant_pod(*offset),
         crate::operators::scalar::constant_pod(*zoom_level),
     );
     let slice = crate::operators::sliceviewer::render_slice(
@@ -231,7 +239,7 @@ fn slice_viewer_rot<'op>(
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             *angle += delta.x() as f32 * 0.05;
         }))
-        .chain(OnWheelMove(|delta| *angle += delta * 0.05))
+        .chain(OnWheelMove(|delta, _| *angle += delta * 0.05))
     });
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
@@ -254,7 +262,7 @@ fn eval_network(
     vol: &dyn VolumeOperatorState,
     angle: &mut f32,
     slice_num: &mut i32,
-    slice_offset: &mut Vector<2, i32>,
+    slice_offset: &mut Vector<2, f32>,
     slice_zoom_level: &mut f32,
     scale: &mut f32,
     offset: &mut f32,

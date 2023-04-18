@@ -252,9 +252,9 @@ impl EventStream {
     }
 }
 
-pub struct OnWheelMove<F: FnMut(f32)>(pub F);
+pub struct OnWheelMove<F: FnMut(f32, &EventState)>(pub F);
 
-impl<F: FnMut(f32)> Behavior for OnWheelMove<F> {
+impl<F: FnMut(f32, &EventState)> Behavior for OnWheelMove<F> {
     fn input(&mut self, event: Event) -> EventChain {
         match event.change {
             winit::event::WindowEvent::MouseWheel { delta, .. } => {
@@ -262,7 +262,7 @@ impl<F: FnMut(f32)> Behavior for OnWheelMove<F> {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y.signum(),
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y.signum() as f32,
                 };
-                (self.0)(motion);
+                (self.0)(motion, &event.state);
                 EventChain::Consumed
             }
             _ => event.into(),
@@ -270,11 +270,13 @@ impl<F: FnMut(f32)> Behavior for OnWheelMove<F> {
     }
 }
 
-pub struct Drag<'a>(pub MouseButton, pub &'a mut Vector<2, i32>);
+pub struct Drag<'a>(pub MouseButton, pub &'a mut Vector<2, f32>);
 
 impl<'a> Behavior for Drag<'a> {
     fn input(&mut self, event: Event) -> EventChain {
-        let mut f = OnMouseDrag(self.0, |_, delta| *self.1 = *self.1 + delta);
+        let mut f = OnMouseDrag(self.0, |_, delta| {
+            *self.1 = *self.1 + delta.map(|v| v as f32)
+        });
         f.input(event)
     }
 }
