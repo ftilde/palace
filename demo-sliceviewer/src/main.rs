@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
-    Drag, EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
+    EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::VolumeOperator;
 use vng_core::operators::volume_gpu;
@@ -195,7 +195,7 @@ fn slice_viewer_z<'op>(
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
-        c.chain(Drag(MouseButton::Left, offset))
+        c.chain(offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
                 *slice_num += delta.y();
             }))

@@ -270,13 +270,19 @@ impl<F: FnMut(f32, &EventState)> Behavior for OnWheelMove<F> {
     }
 }
 
-pub struct Drag<'a>(pub MouseButton, pub &'a mut Vector<2, f32>);
+pub struct DragVec2<'a>(pub MouseButton, pub &'a mut Vector<2, f32>);
 
-impl<'a> Behavior for Drag<'a> {
+impl<'a> Behavior for DragVec2<'a> {
     fn input(&mut self, event: Event) -> EventChain {
         let mut f = OnMouseDrag(self.0, |_, delta| {
             *self.1 = *self.1 + delta.map(|v| v as f32)
         });
         f.input(event)
+    }
+}
+
+impl<'a> Vector<2, f32> {
+    pub fn drag(&mut self, button: MouseButton) -> DragVec2 {
+        DragVec2(button, self)
     }
 }
