@@ -648,6 +648,7 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
 #version 450
 
 #include <util.glsl>
+#include <atomic.glsl>
 
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
@@ -662,18 +663,6 @@ layout(std430, binding = 1) buffer OutputBuffer{
 } sum;
 
 declare_push_consts(consts);
-
-#define atomic_add(mem, value) {\
-    uint initial = 0;\
-    uint new = 0;\
-    do {\
-        initial = mem;\
-        new = floatBitsToUint(uintBitsToFloat(initial) + (value));\
-        if (new == initial) {\
-            break;\
-        }\
-    } while(atomicCompSwap(mem, initial, new) != initial);\
-}
 
 shared uint shared_sum;
 
@@ -698,13 +687,13 @@ void main()
     float sg_sum = subgroupAdd(val);
 
     if(gl_SubgroupInvocationID == 0) {
-        atomic_add(shared_sum, sg_sum);
+        atomic_add_float(shared_sum, sg_sum);
     }
 
     barrier();
 
     if(gl_LocalInvocationIndex == 0) {
-        atomic_add(sum.value, uintBitsToFloat(shared_sum));
+        atomic_add_float(sum.value, uintBitsToFloat(shared_sum));
     }
 }
 "#;
