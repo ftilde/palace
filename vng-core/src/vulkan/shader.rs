@@ -43,7 +43,8 @@ impl ShaderSource for (&str, ShaderDefines) {
             .with_source_language(SourceLanguage::GLSL)
             .generate_debug_info()
             .with_opt_level(OptimizationLevel::Performance)
-            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_2);
+            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_2)
+            .with_include_dir(env!("GLSL_INCLUDE_DIR"));
 
         for (k, v) in defines.defines.into_iter() {
             compiler = compiler.with_macro(&k, Some(&v));

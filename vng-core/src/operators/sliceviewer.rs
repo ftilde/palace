@@ -183,6 +183,8 @@ pub fn render_slice<'a>(
 
 #extension GL_EXT_buffer_reference : require
 
+#include "util.glsl"
+
 layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(buffer_reference, std430) buffer BrickType {
@@ -221,10 +223,6 @@ uvec2 from_linear(uint linear_pos, uvec2 size) {
     return vec_pos;
 }
 
-uint to_linear(uvec3 vec_pos, uvec3 size) {
-    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
-}
-
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
@@ -243,11 +241,11 @@ void main()
             uvec3 urb_brick = consts.brick_region_size + consts.llb_brick;
             if(all(lessThanEqual(consts.llb_brick, sample_brick)) && all(lessThan(sample_brick, urb_brick))) {
                 uvec3 sample_brick_region = sample_brick - consts.llb_brick;
-                uint sample_brick_pos_linear = to_linear(sample_brick_region, consts.brick_region_size);
+                uint sample_brick_pos_linear = to_linear3(sample_brick_region, consts.brick_region_size);
 
                 uvec3 brick_begin = sample_brick * consts.chunk_dim;
                 uvec3 local = sample_pos - brick_begin;
-                uint local_index = to_linear(local, consts.chunk_dim);
+                uint local_index = to_linear3(local, consts.chunk_dim);
                 float v = bricks.values[sample_brick_pos_linear].values[local_index];
                 val = vec4(v, v, v, 1.0);
             } else {
