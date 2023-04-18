@@ -196,7 +196,7 @@ layout(buffer_reference, std430) buffer BrickType {
 
 
 layout(std430, binding = 0) buffer OutputBuffer{
-    float values[TILE_MEM_SIZE];
+    float values[];
 } outputData;
 
 layout(std430, binding = 1) buffer Transform {
@@ -354,8 +354,7 @@ void main()
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(Id::hash(&max_bricks))
-                        .dependent_on(Id::hash(&m.chunk_size)),
+                        .dependent_on(Id::hash(&max_bricks)),
                     || {
                         ComputePipeline::new(
                             device,
@@ -364,7 +363,6 @@ void main()
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
                                     .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
-                                    .add("TILE_MEM_SIZE", hmul(m.chunk_size))
                                     .add("MAX_BRICKS", max_bricks),
                             ),
                             false,
