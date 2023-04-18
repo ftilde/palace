@@ -5,6 +5,7 @@ use futures::StreamExt;
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
     data::{hmul, BrickPosition, GlobalCoordinate, Vector, AABB},
+    id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
     task::RequestStream,
@@ -350,8 +351,12 @@ void main()
                     })
                     .collect::<Vec<_>>();
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(Id::hash(&max_bricks))
+                        .dependent_on(Id::hash(&m.chunk_size)),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -364,7 +369,8 @@ void main()
                             ),
                             false,
                         )
-                    });
+                    },
+                );
 
                 let mut stream = ctx
                     .submit_unordered_with_data(requests.into_iter())

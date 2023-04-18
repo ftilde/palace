@@ -233,8 +233,11 @@ void main() {
                     m_out
                 };
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(Id::hash(&m_out.chunk_size)),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -246,7 +249,8 @@ void main() {
                             ),
                             true,
                         )
-                    });
+                    },
+                );
 
                 let requests = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
@@ -865,7 +869,9 @@ void main()
                     let device = ctx.vulkan_device();
 
                     let pipeline = device.request_state(
-                        RessourceId::new("pipeline").of(ctx.current_op()),
+                        RessourceId::new("pipeline")
+                            .of(ctx.current_op())
+                            .dependent_on(Id::hash(&m.chunk_size)),
                         || {
                             ComputePipeline::new(
                                 device,
