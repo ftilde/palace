@@ -36,6 +36,8 @@ pub fn linear_rescale<'op>(
     const SHADER: &'static str = r#"
 #version 450
 
+#include <util.glsl>
+
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputScale{
@@ -182,6 +184,8 @@ pub fn rechunk<'op>(
     const SHADER: &'static str = r#"
 #version 450
 
+#include <util.glsl>
+
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
@@ -202,32 +206,17 @@ layout(std140, push_constant) uniform PushConstants
     uint global_size;
 } constants;
 
-uvec3 from_linear(uint linear_pos, uvec3 size) {
-    uvec3 vec_pos;
-    vec_pos.x = linear_pos % size.x;
-    linear_pos /= size.x;
-    vec_pos.y = linear_pos % size.y;
-    linear_pos /= size.y;
-    vec_pos.z = linear_pos;
-
-    return vec_pos;
-}
-
-uint to_linear(uvec3 vec_pos, uvec3 size) {
-    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
-}
-
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < constants.global_size) {
-        uvec3 region_pos = from_linear(gID, constants.region_size);
+        uvec3 region_pos = from_linear3(gID, constants.region_size);
 
         uvec3 in_pos = constants.begin_in + region_pos;
         uvec3 out_pos = constants.begin_out + region_pos;
 
-        uint in_index = to_linear(in_pos, constants.mem_size_in);
-        uint out_index = to_linear(out_pos, constants.mem_size_out);
+        uint in_index = to_linear3(in_pos, constants.mem_size_in);
+        uint out_index = to_linear3(out_pos, constants.mem_size_out);
 
         outputData.values[out_index] = sourceData.values[in_index];
     }
@@ -383,6 +372,8 @@ pub fn convolution_1d<'op, const DIM: usize>(
     const SHADER: &'static str = r#"
 #version 450
 
+#include <util.glsl>
+
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
@@ -408,26 +399,11 @@ layout(std140, push_constant) uniform PushConstants {
     uint global_size;
 } consts;
 
-uvec3 from_linear(uint linear_pos, uvec3 size) {
-    uvec3 vec_pos;
-    vec_pos.x = linear_pos % size.x;
-    linear_pos /= size.x;
-    vec_pos.y = linear_pos % size.y;
-    linear_pos /= size.y;
-    vec_pos.z = linear_pos;
-
-    return vec_pos;
-}
-
-uint to_linear(uvec3 vec_pos, uvec3 size) {
-    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
-}
-
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < consts.global_size) {
-        uvec3 out_local = from_linear(gID, consts.mem_dim);
+        uvec3 out_local = from_linear3(gID, consts.mem_dim);
         float acc = 0.0;
 
         if(out_local.x < consts.logical_dim_out.x && out_local.y < consts.logical_dim_out.y && out_local.z < consts.logical_dim_out.z) {
@@ -459,7 +435,7 @@ void main() {
                     uvec3 pos = out_local;
                     pos[DIM] = local;
 
-                    uint local_index = to_linear(pos, consts.mem_dim);
+                    uint local_index = to_linear3(pos, consts.mem_dim);
                     float local_val = sourceData[i].values[local_index];
 
                     acc += kernel_val * local_val;
@@ -677,6 +653,8 @@ pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
     const SHADER: &'static str = r#"
 #version 450
 
+#include <util.glsl>
+
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 layout (local_size_x = 1024) in;
@@ -695,17 +673,6 @@ layout(std140, push_constant) uniform PushConstants
     uvec3 logical_dim;
     float norm_factor;
 } consts;
-
-uvec3 from_linear(uint linear_pos, uvec3 size) {
-    uvec3 vec_pos;
-    vec_pos.x = linear_pos % size.x;
-    linear_pos /= size.x;
-    vec_pos.y = linear_pos % size.y;
-    linear_pos /= size.y;
-    vec_pos.z = linear_pos;
-
-    return vec_pos;
-}
 
 #define atomic_add(mem, value) {\
     uint initial = 0;\
@@ -731,7 +698,7 @@ void main()
 
     float val;
 
-    uvec3 local = from_linear(gID, consts.mem_dim);
+    uvec3 local = from_linear3(gID, consts.mem_dim);
 
     if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
         val = sourceData.values[gID] * consts.norm_factor;
@@ -874,6 +841,8 @@ impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
             r#"
 #version 450
 
+#include <util.glsl>
+
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) buffer OutputBuffer{
@@ -889,27 +858,12 @@ layout(std140, push_constant) uniform PushConstants
     uint num_chunk_elems;
 } consts;
 
-uvec3 from_linear(uint linear_pos, uvec3 size) {
-    uvec3 vec_pos;
-    vec_pos.x = linear_pos % size.x;
-    linear_pos /= size.x;
-    vec_pos.y = linear_pos % size.y;
-    linear_pos /= size.y;
-    vec_pos.z = linear_pos;
-
-    return vec_pos;
-}
-
-uint to_linear(uvec3 vec_pos, uvec3 size) {
-    return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
-}
-
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < consts.num_chunk_elems) {
-        uvec3 out_local = from_linear(gID, consts.mem_dim);
+        uvec3 out_local = from_linear3(gID, consts.mem_dim);
         float result = 0.0;
         uvec3 pos_voxel = out_local + consts.offset;
         vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);

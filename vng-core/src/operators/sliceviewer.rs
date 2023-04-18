@@ -183,7 +183,7 @@ pub fn render_slice<'a>(
 
 #extension GL_EXT_buffer_reference : require
 
-#include "util.glsl"
+#include <util.glsl>
 
 layout (local_size_x = 32, local_size_y = 32) in;
 
@@ -213,15 +213,6 @@ layout(std140, push_constant) uniform PushConstants
     uvec2 out_begin;
     uvec2 out_mem_dim;
 } consts;
-
-uvec2 from_linear(uint linear_pos, uvec2 size) {
-    uvec2 vec_pos;
-    vec_pos.x = linear_pos % size.x;
-    linear_pos /= size.x;
-    vec_pos.y = linear_pos % size.y;
-
-    return vec_pos;
-}
 
 void main()
 {
