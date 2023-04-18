@@ -399,7 +399,7 @@ void main() {
         uvec3 out_local = from_linear3(gID, consts.mem_dim);
         float acc = 0.0;
 
-        if(out_local.x < consts.logical_dim_out.x && out_local.y < consts.logical_dim_out.y && out_local.z < consts.logical_dim_out.z) {
+        if(all(lessThan(out_local, consts.logical_dim_out))) {
             for (int i = 0; i<consts.num_chunks; ++i) {
                 int chunk_pos = int(consts.first_chunk_pos) + i;
                 int global_begin_pos_in = chunk_pos * int(consts.mem_dim[DIM]);
@@ -678,7 +678,7 @@ void main()
 
     uvec3 local = from_linear3(gID, consts.mem_dim);
 
-    if(local.x < consts.logical_dim.x && local.y < consts.logical_dim.y && local.z < consts.logical_dim.z) {
+    if(all(lessThan(local, consts.logical_dim))) {
         val = sourceData.values[gID] * consts.norm_factor;
     } else {
         val = 0.0;
@@ -846,7 +846,7 @@ void main()
         uvec3 pos_voxel = out_local + consts.offset;
         vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
 
-        if(out_local.x < consts.logical_dim.x && out_local.y < consts.logical_dim.y && out_local.z < consts.logical_dim.z) {
+        if(all(lessThan(out_local, consts.logical_dim))) {
         "#,
             self.body,
             r#"

@@ -25,7 +25,6 @@ pub struct Splitter {
 const NUM_CHANNELS: u32 = 4;
 
 impl Splitter {
-    #[allow(deprecated)]
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
         let mut left = EventStream::default();
         let mut right = EventStream::default();
@@ -121,7 +120,7 @@ void main()
     uvec2 out_pos = gl_GlobalInvocationID.xy;
     uint g_id_out = out_pos.x + out_pos.y * consts.dim_out.x;
 
-    if(out_pos.x < consts.dim_out.x && out_pos.y < consts.dim_out.y) {
+    if(all(lessThan(out_pos, consts.dim_out))) {
         vec4 out_val = vec4(0.0);
 
         uvec2 pos_l = out_pos;
@@ -133,7 +132,7 @@ void main()
         }
 
         uvec2 pos_r = out_pos - uvec2(consts.dim_l.x, 0);
-        if(pos_r.x < consts.dim_r.x && pos_r.y < consts.dim_r.y) {
+        if(all(lessThan(pos_r, consts.dim_r))) {
             uint g_id_r = pos_r.x + pos_r.y * consts.dim_r.x;
             for(int c=0; c<4; ++c) {
                 out_val[c] = input_r.values[g_id_r*4 + c];
