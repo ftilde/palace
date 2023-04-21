@@ -384,9 +384,10 @@ impl DeviceContext {
                 .synchronization2(true)
                 .build();
             let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::builder()
+                .shader_buffer_int64_atomics(true)
                 .buffer_device_address(true)
                 .build();
-            let enabled_features = vk::PhysicalDeviceFeatures::builder();
+            let enabled_features = vk::PhysicalDeviceFeatures::builder().shader_int64(true);
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)

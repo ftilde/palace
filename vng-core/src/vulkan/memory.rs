@@ -233,52 +233,59 @@ impl TransferManager {
             };
             let layout = gpu_buf_in.layout;
 
-            let staging_buf = device.staging_to_cpu.request(&device, layout);
-
-            device.with_cmd_buffer(|cmd| {
-                let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
-                unsafe {
-                    device.functions().cmd_copy_buffer(
-                        cmd.raw(),
-                        gpu_buf_in.buffer,
-                        staging_buf.buffer,
-                        &[*copy_info],
-                    );
-                }
-
-                Ok::<(), crate::Error>(())
-            })?;
-
-            ctx.submit(device.wait_for_current_cmd_buffer_completion())
-                .await;
-
             let out_buf = storage.alloc_slot_raw(key, layout).unwrap();
 
-            // Safety: Both buffers have `layout` as their layout. Staging buf data is now valid
-            // since we have waited for the command buffer to finish. This content has also reached
-            // the mapped region of the staging_buf allocation since it was allocated with
-            // HOST_VISIBLE and HOST_COHERENT.
-            let in_ptr =
-                unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
-            let out_ptr = unsafe { SendPointer::pack(out_buf.data) };
-            ctx.submit(ctx.spawn_compute(|| unsafe {
-                std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
-            }))
-            .await;
+            unsafe { copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await };
 
             // Safety: We have just written the complete buffer using a memcpy
             unsafe {
                 out_buf.initialized();
             }
 
-            // Safety: This is exactly the buffer that we requested above and it is no longer used
-            // in the compute pipeline since we have waited for the command buffer to finish.
-            unsafe {
-                device.staging_to_cpu.return_buf(staging_buf);
-            }
-
             Ok(())
         }
         .into()
+    }
+}
+
+pub async unsafe fn copy_to_cpu<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    device: &'cref DeviceContext,
+    buffer_in: ash::vk::Buffer,
+    layout: Layout,
+    out_buf: *mut u8,
+) {
+    let staging_buf = device.staging_to_cpu.request(&device, layout);
+
+    device.with_cmd_buffer(|cmd| {
+        let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
+        unsafe {
+            device.functions().cmd_copy_buffer(
+                cmd.raw(),
+                buffer_in,
+                staging_buf.buffer,
+                &[*copy_info],
+            );
+        }
+    });
+
+    ctx.submit(device.wait_for_current_cmd_buffer_completion())
+        .await;
+
+    // Safety: Both buffers have `layout` as their layout. Staging buf data is now valid
+    // since we have waited for the command buffer to finish. This content has also reached
+    // the mapped region of the staging_buf allocation since it was allocated with
+    // HOST_VISIBLE and HOST_COHERENT.
+    let in_ptr = unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
+    let out_ptr = unsafe { SendPointer::pack(out_buf) };
+    ctx.submit(ctx.spawn_compute(|| unsafe {
+        std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
+    }))
+    .await;
+
+    // Safety: This is exactly the buffer that we requested above and it is no longer used
+    // in the compute pipeline since we have waited for the command buffer to finish.
+    unsafe {
+        device.staging_to_cpu.return_buf(staging_buf);
     }
 }

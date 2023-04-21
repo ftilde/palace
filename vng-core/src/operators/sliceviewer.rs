@@ -1,14 +1,13 @@
+use std::alloc::Layout;
+
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
-use futures::StreamExt;
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{hmul, BrickPosition, GlobalCoordinate, Vector, AABB},
-    id::Id,
+    data::{from_linear, hmul, GlobalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
-    task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -175,8 +174,7 @@ pub fn render_slice<'a>(
     struct PushConstants {
         vol_dim: cgmath::Vector3<u32>,
         chunk_dim: cgmath::Vector3<u32>,
-        brick_region_size: cgmath::Vector3<u32>,
-        llb_brick: cgmath::Vector3<u32>,
+        dim_in_bricks: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector2<u32>,
         out_mem_dim: cgmath::Vector2<u32>,
     }
@@ -185,8 +183,11 @@ pub fn render_slice<'a>(
 #version 450
 
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
 
 #include <util.glsl>
+#include <hash.glsl>
 
 layout (local_size_x = 32, local_size_y = 32) in;
 
@@ -204,8 +205,12 @@ layout(std430, binding = 1) buffer Transform {
 } transform;
 
 layout(std430, binding = 2) buffer RefBuffer {
-    BrickType values[MAX_BRICKS];
+    BrickType values[NUM_BRICKS];
 } bricks;
+
+layout(std430, binding = 3) buffer QueryTable {
+    uint64_t values[REQUEST_TABLE_SIZE];
+} request_table;
 
 declare_push_consts(consts);
 
@@ -224,18 +229,20 @@ void main()
 
         if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
             uvec3 sample_brick = sample_pos / consts.chunk_dim;
-            uvec3 urb_brick = consts.brick_region_size + consts.llb_brick;
-            if(all(lessThanEqual(consts.llb_brick, sample_brick)) && all(lessThan(sample_brick, urb_brick))) {
-                uvec3 sample_brick_region = sample_brick - consts.llb_brick;
-                uint sample_brick_pos_linear = to_linear3(sample_brick_region, consts.brick_region_size);
 
+            uint sample_brick_pos_linear = to_linear3(sample_brick, consts.dim_in_bricks);
+
+            BrickType brick = bricks.values[sample_brick_pos_linear];
+            if(uint64_t(brick) == 0) {
+                uint64_t sbp = uint64_t(sample_brick_pos_linear);
+                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                val = vec4(1.0, 0.0, 0.0, 1.0);
+            } else {
                 uvec3 brick_begin = sample_brick * consts.chunk_dim;
                 uvec3 local = sample_pos - brick_begin;
                 uint local_index = to_linear3(local, consts.chunk_dim);
-                float v = bricks.values[sample_brick_pos_linear].values[local_index];
+                float v = brick.values[local_index];
                 val = vec4(v, v, v, 1.0);
-            } else {
-                val = vec4(1.0, 0.0, 0.0, 0.0);
             }
         } else {
             val = vec4(0.0, 0.0, 1.0, 0.0);
@@ -256,7 +263,7 @@ void main()
         }
     }
 
-    TensorOperator::with_state(
+    TensorOperator::unbatched(
         OperatorId::new("sliceviewer")
             .dependent_on(&input)
             .dependent_on(&result_metadata)
@@ -271,7 +278,7 @@ void main()
             }
             .into()
         },
-        move |ctx, positions, (input, result_metadata, projection_mat), _| {
+        move |ctx, pos, (input, result_metadata, projection_mat), _| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -282,80 +289,22 @@ void main()
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (m2d, transform, transform_gpu) = futures::join! {
+                let (m2d, transform_gpu) = futures::join! {
                     ctx.submit(result_metadata.request_scalar()),
-                    ctx.submit(projection_mat.request_scalar()),
                     ctx.submit(projection_mat.request_scalar_gpu(device.id, dst_info)),
                 };
-                let m = full_info(m2d);
+                let m_out = full_info(m2d);
+                let out_info = m_out.chunk_info(pos);
 
-                let mut max_bricks = 0;
-                let requests = positions
-                    .into_iter()
-                    .map(|pos| {
-                        let out_info = m.chunk_info(pos);
-                        let out_begin_pixel = out_info
-                            .begin()
-                            .raw()
-                            .map(|v| v as f32)
-                            .drop_dim(2)
-                            .add_dim(0, 0.0);
-                        let out_end_pixel = out_info
-                            .end()
-                            .raw()
-                            .map(|v| v as f32)
-                            .drop_dim(2)
-                            .add_dim(0, 0.0);
+                let num_bricks = hmul(m_in.dimension_in_bricks()); //TODO: rename
 
-                        let pixel_aabb = AABB::new(out_begin_pixel, out_end_pixel);
+                let load_factor = 3.0;
+                let request_table_size = (((num_bricks as f32).powf(2.0 / 3.0) * load_factor)
+                    .round() as usize)
+                    .next_power_of_two();
 
-                        let voxel_aabb = pixel_aabb.transform(&transform);
-
-                        let out_begin_voxel = voxel_aabb.lower();
-                        let out_end_voxel = voxel_aabb.upper();
-                        let llb =
-                            out_begin_voxel.zip(out_end_voxel, |a, b| a.min(b).floor() as u32);
-                        let urb =
-                            out_begin_voxel.zip(out_end_voxel, |a, b| a.max(b).floor() as u32);
-
-                        let max_brick_pos = m_in.dimension_in_bricks() - Vector::fill(1u32);
-                        let llb_brick = m_in
-                            .chunk_pos(llb.global())
-                            .zip(max_brick_pos, |a, b| a.min(b));
-                        // Clamp to valid range:
-                        let urb_brick = m_in
-                            .chunk_pos(urb.global())
-                            .zip(max_brick_pos, |a, b| a.min(b));
-
-                        let brick_region_size = urb_brick + Vector::fill(1u32) - llb_brick;
-
-                        max_bricks = max_bricks.max(hmul(brick_region_size));
-
-                        let low = llb_brick.raw();
-                        let high = urb_brick.raw();
-
-                        let in_brick_positions = itertools::iproduct! {
-                            low.z()..=high.z(),
-                            low.y()..=high.y(),
-                            low.x()..=high.x()
-                        }
-                        .map(|(z, y, x)| BrickPosition::from([z, y, x]))
-                        .collect::<Vec<_>>();
-                        let intersecting_bricks = ctx.group(
-                            in_brick_positions
-                                .iter()
-                                .map(|pos| input.bricks.request_gpu(device.id, *pos, dst_info)),
-                        );
-
-                        (intersecting_bricks, (pos, llb_brick, brick_region_size))
-                    })
-                    .collect::<Vec<_>>();
-
-                let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
-                        .of(ctx.current_op())
-                        .dependent_on(Id::hash(&max_bricks)),
-                    || {
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                         ComputePipeline::new(
                             device,
                             (
@@ -363,78 +312,81 @@ void main()
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
                                     .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
-                                    .add("MAX_BRICKS", max_bricks),
+                                    .add("NUM_BRICKS", num_bricks)
+                                    .add("REQUEST_TABLE_SIZE", request_table_size),
                             ),
                             false,
                         )
-                    },
-                );
+                    });
 
-                let mut stream = ctx
-                    .submit_unordered_with_data(requests.into_iter())
-                    .then_req_with_data(
-                        *ctx,
-                        |(intersecting_bricks, (pos, llb_brick, brick_region_size))| {
-                            let out_info = m.chunk_info(pos);
-                            let gpu_brick_out = ctx
-                                .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                                .unwrap();
+                let brick_index_layout = Layout::array::<u64>(num_bricks).unwrap();
 
-                            let brick_index_layout =
-                                std::alloc::Layout::array::<u64>(max_bricks).unwrap();
-                            let brick_index =
-                                device.tmp_buffers.request(device, brick_index_layout);
+                // TODO: Manage brick indices globally to avoid duplicate work.
+                let brick_index = device.tmp_buffers.request(device, brick_index_layout);
 
-                            let addrs = intersecting_bricks
-                                .iter()
-                                .map(|brick| {
-                                    let info = ash::vk::BufferDeviceAddressInfo::builder()
-                                        .buffer(brick.buffer);
-                                    unsafe { device.functions().get_buffer_device_address(&info) }
-                                })
-                                .collect::<Vec<_>>();
+                let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
+                let request_table_buffer = device
+                    .tmp_buffers
+                    .request(device, request_table_buffer_layout);
 
-                            device.with_cmd_buffer(|cmd| {
-                                unsafe {
-                                    device.functions().cmd_update_buffer(
-                                        cmd.raw(),
-                                        brick_index.allocation.buffer,
-                                        0,
-                                        bytemuck::cast_slice(&addrs),
-                                    )
-                                };
-                            });
-                            let barrier_req = device.barrier(
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::TRANSFER,
-                                    access: vk::AccessFlags2::TRANSFER_WRITE,
-                                },
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            );
-
-                            let consts = PushConstants {
-                                vol_dim: m_in.dimensions.raw().into(),
-                                chunk_dim: m_in.chunk_size.raw().into(),
-                                brick_region_size: brick_region_size.raw().into(),
-                                llb_brick: llb_brick.raw().into(),
-                                out_begin: out_info.begin.drop_dim(2).raw().into(),
-                                out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
-                            };
-
-                            (barrier_req, (consts, brick_index, gpu_brick_out))
-                        },
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device.functions().cmd_fill_buffer(
+                        cmd.raw(),
+                        request_table_buffer.allocation.buffer,
+                        0,
+                        vk::WHOLE_SIZE,
+                        0xffffffff,
                     );
+                    device.functions().cmd_fill_buffer(
+                        cmd.raw(),
+                        brick_index.allocation.buffer,
+                        0,
+                        vk::WHOLE_SIZE,
+                        0,
+                    );
+                });
 
-                while let Some(((), (consts, brick_index, gpu_brick_out))) = stream.next().await {
-                    let chunk_size = m2d.chunk_size.raw();
-                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+                ctx.submit(device.barrier(
+                    SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                    },
+                    DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                    },
+                ))
+                .await;
 
+                let dim_in_bricks = m_in.dimension_in_bricks();
+                let consts = PushConstants {
+                    vol_dim: m_in.dimensions.raw().into(),
+                    chunk_dim: m_in.chunk_size.raw().into(),
+                    dim_in_bricks: dim_in_bricks.raw().into(),
+                    out_begin: out_info.begin.drop_dim(2).raw().into(),
+                    out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
+                };
+
+                let gpu_brick_out = ctx
+                    .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                    .unwrap();
+                let chunk_size = m2d.chunk_size.raw();
+                let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                // TODO: Free bricks once it is safe to do so. Ties in to a global handling of the
+                // brick index.
+                // Once we do that, we have to maintain a temporary buffer that stores which output
+                // pixels have been written already, though!
+                let mut collected_bricks = Vec::new();
+
+                loop {
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config =
-                            DescriptorConfig::new([&gpu_brick_out, &transform_gpu, &brick_index]);
+                        let descriptor_config = DescriptorConfig::new([
+                            &gpu_brick_out,
+                            &transform_gpu,
+                            &brick_index,
+                            &request_table_buffer,
+                        ]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -445,16 +397,98 @@ void main()
                         }
                     });
 
-                    // Safety: The buffer was requested above from the same device
-                    unsafe { device.tmp_buffers.return_buf(device, brick_index) };
-
-                    unsafe {
-                        gpu_brick_out.initialized(SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        })
+                    let src_info = SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
                     };
+                    let dst_info = DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_READ,
+                    };
+                    ctx.submit(device.barrier(src_info, dst_info)).await;
+
+                    let mut request_table_cpu = vec![0u64; request_table_size];
+                    let request_table_cpu_bytes =
+                        bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
+                    unsafe {
+                        crate::vulkan::memory::copy_to_cpu(
+                            *ctx,
+                            device,
+                            request_table_buffer.allocation.buffer,
+                            request_table_buffer_layout,
+                            request_table_cpu_bytes.as_mut_ptr(),
+                        )
+                        .await
+                    };
+
+                    let to_request_linear = request_table_cpu
+                        .into_iter()
+                        .filter(|v| *v != u64::max_value())
+                        .collect::<Vec<u64>>();
+                    if to_request_linear.is_empty() {
+                        break;
+                    }
+
+                    let to_request = to_request_linear.iter().map(|v| {
+                        input.bricks.request_gpu(
+                            device.id,
+                            from_linear(*v as usize, dim_in_bricks),
+                            dst_info,
+                        )
+                    });
+                    let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        for (brick, brick_linear_pos) in
+                            requested_bricks.iter().zip(to_request_linear.into_iter())
+                        {
+                            let info =
+                                ash::vk::BufferDeviceAddressInfo::builder().buffer(brick.buffer);
+                            let addr = device.functions().get_buffer_device_address(&info);
+                            device.functions().cmd_update_buffer(
+                                cmd.raw(),
+                                brick_index.allocation.buffer,
+                                brick_linear_pos * std::mem::size_of::<u64>() as u64,
+                                bytemuck::bytes_of(&addr),
+                            );
+                        }
+                        device.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            request_table_buffer.allocation.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0xffffffff,
+                        );
+                    });
+
+                    // Make sure the bricks are not freed as long as we reference them from the
+                    // index buffer
+                    collected_bricks.extend(requested_bricks);
+
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    ))
+                    .await;
                 }
+
+                // Safety: The buffer was requested above from the same device
+                unsafe { device.tmp_buffers.return_buf(device, brick_index) };
+
+                // Safety: The buffer was requested above from the same device
+                unsafe { device.tmp_buffers.return_buf(device, request_table_buffer) };
+
+                let src_info = SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_WRITE,
+                };
+                unsafe { gpu_brick_out.initialized(src_info) };
 
                 Ok(())
             }

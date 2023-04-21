@@ -5,7 +5,7 @@ use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::volume::VolumeOperator;
+use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq);
+                result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
 
             }"#
             .to_owned(),
@@ -212,6 +212,11 @@ fn slice_viewer_z<'op>(
             }))
     });
 
+    let md = ImageMetaData {
+        dimensions: md.dimensions,
+        chunk_size: Vector::fill(512.into()),
+    };
+
     let slice_num_g = ((*slice_num).max(0) as u32).into();
     let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
         slice_input.metadata.clone(),
@@ -225,7 +230,7 @@ fn slice_viewer_z<'op>(
         crate::operators::scalar::constant_hash(md),
         slice_proj_z,
     );
-    //let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
 
@@ -237,10 +242,15 @@ fn slice_viewer_rot<'op>(
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-            *angle += delta.x() as f32 * 0.05;
+            *angle += delta.x() as f32 * 0.01;
         }))
         .chain(OnWheelMove(|delta, _| *angle += delta * 0.05))
     });
+
+    let md = ImageMetaData {
+        dimensions: md.dimensions,
+        chunk_size: Vector::fill(512.into()),
+    };
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
@@ -252,7 +262,7 @@ fn slice_viewer_rot<'op>(
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
     );
-    //let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
 

@@ -20,6 +20,19 @@ pub fn to_linear<const N: usize, T: CoordinateType>(
     out
 }
 
+pub fn from_linear<const N: usize, T: CoordinateType>(
+    mut linear_pos: usize,
+    dim: Vector<N, Coordinate<T>>,
+) -> Vector<N, Coordinate<T>> {
+    let mut out = Vector::<N, Coordinate<T>>::fill(0.into());
+    for i in (0..N).rev() {
+        let ddim = dim[i].raw as usize;
+        out[i] = ((linear_pos % ddim) as u32).into();
+        linear_pos /= ddim;
+    }
+    out
+}
+
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
