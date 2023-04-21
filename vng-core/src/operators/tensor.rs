@@ -68,6 +68,35 @@ impl<'op, const N: usize> TensorOperator<'op, N> {
             bricks: Operator::with_state(base_id.slot(1), state_bricks, bricks),
         }
     }
+
+    pub fn unbatched<
+        SM: 'op,
+        SB: 'op,
+        M: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, (), TensorMetaData<N>>,
+                &'inv SM,
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+        B: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
+                Vector<N, ChunkCoordinate>,
+                &'inv SB,
+                crate::operator::OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+    >(
+        base_id: OperatorId,
+        state_metadata: SM,
+        state_bricks: SB,
+        metadata: M,
+        bricks: B,
+    ) -> Self {
+        Self {
+            metadata: crate::operators::scalar::scalar(base_id.slot(0), state_metadata, metadata),
+            bricks: Operator::unbatched(base_id.slot(1), state_bricks, bricks),
+        }
+    }
 }
 
 impl<const N: usize> Into<Id> for &TensorOperator<'_, N> {

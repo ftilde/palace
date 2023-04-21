@@ -107,6 +107,10 @@ impl<'inv> RequestBatcher<'inv> {
         }
     }
 
+    fn gen_single_task_id(&mut self, op_id: OperatorId) -> TaskId {
+        self.task_id_manager.gen_id(op_id)
+    }
+
     fn get(&mut self, op: OperatorId) -> (&'inv dyn OpaqueOperator, Vec<TypeErased>) {
         let batch = self.pending_batches.remove(&op).unwrap();
         let items = batch.items.into_iter().map(|i| i.item).collect::<Vec<_>>();
@@ -557,12 +561,30 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             .unwrap();
                         self.task_graph.will_provide(task_id, data_id.id);
                     } else {
-                        let task_id = match self.request_batcher.add(data_request) {
-                            BatchAddResult::New(id) => {
-                                self.task_graph.add_implied(id, PRIORITY_GENERAL_TASK);
-                                id
+                        let task_id = match data_request.source.granularity() {
+                            crate::operator::ItemGranularity::Single => {
+                                // Spawn task immediately since we have all information we need
+                                let task_id = self
+                                    .request_batcher
+                                    .gen_single_task_id(data_request.source.id());
+                                let context = self.context(task_id);
+                                let items = vec![data_request.item];
+                                //Safety: The item is precisely for the returned operator, and thus of the right type.
+                                let task = unsafe { data_request.source.compute(context, items) };
+                                self.task_graph.add_implied(task_id, PRIORITY_GENERAL_TASK);
+                                self.task_manager.add_task(task_id, task);
+                                task_id
                             }
-                            BatchAddResult::Existing(id) => id,
+                            crate::operator::ItemGranularity::Batched => {
+                                // Add item to batcher to spawn later
+                                match self.request_batcher.add(data_request) {
+                                    BatchAddResult::New(id) => {
+                                        self.task_graph.add_implied(id, PRIORITY_GENERAL_TASK);
+                                        id
+                                    }
+                                    BatchAddResult::Existing(id) => id,
+                                }
+                            }
                         };
                         self.task_graph.will_provide(task_id, data_id.id);
                     }

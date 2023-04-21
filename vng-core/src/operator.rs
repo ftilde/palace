@@ -82,8 +82,15 @@ pub type ComputeFunction<'op, ItemDescriptor, Output> = Rc<
         + 'op,
 >;
 
+#[derive(Copy, Clone)]
+pub enum ItemGranularity {
+    Single,
+    Batched,
+}
+
 pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
+    fn granularity(&self) -> ItemGranularity;
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         context: OpaqueTaskContext<'cref, 'inv>,
@@ -95,6 +102,7 @@ pub trait OpaqueOperator {
 pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
     id: OperatorId,
     state: Rc<TypeErased>,
+    granularity: ItemGranularity,
     compute: ComputeFunction<'op, ItemDescriptor, Output>,
 }
 
@@ -176,11 +184,41 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
         Self {
             id,
             state: Rc::new(TypeErased::pack(state)),
+            granularity: ItemGranularity::Batched,
             compute: Rc::new(move |ctx, items, state, marker| {
                 // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
                 // then packed and then unpacked again here to `S: 'op`.
                 let state = unsafe { state.unpack_ref() };
                 compute(ctx, items, state, marker)
+            }),
+        }
+    }
+
+    pub fn unbatched<
+        S: 'op,
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
+                ItemDescriptor,
+                &'inv S,
+                OutlivesMarker<'op, 'inv>,
+            ) -> Task<'cref>
+            + 'op,
+    >(
+        id: OperatorId,
+        state: S,
+        compute: F,
+    ) -> Self {
+        Self {
+            id,
+            state: Rc::new(TypeErased::pack(state)),
+            granularity: ItemGranularity::Single,
+            compute: Rc::new(move |ctx, items, state, marker| {
+                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
+                // then packed and then unpacked again here to `S: 'op`.
+                let state = unsafe { state.unpack_ref() };
+                assert_eq!(items.len(), 1);
+                let item = items.into_iter().next().unwrap();
+                compute(ctx, item, state, marker)
             }),
         }
     }
@@ -333,6 +371,9 @@ impl<'op, ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
 {
     fn id(&self) -> OperatorId {
         self.id
+    }
+    fn granularity(&self) -> ItemGranularity {
+        self.granularity
     }
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
