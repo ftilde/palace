@@ -162,9 +162,13 @@ fn select_swap_surface_format(available: &[vk::SurfaceFormatKHR]) -> vk::Surface
 }
 
 fn select_swap_present_mode(available: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
-    if available.contains(&vk::PresentModeKHR::MAILBOX) {
-        return vk::PresentModeKHR::MAILBOX;
-    }
+    // MAILBOX (kind of like triple buffering) causes a lot of superfluous network evaluations.
+    // Instead we always use FIFO (comparable to VSYNCed updates) for now. We may want to make this
+    // configurable in the future, though!
+    //if available.contains(&vk::PresentModeKHR::MAILBOX) {
+    //    return vk::PresentModeKHR::MAILBOX;
+    //}
+
     assert!(available.contains(&vk::PresentModeKHR::FIFO));
     vk::PresentModeKHR::FIFO
 }
