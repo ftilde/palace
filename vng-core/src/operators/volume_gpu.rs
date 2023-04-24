@@ -185,7 +185,7 @@ layout(std430, binding = 0) readonly buffer InputBuffer{
 } sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
-    float values[BRICK_MEM_SIZE_OUT];
+    float values[];
 } outputData;
 
 declare_push_consts(constants);
@@ -233,24 +233,19 @@ void main() {
                     m_out
                 };
 
-                let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
-                        .of(ctx.current_op())
-                        .dependent_on(Id::hash(&m_out.chunk_size)),
-                    || {
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                         ComputePipeline::new(
                             device,
                             (
                                 SHADER,
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size))
-                                    .add("BRICK_MEM_SIZE_OUT", hmul(m_out.chunk_size)),
+                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size)),
                             ),
                             true,
                         )
-                    },
-                );
+                    });
 
                 let requests = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
