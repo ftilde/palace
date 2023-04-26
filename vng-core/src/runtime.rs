@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet, VecDeque},
+    num::NonZeroU64,
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     time::Duration,
@@ -8,9 +9,9 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
-    storage::{ram::Storage, DataLocation, VisibleDataLocation},
+    storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
-    task_graph::{LocatedDataId, RequestId, TaskGraph, TaskId, VisibleDataId},
+    task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     vulkan::{BarrierInfo, DeviceContext, VulkanContext},
@@ -84,7 +85,7 @@ impl<'inv> RequestBatcher<'inv> {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
-            id: request.id.id,
+            id: request.id,
             item: request.item,
         };
         match self.pending_batches.entry(op_id) {
@@ -201,6 +202,7 @@ pub struct RunTime {
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
+    frame: FrameNumber,
 }
 
 impl RunTime {
@@ -213,6 +215,7 @@ impl RunTime {
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size)?;
         let ram = crate::storage::ram::Storage::new(storage_size)?;
+        let frame = FrameNumber(1.try_into().unwrap());
         Ok(RunTime {
             ram,
             compute_thread_pool: ComputeThreadPool::new(
@@ -222,12 +225,15 @@ impl RunTime {
             io_thread_pool: IoThreadPool::new(async_result_sender),
             async_result_receiver,
             vulkan,
+            frame,
         })
     }
 
     pub fn context_anchor(&mut self) -> ContextAnchor {
+        let frame = self.frame;
+        self.frame = FrameNumber(frame.0.checked_add(1).unwrap());
         ContextAnchor {
-            data: ContextData::new(&self.ram, self.vulkan.device_contexts()),
+            data: ContextData::new(&self.ram, self.vulkan.device_contexts(), frame),
             compute_thread_pool: &mut self.compute_thread_pool,
             io_thread_pool: &mut self.io_thread_pool,
             async_result_receiver: &mut self.async_result_receiver,
@@ -244,6 +250,10 @@ impl Drop for RunTime {
         }
     }
 }
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[repr(transparent)]
+pub struct FrameNumber(NonZeroU64);
 
 /// An object that contains all data that will be later lent out to `TaskContexts` via `Executor`.
 ///
@@ -287,14 +297,21 @@ pub struct ContextData<'cref, 'inv> {
     thread_spawner: ThreadSpawner,
     pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
+    frame: FrameNumber,
+    predicted_preview_tasks: RefCell<BTreeSet<TaskId>>,
 }
 
 impl<'cref> ContextData<'cref, '_> {
-    pub fn new(storage: &'cref Storage, device_contexts: &'cref [DeviceContext]) -> Self {
+    pub fn new(
+        storage: &'cref Storage,
+        device_contexts: &'cref [DeviceContext],
+        frame: FrameNumber,
+    ) -> Self {
         let request_queue = RequestQueue::new();
         let hints = TaskHints::default();
         let thread_spawner = ThreadSpawner::new();
         let barrier_completions = Default::default();
+        let predicted_preview_tasks = Default::default();
         ContextData {
             request_queue,
             barrier_completions,
@@ -302,6 +319,8 @@ impl<'cref> ContextData<'cref, '_> {
             thread_spawner,
             storage,
             device_contexts,
+            frame,
+            predicted_preview_tasks,
         }
     }
 }
@@ -330,6 +349,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
+            current_frame: self.data.frame,
+            predicted_preview_tasks: &self.data.predicted_preview_tasks,
         }
     }
 
@@ -444,19 +465,26 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn register_produced_data_from(&mut self, items: impl Iterator<Item = LocatedDataId>) {
-        for available in items {
-            for requested in self.task_graph.requested_locations(available.id) {
-                let requested = VisibleDataId {
-                    id: available.id,
-                    location: requested,
-                };
-                if let Some(task_id) =
-                    self.try_make_available(available.id, available.location, requested.location)
-                {
-                    self.task_graph.will_provide(task_id, requested.id);
+    fn register_produced_data_from(
+        &mut self,
+        items: impl Iterator<Item = (DataId, DataLocation, DataVersionType)>,
+    ) {
+        for (id, produced_loc, produced_ver) in items {
+            for requested in self.task_graph.requested_locations(id) {
+                if let Some(task_id) = self.try_make_available(id, produced_loc, requested) {
+                    self.task_graph.will_provide(task_id, id);
                 } else {
-                    self.task_graph.resolved_implied(requested.into());
+                    let requested = VisibleDataId {
+                        id,
+                        location: requested,
+                    };
+                    let unblocked = self.task_graph.resolved_implied(requested.into());
+                    if let DataVersionType::Preview = produced_ver {
+                        let mut m = self.data.predicted_preview_tasks.borrow_mut();
+                        for t in unblocked {
+                            m.insert(t);
+                        }
+                    }
                 }
             }
         }
@@ -523,7 +551,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
-                let access = device.storage.register_access(device, data);
+                let access = device
+                    .storage
+                    .register_access(device, self.data.frame, data);
                 let transfer_task = self.transfer_manager.transfer_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
@@ -558,12 +588,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::Data(data_request) => {
                 let data_id = data_request.id;
                 if !already_requested {
-                    if let Some(available) = self.find_available_location(data_id.id) {
+                    if let Some(available) = self.find_available_location(data_id) {
                         // Data should not already be present => unwrap
                         let task_id = self
-                            .try_make_available(data_id.id, available, data_id.location)
+                            .try_make_available(data_id, available, data_request.location)
                             .unwrap();
-                        self.task_graph.will_provide(task_id, data_id.id);
+                        self.task_graph.will_provide(task_id, data_id);
                     } else {
                         let task_id = match data_request.source.granularity() {
                             crate::operator::ItemGranularity::Single => {
@@ -590,7 +620,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 }
                             }
                         };
-                        self.task_graph.will_provide(task_id, data_id.id);
+                        self.task_graph.will_provide(task_id, data_id);
                     }
                 }
             }

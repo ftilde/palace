@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -6,9 +7,10 @@ use std::task::Poll;
 
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
-use crate::runtime::{CompletedBarrierItems, RequestQueue, TaskHints};
+use crate::runtime::{CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::WriteHandle;
 use crate::storage::ram::{Storage, WriteHandleUninit};
+use crate::storage::VisibleDataLocation;
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
@@ -48,7 +50,8 @@ impl RequestInfo<'_> {
 type ResultPoll<'a, V> = Box<dyn FnMut() -> Option<V> + 'a>;
 
 pub struct DataRequest<'inv> {
-    pub id: VisibleDataId,
+    pub id: DataId,
+    pub location: VisibleDataLocation,
     pub source: &'inv dyn OpaqueOperator,
     pub item: TypeErased,
 }
@@ -73,7 +76,10 @@ impl RequestType<'_> {
             RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
             RequestType::CmdBufferSubmission(d) => RequestId::CmdBufferSubmission(*d),
             RequestType::Barrier(i) => RequestId::Barrier(*i),
-            RequestType::Data(d) => RequestId::Data(d.id),
+            RequestType::Data(d) => RequestId::Data(VisibleDataId {
+                id: d.id,
+                location: d.location,
+            }),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
         }
@@ -102,6 +108,7 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
 pub struct PollContext<'cref> {
     pub storage: &'cref Storage,
     pub device_contexts: &'cref [DeviceContext],
+    pub current_frame: FrameNumber,
 }
 
 #[derive(Copy, Clone)]
@@ -112,7 +119,9 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
     pub(crate) device_contexts: &'cref [DeviceContext],
+    pub(crate) predicted_preview_tasks: &'cref RefCell<BTreeSet<TaskId>>,
     pub(crate) current_task: TaskId,
+    pub(crate) current_frame: FrameNumber,
 }
 
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
@@ -125,6 +134,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             let mut poll = (request.gen_poll)(PollContext {
                 storage: self.storage,
                 device_contexts: self.device_contexts,
+                current_frame: self.current_frame,
             });
             match request.type_ {
                 RequestType::Data(_)
@@ -231,6 +241,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             let mut poll = (r.gen_poll)(PollContext {
                 storage: self.storage,
                 device_contexts: self.device_contexts,
+                current_frame: self.current_frame,
             });
             match r.type_ {
                 RequestType::Data(_)
@@ -420,6 +431,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
         let mut poll = (req.gen_poll)(PollContext {
             storage: self.task_context.storage,
             device_contexts: self.task_context.device_contexts,
+            current_frame: self.task_context.current_frame,
         });
         match req.type_ {
             RequestType::Data(_)
@@ -549,7 +561,9 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std43
         size: usize,
     ) -> Result<WriteHandle<'a>, Error> {
         let id = DataId::new(self.current_op(), &item);
-        device.storage.alloc_slot::<Output>(device, id, size)
+        device
+            .storage
+            .alloc_slot::<Output>(device, self.current_frame, id, size)
     }
 }
 
@@ -568,6 +582,8 @@ impl<'cref, 'inv, Output: Copy + Std430> TaskContext<'cref, 'inv, (), Output> {
         device: &'a DeviceContext,
     ) -> Result<WriteHandle<'a>, Error> {
         let id = DataId::new(self.current_op(), &());
-        device.storage.alloc_slot::<Output>(device, id, 1)
+        device
+            .storage
+            .alloc_slot::<Output>(device, self.current_frame, id, 1)
     }
 }

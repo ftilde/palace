@@ -212,7 +212,7 @@ void main()
                     });
 
                     unsafe {
-                        gpu_brick_out.initialized(SrcBarrierInfo {
+                        gpu_brick_out.initialized(*ctx, SrcBarrierInfo {
                             stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             access: vk::AccessFlags2::SHADER_WRITE,
                         })

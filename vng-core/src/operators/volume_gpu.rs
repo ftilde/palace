@@ -123,7 +123,7 @@ void main()
 
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
-                            gpu::InplaceResult::Inplace(rw) => (rw, rw),
+                            gpu::InplaceResult::Inplace(rw, _v) => (rw, rw),
                             gpu::InplaceResult::New(r, w) => (r, w),
                         };
 
@@ -146,10 +146,13 @@ void main()
                     });
 
                     unsafe {
-                        inplace.initialized(SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        })
+                        inplace.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
                     };
                 }
 
@@ -331,10 +334,13 @@ void main() {
                         }
                     });
                     unsafe {
-                        gpu_brick_out.initialized(SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        })
+                        gpu_brick_out.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
                     };
                 }
 
@@ -603,10 +609,13 @@ void main() {
                     });
 
                     unsafe {
-                        gpu_brick_out.initialized(SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        })
+                        gpu_brick_out.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
                     };
                 }
 
@@ -783,10 +792,13 @@ void main()
                         .await;
                 }
                 unsafe {
-                    sum.initialized(SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_WRITE,
-                    })
+                    sum.initialized(
+                        *ctx,
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    )
                 };
 
                 Ok(())
@@ -909,10 +921,13 @@ void main()
                         });
 
                         unsafe {
-                            gpu_brick_out.initialized(SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
-                            })
+                            gpu_brick_out.initialized(
+                                *ctx,
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_WRITE,
+                                },
+                            )
                         };
                     }
 

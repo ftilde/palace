@@ -169,6 +169,7 @@ pub fn render_slice<'a>(
     input: VolumeOperator<'a>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
+    deadline: std::time::Instant,
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -425,7 +426,7 @@ void main()
                         .into_iter()
                         .filter(|v| *v != u64::max_value())
                         .collect::<Vec<u64>>();
-                    if to_request_linear.is_empty() {
+                    if to_request_linear.is_empty() || deadline < std::time::Instant::now() {
                         break;
                     }
 
@@ -488,7 +489,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_WRITE,
                 };
-                unsafe { gpu_brick_out.initialized(src_info) };
+                unsafe { gpu_brick_out.initialized(*ctx, src_info) };
 
                 Ok(())
             }

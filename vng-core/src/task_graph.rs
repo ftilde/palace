@@ -31,8 +31,8 @@ pub enum RequestId {
 }
 
 impl From<VisibleDataId> for RequestId {
-    fn from(value: VisibleDataId) -> Self {
-        RequestId::Data(value)
+    fn from(d: VisibleDataId) -> Self {
+        RequestId::Data(d)
     }
 }
 impl From<JobId> for RequestId {
@@ -135,9 +135,13 @@ impl ReadyQueue {
     }
 }
 
+struct TaskMetadata {
+    priority: u32,
+}
+
 #[derive(Default)]
 pub struct TaskGraph {
-    implied_tasks: BTreeMap<TaskId, u32>,
+    implied_tasks: BTreeMap<TaskId, TaskMetadata>,
     waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
     required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
     will_provide: BTreeMap<TaskId, BTreeSet<DataId>>,
@@ -152,6 +156,7 @@ impl TaskGraph {
     pub fn new() -> Self {
         Default::default()
     }
+
     pub fn add_dependency(
         &mut self,
         wants: TaskId,
@@ -189,7 +194,7 @@ impl TaskGraph {
     }
 
     pub fn add_implied(&mut self, id: TaskId, priority: u32) {
-        let inserted = self.implied_tasks.insert(id, priority);
+        let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
         self.waits_on.insert(id, BTreeMap::new());
         assert!(inserted.is_none(), "Tried to insert task twice");
         self.implied_ready.add(id, priority);
@@ -199,7 +204,13 @@ impl TaskGraph {
         self.required_by.contains_key(&rid)
     }
 
-    pub fn resolved_implied(&mut self, id: RequestId) {
+    pub fn resolved_implied(&mut self, id: RequestId) -> BTreeSet<TaskId> {
+        let mut ret = BTreeSet::new();
+        self.resolved_implied_inner(id, &mut ret);
+        ret
+    }
+
+    pub fn resolved_implied_inner(&mut self, id: RequestId, unblocked: &mut BTreeSet<TaskId>) {
         if let RequestId::Data(d) = id {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
             entry.remove(&d.location);
@@ -215,8 +226,8 @@ impl TaskGraph {
             if deps_of_rev_dep.is_empty()
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
-                if let Some(prio) = self.implied_tasks.get(rev_dep) {
-                    self.implied_ready.add(*rev_dep, *prio);
+                if let Some(m) = self.implied_tasks.get_mut(rev_dep) {
+                    self.implied_ready.add(*rev_dep, m.priority);
                 }
             }
         }
@@ -233,7 +244,7 @@ impl TaskGraph {
             }
         }
         for group in resolved_groups {
-            self.resolved_implied(group.into());
+            self.resolved_implied_inner(group.into(), unblocked);
         }
     }
 

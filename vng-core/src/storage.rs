@@ -1,13 +1,11 @@
 pub mod gpu;
 pub mod ram;
 
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
     operator::DataId,
+    runtime::FrameNumber,
     vulkan::{DeviceId, DstBarrierInfo},
 };
 
@@ -24,6 +22,54 @@ pub enum VisibleDataLocation {
 }
 
 type LRUIndex = u64;
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub enum DataVersion {
+    Final,
+    Preview(FrameNumber),
+}
+
+impl DataVersion {
+    pub fn of_frame(&self) -> Option<FrameNumber> {
+        match self {
+            DataVersion::Final => None,
+            DataVersion::Preview(v) => Some(*v),
+        }
+    }
+}
+
+impl Ord for DataVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (DataVersion::Final, DataVersion::Final) => Ordering::Equal,
+            (DataVersion::Final, DataVersion::Preview(_)) => Ordering::Greater,
+            (DataVersion::Preview(_), DataVersion::Final) => Ordering::Less,
+            (DataVersion::Preview(l), DataVersion::Preview(r)) => l.cmp(r),
+        }
+    }
+}
+
+impl PartialOrd for DataVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl DataVersion {
+    pub fn type_(&self) -> DataVersionType {
+        match self {
+            DataVersion::Final => DataVersionType::Final,
+            DataVersion::Preview(_) => DataVersionType::Preview,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum DataVersionType {
+    Final,
+    Preview,
+}
 
 #[derive(Default)]
 struct LRUManager {
@@ -65,17 +111,17 @@ impl LRUManager {
 
 #[derive(Default)]
 pub struct NewDataManager {
-    inner: RefCell<BTreeSet<DataId>>,
+    inner: RefCell<BTreeMap<DataId, DataVersionType>>,
 }
 
 impl NewDataManager {
-    fn add(&self, key: DataId) {
-        self.inner.borrow_mut().insert(key);
+    fn add(&self, key: DataId, version: DataVersionType) {
+        self.inner.borrow_mut().insert(key, version);
     }
     fn remove(&self, key: DataId) {
         self.inner.borrow_mut().remove(&key);
     }
-    fn drain(&self) -> impl Iterator<Item = DataId> {
+    fn drain(&self) -> impl Iterator<Item = (DataId, DataVersionType)> {
         let mut m = self.inner.borrow_mut();
         let ret = std::mem::take(&mut *m);
         ret.into_iter()

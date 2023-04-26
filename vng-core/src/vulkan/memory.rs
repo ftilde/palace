@@ -178,7 +178,10 @@ impl TransferManager {
             }))
             .await;
 
-            let gpu_buf_out = device.storage.alloc_slot_raw(device, key, layout)?;
+            let gpu_buf_out =
+                device
+                    .storage
+                    .alloc_slot_raw(device, ctx.current_frame, key, layout)?;
             device.with_cmd_buffer(|cmd| {
                 let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
                 unsafe {
@@ -193,10 +196,13 @@ impl TransferManager {
                 Ok::<(), crate::Error>(())
             })?;
             unsafe {
-                gpu_buf_out.initialized(super::SrcBarrierInfo {
-                    stage: vk::PipelineStageFlags2::TRANSFER,
-                    access: vk::AccessFlags2::TRANSFER_WRITE,
-                })
+                gpu_buf_out.initialized(
+                    ctx,
+                    super::SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                    },
+                )
             };
 
             ctx.submit(device.wait_for_current_cmd_buffer_completion())

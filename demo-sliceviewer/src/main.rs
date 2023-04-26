@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
@@ -131,6 +132,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
     let mut events = EventSource::default();
 
+    let mut next_timeout = Instant::now() + Duration::from_millis(10);
+
     event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
 
@@ -177,8 +180,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut scale,
                     &mut offset,
                     events.current_batch(),
+                    next_timeout,
                 )
                 .unwrap();
+                next_timeout = Instant::now() + Duration::from_millis(10);
             }
             _ => (),
         }
@@ -198,6 +203,7 @@ fn slice_viewer_z<'op>(
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     mut events: EventStream,
+    deadline: Instant,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
@@ -234,6 +240,7 @@ fn slice_viewer_z<'op>(
         slice_input,
         crate::operators::scalar::constant_hash(md),
         slice_proj_z,
+        deadline,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
@@ -244,6 +251,7 @@ fn slice_viewer_rot<'op>(
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
+    deadline: Instant,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -266,6 +274,7 @@ fn slice_viewer_rot<'op>(
         slice_input,
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
+        deadline,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
@@ -282,6 +291,7 @@ fn eval_network(
     scale: &mut f32,
     offset: &mut f32,
     mut events: EventStream,
+    deadline: Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
     events.act(|c| {
         c.chain(OnKeyPress(Key::Plus, || *slice_num += 1))
@@ -313,8 +323,9 @@ fn eval_network(
             slice_offset,
             slice_zoom_level,
             events_l,
+            deadline,
         ),
-        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r),
+        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r, deadline),
     );
 
     let mut c = runtime.context_anchor();

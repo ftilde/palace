@@ -41,12 +41,14 @@ impl<I, O> Into<Id> for &Operator<'_, I, O> {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct DataId(pub Id);
+
 impl DataId {
     pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
         let data_id = Id::hash(descriptor);
 
         DataId(Id::combine(&[op.inner(), data_id]))
     }
+
     pub fn in_location(self, location: DataLocation) -> LocatedDataId {
         LocatedDataId { id: self, location }
     }
@@ -114,10 +116,8 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: VisibleDataId {
-                    id,
-                    location: VisibleDataLocation::Ram,
-                },
+                id,
+                location: VisibleDataLocation::Ram,
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -232,10 +232,8 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: VisibleDataId {
-                    id,
-                    location: VisibleDataLocation::Ram,
-                },
+                id,
+                location: VisibleDataLocation::Ram,
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -264,10 +262,8 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: VisibleDataId {
-                    id: read_id,
-                    location: VisibleDataLocation::Ram,
-                },
+                id: read_id,
+                location: VisibleDataLocation::Ram,
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -299,16 +295,18 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: VisibleDataId {
-                    id,
-                    location: VisibleDataLocation::VRam(gpu, dst_info),
-                },
+                id,
+                location: VisibleDataLocation::VRam(gpu, dst_info),
                 source: self,
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
-                let mut access = Some(device.storage.register_access(device, id));
+                let mut access = Some(device.storage.register_access(
+                    device,
+                    ctx.current_frame,
+                    id,
+                ));
                 Box::new(
                     move || match device.storage.read(access.take().unwrap(), dst_info) {
                         Ok(r) => Some(r),
@@ -336,19 +334,22 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
 
         Request {
             type_: RequestType::Data(DataRequest {
-                id: VisibleDataId {
-                    id: read_id,
-                    location: VisibleDataLocation::VRam(gpu, dst_info),
-                },
+                id: read_id,
+                location: VisibleDataLocation::VRam(gpu, dst_info),
                 source: self,
                 item: TypeErased::pack(item),
             }),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
-                let mut access = Some(device.storage.register_access(device, read_id));
+                let mut access = Some(device.storage.register_access(
+                    device,
+                    ctx.current_frame,
+                    read_id,
+                ));
                 Box::new(move || {
                     match device.storage.try_update_inplace(
                         device,
+                        ctx.current_frame,
                         access.take().unwrap(),
                         write_id,
                         dst_info,

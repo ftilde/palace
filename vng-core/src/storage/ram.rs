@@ -1,8 +1,8 @@
 use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit, pin::Pin};
 
-use crate::{operator::DataId, task_graph::LocatedDataId, util::num_elms_in_array, Error};
+use crate::{operator::DataId, util::num_elms_in_array, Error};
 
-use super::LRUIndex;
+use super::{DataLocation, DataVersionType, LRUIndex};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -170,7 +170,10 @@ pub struct DropMarkInitialized<'a> {
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.access.storage.new_data.add(self.access.id);
+        self.access
+            .storage
+            .new_data
+            .add(self.access.id, DataVersionType::Final); //NO_PUSH_main
         {
             let mut binding = self.access.storage.index.borrow_mut();
             let state = &mut binding.get_mut(&self.access.id).unwrap().state;
@@ -462,10 +465,12 @@ impl Storage {
         }
     }
 
-    pub(crate) fn newest_data(&self) -> impl Iterator<Item = LocatedDataId> {
+    pub(crate) fn newest_data(
+        &self,
+    ) -> impl Iterator<Item = (DataId, DataLocation, DataVersionType)> {
         self.new_data
             .drain()
-            .map(|d| d.in_location(super::DataLocation::Ram))
+            .map(|(d, v)| (d, DataLocation::Ram, v))
     }
 
     pub fn register_access(&self, id: DataId) -> AccessToken {

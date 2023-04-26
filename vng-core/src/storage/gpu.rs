@@ -1,7 +1,7 @@
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
 };
 
 use ash::vk;
@@ -9,7 +9,8 @@ use gpu_allocator::vulkan::AllocationScheme;
 
 use crate::{
     operator::DataId,
-    task_graph::LocatedDataId,
+    runtime::FrameNumber,
+    task::OpaqueTaskContext,
     vulkan::{
         CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
@@ -81,7 +82,7 @@ impl BarrierManager {
     }
 }
 
-use super::LRUIndex;
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -97,7 +98,7 @@ struct Visibility {
 enum StorageEntryState {
     Registered,
     Initializing(StorageInfo),
-    Initialized(StorageInfo, Visibility),
+    Initialized(StorageInfo, Visibility, DataVersion),
 }
 
 struct StorageInfo {
@@ -118,7 +119,7 @@ pub struct AccessToken<'a> {
 
 impl std::fmt::Debug for AccessToken<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AccessToken {{ {:?} }}", self.id)
+        write!(f, "AccessIntentToken {{ {:?} }}", self.id)
     }
 }
 impl<'a> AccessToken<'a> {
@@ -141,21 +142,25 @@ impl<'a> AccessToken<'a> {
         }
     }
 }
+
+fn dec_access(access: &mut AccessState, storage: &Storage, device: &DeviceContext, id: DataId) {
+    *access = match *access {
+        AccessState::Some(1) => {
+            let lru_id = storage.lru_manager.borrow_mut().add(id);
+            AccessState::None(lru_id, device.current_epoch())
+        }
+        AccessState::Some(n) => AccessState::Some(n - 1),
+        AccessState::None(..) => {
+            panic!("Invalid state");
+        }
+    };
+}
 impl Drop for AccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
-        vram_entry.access = match vram_entry.access {
-            AccessState::Some(1) => {
-                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
-                AccessState::None(lru_id, self.device.current_epoch())
-            }
-            AccessState::Some(n) => AccessState::Some(n - 1),
-            AccessState::None(..) => {
-                panic!("Invalid state");
-            }
-        };
+        dec_access(&mut vram_entry.access, self.storage, self.device, self.id);
     }
 }
 
@@ -175,7 +180,31 @@ impl Drop for DropError {
 
 impl<'a> WriteHandle<'a> {
     /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn initialized(self, src: SrcBarrierInfo) {
+    pub unsafe fn initialized<'c, 'b>(self, ctx: OpaqueTaskContext<'c, 'b>, src: SrcBarrierInfo) {
+        let version = if ctx
+            .predicted_preview_tasks
+            .borrow()
+            .contains(&ctx.current_task)
+        {
+            DataVersion::Preview(ctx.current_frame)
+        } else {
+            DataVersion::Final
+        };
+        self.initialized_with_version(src, version)
+    }
+    pub unsafe fn initialized_version<'c, 'b>(
+        self,
+        ctx: OpaqueTaskContext<'c, 'b>,
+        src: SrcBarrierInfo,
+        version: DataVersionType,
+    ) {
+        let version = match version {
+            DataVersionType::Final => DataVersion::Final,
+            DataVersionType::Preview => DataVersion::Preview(ctx.current_frame),
+        };
+        self.initialized_with_version(src, version)
+    }
+    unsafe fn initialized_with_version(self, src: SrcBarrierInfo, version: DataVersion) {
         let WriteHandle {
             access,
             drop_handler,
@@ -186,7 +215,6 @@ impl<'a> WriteHandle<'a> {
         std::mem::forget(drop_handler);
 
         // Mark as initialized
-        access.storage.new_data.add(access.id);
         let mut binding = access.storage.index.borrow_mut();
 
         {
@@ -199,13 +227,17 @@ impl<'a> WriteHandle<'a> {
                 StorageEntryState::Initialized(..) => {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
-                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(
-                    info,
-                    Visibility {
-                        src,
-                        created: access.storage.barrier_manager.current_epoch(),
-                    },
-                ),
+                StorageEntryState::Initializing(info) => {
+                    access.storage.new_data.add(access.id, version.type_());
+                    StorageEntryState::Initialized(
+                        info,
+                        Visibility {
+                            src,
+                            created: access.storage.barrier_manager.current_epoch(),
+                        },
+                        version,
+                    )
+                }
             };
         }
     }
@@ -217,25 +249,27 @@ pub struct ReadHandle<'a> {
     pub layout: Layout,
     #[allow(unused)]
     access: AccessToken<'a>,
+    pub version: DataVersionType,
 }
 
 pub enum InplaceResult<'a> {
-    Inplace(WriteHandle<'a>),
+    Inplace(WriteHandle<'a>, DataVersionType),
     New(ReadHandle<'a>, WriteHandle<'a>),
 }
 impl<'a> InplaceResult<'a> {
     /// Safety: The corresponding slot (either rw inplace or separate w) has to have been
     /// completely written to.
-    pub unsafe fn initialized(self, info: SrcBarrierInfo) {
+    pub unsafe fn initialized<'b, 'c>(self, ctx: OpaqueTaskContext<'b, 'c>, info: SrcBarrierInfo) {
         match self {
-            InplaceResult::Inplace(rw) => unsafe { rw.initialized(info) },
-            InplaceResult::New(_r, w) => unsafe { w.initialized(info) },
+            InplaceResult::Inplace(rw, _v) => unsafe { rw.initialized(ctx, info) },
+            InplaceResult::New(_r, w) => unsafe { w.initialized(ctx, info) },
         };
     }
 }
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
+    old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
@@ -247,6 +281,7 @@ impl Storage {
     pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
             index: Default::default(),
+            old_unused: Default::default(),
             lru_manager: Default::default(),
             barrier_manager: BarrierManager::new(),
             allocator,
@@ -258,11 +293,15 @@ impl Storage {
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
     /// references is done!
     pub unsafe fn free_vram(&self) {
-        let mut index = self.index.borrow_mut();
-        for entry in index.values_mut() {
-            match std::mem::replace(&mut entry.state, StorageEntryState::Registered) {
+        for (info, _) in std::mem::take(&mut *self.old_unused.borrow_mut()) {
+            self.allocator.deallocate(info.allocation);
+        }
+
+        for (_, entry) in std::mem::take(&mut *self.index.borrow_mut()) {
+            match entry.state {
                 StorageEntryState::Registered => {}
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
+                StorageEntryState::Initializing(info)
+                | StorageEntryState::Initialized(info, _, _) => {
                     self.allocator.deallocate(info.allocation);
                 }
             }
@@ -270,9 +309,22 @@ impl Storage {
     }
 
     pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) {
+        let mut collected = 0;
+
+        let mut unused = self.old_unused.borrow_mut();
+        while unused
+            .front()
+            .map(|(_, d)| device.cmd_buffer_completed(*d))
+            .unwrap_or(false)
+        {
+            let (info, _) = unused.pop_front().unwrap();
+            unsafe { self.allocator.deallocate(info.allocation) };
+
+            collected += info.layout.size();
+        }
+
         let mut lru = self.lru_manager.borrow_mut();
         let mut index = self.index.borrow_mut();
-        let mut collected = 0;
         while let Some(key) = lru.get_next() {
             let entry = index.get_mut(&key).unwrap();
             let AccessState::None(_, f) = entry.access else {
@@ -288,9 +340,8 @@ impl Storage {
 
             let info = match entry.state {
                 StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
-                    info
-                }
+                StorageEntryState::Initializing(info)
+                | StorageEntryState::Initialized(info, _, _) => info,
             };
 
             // Safety: All allocations in the index have been allocated with the allocator.
@@ -317,26 +368,72 @@ impl Storage {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, StorageEntryState::Initialized(_, _)))
+            .map(|e| matches!(e.state, StorageEntryState::Initialized(_, _, _)))
             .unwrap_or(false)
     }
 
-    pub(crate) fn newest_data(&self) -> impl Iterator<Item = LocatedDataId> {
+    pub(crate) fn newest_data(
+        &self,
+    ) -> impl Iterator<Item = (DataId, DataLocation, DataVersionType)> {
         let id = self.id;
         self.new_data
             .drain()
-            .map(move |d| d.in_location(super::DataLocation::VRam(id)))
+            .map(move |(d, v)| (d, DataLocation::VRam(id), v))
     }
 
-    pub fn register_access<'b>(&'b self, device: &'b DeviceContext, id: DataId) -> AccessToken<'b> {
-        {
-            let mut index = self.index.borrow_mut();
-            index.entry(id).or_insert_with(|| {
-                Entry {
+    fn ensure_presence<'a>(
+        &self,
+        current_frame: FrameNumber,
+        entry: std::collections::btree_map::Entry<'a, DataId, Entry>,
+    ) -> &'a mut Entry {
+        match entry {
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                if let StorageEntryState::Initialized(_, _, version) = e.get().state {
+                    if version < DataVersion::Preview(current_frame) {
+                        let old = e.insert(Entry {
+                            state: StorageEntryState::Registered,
+                            access: AccessState::Some(0), // Will be overwritten immediately when generating token
+                        });
+                        match old.access {
+                            AccessState::Some(_) => {
+                                panic!(
+                                    "There should not be any readers left from the previous frame"
+                                );
+                            }
+                            AccessState::None(lru_index, epoch) => {
+                                let StorageEntryState::Initialized(info, _, _) = old.state else {
+                                    panic!("we just checked that");
+                                };
+                                self.lru_manager.borrow_mut().remove(lru_index);
+                                let mut old_unused = self.old_unused.borrow_mut();
+                                old_unused.push_back((info, epoch));
+                            }
+                        }
+                    }
+                }
+                e.into_mut()
+            }
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert(Entry {
                     state: StorageEntryState::Registered,
                     access: AccessState::Some(0), // Will be overwritten immediately when generating token
-                }
-            });
+                })
+            }
+        }
+    }
+
+    pub fn register_access<'b>(
+        &'b self,
+        device: &'b DeviceContext,
+        current_frame: FrameNumber,
+        id: DataId,
+    ) -> AccessToken<'b> {
+        {
+            let mut index = self.index.borrow_mut();
+            let entry = index.entry(id);
+            // TODO: See if we can instead pass the mutable reference to the entry into AccessToken
+            // to avoid touching the index twice
+            self.ensure_presence(current_frame, entry);
         }
         AccessToken::new(self, device, id)
     }
@@ -365,27 +462,29 @@ impl Storage {
         self.allocator.deallocate(allocation);
     }
 
-    // Allocates a GpuOnly storage buffer
-    fn alloc_ssbo<'b>(
-        &'b self,
-        device: &'b DeviceContext,
-        key: DataId,
-        layout: Layout,
-    ) -> Result<(ash::vk::Buffer, AccessToken<'b>), Error> {
+    fn alloc_ssbo<'b>(&'b self, device: &'b DeviceContext, layout: Layout) -> Allocation {
         let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
             | ash::vk::BufferUsageFlags::TRANSFER_DST
             | ash::vk::BufferUsageFlags::TRANSFER_SRC;
         let location = MemoryLocation::GpuOnly;
-        let allocation = self.allocate(device, layout, flags, location);
+        self.allocate(device, layout, flags, location)
+    }
+
+    // Allocates a GpuOnly storage buffer
+    fn alloc_and_register_ssbo<'b>(
+        &'b self,
+        device: &'b DeviceContext,
+        current_frame: FrameNumber,
+        key: DataId,
+        layout: Layout,
+    ) -> Result<(ash::vk::Buffer, AccessToken<'b>), Error> {
+        let allocation = self.alloc_ssbo(device, layout);
 
         let buffer = allocation.buffer;
 
         {
             let mut index = self.index.borrow_mut();
-            let entry = index.entry(key).or_insert_with(|| Entry {
-                state: StorageEntryState::Registered,
-                access: AccessState::Some(0), // Will be overwritten immediately when generating token
-            });
+            let entry = self.ensure_presence(current_frame, index.entry(key));
 
             let info = StorageInfo { allocation, layout };
 
@@ -400,11 +499,12 @@ impl Storage {
     pub fn alloc_slot_raw<'b>(
         &'b self,
         device: &'b DeviceContext,
+        current_frame: FrameNumber,
         key: DataId,
         layout: Layout,
     ) -> Result<WriteHandle<'b>, Error> {
         let size = layout.size();
-        let (buffer, access) = self.alloc_ssbo(device, key, layout)?;
+        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, key, layout)?;
 
         Ok(WriteHandle {
             buffer,
@@ -417,12 +517,13 @@ impl Storage {
     pub fn alloc_slot<'b, T: Copy + crevice::std430::Std430>(
         &'b self,
         device: &'b DeviceContext,
+        current_frame: FrameNumber,
         key: DataId,
         num: usize,
     ) -> Result<WriteHandle<'b>, Error> {
         //TODO: Not sure if this actually works with std430
         let layout = Layout::array::<T>(num).unwrap();
-        self.alloc_slot_raw(device, key, layout)
+        self.alloc_slot_raw(device, current_frame, key, layout)
     }
 
     pub fn is_visible(&self, id: DataId, dst_info: DstBarrierInfo) -> Result<(), SrcBarrierInfo> {
@@ -430,7 +531,7 @@ impl Storage {
         let Some(entry) = index.get(&id) else {
             panic!("Should only be called on present, initialized data");
         };
-        let StorageEntryState::Initialized(_info, visibility) = &entry.state else {
+        let StorageEntryState::Initialized(_info, visibility, _) = &entry.state else {
             panic!("Should only be called on present, initialized data");
         };
         if self
@@ -452,7 +553,7 @@ impl Storage {
         let Some(entry) = index.get(&access.id) else {
             return Err(access);
         };
-        let StorageEntryState::Initialized(info, visibility) = &entry.state else {
+        let StorageEntryState::Initialized(info, visibility, version) = &entry.state else {
             return Err(access);
         };
         if !self
@@ -466,12 +567,14 @@ impl Storage {
             buffer: info.allocation.buffer,
             layout: info.layout,
             access,
+            version: version.type_(),
         })
     }
 
     pub fn try_update_inplace<'b, 't: 'b>(
         &'b self,
         device: &'b DeviceContext,
+        current_frame: FrameNumber,
         old_access: AccessToken<'t>,
         new_key: DataId,
         dst_info: DstBarrierInfo,
@@ -482,9 +585,10 @@ impl Storage {
         let Some(entry) = index.get(&old_access.id) else {
             return Err(old_access);
         };
-        let StorageEntryState::Initialized(info, visibility) = &entry.state else {
+        let StorageEntryState::Initialized(info, visibility, version) = &entry.state else {
             return Err(old_access)
         };
+        let old_version = version.type_();
         if !self
             .barrier_manager
             .is_visible(visibility.src, dst_info, visibility.created)
@@ -510,7 +614,7 @@ impl Storage {
                 access: AccessState::Some(0),
             });
 
-            let StorageEntryState::Initialized(info, _) = old_entry.state else {
+            let StorageEntryState::Initialized(info, _, _) = old_entry.state else {
                 panic!("We already checked that it is initialized and are just moving out now");
             };
             new_entry.state = StorageEntryState::Initializing(info);
@@ -520,19 +624,22 @@ impl Storage {
                 AccessState::None(..) => panic!("If present, entry should have accessors"),
             };
 
-            InplaceResult::Inplace(WriteHandle {
-                buffer,
-                size: layout.size() as _,
-                drop_handler: DropError,
-                access: new_access,
-            })
+            InplaceResult::Inplace(
+                WriteHandle {
+                    buffer,
+                    size: layout.size() as _,
+                    drop_handler: DropError,
+                    access: new_access,
+                },
+                old_version,
+            )
         } else {
             let layout = info.layout;
             let buffer = info.allocation.buffer;
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = match self.alloc_slot_raw(device, new_key, layout) {
+            let w = match self.alloc_slot_raw(device, current_frame, new_key, layout) {
                 Ok(w) => w,
                 Err(e) => return Ok(Err(e)),
             };
@@ -540,6 +647,7 @@ impl Storage {
                 buffer,
                 layout,
                 access: old_access,
+                version: old_version,
             };
             InplaceResult::New(r, w)
         }))
