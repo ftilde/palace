@@ -565,6 +565,7 @@ pub struct Allocator {
     allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
     device: ash::Device,
     num_alloced: Cell<u64>,
+    capacity: Option<u64>,
 }
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
@@ -574,6 +575,7 @@ impl Allocator {
         instance: ash::Instance,
         device: ash::Device,
         physical_device: vk::PhysicalDevice,
+        capacity: Option<u64>,
     ) -> Self {
         let allocator = RefCell::new(Some(
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
@@ -590,6 +592,7 @@ impl Allocator {
             allocator,
             device,
             num_alloced,
+            capacity,
         }
     }
     pub fn allocate(
@@ -598,6 +601,12 @@ impl Allocator {
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
     ) -> gpu_allocator::Result<Allocation> {
+        if let Some(capacity) = self.capacity {
+            if self.num_alloced.get() + layout.size() as u64 > capacity {
+                return Err(gpu_allocator::AllocationError::OutOfMemory);
+            }
+        }
+
         // Setup vulkan info
         let vk_info = vk::BufferCreateInfo::builder()
             .size(layout.size() as u64)

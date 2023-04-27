@@ -100,7 +100,7 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(gpu_mem_capacity: Option<u64>) -> Result<Self, Error> {
         unsafe {
             let entry = ash::Entry::load()?;
 
@@ -170,6 +170,7 @@ impl VulkanContext {
                                     *physical_device,
                                     index as u32,
                                     info.queue_count,
+                                    gpu_mem_capacity,
                                 )
                                 .ok()
                             } else {
@@ -355,6 +356,7 @@ impl DeviceContext {
         physical_device: vk::PhysicalDevice,
         queue_family_index: u32,
         queue_count: u32,
+        mem_capacity: Option<u64>,
     ) -> Result<Self, Error> {
         unsafe {
             let device_extension_props = instance
@@ -417,7 +419,12 @@ impl DeviceContext {
 
             let vulkan_states = state::Cache::default();
 
-            let allocator = Allocator::new(instance.clone(), device.clone(), physical_device);
+            let allocator = Allocator::new(
+                instance.clone(),
+                device.clone(),
+                physical_device,
+                mem_capacity,
+            );
 
             let staging_to_cpu = memory::BufferStash::new(
                 MemoryLocation::GpuToCpu,

@@ -204,10 +204,14 @@ pub struct RunTime {
 }
 
 impl RunTime {
-    pub fn new(storage_size: usize, num_compute_threads: Option<usize>) -> Result<Self, Error> {
+    pub fn new(
+        storage_size: usize,
+        gpu_storage_size: Option<u64>,
+        num_compute_threads: Option<usize>,
+    ) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
-        let vulkan = VulkanContext::new()?;
+        let vulkan = VulkanContext::new(gpu_storage_size)?;
         let ram = crate::storage::ram::Storage::new(storage_size)?;
         Ok(RunTime {
             ram,

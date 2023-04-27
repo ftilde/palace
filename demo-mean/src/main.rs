@@ -43,6 +43,10 @@ struct CliArgs {
     #[arg(short, long, default_value = "8")]
     mem_size: usize,
 
+    /// Size of the gpu memory pool that will be allocated in gigabytes.
+    #[arg(short, long)]
+    gpu_mem_size: Option<u64>,
+
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
@@ -77,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_size = args.mem_size << 30; //in gigabyte
 
-    let mut runtime = RunTime::new(storage_size, args.compute_pool_size)?;
+    let mut runtime = RunTime::new(storage_size, args.gpu_mem_size, args.compute_pool_size)?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
