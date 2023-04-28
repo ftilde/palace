@@ -204,13 +204,11 @@ impl TaskGraph {
         self.required_by.contains_key(&rid)
     }
 
-    pub fn resolved_implied(&mut self, id: RequestId) -> BTreeSet<TaskId> {
-        let mut ret = BTreeSet::new();
-        self.resolved_implied_inner(id, &mut ret);
-        ret
+    pub fn dependents(&self, id: RequestId) -> &BTreeSet<TaskId> {
+        self.required_by.get(&id).unwrap()
     }
 
-    pub fn resolved_implied_inner(&mut self, id: RequestId, unblocked: &mut BTreeSet<TaskId>) {
+    pub fn resolved_implied(&mut self, id: RequestId) {
         if let RequestId::Data(d) = id {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
             entry.remove(&d.location);
@@ -244,7 +242,7 @@ impl TaskGraph {
             }
         }
         for group in resolved_groups {
-            self.resolved_implied_inner(group.into(), unblocked);
+            self.resolved_implied(group.into());
         }
     }
 

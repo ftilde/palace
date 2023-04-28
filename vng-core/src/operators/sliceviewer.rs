@@ -8,6 +8,7 @@ use crate::{
     data::{from_linear, hmul, GlobalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
+    storage::DataVersionType,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -380,7 +381,8 @@ void main()
                 // pixels have been written already, though!
                 let mut collected_bricks = Vec::new();
 
-                loop {
+                let mut it = 0; //NO_PUSH_main
+                let timed_out = loop {
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
@@ -426,8 +428,11 @@ void main()
                         .into_iter()
                         .filter(|v| *v != u64::max_value())
                         .collect::<Vec<u64>>();
-                    if to_request_linear.is_empty() || deadline < std::time::Instant::now() {
-                        break;
+                    if to_request_linear.is_empty() {
+                        break false;
+                    }
+                    if deadline < std::time::Instant::now() {
+                        break true;
                     }
 
                     let to_request = to_request_linear.iter().map(|v| {
@@ -477,7 +482,8 @@ void main()
                         },
                     ))
                     .await;
-                }
+                    it += 1;
+                };
 
                 // Safety: The buffer was requested above from the same device
                 unsafe { device.tmp_buffers.return_buf(device, brick_index) };
@@ -489,7 +495,14 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_WRITE,
                 };
-                unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                if timed_out {
+                    unsafe {
+                        println!("Sliceviewer: Time out result after {} it", it);
+                        gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
+                    };
+                } else {
+                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                }
 
                 Ok(())
             }

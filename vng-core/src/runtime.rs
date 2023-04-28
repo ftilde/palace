@@ -471,20 +471,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     ) {
         for (id, produced_loc, produced_ver) in items {
             for requested in self.task_graph.requested_locations(id) {
+                let r_id = VisibleDataId {
+                    id,
+                    location: requested,
+                }
+                .into();
+                if let DataVersionType::Preview = produced_ver {
+                    let mut m = self.data.predicted_preview_tasks.borrow_mut();
+                    for dependent in self.task_graph.dependents(r_id) {
+                        m.insert(*dependent);
+                    }
+                }
                 if let Some(task_id) = self.try_make_available(id, produced_loc, requested) {
                     self.task_graph.will_provide(task_id, id);
                 } else {
-                    let requested = VisibleDataId {
-                        id,
-                        location: requested,
-                    };
-                    let unblocked = self.task_graph.resolved_implied(requested.into());
-                    if let DataVersionType::Preview = produced_ver {
-                        let mut m = self.data.predicted_preview_tasks.borrow_mut();
-                        for t in unblocked {
-                            m.insert(t);
-                        }
-                    }
+                    self.task_graph.resolved_implied(r_id);
                 }
             }
         }
