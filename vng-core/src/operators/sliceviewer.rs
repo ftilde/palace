@@ -170,7 +170,6 @@ pub fn render_slice<'a>(
     input: VolumeOperator<'a>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
-    deadline: std::time::Instant,
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -431,7 +430,7 @@ void main()
                     if to_request_linear.is_empty() {
                         break false;
                     }
-                    if deadline < std::time::Instant::now() {
+                    if ctx.past_deadline() {
                         break true;
                     }
 

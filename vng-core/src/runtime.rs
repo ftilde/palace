@@ -4,7 +4,7 @@ use std::{
     num::NonZeroU64,
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -272,7 +272,7 @@ pub struct ContextAnchor<'cref, 'inv> {
 }
 
 impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
-    pub fn executor(&'cref mut self) -> Executor<'cref, 'inv> {
+    pub fn executor(&'cref mut self, deadline: Option<Instant>) -> Executor<'cref, 'inv> {
         Executor {
             data: &self.data,
             task_manager: TaskManager::new(
@@ -286,6 +286,9 @@ impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
             transfer_manager: Default::default(),
             request_batcher: Default::default(),
             barrier_batcher: BarrierBatcher::new(),
+            deadline: deadline.unwrap_or_else(|| {
+                Instant::now() + std::time::Duration::from_secs(1 << 32)
+            } /* basically: never */),
         }
     }
 }
@@ -334,6 +337,7 @@ pub struct Executor<'cref, 'inv> {
     transfer_manager: crate::vulkan::memory::TransferManager,
     statistics: Statistics,
     waker: Waker,
+    deadline: Instant,
 }
 
 impl<'cref, 'inv> Executor<'cref, 'inv> {
@@ -351,6 +355,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             current_task,
             current_frame: self.data.frame,
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
+            deadline: self.deadline,
         }
     }
 

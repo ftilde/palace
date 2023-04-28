@@ -169,6 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // It's preferable for applications that do not render continuously to render in
                 // this event rather than in MainEventsCleared, since rendering in here allows
                 // the program to gracefully handle redraws requested by the OS.
+                next_timeout = Instant::now() + Duration::from_millis(10);
                 eval_network(
                     &mut runtime,
                     &mut window,
@@ -183,7 +184,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next_timeout,
                 )
                 .unwrap();
-                next_timeout = Instant::now() + Duration::from_millis(10);
             }
             _ => (),
         }
@@ -203,7 +203,6 @@ fn slice_viewer_z<'op>(
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     mut events: EventStream,
-    deadline: Instant,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
@@ -225,7 +224,7 @@ fn slice_viewer_z<'op>(
 
     let md = ImageMetaData {
         dimensions: md.dimensions,
-        chunk_size: Vector::fill(512.into()),
+        chunk_size: Vector::fill(128.into()),
     };
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
@@ -240,7 +239,6 @@ fn slice_viewer_z<'op>(
         slice_input,
         crate::operators::scalar::constant_hash(md),
         slice_proj_z,
-        deadline,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
@@ -251,7 +249,6 @@ fn slice_viewer_rot<'op>(
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
-    deadline: Instant,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -262,7 +259,7 @@ fn slice_viewer_rot<'op>(
 
     let md = ImageMetaData {
         dimensions: md.dimensions,
-        chunk_size: Vector::fill(512.into()),
+        chunk_size: Vector::fill(128.into()),
     };
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
@@ -274,7 +271,6 @@ fn slice_viewer_rot<'op>(
         slice_input,
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
-        deadline,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
@@ -323,13 +319,12 @@ fn eval_network(
             slice_offset,
             slice_zoom_level,
             events_l,
-            deadline,
         ),
-        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r, deadline),
+        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r),
     );
 
     let mut c = runtime.context_anchor();
-    let mut executor = c.executor();
+    let mut executor = c.executor(Some(deadline));
 
     let slice_ref = &frame;
     executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;

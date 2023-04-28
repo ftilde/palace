@@ -146,7 +146,7 @@ fn eval_network(
     let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
     let mut c = runtime.context_anchor();
-    let mut executor = c.executor();
+    let mut executor = c.executor(None);
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?

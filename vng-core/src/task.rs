@@ -4,6 +4,7 @@ use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::Poll;
+use std::time::Instant;
 
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
@@ -122,6 +123,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) predicted_preview_tasks: &'cref RefCell<BTreeSet<TaskId>>,
     pub(crate) current_task: TaskId,
     pub(crate) current_frame: FrameNumber,
+    pub(crate) deadline: Instant,
 }
 
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
@@ -303,6 +305,10 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
 
     pub fn vulkan_device(&self) -> &DeviceContext {
         self.device_contexts.first().unwrap()
+    }
+
+    pub fn past_deadline(&self) -> bool {
+        self.deadline < Instant::now()
     }
 }
 
