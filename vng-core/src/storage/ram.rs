@@ -2,7 +2,7 @@ use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit,
 
 use crate::{operator::DataId, util::num_elms_in_array, Error};
 
-use super::{DataLocation, DataVersionType, LRUIndex};
+use super::{DataLocation, DataVersionType, LRUIndex, LRUItem};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -69,7 +69,11 @@ impl Drop for AccessToken<'_> {
 
         ram_entry.access = match ram_entry.access {
             AccessState::Some(1) => {
-                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+                let lru_id = self
+                    .storage
+                    .lru_manager
+                    .borrow_mut()
+                    .add(LRUItem::Data(self.id));
                 AccessState::None(lru_id)
             }
             AccessState::Some(n) => AccessState::Some(n - 1),
@@ -403,6 +407,10 @@ impl Storage {
         let mut index = self.index.borrow_mut();
         let mut collected = 0;
         for key in lru.drain_lru().into_iter() {
+            let key = match key {
+                LRUItem::Data(k) => k,
+                LRUItem::State(_) => panic!("There should not be any state keys"),
+            };
             let entry = index.get_mut(&key).unwrap();
             let info = match entry.state {
                 StorageEntryState::Registered => panic!("Should not be in LRU list"),

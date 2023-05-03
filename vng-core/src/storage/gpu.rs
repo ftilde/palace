@@ -82,7 +82,7 @@ impl BarrierManager {
     }
 }
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex};
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -111,6 +111,46 @@ struct Entry {
     access: AccessState,
 }
 
+struct StateCacheEntry {
+    storage: StorageInfo,
+    access: AccessState,
+}
+
+pub struct StateCacheAccessToken<'a> {
+    storage: &'a Storage,
+    device: &'a DeviceContext,
+    pub id: DataId,
+}
+
+//TODO: See if we can deduplicate the code in comparison with the "normal" AccessToken
+impl<'a> StateCacheAccessToken<'a> {
+    fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
+        let mut index = storage.state_cache_index.borrow_mut();
+        let entry = index.get_mut(&id).unwrap();
+
+        inc_access(&mut entry.access, storage);
+
+        Self {
+            storage,
+            id,
+            device,
+        }
+    }
+}
+impl Drop for StateCacheAccessToken<'_> {
+    fn drop(&mut self) {
+        let mut index = self.storage.state_cache_index.borrow_mut();
+        let vram_entry = index.get_mut(&self.id).unwrap();
+
+        dec_access(
+            &mut vram_entry.access,
+            self.storage,
+            self.device,
+            LRUItem::State(self.id),
+        );
+    }
+}
+
 pub struct AccessToken<'a> {
     storage: &'a Storage,
     device: &'a DeviceContext,
@@ -127,13 +167,7 @@ impl<'a> AccessToken<'a> {
         let mut index = storage.index.borrow_mut();
         let vram_entry = index.get_mut(&id).unwrap();
 
-        vram_entry.access = match vram_entry.access {
-            AccessState::Some(n) => AccessState::Some(n + 1),
-            AccessState::None(id, _) => {
-                storage.lru_manager.borrow_mut().remove(id);
-                AccessState::Some(1)
-            }
-        };
+        inc_access(&mut vram_entry.access, storage);
 
         Self {
             storage,
@@ -143,7 +177,16 @@ impl<'a> AccessToken<'a> {
     }
 }
 
-fn dec_access(access: &mut AccessState, storage: &Storage, device: &DeviceContext, id: DataId) {
+fn inc_access(access: &mut AccessState, storage: &Storage) {
+    *access = match *access {
+        AccessState::Some(n) => AccessState::Some(n + 1),
+        AccessState::None(id, _) => {
+            storage.lru_manager.borrow_mut().remove(id);
+            AccessState::Some(1)
+        }
+    };
+}
+fn dec_access(access: &mut AccessState, storage: &Storage, device: &DeviceContext, id: LRUItem) {
     *access = match *access {
         AccessState::Some(1) => {
             let lru_id = storage.lru_manager.borrow_mut().add(id);
@@ -160,7 +203,12 @@ impl Drop for AccessToken<'_> {
         let mut index = self.storage.index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
-        dec_access(&mut vram_entry.access, self.storage, self.device, self.id);
+        dec_access(
+            &mut vram_entry.access,
+            self.storage,
+            self.device,
+            LRUItem::Data(self.id),
+        );
     }
 }
 
@@ -252,6 +300,36 @@ pub struct ReadHandle<'a> {
     pub version: DataVersionType,
 }
 
+pub struct StateCacheHandle<'a> {
+    pub buffer: ash::vk::Buffer,
+    pub size: u64,
+    #[allow(unused)]
+    access: StateCacheAccessToken<'a>,
+}
+
+pub enum StateCacheResult<'a> {
+    New(StateCacheHandle<'a>),
+    Existing(StateCacheHandle<'a>),
+}
+
+impl<'a> StateCacheResult<'a> {
+    pub fn init(self, f: impl FnOnce(&mut StateCacheHandle)) -> StateCacheHandle<'a> {
+        match self {
+            StateCacheResult::New(mut n) => {
+                f(&mut n);
+                n
+            }
+            StateCacheResult::Existing(n) => n,
+        }
+    }
+    pub fn unpack(self) -> StateCacheHandle<'a> {
+        match self {
+            StateCacheResult::New(n) => n,
+            StateCacheResult::Existing(n) => n,
+        }
+    }
+}
+
 pub enum InplaceResult<'a> {
     Inplace(WriteHandle<'a>, DataVersionType),
     New(ReadHandle<'a>, WriteHandle<'a>),
@@ -269,6 +347,7 @@ impl<'a> InplaceResult<'a> {
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
+    state_cache_index: RefCell<BTreeMap<DataId, StateCacheEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager>,
     pub(crate) barrier_manager: BarrierManager,
@@ -281,6 +360,7 @@ impl Storage {
     pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
             index: Default::default(),
+            state_cache_index: Default::default(),
             old_unused: Default::default(),
             lru_manager: Default::default(),
             barrier_manager: BarrierManager::new(),
@@ -325,23 +405,46 @@ impl Storage {
 
         let mut lru = self.lru_manager.borrow_mut();
         let mut index = self.index.borrow_mut();
+        let mut state_cache_index = self.state_cache_index.borrow_mut();
         while let Some(key) = lru.get_next() {
-            let entry = index.get_mut(&key).unwrap();
-            let AccessState::None(_, f) = entry.access else {
-                panic!("Should not be in LRU list");
-            };
-            if !device.cmd_buffer_completed(f) {
-                // All following LRU items will have the same or a later epoch so cannot be deleted
-                // either
-                break;
-            }
+            let (info, key) = match key {
+                LRUItem::Data(key) => {
+                    let entry = index.get_mut(&key).unwrap();
+                    let AccessState::None(_, f) = entry.access else {
+                        panic!("Should not be in LRU list");
+                    };
+                    if !device.cmd_buffer_completed(f) {
+                        // All following LRU items will have the same or a later epoch so cannot be deleted
+                        // either
+                        break;
+                    }
 
-            let entry = index.remove(&key).unwrap();
+                    let entry = index.remove(&key).unwrap();
 
-            let info = match entry.state {
-                StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                StorageEntryState::Initializing(info)
-                | StorageEntryState::Initialized(info, _, _) => info,
+                    (
+                        match entry.state {
+                            StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                            StorageEntryState::Initializing(info)
+                            | StorageEntryState::Initialized(info, _, _) => info,
+                        },
+                        key,
+                    )
+                }
+                LRUItem::State(key) => {
+                    let entry = state_cache_index.get_mut(&key).unwrap();
+                    let AccessState::None(_, f) = entry.access else {
+                        panic!("Should not be in LRU list");
+                    };
+                    if !device.cmd_buffer_completed(f) {
+                        // All following LRU items will have the same or a later epoch so cannot be deleted
+                        // either
+                        break;
+                    }
+
+                    let entry = state_cache_index.remove(&key).unwrap();
+
+                    (entry.storage, key)
+                }
             };
 
             // Safety: All allocations in the index have been allocated with the allocator.
@@ -470,6 +573,7 @@ impl Storage {
         self.allocate(device, layout, flags, location)
     }
 
+    //TODO: remove error case since we actually cannot hit it
     // Allocates a GpuOnly storage buffer
     fn alloc_and_register_ssbo<'b>(
         &'b self,
@@ -651,6 +755,53 @@ impl Storage {
             };
             InplaceResult::New(r, w)
         }))
+    }
+
+    pub fn access_state_cache<'b>(
+        &'b self,
+        device: &'b DeviceContext,
+        key: DataId,
+        layout: Layout,
+    ) -> StateCacheResult<'b> {
+        let mut new = false;
+        let buffer = {
+            let index = self.state_cache_index.borrow();
+            if let Some(entry) = index.get(&key) {
+                entry.storage.allocation.buffer
+            } else {
+                new = true;
+                std::mem::drop(index);
+                // Drop index for allocation which may need to free and then access the index
+                let storage = StorageInfo {
+                    allocation: self.alloc_ssbo(device, layout),
+                    layout,
+                };
+
+                let mut index = self.state_cache_index.borrow_mut();
+                let buffer = storage.allocation.buffer;
+                index.insert(
+                    key,
+                    StateCacheEntry {
+                        access: AccessState::Some(0),
+                        storage,
+                    },
+                );
+                buffer
+            }
+        };
+
+        let access = StateCacheAccessToken::new(self, device, key);
+        let handle = StateCacheHandle {
+            buffer,
+            size: layout.size() as _,
+            access,
+        };
+
+        if new {
+            StateCacheResult::New(handle)
+        } else {
+            StateCacheResult::Existing(handle)
+        }
     }
 
     pub fn deinitialize(&mut self) {

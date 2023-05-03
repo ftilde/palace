@@ -199,7 +199,7 @@ layout(buffer_reference, std430) buffer BrickType {
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
-} outputData;
+} output_data;
 
 layout(std430, binding = 1) buffer Transform {
     mat4 value;
@@ -213,44 +213,69 @@ layout(std430, binding = 3) buffer QueryTable {
     uint64_t values[REQUEST_TABLE_SIZE];
 } request_table;
 
+layout(std430, binding = 4) buffer StateBuffer {
+    uint values[];
+} state;
+
+layout(std430, binding = 5) buffer ValueBuffer{
+    float values[];
+} brick_values;
+
 declare_push_consts(consts);
+
+#define UNINIT 0
+#define INIT_VAL 1
+#define INIT_EMPTY 2
 
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
     uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
     if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
+        uint s = state.values[gID];
+
         vec4 val;
-
-        //TODO: Maybe revisit this +0.5 -0.5 business.
-        vec4 pos = vec4(vec2(out_pos + consts.out_begin) + vec2(0.5), 0, 1);
-        vec3 sample_pos_f = (transform.value * pos).xyz - vec3(0.5);
-        ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
-        ivec3 vol_dim = ivec3(consts.vol_dim);
-
-        if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
-            uvec3 sample_brick = sample_pos / consts.chunk_dim;
-
-            uint sample_brick_pos_linear = to_linear3(sample_brick, consts.dim_in_bricks);
-
-            BrickType brick = bricks.values[sample_brick_pos_linear];
-            if(uint64_t(brick) == 0) {
-                uint64_t sbp = uint64_t(sample_brick_pos_linear);
-                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                val = vec4(1.0, 0.0, 0.0, 1.0);
-            } else {
-                uvec3 brick_begin = sample_brick * consts.chunk_dim;
-                uvec3 local = sample_pos - brick_begin;
-                uint local_index = to_linear3(local, consts.chunk_dim);
-                float v = brick.values[local_index];
-                val = vec4(v, v, v, 1.0);
-            }
-        } else {
+        if(s == INIT_VAL) {
+            float v = brick_values.values[gID];
+            val = vec4(v, v, v, 1.0);
+        } else if(s == INIT_EMPTY) {
             val = vec4(0.0, 0.0, 1.0, 0.0);
+        } else {
+            //TODO: Maybe revisit this +0.5 -0.5 business.
+            vec4 pos = vec4(vec2(out_pos + consts.out_begin) + vec2(0.5), 0, 1);
+            vec3 sample_pos_f = (transform.value * pos).xyz - vec3(0.5);
+            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
+            ivec3 vol_dim = ivec3(consts.vol_dim);
+
+            if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
+                uvec3 sample_brick = sample_pos / consts.chunk_dim;
+
+                uint sample_brick_pos_linear = to_linear3(sample_brick, consts.dim_in_bricks);
+
+                BrickType brick = bricks.values[sample_brick_pos_linear];
+                if(uint64_t(brick) == 0) {
+                    uint64_t sbp = uint64_t(sample_brick_pos_linear);
+                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                    val = vec4(1.0, 0.0, 0.0, 1.0);
+                } else {
+                    uvec3 brick_begin = sample_brick * consts.chunk_dim;
+                    uvec3 local = sample_pos - brick_begin;
+                    uint local_index = to_linear3(local, consts.chunk_dim);
+                    float v = brick.values[local_index];
+                    val = vec4(v, v, v, 1.0);
+
+                    state.values[gID] = INIT_VAL;
+                    brick_values.values[gID] = v;
+                }
+            } else {
+                val = vec4(0.0, 0.0, 1.0, 0.0);
+
+                state.values[gID] = INIT_EMPTY;
+            }
         }
 
         for(int c=0; c<4; ++c) {
-            outputData.values[4*gID+c] = val[c];
+            output_data.values[4*gID+c] = val[c];
         }
     }
 }
@@ -299,10 +324,11 @@ void main()
 
                 let num_bricks = hmul(m_in.dimension_in_bricks()); //TODO: rename
 
-                let load_factor = 3.0;
-                let request_table_size = (((num_bricks as f32).powf(2.0 / 3.0) * load_factor)
-                    .round() as usize)
-                    .next_power_of_two();
+                //let load_factor = 3.0;
+                //let request_table_size = (((num_bricks as f32).powf(2.0 / 3.0) * load_factor)
+                //    .round() as usize)
+                //    .next_power_of_two();
+                let request_table_size = 32;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -319,6 +345,35 @@ void main()
                             false,
                         )
                     });
+
+                let state_initialized = ctx
+                    .access_state_cache(
+                        device,
+                        pos,
+                        "initialized",
+                        Layout::array::<u32>(hmul(m2d.chunk_size)).unwrap(),
+                    )
+                    .unwrap();
+                let state_initialized = state_initialized.init(|v| {
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        device.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            v.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0,
+                        );
+                    });
+                });
+                let state_values = ctx
+                    .access_state_cache(
+                        device,
+                        pos,
+                        "values",
+                        Layout::array::<f32>(hmul(m2d.chunk_size)).unwrap(),
+                    )
+                    .unwrap()
+                    .unpack();
 
                 let brick_index_layout = Layout::array::<u64>(num_bricks).unwrap();
 
@@ -380,7 +435,7 @@ void main()
                 // pixels have been written already, though!
                 let mut collected_bricks = Vec::new();
 
-                let mut it = 0; //NO_PUSH_main
+                let mut it = 0;
                 let timed_out = loop {
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
@@ -388,6 +443,8 @@ void main()
                             &transform_gpu,
                             &brick_index,
                             &request_table_buffer,
+                            &state_initialized,
+                            &state_values,
                         ]);
 
                         unsafe {
@@ -430,7 +487,9 @@ void main()
                     if to_request_linear.is_empty() {
                         break false;
                     }
-                    if ctx.past_deadline() {
+                    if ctx.past_deadline() && it > 0 {
+                        // We need at least one iteration to make any kind of progress
+                        // TODO: Potentially remove once we have global volume page tables
                         break true;
                     }
 

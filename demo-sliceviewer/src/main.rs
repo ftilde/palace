@@ -224,7 +224,7 @@ fn slice_viewer_z<'op>(
 
     let md = ImageMetaData {
         dimensions: md.dimensions,
-        chunk_size: Vector::fill(128.into()),
+        chunk_size: Vector::fill(512.into()),
     };
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
@@ -259,7 +259,7 @@ fn slice_viewer_rot<'op>(
 
     let md = ImageMetaData {
         dimensions: md.dimensions,
-        chunk_size: Vector::fill(128.into()),
+        chunk_size: Vector::fill(512.into()),
     };
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(

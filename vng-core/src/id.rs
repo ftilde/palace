@@ -16,7 +16,7 @@ impl Id {
         let sha = Sha1::from(data);
         Self(digest_to_u128(sha.digest().bytes()))
     }
-    pub fn hash(data: &impl std::hash::Hash) -> Self {
+    pub fn hash<T: std::hash::Hash + ?Sized>(data: &T) -> Self {
         let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(0).build();
         data.hash(&mut hasher);
         let digest = hasher.digest128();

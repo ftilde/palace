@@ -1,3 +1,4 @@
+use std::alloc::Layout;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
@@ -9,7 +10,7 @@ use std::time::Instant;
 use crate::id::Id;
 use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints};
-use crate::storage::gpu::WriteHandle;
+use crate::storage::gpu::{StateCacheResult, WriteHandle};
 use crate::storage::ram::{Storage, WriteHandleUninit};
 use crate::storage::VisibleDataLocation;
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
@@ -570,6 +571,19 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std43
         device
             .storage
             .alloc_slot::<Output>(device, self.current_frame, id, size)
+    }
+
+    pub fn access_state_cache<'a>(
+        &'a self,
+        device: &'a DeviceContext,
+        item: ItemDescriptor,
+        name: &str,
+        layout: Layout,
+    ) -> Result<StateCacheResult<'a>, Error> {
+        let base_id = DataId::new(self.current_op(), &item);
+        let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
+
+        Ok(device.storage.access_state_cache(device, id, layout))
     }
 }
 

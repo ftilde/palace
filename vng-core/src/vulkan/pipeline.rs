@@ -8,7 +8,7 @@ use crevice::std140::{AsStd140, Std140};
 
 use crate::{
     data::Vector,
-    storage::gpu::{ReadHandle, WriteHandle},
+    storage::gpu::{ReadHandle, StateCacheHandle, WriteHandle},
     vulkan::shader::Shader,
 };
 
@@ -322,6 +322,15 @@ impl<'a> AsDescriptor for ReadHandle<'a> {
 }
 
 impl<'a> AsDescriptor for WriteHandle<'a> {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::builder()
+            .buffer(self.buffer)
+            .range(self.size as _)
+            .build()
+    }
+}
+
+impl<'a> AsDescriptor for StateCacheHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)

@@ -71,9 +71,15 @@ pub enum DataVersionType {
     Preview,
 }
 
+#[derive(Copy, Clone)]
+enum LRUItem {
+    Data(DataId),
+    State(DataId),
+}
+
 #[derive(Default)]
 struct LRUManager {
-    list: BTreeMap<LRUIndex, DataId>,
+    list: BTreeMap<LRUIndex, LRUItem>,
     current: LRUIndex,
 }
 
@@ -83,7 +89,7 @@ impl LRUManager {
     }
 
     #[must_use]
-    fn add(&mut self, data: DataId) -> LRUIndex {
+    fn add(&mut self, data: LRUItem) -> LRUIndex {
         let new = self
             .current
             .checked_add(1)
@@ -95,14 +101,14 @@ impl LRUManager {
         new
     }
 
-    fn get_next(&self) -> Option<DataId> {
+    fn get_next(&self) -> Option<LRUItem> {
         self.list.first_key_value().map(|(_, d)| *d)
     }
     fn pop_next(&mut self) {
         self.list.pop_first();
     }
 
-    fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = DataId> + 'a {
+    fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = LRUItem> + 'a {
         std::iter::from_fn(move || {
             return self.list.pop_first().map(|(_, d)| d);
         })
