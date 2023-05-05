@@ -591,7 +591,7 @@ impl<'cref, 'inv, Output: Copy> TaskContext<'cref, 'inv, (), Output> {
     pub fn write(&self, value: Output) -> Result<(), Error> {
         let mut slot = self.alloc_slot((), 1)?;
         slot[0].write(value);
-        unsafe { slot.initialized() };
+        unsafe { slot.initialized(**self) };
 
         Ok(())
     }

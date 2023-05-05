@@ -122,7 +122,7 @@ pub async fn map_values<
 {
     let requests = positions
         .into_iter()
-        .map(|pos| input.request_inplace(pos, ctx.current_op()));
+        .map(|pos| input.request_inplace(*ctx, pos, ctx.current_op()));
 
     let stream = ctx
         .submit_unordered(requests)
@@ -148,11 +148,11 @@ pub async fn map_values<
     futures::pin_mut!(stream);
     // Drive the stream until completion
     while let Some(brick_handle) = stream.next().await {
-        let brick_handle = brick_handle.into_main_handle(ctx.storage());
+        let brick_handle = brick_handle.into_main_handle(*ctx);
         if let InplaceResult::New(_, w) = brick_handle {
             // Safety: We have written all values in the above closure executed on
             // the thread pool.
-            unsafe { w.initialized() };
+            unsafe { w.initialized(*ctx) };
         };
     }
 }
@@ -259,7 +259,7 @@ pub fn from_static<'op, const N: usize>(
 
                 // Safety: slot and values are of the exact same size. Thus all values are
                 // initialized.
-                unsafe { out.initialized() };
+                unsafe { out.initialized(*ctx) };
                 Ok(())
             }
             .into()

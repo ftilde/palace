@@ -254,6 +254,7 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     #[must_use]
     pub fn request_inplace<'req, 'inv: 'req>(
         &'inv self,
+        o_ctx: OpaqueTaskContext<'req, 'inv>,
         item: ItemDescriptor,
         write_id: OperatorId,
     ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, f32>, Error>> {
@@ -270,10 +271,11 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             gen_poll: Box::new(move |ctx| {
                 let mut access = Some(ctx.storage.register_access(read_id));
                 Box::new(move || unsafe {
-                    access = match ctx
-                        .storage
-                        .try_update_inplace(access.take().unwrap(), write_id)
-                    {
+                    access = match ctx.storage.try_update_inplace(
+                        o_ctx,
+                        access.take().unwrap(),
+                        write_id,
+                    ) {
                         Ok(v) => return Some(v),
                         Err(access) => Some(access),
                     };

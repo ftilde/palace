@@ -190,7 +190,7 @@ pub fn rechunk<'op>(
 
                 while let Some((brick_handle, intersecting_bricks)) = stream.next().await {
                     let brick_handle = brick_handle.into_main_handle(ctx.storage());
-                    unsafe { brick_handle.initialized() };
+                    unsafe { brick_handle.initialized(*ctx) };
                     for i in intersecting_bricks {
                         i.into_main_handle(ctx.storage());
                     }
@@ -379,7 +379,7 @@ pub fn convolution_1d<'op, const DIM: usize>(
 
                 while let Some((brick_handle, intersecting_bricks)) = stream.next().await {
                     let brick_handle = brick_handle.into_main_handle(ctx.storage());
-                    unsafe { brick_handle.initialized() };
+                    unsafe { brick_handle.initialized(*ctx) };
                     for i in intersecting_bricks {
                         i.into_main_handle(ctx.storage());
                     }

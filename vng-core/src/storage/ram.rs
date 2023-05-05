@@ -1,8 +1,17 @@
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap, mem::MaybeUninit, pin::Pin};
+use std::{
+    alloc::Layout,
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    mem::MaybeUninit,
+    pin::Pin,
+};
 
-use crate::{operator::DataId, util::num_elms_in_array, Error};
+use crate::{
+    operator::DataId, runtime::FrameNumber, task::OpaqueTaskContext, task_graph::TaskId,
+    util::num_elms_in_array, Error,
+};
 
-use super::{DataLocation, DataVersionType, LRUIndex, LRUItem};
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -20,7 +29,7 @@ pub struct StorageInfo {
 enum StorageEntryState {
     Registered,
     Initializing(StorageInfo),
-    Initialized(StorageInfo),
+    Initialized(StorageInfo, DataVersion),
 }
 
 struct Entry {
@@ -154,13 +163,21 @@ pub struct DropError<'a> {
     access: AccessToken<'a>,
 }
 impl<'a> DropError<'a> {
-    fn into_mark_initialized(self) -> DropMarkInitialized<'a> {
+    fn into_mark_initialized<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+        version: Option<DataVersionType>,
+    ) -> DropMarkInitialized<'a> {
         let id = self.access.id;
         let storage = self.access.storage;
         // Avoid running destructor which would panic
         std::mem::forget(self);
         DropMarkInitialized {
             access: AccessToken { storage, id },
+            predicted_preview_tasks: ctx.predicted_preview_tasks,
+            current_frame: ctx.current_frame,
+            current_task: ctx.current_task,
+            version,
         }
     }
 }
@@ -171,24 +188,48 @@ impl Drop for DropError<'_> {
 }
 pub struct DropMarkInitialized<'a> {
     access: AccessToken<'a>,
+    version: Option<DataVersionType>,
+    predicted_preview_tasks: &'a RefCell<BTreeSet<TaskId>>,
+    current_frame: FrameNumber,
+    current_task: TaskId,
 }
 impl Drop for DropMarkInitialized<'_> {
     fn drop(&mut self) {
-        self.access
-            .storage
-            .new_data
-            .add(self.access.id, DataVersionType::Final); //NO_PUSH_main
         {
+            let version_type = self.version.unwrap_or_else(|| {
+                if self
+                    .predicted_preview_tasks
+                    .borrow()
+                    .contains(&self.current_task)
+                {
+                    DataVersionType::Preview
+                } else {
+                    DataVersionType::Final
+                }
+            });
+            let version = match version_type {
+                DataVersionType::Final => DataVersion::Final,
+                DataVersionType::Preview => DataVersion::Preview(self.current_frame),
+            };
+
             let mut binding = self.access.storage.index.borrow_mut();
             let state = &mut binding.get_mut(&self.access.id).unwrap().state;
+
+            self.access
+                .storage
+                .new_data
+                .add(self.access.id, version_type);
+
             *state = match state {
                 StorageEntryState::Registered => {
                     panic!("Entry should be in state Initializing, but is in Registered");
                 }
-                StorageEntryState::Initialized(_) => {
+                StorageEntryState::Initialized(..) => {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
-                StorageEntryState::Initializing(info) => StorageEntryState::Initialized(*info),
+                StorageEntryState::Initializing(info) => {
+                    StorageEntryState::Initialized(*info, version)
+                }
             };
         }
     }
@@ -239,7 +280,9 @@ impl ThreadHandleDropPanic {
         std::mem::forget(self);
     }
 }
-pub struct ThreadMarkerInitialized;
+pub struct ThreadMarkerInitialized {
+    version: Option<DataVersionType>,
+}
 pub struct ThreadMarkerUninitialized;
 pub struct ThreadWriteHandle<'a, T: ?Sized + Send, D: Send> {
     id: DataId,
@@ -260,14 +303,21 @@ impl<T: ?Sized + Send, D: Send> std::ops::DerefMut for ThreadWriteHandle<'_, T, 
     }
 }
 impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerInitialized> {
-    pub fn into_main_handle(self, storage: &'a Storage) -> WriteHandleInit<'a, T> {
+    pub fn into_main_handle<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+    ) -> WriteHandleInit<'a, T> {
         self._panic_handle.dismiss();
         WriteHandle {
             drop_handler: DropMarkInitialized {
                 access: AccessToken {
-                    storage,
+                    storage: ctx.storage,
                     id: self.id,
                 },
+                current_frame: ctx.current_frame,
+                current_task: ctx.current_task,
+                predicted_preview_tasks: ctx.predicted_preview_tasks,
+                version: self._marker.version,
             },
             data: self.data,
         }
@@ -294,12 +344,27 @@ pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerU
 
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
     /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn initialized(self) -> WriteHandleInit<'a, T> {
+    pub unsafe fn initialized<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+    ) -> WriteHandleInit<'a, T> {
         WriteHandle {
-            drop_handler: self.drop_handler.into_mark_initialized(),
+            drop_handler: self.drop_handler.into_mark_initialized(ctx, None),
             data: self.data,
         }
     }
+
+    pub unsafe fn initialized_version<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+        version: DataVersionType,
+    ) -> WriteHandleInit<'a, T> {
+        WriteHandle {
+            drop_handler: self.drop_handler.into_mark_initialized(ctx, Some(version)),
+            data: self.data,
+        }
+    }
+
     pub fn into_thread_handle(self) -> ThreadWriteHandleUninit<'a, T>
     where
         T: Send,
@@ -316,9 +381,12 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
 }
 impl<'a> RawWriteHandleUninit<'a> {
     /// Safety: The corresponding slot has to have been completely written to.
-    pub unsafe fn initialized(self) -> RawWriteHandleInit<'a> {
+    pub unsafe fn initialized<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+    ) -> RawWriteHandleInit<'a> {
         RawWriteHandle {
-            drop_handler: self.drop_handler.into_mark_initialized(),
+            drop_handler: self.drop_handler.into_mark_initialized(ctx, None),
             data: self.data,
             layout: self.layout,
         }
@@ -334,11 +402,12 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
         T: Send,
     {
         let id = self.drop_handler.access.id;
+        let version = self.drop_handler.version;
         std::mem::forget(self.drop_handler);
         ThreadWriteHandle {
             id,
             data: self.data,
-            _marker: ThreadMarkerInitialized,
+            _marker: ThreadMarkerInitialized { version },
             _panic_handle: Default::default(),
         }
     }
@@ -369,14 +438,13 @@ pub enum ThreadInplaceResult<'a, T: Send> {
 }
 
 impl<'a, T: Send> ThreadInplaceResult<'a, T> {
-    pub fn into_main_handle(self, storage: &'a Storage) -> InplaceResult<'a, T> {
+    pub fn into_main_handle<'inv>(self, ctx: OpaqueTaskContext<'a, 'inv>) -> InplaceResult<'a, T> {
         match self {
-            ThreadInplaceResult::Inplace(rw) => {
-                InplaceResult::Inplace(rw.into_main_handle(storage))
-            }
-            ThreadInplaceResult::New(r, w) => {
-                InplaceResult::New(r.into_main_handle(storage), w.into_main_handle(storage))
-            }
+            ThreadInplaceResult::Inplace(rw) => InplaceResult::Inplace(rw.into_main_handle(ctx)),
+            ThreadInplaceResult::New(r, w) => InplaceResult::New(
+                r.into_main_handle(&ctx.storage),
+                w.into_main_handle(&ctx.storage),
+            ),
         }
     }
 }
@@ -414,7 +482,7 @@ impl Storage {
             let entry = index.get_mut(&key).unwrap();
             let info = match entry.state {
                 StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
                     info
                 }
             };
@@ -442,7 +510,7 @@ impl Storage {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, StorageEntryState::Initialized(_)))
+            .map(|e| matches!(e.state, StorageEntryState::Initialized(..)))
             .unwrap_or(false)
     }
 
@@ -453,7 +521,7 @@ impl Storage {
 
             let info = match entry.state {
                 StorageEntryState::Registered => return Err(()),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info) => {
+                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
                     info
                 }
             };
@@ -566,7 +634,7 @@ impl Storage {
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
             };
-            let StorageEntryState::Initialized(info) = entry.state else {
+            let StorageEntryState::Initialized(info, _) = entry.state else {
                 return Err(access);
             };
 
@@ -586,7 +654,7 @@ impl Storage {
                 return Err(access);
             };
 
-            let StorageEntryState::Initialized(info) = entry.state else {
+            let StorageEntryState::Initialized(info, _) = entry.state else {
                 return Err(access);
             };
 
@@ -607,8 +675,9 @@ impl Storage {
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace<'b, 't: 'b, T: Copy>(
+    pub unsafe fn try_update_inplace<'b, 't: 'b, 'inv, T: Copy>(
         &'b self,
+        ctx: OpaqueTaskContext<'t, 'inv>,
         old_access: AccessToken<'t>,
         new_key: DataId,
     ) -> Result<Result<InplaceResult<'b, T>, Error>, AccessToken<'t>> {
@@ -619,7 +688,7 @@ impl Storage {
                 return Err(old_access);
             };
 
-        let StorageEntryState::Initialized(info) = entry.state else {
+        let StorageEntryState::Initialized(info, _) = entry.state else {
             return Err(old_access)
         };
 
@@ -656,7 +725,13 @@ impl Storage {
 
             InplaceResult::Inplace(WriteHandleInit {
                 data: t_ref,
-                drop_handler: DropMarkInitialized { access: new_access },
+                drop_handler: DropMarkInitialized {
+                    access: new_access,
+                    version: None,
+                    predicted_preview_tasks: ctx.predicted_preview_tasks,
+                    current_frame: ctx.current_frame,
+                    current_task: ctx.current_task,
+                },
             })
         } else {
             std::mem::drop(index); // Release borrow for alloc

@@ -245,7 +245,7 @@ impl TransferManager {
 
             // Safety: We have just written the complete buffer using a memcpy
             unsafe {
-                out_buf.initialized();
+                out_buf.initialized(ctx);
             }
 
             Ok(())

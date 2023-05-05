@@ -138,7 +138,7 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
 
                         // Safety: At this point the thread pool job above has finished and has initialized all bytes
                         // in the brick.
-                        unsafe { brick_handle.initialized() };
+                        unsafe { brick_handle.initialized(*ctx) };
                     }
                     Ok(())
                 }

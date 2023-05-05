@@ -78,7 +78,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     futures::pin_mut!(stream);
     while let Some(handle) = stream.next().await {
         let handle = handle.into_main_handle(ctx.storage());
-        unsafe { handle.initialized() };
+        unsafe { handle.initialized(*ctx) };
     }
 
     Ok(())

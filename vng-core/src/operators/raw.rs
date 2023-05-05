@@ -154,7 +154,7 @@ impl RawVolumeSourceState {
         while let Some(handles) = stream.next().await {
             for (_, handle) in handles {
                 let handle = handle.into_main_handle(ctx.storage());
-                unsafe { handle.initialized() };
+                unsafe { handle.initialized(*ctx) };
             }
         }
 
