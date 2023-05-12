@@ -8,7 +8,7 @@ use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 
 use crate::{
-    operator::DataId,
+    operator::{DataId, OperatorId},
     runtime::FrameNumber,
     task::OpaqueTaskContext,
     vulkan::{
@@ -164,7 +164,7 @@ impl std::fmt::Debug for AccessToken<'_> {
 }
 impl<'a> AccessToken<'a> {
     fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
-        let mut index = storage.index.borrow_mut();
+        let mut index = storage.data_index.borrow_mut();
         let vram_entry = index.get_mut(&id).unwrap();
 
         inc_access(&mut vram_entry.access, storage);
@@ -200,7 +200,7 @@ fn dec_access(access: &mut AccessState, storage: &Storage, device: &DeviceContex
 }
 impl Drop for AccessToken<'_> {
     fn drop(&mut self) {
-        let mut index = self.storage.index.borrow_mut();
+        let mut index = self.storage.data_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
         dec_access(
@@ -263,7 +263,7 @@ impl<'a> WriteHandle<'a> {
         std::mem::forget(drop_handler);
 
         // Mark as initialized
-        let mut binding = access.storage.index.borrow_mut();
+        let mut binding = access.storage.data_index.borrow_mut();
 
         {
             let entry = &mut binding.get_mut(&access.id).unwrap();
@@ -345,9 +345,78 @@ impl<'a> InplaceResult<'a> {
     }
 }
 
+pub struct IndexEntry {
+    storage: StorageInfo,
+    visibility: Visibility,
+    present: BTreeMap<u64, ash::vk::Buffer>,
+}
+
+impl IndexEntry {
+    fn new(storage: StorageInfo, visibility: Visibility) -> Self {
+        Self {
+            storage,
+            visibility,
+            present: Default::default(),
+        }
+    }
+}
+
+// TODO:
+// - Allow freeing of indices
+//    We can also track then in the lru list. When we free the index, we can also release all
+//    referenced bricks. This is important for cases where we update the input volume on the fly,
+//    e.g., a linear rescale before a slice viewer. However, this is not enough in general, we also
+//    need to ...
+//
+// - Allow freeing of referenced bricks
+//    Even if we never release the index, we also need to at some point release referenced bricks
+//    (after deleting references to it). Otherwise we run out of memory when scrolling through a
+//    large volume.
+pub struct IndexHandle<'a> {
+    pub(crate) buffer: ash::vk::Buffer,
+    pub(crate) num_bricks: usize,
+    op: OperatorId,
+    device: &'a DeviceContext,
+}
+
+impl<'a> IndexHandle<'a> {
+    pub fn insert<'h>(&self, pos: u64, brick: ReadHandle<'h>) {
+        let mut index = self.device.storage.index_index.borrow_mut();
+        let entry = index.get_mut(&self.op).unwrap();
+
+        if entry.present.contains_key(&pos) {
+            return;
+        }
+
+        let brick_buffer = brick.buffer;
+
+        // We are somewhat fine with racing here, but not sure how to convince the validation
+        // layers of this...
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let info = ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_buffer);
+            let addr = self.device.functions().get_buffer_device_address(&info);
+            let offset = pos * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
+
+            assert!(offset < entry.storage.layout.size() as u64);
+            self.device.functions().cmd_update_buffer(
+                cmd.raw(),
+                self.buffer,
+                offset,
+                bytemuck::bytes_of(&addr),
+            );
+        });
+
+        // Leak ReadHandle: For now we don't ever remove bricks once they are in the index.
+        std::mem::forget(brick);
+
+        entry.present.insert(pos, brick_buffer);
+    }
+}
+
 pub struct Storage {
-    index: RefCell<BTreeMap<DataId, Entry>>,
+    data_index: RefCell<BTreeMap<DataId, Entry>>,
     state_cache_index: RefCell<BTreeMap<DataId, StateCacheEntry>>,
+    index_index: RefCell<BTreeMap<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager>,
     pub(crate) barrier_manager: BarrierManager,
@@ -359,8 +428,9 @@ pub struct Storage {
 impl Storage {
     pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
-            index: Default::default(),
+            data_index: Default::default(),
             state_cache_index: Default::default(),
+            index_index: Default::default(),
             old_unused: Default::default(),
             lru_manager: Default::default(),
             barrier_manager: BarrierManager::new(),
@@ -381,7 +451,7 @@ impl Storage {
             self.allocator.deallocate(entry.storage.allocation);
         }
 
-        for (_, entry) in std::mem::take(&mut *self.index.borrow_mut()) {
+        for (_, entry) in std::mem::take(&mut *self.data_index.borrow_mut()) {
             match entry.state {
                 StorageEntryState::Registered => {}
                 StorageEntryState::Initializing(info)
@@ -408,7 +478,7 @@ impl Storage {
         }
 
         let mut lru = self.lru_manager.borrow_mut();
-        let mut index = self.index.borrow_mut();
+        let mut index = self.data_index.borrow_mut();
         let mut state_cache_index = self.state_cache_index.borrow_mut();
         while let Some(key) = lru.get_next() {
             let (info, key) = match key {
@@ -472,7 +542,7 @@ impl Storage {
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {
-        self.index
+        self.data_index
             .borrow()
             .get(&id)
             .map(|e| matches!(e.state, StorageEntryState::Initialized(_, _, _)))
@@ -536,7 +606,7 @@ impl Storage {
         id: DataId,
     ) -> AccessToken<'b> {
         {
-            let mut index = self.index.borrow_mut();
+            let mut index = self.data_index.borrow_mut();
             let entry = index.entry(id);
             // TODO: See if we can instead pass the mutable reference to the entry into AccessToken
             // to avoid touching the index twice
@@ -591,7 +661,7 @@ impl Storage {
         let buffer = allocation.buffer;
 
         {
-            let mut index = self.index.borrow_mut();
+            let mut index = self.data_index.borrow_mut();
             let entry = self.ensure_presence(current_frame, index.entry(key));
 
             let info = StorageInfo { allocation, layout };
@@ -635,7 +705,7 @@ impl Storage {
     }
 
     pub fn is_visible(&self, id: DataId, dst_info: DstBarrierInfo) -> Result<(), SrcBarrierInfo> {
-        let index = self.index.borrow();
+        let index = self.data_index.borrow();
         let Some(entry) = index.get(&id) else {
             panic!("Should only be called on present, initialized data");
         };
@@ -652,12 +722,66 @@ impl Storage {
         }
     }
 
+    pub async fn get_index<'b, 'inv>(
+        &'b self,
+        ctx: OpaqueTaskContext<'b, 'inv>,
+        device: &'b DeviceContext,
+        op: OperatorId,
+        size: usize,
+        dst: DstBarrierInfo,
+    ) -> IndexHandle<'b> {
+        let (src, created, buffer) = {
+            let mut index = self.index_index.borrow_mut();
+
+            let entry = index.entry(op).or_insert_with(|| {
+                let layout = Layout::array::<ash::vk::DeviceAddress>(size).unwrap();
+                let allocation = self.alloc_ssbo(device, layout);
+                let info = StorageInfo { allocation, layout };
+                let buffer = info.allocation.buffer;
+
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device
+                        .functions()
+                        .cmd_fill_buffer(cmd.raw(), buffer, 0, vk::WHOLE_SIZE, 0);
+                });
+
+                let src = SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::TRANSFER,
+                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                };
+
+                let visibility = Visibility {
+                    src,
+                    created: self.barrier_manager.current_epoch(),
+                };
+                IndexEntry::new(info, visibility)
+            });
+            (
+                entry.visibility.src,
+                entry.visibility.created,
+                entry.storage.allocation.buffer,
+            )
+        };
+
+        if !self.barrier_manager.is_visible(src, dst, created) {
+            ctx.submit(device.barrier(src, dst)).await;
+        }
+        assert!(self.barrier_manager.is_visible(src, dst, created));
+
+        IndexHandle {
+            buffer,
+            op,
+            device,
+            num_bricks: size,
+        }
+    }
+
     pub fn read<'b, 't: 'b>(
         &'b self,
         access: AccessToken<'t>,
         dst_info: DstBarrierInfo,
     ) -> Result<ReadHandle<'b>, AccessToken<'t>> {
-        let index = self.index.borrow();
+        let index = self.data_index.borrow();
         let Some(entry) = index.get(&access.id) else {
             return Err(access);
         };
@@ -689,7 +813,7 @@ impl Storage {
     ) -> Result<Result<InplaceResult<'b>, Error>, AccessToken<'t>> {
         let old_key = old_access.id;
 
-        let mut index = self.index.borrow_mut();
+        let mut index = self.data_index.borrow_mut();
         let Some(entry) = index.get(&old_access.id) else {
             return Err(old_access);
         };

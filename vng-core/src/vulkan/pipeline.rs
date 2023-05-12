@@ -8,7 +8,7 @@ use crevice::std140::{AsStd140, Std140};
 
 use crate::{
     data::Vector,
-    storage::gpu::{ReadHandle, StateCacheHandle, WriteHandle},
+    storage::gpu::{IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
     vulkan::shader::Shader,
 };
 
@@ -326,6 +326,15 @@ impl<'a> AsDescriptor for WriteHandle<'a> {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
             .range(self.size as _)
+            .build()
+    }
+}
+
+impl<'a> AsDescriptor for IndexHandle<'a> {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::builder()
+            .buffer(self.buffer)
+            .range((self.num_bricks * std::mem::size_of::<vk::DeviceAddress>()) as _)
             .build()
     }
 }

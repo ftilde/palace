@@ -6,7 +6,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
     data::{from_linear, hmul, GlobalCoordinate, Vector},
-    operator::OperatorId,
+    operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -324,6 +324,11 @@ void main()
 
                 let num_bricks = hmul(m_in.dimension_in_bricks()); //TODO: rename
 
+                let brick_index = device
+                    .storage
+                    .get_index(*ctx, device, input.bricks.id(), num_bricks, dst_info)
+                    .await;
+
                 //let load_factor = 3.0;
                 //let request_table_size = (((num_bricks as f32).powf(2.0 / 3.0) * load_factor)
                 //    .round() as usize)
@@ -375,11 +380,6 @@ void main()
                     .unwrap()
                     .unpack();
 
-                let brick_index_layout = Layout::array::<u64>(num_bricks).unwrap();
-
-                // TODO: Manage brick indices globally to avoid duplicate work.
-                let brick_index = device.tmp_buffers.request(device, brick_index_layout);
-
                 let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
                 let request_table_buffer = device
                     .tmp_buffers
@@ -392,13 +392,6 @@ void main()
                         0,
                         vk::WHOLE_SIZE,
                         0xffffffff,
-                    );
-                    device.functions().cmd_fill_buffer(
-                        cmd.raw(),
-                        brick_index.allocation.buffer,
-                        0,
-                        vk::WHOLE_SIZE,
-                        0,
                     );
                 });
 
@@ -428,12 +421,6 @@ void main()
                     .unwrap();
                 let chunk_size = m2d.chunk_size.raw();
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
-
-                // TODO: Free bricks once it is safe to do so. Ties in to a global handling of the
-                // brick index.
-                // Once we do that, we have to maintain a temporary buffer that stores which output
-                // pixels have been written already, though!
-                let mut collected_bricks = Vec::new();
 
                 let mut it = 0;
                 let timed_out = loop {
@@ -503,19 +490,6 @@ void main()
                     let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
                     device.with_cmd_buffer(|cmd| unsafe {
-                        for (brick, brick_linear_pos) in
-                            requested_bricks.iter().zip(to_request_linear.into_iter())
-                        {
-                            let info =
-                                ash::vk::BufferDeviceAddressInfo::builder().buffer(brick.buffer);
-                            let addr = device.functions().get_buffer_device_address(&info);
-                            device.functions().cmd_update_buffer(
-                                cmd.raw(),
-                                brick_index.allocation.buffer,
-                                brick_linear_pos * std::mem::size_of::<u64>() as u64,
-                                bytemuck::bytes_of(&addr),
-                            );
-                        }
                         device.functions().cmd_fill_buffer(
                             cmd.raw(),
                             request_table_buffer.allocation.buffer,
@@ -525,9 +499,12 @@ void main()
                         );
                     });
 
-                    // Make sure the bricks are not freed as long as we reference them from the
-                    // index buffer
-                    collected_bricks.extend(requested_bricks);
+                    for (brick, brick_linear_pos) in requested_bricks
+                        .into_iter()
+                        .zip(to_request_linear.into_iter())
+                    {
+                        brick_index.insert(brick_linear_pos, brick);
+                    }
 
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -542,9 +519,6 @@ void main()
                     .await;
                     it += 1;
                 };
-
-                // Safety: The buffer was requested above from the same device
-                unsafe { device.tmp_buffers.return_buf(device, brick_index) };
 
                 // Safety: The buffer was requested above from the same device
                 unsafe { device.tmp_buffers.return_buf(device, request_table_buffer) };
