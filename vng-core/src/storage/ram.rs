@@ -478,6 +478,7 @@ impl Storage {
             let key = match key {
                 LRUItem::Data(k) => k,
                 LRUItem::State(_) => panic!("There should not be any state keys"),
+                LRUItem::Index(_) => panic!("There should not be any index keys"),
             };
             let entry = index.get_mut(&key).unwrap();
             let info = match entry.state {

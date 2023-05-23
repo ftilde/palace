@@ -4,6 +4,8 @@ use std::{
     collections::{BTreeMap, VecDeque},
 };
 
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem, LRUManager};
+
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 
@@ -82,8 +84,6 @@ impl BarrierManager {
     }
 }
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem};
-
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
     Some(usize),
@@ -142,9 +142,10 @@ impl Drop for StateCacheAccessToken<'_> {
         let mut index = self.storage.state_cache_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
+        let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
         dec_access(
             &mut vram_entry.access,
-            self.storage,
+            &mut lru_manager,
             self.device,
             LRUItem::State(self.id),
         );
@@ -186,10 +187,15 @@ fn inc_access(access: &mut AccessState, storage: &Storage) {
         }
     };
 }
-fn dec_access(access: &mut AccessState, storage: &Storage, device: &DeviceContext, id: LRUItem) {
+fn dec_access(
+    access: &mut AccessState,
+    lru_manager: &mut LRUManager,
+    device: &DeviceContext,
+    id: LRUItem,
+) {
     *access = match *access {
         AccessState::Some(1) => {
-            let lru_id = storage.lru_manager.borrow_mut().add(id);
+            let lru_id = lru_manager.add(id);
             AccessState::None(lru_id, device.current_epoch())
         }
         AccessState::Some(n) => AccessState::Some(n - 1),
@@ -203,9 +209,10 @@ impl Drop for AccessToken<'_> {
         let mut index = self.storage.data_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
+        let mut lru_manager = self.storage.lru_manager.borrow_mut();
         dec_access(
             &mut vram_entry.access,
-            self.storage,
+            &mut lru_manager,
             self.device,
             LRUItem::Data(self.id),
         );
@@ -348,7 +355,8 @@ impl<'a> InplaceResult<'a> {
 pub struct IndexEntry {
     storage: StorageInfo,
     visibility: Visibility,
-    present: BTreeMap<u64, ash::vk::Buffer>,
+    present: BTreeMap<u64, (DataId, ash::vk::Buffer)>,
+    access: AccessState,
 }
 
 impl IndexEntry {
@@ -357,17 +365,12 @@ impl IndexEntry {
             storage,
             visibility,
             present: Default::default(),
+            access: AccessState::Some(0),
         }
     }
 }
 
 // TODO:
-// - Allow freeing of indices
-//    We can also track then in the lru list. When we free the index, we can also release all
-//    referenced bricks. This is important for cases where we update the input volume on the fly,
-//    e.g., a linear rescale before a slice viewer. However, this is not enough in general, we also
-//    need to ...
-//
 // - Allow freeing of referenced bricks
 //    Even if we never release the index, we also need to at some point release referenced bricks
 //    (after deleting references to it). Otherwise we run out of memory when scrolling through a
@@ -406,10 +409,25 @@ impl<'a> IndexHandle<'a> {
             );
         });
 
+        let data_id = brick.access.id;
         // Leak ReadHandle: For now we don't ever remove bricks once they are in the index.
         std::mem::forget(brick);
 
-        entry.present.insert(pos, brick_buffer);
+        entry.present.insert(pos, (data_id, brick_buffer));
+    }
+}
+impl<'a> Drop for IndexHandle<'a> {
+    fn drop(&mut self) {
+        let mut index = self.device.storage.index_index.borrow_mut();
+        let vram_entry = index.get_mut(&self.op).unwrap();
+
+        let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
+        dec_access(
+            &mut vram_entry.access,
+            &mut lru_manager,
+            self.device,
+            LRUItem::Index(self.op),
+        );
     }
 }
 
@@ -480,8 +498,9 @@ impl Storage {
         let mut lru = self.lru_manager.borrow_mut();
         let mut index = self.data_index.borrow_mut();
         let mut state_cache_index = self.state_cache_index.borrow_mut();
+        let mut index_index = self.index_index.borrow_mut();
         while let Some(key) = lru.get_next() {
-            let (info, key) = match key {
+            let info = match key {
                 LRUItem::Data(key) => {
                     let entry = index.get_mut(&key).unwrap();
                     let AccessState::None(_, f) = entry.access else {
@@ -495,14 +514,12 @@ impl Storage {
 
                     let entry = index.remove(&key).unwrap();
 
-                    (
-                        match entry.state {
-                            StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                            StorageEntryState::Initializing(info)
-                            | StorageEntryState::Initialized(info, _, _) => info,
-                        },
-                        key,
-                    )
+                    self.new_data.remove(key);
+                    match entry.state {
+                        StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                        StorageEntryState::Initializing(info)
+                        | StorageEntryState::Initialized(info, _, _) => info,
+                    }
                 }
                 LRUItem::State(key) => {
                     let entry = state_cache_index.get_mut(&key).unwrap();
@@ -517,7 +534,29 @@ impl Storage {
 
                     let entry = state_cache_index.remove(&key).unwrap();
 
-                    (entry.storage, key)
+                    self.new_data.remove(key);
+                    entry.storage
+                }
+                LRUItem::Index(key) => {
+                    let entry = index_index.get_mut(&key).unwrap();
+                    let AccessState::None(_, f) = entry.access else {
+                        panic!("Should not be in LRU list");
+                    };
+
+                    if !device.cmd_buffer_completed(f) {
+                        // All following LRU items will have the same or a later epoch so cannot be deleted
+                        // either
+                        break;
+                    }
+
+                    let entry = index_index.remove(&key).unwrap();
+
+                    for (id, _) in entry.present.into_values() {
+                        let d_entry = index.get_mut(&id).unwrap();
+                        dec_access(&mut d_entry.access, &mut lru, device, LRUItem::Data(id));
+                    }
+
+                    entry.storage
                 }
             };
 
@@ -526,8 +565,6 @@ impl Storage {
             // index. The allocation is also not used on the gpu anymore since the last access
             // epoch has already passed.
             unsafe { self.allocator.deallocate(info.allocation) };
-
-            self.new_data.remove(key);
 
             lru.pop_next();
 
@@ -756,6 +793,8 @@ impl Storage {
                 };
                 IndexEntry::new(info, visibility)
             });
+
+            inc_access(&mut entry.access, self);
             (
                 entry.visibility.src,
                 entry.visibility.created,

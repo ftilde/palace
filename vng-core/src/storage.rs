@@ -4,7 +4,7 @@ pub mod ram;
 use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
-    operator::DataId,
+    operator::{DataId, OperatorId},
     runtime::FrameNumber,
     vulkan::{DeviceId, DstBarrierInfo},
 };
@@ -75,6 +75,7 @@ pub enum DataVersionType {
 enum LRUItem {
     Data(DataId),
     State(DataId),
+    Index(OperatorId),
 }
 
 #[derive(Default)]
