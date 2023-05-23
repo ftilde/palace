@@ -469,6 +469,10 @@ impl Storage {
             self.allocator.deallocate(entry.storage.allocation);
         }
 
+        for (_, entry) in std::mem::take(&mut *self.index_index.borrow_mut()) {
+            self.allocator.deallocate(entry.storage.allocation);
+        }
+
         for (_, entry) in std::mem::take(&mut *self.data_index.borrow_mut()) {
             match entry.state {
                 StorageEntryState::Registered => {}
