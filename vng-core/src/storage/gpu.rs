@@ -352,10 +352,15 @@ impl<'a> InplaceResult<'a> {
     }
 }
 
+struct IndexBrickRef {
+    id: DataId,
+    acquire_lru_index: LRUIndex,
+}
+
 pub struct IndexEntry {
     storage: StorageInfo,
     visibility: Visibility,
-    present: BTreeMap<u64, (DataId, ash::vk::Buffer, LRUIndex)>,
+    present: BTreeMap<u64, IndexBrickRef>,
     access: AccessState,
 }
 
@@ -377,17 +382,16 @@ impl IndexEntry {
         brick_index: &mut BTreeMap<DataId, Entry>,
         index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
-        pos: u64,
+        brick_ref: IndexBrickRef,
     ) {
-        let (data_id, _buffer, lru_id) = self.present.remove(&pos).unwrap();
-        index_lru.remove(lru_id);
+        index_lru.remove(brick_ref.acquire_lru_index);
 
-        let d_entry = brick_index.get_mut(&data_id).unwrap();
+        let d_entry = brick_index.get_mut(&brick_ref.id).unwrap();
         dec_access(
             &mut d_entry.access,
             brick_lru,
             device,
-            LRUItem::Data(data_id),
+            LRUItem::Data(brick_ref.id),
         );
     }
 
@@ -400,8 +404,8 @@ impl IndexEntry {
         index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
     ) {
-        for (pos, (_id, _, _lru_index)) in std::mem::take(&mut self.present) {
-            self.unref(device, brick_index, index_lru, brick_lru, pos);
+        for (_pos, brick_ref) in std::mem::take(&mut self.present) {
+            self.unref(device, brick_index, index_lru, brick_lru, brick_ref);
         }
     }
 
@@ -425,8 +429,10 @@ impl IndexEntry {
             );
         });
 
+        let brick_ref = self.present.remove(&pos).unwrap();
+
         // Safety: We have also just removed the reference from the index
-        unsafe { self.unref(device, brick_index, index_lru, brick_lru, pos) };
+        unsafe { self.unref(device, brick_index, index_lru, brick_lru, brick_ref) };
     }
 }
 
@@ -475,9 +481,13 @@ impl<'a> IndexHandle<'a> {
         // Leak ReadHandle: For now we don't ever remove bricks once they are in the index.
         std::mem::forget(brick);
 
-        entry
-            .present
-            .insert(pos, (data_id, brick_buffer, lru_index));
+        entry.present.insert(
+            pos,
+            IndexBrickRef {
+                id: data_id,
+                acquire_lru_index: lru_index,
+            },
+        );
     }
 }
 impl<'a> Drop for IndexHandle<'a> {
@@ -646,32 +656,35 @@ impl Storage {
 
             let size = info.layout.size();
             collected += size;
-            let Some(rest) = goal_in_bytes.checked_sub(size) else {
+            goal_in_bytes = goal_in_bytes.saturating_sub(size);
+            if goal_in_bytes == 0 {
                 break;
             };
-            goal_in_bytes = rest;
         }
 
         let mut unindexed = 0;
-        while let Some((op, pos, data_id)) = index_lru.get_next() {
-            let brick_index = index_index.get_mut(&op).unwrap();
+        if goal_in_bytes > 0 {
+            while let Some((op, pos, data_id)) = index_lru.get_next() {
+                let brick_index = index_index.get_mut(&op).unwrap();
 
-            brick_index.release(device, &mut index, &mut *index_lru, &mut lru, pos);
+                // Releasing the brick also removes it from the index_lru queue
+                brick_index.release(device, &mut index, &mut *index_lru, &mut lru, pos);
 
-            let brick_entry = index.get(&data_id).unwrap();
-            let brick_info = match &brick_entry.state {
-                StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
-                    panic!("Indexed brick should be initialized")
-                }
-                StorageEntryState::Initialized(info, _, _) => info,
-            };
-            let size = brick_info.layout.size();
+                let brick_entry = index.get(&data_id).unwrap();
+                let brick_info = match &brick_entry.state {
+                    StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
+                        panic!("Indexed brick should be initialized")
+                    }
+                    StorageEntryState::Initialized(info, _, _) => info,
+                };
+                let size = brick_info.layout.size();
 
-            unindexed += size;
-            let Some(rest) = goal_in_bytes.checked_sub(size) else {
+                unindexed += size;
+                let Some(rest) = goal_in_bytes.checked_sub(size) else {
                 break;
             };
-            goal_in_bytes = rest;
+                goal_in_bytes = rest;
+            }
         }
 
         println!(
