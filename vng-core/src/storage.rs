@@ -4,7 +4,7 @@ pub mod ram;
 use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
-    operator::{DataId, OperatorId},
+    operator::DataId,
     runtime::FrameNumber,
     vulkan::{DeviceId, DstBarrierInfo},
 };
@@ -71,26 +71,27 @@ pub enum DataVersionType {
     Preview,
 }
 
-#[derive(Copy, Clone)]
-enum LRUItem {
-    Data(DataId),
-    State(DataId),
-    Index(OperatorId),
-}
-
-#[derive(Default)]
-struct LRUManager {
-    list: BTreeMap<LRUIndex, LRUItem>,
+struct LRUManager<T> {
+    list: BTreeMap<LRUIndex, T>,
     current: LRUIndex,
 }
 
-impl LRUManager {
+impl<T> Default for LRUManager<T> {
+    fn default() -> Self {
+        Self {
+            list: Default::default(),
+            current: 0,
+        }
+    }
+}
+
+impl<T: Clone> LRUManager<T> {
     fn remove(&mut self, old: LRUIndex) {
         self.list.remove(&old).unwrap();
     }
 
     #[must_use]
-    fn add(&mut self, data: LRUItem) -> LRUIndex {
+    fn add(&mut self, data: T) -> LRUIndex {
         let new = self
             .current
             .checked_add(1)
@@ -102,14 +103,14 @@ impl LRUManager {
         new
     }
 
-    fn get_next(&self) -> Option<LRUItem> {
-        self.list.first_key_value().map(|(_, d)| *d)
+    fn get_next(&self) -> Option<T> {
+        self.list.first_key_value().map(|(_, d)| d.clone())
     }
     fn pop_next(&mut self) {
         self.list.pop_first();
     }
 
-    fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = LRUItem> + 'a {
+    fn drain_lru<'a>(&'a mut self) -> impl Iterator<Item = T> + 'a {
         std::iter::from_fn(move || {
             return self.list.pop_first().map(|(_, d)| d);
         })

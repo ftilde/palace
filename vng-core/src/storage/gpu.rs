@@ -187,11 +187,11 @@ fn inc_access(access: &mut AccessState, storage: &Storage) {
         }
     };
 }
-fn dec_access(
+fn dec_access<T: Clone>(
     access: &mut AccessState,
-    lru_manager: &mut LRUManager<LRUItem>,
+    lru_manager: &mut LRUManager<T>,
     device: &DeviceContext,
-    id: LRUItem,
+    id: T,
 ) {
     *access = match *access {
         AccessState::Some(1) => {
@@ -355,7 +355,7 @@ impl<'a> InplaceResult<'a> {
 pub struct IndexEntry {
     storage: StorageInfo,
     visibility: Visibility,
-    present: BTreeMap<u64, (DataId, ash::vk::Buffer)>,
+    present: BTreeMap<u64, (DataId, ash::vk::Buffer, LRUIndex)>,
     access: AccessState,
 }
 
@@ -368,13 +368,68 @@ impl IndexEntry {
             access: AccessState::Some(0),
         }
     }
+
+    // Safety: The caller is responsible for removing the reference from the index in gpu memory
+    // (i.e. self.storage.allocation.buffer)
+    unsafe fn unref(
+        &mut self,
+        device: &DeviceContext,
+        brick_index: &mut BTreeMap<DataId, Entry>,
+        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
+        brick_lru: &mut LRUManager<LRUItem>,
+        pos: u64,
+    ) {
+        let (data_id, _buffer, lru_id) = self.present.remove(&pos).unwrap();
+        index_lru.remove(lru_id);
+
+        let d_entry = brick_index.get_mut(&data_id).unwrap();
+        dec_access(
+            &mut d_entry.access,
+            brick_lru,
+            device,
+            LRUItem::Data(data_id),
+        );
+    }
+
+    // Safety: Only use this when the index is destroyed afterwards. This will *NOT* remove the
+    // references from the index.
+    unsafe fn unref_all(
+        &mut self,
+        device: &DeviceContext,
+        brick_index: &mut BTreeMap<DataId, Entry>,
+        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
+        brick_lru: &mut LRUManager<LRUItem>,
+    ) {
+        for (pos, (_id, _, _lru_index)) in std::mem::take(&mut self.present) {
+            self.unref(device, brick_index, index_lru, brick_lru, pos);
+        }
+    }
+
+    fn release(
+        &mut self,
+        device: &DeviceContext,
+        brick_index: &mut BTreeMap<DataId, Entry>,
+        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
+        brick_lru: &mut LRUManager<LRUItem>,
+        pos: u64,
+    ) {
+        device.with_cmd_buffer(|cmd| unsafe {
+            let addr: ash::vk::DeviceAddress = 0u64;
+            let offset = pos * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
+
+            device.functions().cmd_update_buffer(
+                cmd.raw(),
+                self.storage.allocation.buffer,
+                offset,
+                bytemuck::bytes_of(&addr),
+            );
+        });
+
+        // Safety: We have also just removed the reference from the index
+        unsafe { self.unref(device, brick_index, index_lru, brick_lru, pos) };
+    }
 }
 
-// TODO:
-// - Allow freeing of referenced bricks
-//    Even if we never release the index, we also need to at some point release referenced bricks
-//    (after deleting references to it). Otherwise we run out of memory when scrolling through a
-//    large volume.
 pub struct IndexHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
     pub(crate) num_bricks: usize,
@@ -408,12 +463,21 @@ impl<'a> IndexHandle<'a> {
                 bytemuck::bytes_of(&addr),
             );
         });
-
         let data_id = brick.access.id;
+
+        let lru_index = self
+            .device
+            .storage
+            .index_lru
+            .borrow_mut()
+            .add((self.op, pos, data_id));
+
         // Leak ReadHandle: For now we don't ever remove bricks once they are in the index.
         std::mem::forget(brick);
 
-        entry.present.insert(pos, (data_id, brick_buffer));
+        entry
+            .present
+            .insert(pos, (data_id, brick_buffer, lru_index));
     }
 }
 impl<'a> Drop for IndexHandle<'a> {
@@ -444,6 +508,8 @@ pub struct Storage {
     index_index: RefCell<BTreeMap<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
+    index_lru: RefCell<super::LRUManager<(OperatorId, u64, DataId)>>, //TODO: Simplify after DataId
+    //overhaul
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -458,6 +524,7 @@ impl Storage {
             index_index: Default::default(),
             old_unused: Default::default(),
             lru_manager: Default::default(),
+            index_lru: Default::default(),
             barrier_manager: BarrierManager::new(),
             allocator,
             new_data: Default::default(),
@@ -507,6 +574,7 @@ impl Storage {
         }
 
         let mut lru = self.lru_manager.borrow_mut();
+        let mut index_lru = self.index_lru.borrow_mut();
         let mut index = self.data_index.borrow_mut();
         let mut state_cache_index = self.state_cache_index.borrow_mut();
         let mut index_index = self.index_index.borrow_mut();
@@ -560,12 +628,9 @@ impl Storage {
                         break;
                     }
 
-                    let entry = index_index.remove(&key).unwrap();
+                    let mut entry = index_index.remove(&key).unwrap();
 
-                    for (id, _) in entry.present.into_values() {
-                        let d_entry = index.get_mut(&id).unwrap();
-                        dec_access(&mut d_entry.access, &mut lru, device, LRUItem::Data(id));
-                    }
+                    unsafe { entry.unref_all(device, &mut index, &mut index_lru, &mut lru) };
 
                     entry.storage
                 }
@@ -586,7 +651,33 @@ impl Storage {
             };
             goal_in_bytes = rest;
         }
-        println!("Garbage collect GPU: {}B", collected);
+
+        let mut unindexed = 0;
+        while let Some((op, pos, data_id)) = index_lru.get_next() {
+            let brick_index = index_index.get_mut(&op).unwrap();
+
+            brick_index.release(device, &mut index, &mut *index_lru, &mut lru, pos);
+
+            let brick_entry = index.get(&data_id).unwrap();
+            let brick_info = match &brick_entry.state {
+                StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
+                    panic!("Indexed brick should be initialized")
+                }
+                StorageEntryState::Initialized(info, _, _) => info,
+            };
+            let size = brick_info.layout.size();
+
+            unindexed += size;
+            let Some(rest) = goal_in_bytes.checked_sub(size) else {
+                break;
+            };
+            goal_in_bytes = rest;
+        }
+
+        println!(
+            "Garbage collect GPU: {}B | Unindexed: {}B",
+            collected, unindexed
+        );
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {
