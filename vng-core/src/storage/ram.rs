@@ -11,7 +11,7 @@ use crate::{
     util::num_elms_in_array, Error,
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem};
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -78,11 +78,7 @@ impl Drop for AccessToken<'_> {
 
         ram_entry.access = match ram_entry.access {
             AccessState::Some(1) => {
-                let lru_id = self
-                    .storage
-                    .lru_manager
-                    .borrow_mut()
-                    .add(LRUItem::Data(self.id));
+                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
                 AccessState::None(lru_id)
             }
             AccessState::Some(n) => AccessState::Some(n - 1),
@@ -451,7 +447,7 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
 
 pub struct Storage {
     index: RefCell<BTreeMap<DataId, Entry>>,
-    lru_manager: RefCell<super::LRUManager>,
+    lru_manager: RefCell<super::LRUManager<DataId>>,
     allocator: Allocator,
     new_data: super::NewDataManager,
 }
@@ -475,11 +471,6 @@ impl Storage {
         let mut index = self.index.borrow_mut();
         let mut collected = 0;
         for key in lru.drain_lru().into_iter() {
-            let key = match key {
-                LRUItem::Data(k) => k,
-                LRUItem::State(_) => panic!("There should not be any state keys"),
-                LRUItem::Index(_) => panic!("There should not be any index keys"),
-            };
             let entry = index.get_mut(&key).unwrap();
             let info = match entry.state {
                 StorageEntryState::Registered => panic!("Should not be in LRU list"),

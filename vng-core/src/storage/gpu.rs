@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUItem, LRUManager};
+use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUManager};
 
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
@@ -189,7 +189,7 @@ fn inc_access(access: &mut AccessState, storage: &Storage) {
 }
 fn dec_access(
     access: &mut AccessState,
-    lru_manager: &mut LRUManager,
+    lru_manager: &mut LRUManager<LRUItem>,
     device: &DeviceContext,
     id: LRUItem,
 ) {
@@ -431,12 +431,19 @@ impl<'a> Drop for IndexHandle<'a> {
     }
 }
 
+#[derive(Copy, Clone)]
+enum LRUItem {
+    Data(DataId),
+    State(DataId),
+    Index(OperatorId),
+}
+
 pub struct Storage {
     data_index: RefCell<BTreeMap<DataId, Entry>>,
     state_cache_index: RefCell<BTreeMap<DataId, StateCacheEntry>>,
     index_index: RefCell<BTreeMap<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
-    lru_manager: RefCell<super::LRUManager>,
+    lru_manager: RefCell<super::LRUManager<LRUItem>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
