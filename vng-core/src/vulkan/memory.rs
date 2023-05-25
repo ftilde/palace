@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     operator::OperatorId,
-    storage::gpu::Allocation,
+    storage::gpu::{Allocation, ImageAllocation},
     task::{OpaqueTaskContext, Task},
     task_graph::TaskId,
 };
@@ -32,9 +32,18 @@ pub struct TempBuffer {
     pub size: u64,
 }
 
+pub struct TempImage {
+    pub allocation: ImageAllocation,
+}
+
+pub enum TempAlloc {
+    Buf(Allocation),
+    Img(ImageAllocation),
+}
+
 #[derive(Default)]
 pub struct TempBuffers {
-    returns: RefCell<BTreeMap<CmdBufferEpoch, Vec<Allocation>>>,
+    returns: RefCell<BTreeMap<CmdBufferEpoch, Vec<TempAlloc>>>,
 }
 
 impl TempBuffers {
@@ -49,13 +58,28 @@ impl TempBuffers {
         }
     }
 
+    pub fn request_image(&self, device: &DeviceContext, desc: vk::ImageCreateInfo) -> TempImage {
+        TempImage {
+            allocation: device.storage.allocate_image(device, desc),
+        }
+    }
+
     /// Safety: The buffer must have previously been allocated from tmp buffer manager
     pub unsafe fn return_buf(&self, device: &DeviceContext, buf: TempBuffer) {
         let mut returns = self.returns.borrow_mut();
         returns
             .entry(device.current_epoch())
             .or_default()
-            .push(buf.allocation);
+            .push(TempAlloc::Buf(buf.allocation));
+    }
+
+    /// Safety: The image must have previously been allocated from tmp buffer manager
+    pub unsafe fn return_image(&self, device: &DeviceContext, buf: TempImage) {
+        let mut returns = self.returns.borrow_mut();
+        returns
+            .entry(device.current_epoch())
+            .or_default()
+            .push(TempAlloc::Img(buf.allocation));
     }
 
     pub fn collect_returns(&self, device: &DeviceContext) {
@@ -67,7 +91,12 @@ impl TempBuffers {
         {
             let (_, allocs) = returns.pop_first().unwrap();
             for alloc in allocs {
-                unsafe { device.storage.deallocate(alloc) };
+                unsafe {
+                    match alloc {
+                        TempAlloc::Buf(a) => device.storage.deallocate(a),
+                        TempAlloc::Img(a) => device.storage.deallocate_image(a),
+                    }
+                }
             }
         }
     }

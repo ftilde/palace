@@ -791,6 +791,28 @@ impl Storage {
         self.allocator.deallocate(allocation);
     }
 
+    pub fn allocate_image(
+        &self,
+        device: &DeviceContext,
+        create_desc: vk::ImageCreateInfo,
+    ) -> ImageAllocation {
+        match self.allocator.allocate_image(create_desc) {
+            Ok(a) => a,
+            Err(_e) => {
+                let garbage_collect_goal = self.allocator.allocated() / 2;
+                self.try_garbage_collect(device, garbage_collect_goal as _);
+                self.allocator
+                    .allocate_image(create_desc)
+                    .expect("Out of memory and nothing we can do about it.")
+            }
+        }
+    }
+
+    /// Safety: Allocation must come from this storage
+    pub unsafe fn deallocate_image(&self, allocation: ImageAllocation) {
+        self.allocator.deallocate_image(allocation);
+    }
+
     fn alloc_ssbo<'b>(&'b self, device: &'b DeviceContext, layout: Layout) -> Allocation {
         let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
             | ash::vk::BufferUsageFlags::TRANSFER_DST
@@ -1096,6 +1118,11 @@ pub struct Allocation {
     pub buffer: vk::Buffer,
 }
 
+pub struct ImageAllocation {
+    allocation: gpu_allocator::vulkan::Allocation,
+    pub image: vk::Image,
+}
+
 impl Allocation {
     pub fn mapped_ptr(&self) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
         self.allocation.mapped_ptr()
@@ -1160,7 +1187,7 @@ impl Allocator {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
         let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-            name: "some allocation",
+            name: "buffer allocation",
             requirements,
             location,
             linear: true, // Buffers are always linear
@@ -1194,6 +1221,55 @@ impl Allocator {
         let size = allocation.allocation.size();
         allocator.free(allocation.allocation).unwrap();
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
+
+        self.num_alloced
+            .set(self.num_alloced.get().checked_sub(size).unwrap());
+    }
+
+    pub fn allocate_image(
+        &self,
+        image_info: vk::ImageCreateInfo,
+    ) -> gpu_allocator::Result<ImageAllocation> {
+        let image = unsafe { self.device.create_image(&image_info, None) }.unwrap();
+        let requirements = unsafe { self.device.get_image_memory_requirements(image) };
+
+        let size = requirements.size;
+
+        if let Some(capacity) = self.capacity {
+            if self.num_alloced.get() + size > capacity {
+                unsafe { self.device.destroy_image(image, None) };
+                return Err(gpu_allocator::AllocationError::OutOfMemory);
+            }
+        }
+        self.num_alloced.set(self.num_alloced.get() + size);
+
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+            name: "texture allocation",
+            requirements,
+            location: gpu_allocator::MemoryLocation::GpuOnly,
+            linear: true, // TODO: maybe not linear?
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        });
+        let allocation = match allocation {
+            Ok(a) => a,
+            Err(e) => {
+                unsafe { self.device.destroy_image(image, None) };
+                return Err(e);
+            }
+        };
+
+        Ok(ImageAllocation { allocation, image })
+    }
+
+    /// Safety: Allocation must come from this allocator
+    pub unsafe fn deallocate_image(&self, allocation: ImageAllocation) {
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        let size = allocation.allocation.size();
+        allocator.free(allocation.allocation).unwrap();
+        unsafe { self.device.destroy_image(allocation.image, None) };
 
         self.num_alloced
             .set(self.num_alloced.get().checked_sub(size).unwrap());
