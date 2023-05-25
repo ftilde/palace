@@ -17,13 +17,32 @@ use super::{
     DeviceContext,
 };
 
-pub struct ComputePipeline {
+pub trait PipelineType {
+    const BINDPOINT: vk::PipelineBindPoint;
+}
+
+pub struct GraphicsPipelineType;
+impl PipelineType for GraphicsPipelineType {
+    const BINDPOINT: vk::PipelineBindPoint = vk::PipelineBindPoint::GRAPHICS;
+}
+
+pub struct ComputePipelineType {
+    local_size: Vector<3, u32>,
+}
+impl PipelineType for ComputePipelineType {
+    const BINDPOINT: vk::PipelineBindPoint = vk::PipelineBindPoint::COMPUTE;
+}
+
+pub struct Pipeline<T> {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     ds_pools: Vec<RefCell<DynamicDescriptorSetPool>>,
-    local_size: Vector<3, u32>,
     push_constant_size: Option<usize>,
+    type_: T,
 }
+
+pub type ComputePipeline = Pipeline<ComputePipelineType>;
+pub type GraphicsPipeline = Pipeline<GraphicsPipelineType>;
 
 impl ComputePipeline {
     pub fn new(
@@ -89,15 +108,17 @@ impl ComputePipeline {
             pipeline,
             pipeline_layout,
             ds_pools,
-            local_size,
             push_constant_size,
+            type_: ComputePipelineType { local_size },
         }
     }
+}
 
-    pub unsafe fn bind<'a>(&'a self, cmd: &'a mut CommandBuffer) -> BoundPipeline<'a> {
+impl<T: PipelineType> Pipeline<T> {
+    pub unsafe fn bind<'a>(&'a self, cmd: &'a mut CommandBuffer) -> BoundPipeline<'a, T> {
         let cmd_raw = cmd.raw();
         cmd.functions()
-            .cmd_bind_pipeline(cmd_raw, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+            .cmd_bind_pipeline(cmd_raw, T::BINDPOINT, self.pipeline);
         BoundPipeline {
             pipeline: self,
             cmd,
@@ -105,7 +126,7 @@ impl ComputePipeline {
     }
 }
 
-impl VulkanState for ComputePipeline {
+impl<T: 'static> VulkanState for Pipeline<T> {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         let df = context.functions();
         unsafe {
@@ -116,6 +137,137 @@ impl VulkanState for ComputePipeline {
             df.device
                 .destroy_pipeline_layout(self.pipeline_layout, None)
         };
+    }
+}
+
+impl GraphicsPipeline {
+    pub fn new(
+        device: &DeviceContext,
+        vertex_shader: impl ShaderSource,
+        fragment_shader: impl ShaderSource,
+        render_pass: &vk::RenderPass,
+        use_push_descriptor: bool,
+    ) -> Self {
+        let df = device.functions();
+        let mut vertex_shader =
+            Shader::from_source(df, vertex_shader, spirv_compiler::ShaderKind::Vertex);
+        let mut fragment_shader =
+            Shader::from_source(df, fragment_shader, spirv_compiler::ShaderKind::Fragment);
+
+        let entry_point_name = "main";
+        let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
+
+        let vertex_c_info = vk::PipelineShaderStageCreateInfo::builder()
+            .module(vertex_shader.module)
+            .name(&entry_point_name_c)
+            .stage(vk::ShaderStageFlags::VERTEX);
+
+        let fragment_c_info = vk::PipelineShaderStageCreateInfo::builder()
+            .module(fragment_shader.module)
+            .name(&entry_point_name_c)
+            .stage(vk::ShaderStageFlags::FRAGMENT);
+
+        let vertex_info = vertex_shader.collect_info(entry_point_name);
+        let fragment_info = fragment_shader.collect_info(entry_point_name);
+
+        let push_const = vertex_info.push_const.or(fragment_info.push_const);
+        let push_constant_size = push_const.map(|i| i.size as usize);
+        let push_constant_ranges = push_const.as_ref().map(std::slice::from_ref).unwrap_or(&[]);
+
+        let descriptor_bindings = vertex_info
+            .descriptor_bindings
+            .merge(fragment_info.descriptor_bindings);
+
+        let (descriptor_set_layouts, ds_pools) = descriptor_bindings
+            .create_descriptor_set_layout(&device.functions, use_push_descriptor);
+
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+            .set_layouts(&descriptor_set_layouts)
+            .push_constant_ranges(push_constant_ranges);
+
+        let pipeline_layout = unsafe {
+            df.device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+        }
+        .unwrap();
+
+        let shader_stages = [*vertex_c_info, *fragment_c_info];
+
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_info =
+            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
+
+        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            .primitive_restart_enable(false)
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
+            .viewport_count(1)
+            .scissor_count(1);
+
+        let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::builder()
+            .depth_clamp_enable(false)
+            .rasterizer_discard_enable(false)
+            .polygon_mode(vk::PolygonMode::FILL)
+            .line_width(1.0)
+            .cull_mode(vk::CullModeFlags::BACK)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .depth_bias_enable(false);
+
+        let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::builder()
+            .sample_shading_enable(false)
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            )
+            .blend_enable(false);
+
+        let color_blend_attachments = [*color_blend_attachment];
+        let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
+            .logic_op_enable(false)
+            .attachments(&color_blend_attachments);
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input_info)
+            .input_assembly_state(&input_assembly_info)
+            .viewport_state(&viewport_state_info)
+            .rasterization_state(&rasterizer_info)
+            .multisample_state(&multi_sampling_info)
+            .color_blend_state(&color_blending)
+            .dynamic_state(&dynamic_info)
+            .layout(pipeline_layout)
+            .render_pass(*render_pass)
+            .subpass(0);
+
+        let pipeline_cache = vk::PipelineCache::null();
+        let pipelines = unsafe {
+            device
+                .functions
+                .create_graphics_pipelines(pipeline_cache, &[*pipeline_info], None)
+        }
+        .unwrap();
+
+        let pipeline = pipelines[0];
+
+        // Safety: Pipeline has been created now. Shader module is not referenced anymore.
+        unsafe { vertex_shader.deinitialize(device) };
+        unsafe { fragment_shader.deinitialize(device) };
+
+        Self {
+            pipeline,
+            pipeline_layout,
+            ds_pools,
+            push_constant_size,
+            type_: GraphicsPipelineType,
+        }
     }
 }
 
@@ -209,13 +361,17 @@ impl DynamicDescriptorSetPool {
     }
 }
 
-pub struct BoundPipeline<'a> {
-    pipeline: &'a ComputePipeline,
+pub struct BoundPipeline<'a, T> {
+    pipeline: &'a Pipeline<T>,
     cmd: &'a mut CommandBuffer, //Note: Since we take a mutable reference to the command buffer
                                 //here, we ensure that this pipeline is bound for the remainder of
                                 //the BoundPipeline's lifetime (barring unsafe operations).
 }
-impl<'a> BoundPipeline<'a> {
+impl<'a, T: PipelineType> BoundPipeline<'a, T> {
+    pub fn cmd(&mut self) -> &mut CommandBuffer {
+        self.cmd
+    }
+
     pub fn push_descriptor_set<const N: usize>(
         &mut self,
         bind_set: u32,
@@ -229,7 +385,7 @@ impl<'a> BoundPipeline<'a> {
                 .push_descriptor_ext
                 .cmd_push_descriptor_set(
                     cmd_raw,
-                    vk::PipelineBindPoint::COMPUTE,
+                    T::BINDPOINT,
                     self.pipeline.pipeline_layout,
                     bind_set,
                     &writes,
@@ -254,7 +410,7 @@ impl<'a> BoundPipeline<'a> {
 
             self.cmd.functions().cmd_bind_descriptor_sets(
                 cmd_raw,
-                vk::PipelineBindPoint::COMPUTE,
+                T::BINDPOINT,
                 self.pipeline.pipeline_layout,
                 bind_set,
                 &[ds],
@@ -263,7 +419,7 @@ impl<'a> BoundPipeline<'a> {
         }
     }
 
-    pub fn push_constant<T: AsStd140>(&mut self, val: T) {
+    pub fn push_constant_at<V: AsStd140>(&mut self, val: V, stage: vk::ShaderStageFlags) {
         let v = val.as_std140();
         let bytes = v.as_bytes();
 
@@ -278,24 +434,29 @@ impl<'a> BoundPipeline<'a> {
             self.cmd.functions().cmd_push_constants(
                 cmd_raw,
                 self.pipeline.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE,
+                stage,
                 0,
                 bytes,
             );
         }
     }
+}
 
+impl<'a> BoundPipeline<'a, ComputePipelineType> {
     pub unsafe fn dispatch(&mut self, global_size: usize) {
         self.dispatch3d([1u32, 1, global_size.try_into().unwrap()].into())
     }
 
     pub unsafe fn dispatch3d(&mut self, global_size: Vector<3, u32>) {
-        let num_wgs = crate::util::div_round_up(global_size, self.pipeline.local_size);
+        let num_wgs = crate::util::div_round_up(global_size, self.pipeline.type_.local_size);
 
         let cmd_raw = self.cmd.raw();
         self.cmd
             .functions()
             .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
+    }
+    pub fn push_constant<V: AsStd140>(&mut self, val: V) {
+        self.push_constant_at(val, vk::ShaderStageFlags::COMPUTE);
     }
 }
 

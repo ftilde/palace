@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 #[cfg(target_family = "unix")]
 use ash::extensions::khr::{WaylandSurface, XlibSurface};
 
@@ -12,15 +10,13 @@ use crevice::std140::AsStd140;
 use winit::event_loop::EventLoopWindowTarget;
 use winit::window::WindowBuilder;
 
+use super::pipeline::{DescriptorConfig, GraphicsPipeline};
+use super::shader::ShaderDefines;
+use super::state::VulkanState;
+use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 use crate::data::{BrickPosition, GlobalCoordinate, Vector};
 use crate::operators::volume::VolumeOperator;
 use crate::task::OpaqueTaskContext;
-use crate::vulkan::shader::Shader;
-
-use super::pipeline::{DescriptorConfig, DynamicDescriptorSetPool};
-use super::shader::{ShaderDefines, ShaderSource};
-use super::state::VulkanState;
-use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 
 type WindowSize = winit::dpi::PhysicalSize<u32>;
 
@@ -297,157 +293,6 @@ fn create_framebuffers(
         .collect::<Vec<_>>()
 }
 
-struct GraphicsPipeline {
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    ds_pools: Vec<RefCell<DynamicDescriptorSetPool>>,
-    push_constant_size: Option<usize>,
-}
-
-impl VulkanState for GraphicsPipeline {
-    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
-        let df = context.functions();
-        unsafe {
-            for pool in &mut self.ds_pools {
-                pool.get_mut().deinitialize(context);
-            }
-            df.device.destroy_pipeline(self.pipeline, None);
-            df.device
-                .destroy_pipeline_layout(self.pipeline_layout, None)
-        };
-    }
-}
-
-impl GraphicsPipeline {
-    pub fn new(
-        device: &DeviceContext,
-        vertex_shader: impl ShaderSource,
-        fragment_shader: impl ShaderSource,
-        render_pass: &vk::RenderPass,
-        use_push_descriptor: bool,
-    ) -> Self {
-        let df = device.functions();
-        let mut vertex_shader =
-            Shader::from_source(df, vertex_shader, spirv_compiler::ShaderKind::Vertex);
-        let mut fragment_shader =
-            Shader::from_source(df, fragment_shader, spirv_compiler::ShaderKind::Fragment);
-
-        let entry_point_name = "main";
-        let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
-
-        let vertex_c_info = vk::PipelineShaderStageCreateInfo::builder()
-            .module(vertex_shader.module)
-            .name(&entry_point_name_c)
-            .stage(vk::ShaderStageFlags::VERTEX);
-
-        let fragment_c_info = vk::PipelineShaderStageCreateInfo::builder()
-            .module(fragment_shader.module)
-            .name(&entry_point_name_c)
-            .stage(vk::ShaderStageFlags::FRAGMENT);
-
-        let vertex_info = vertex_shader.collect_info(entry_point_name);
-        let fragment_info = fragment_shader.collect_info(entry_point_name);
-
-        let push_const = vertex_info.push_const.or(fragment_info.push_const);
-        let push_constant_size = push_const.map(|i| i.size as usize);
-        let push_constant_ranges = push_const.as_ref().map(std::slice::from_ref).unwrap_or(&[]);
-
-        let descriptor_bindings = vertex_info
-            .descriptor_bindings
-            .merge(fragment_info.descriptor_bindings);
-
-        let (descriptor_set_layouts, ds_pools) = descriptor_bindings
-            .create_descriptor_set_layout(&device.functions, use_push_descriptor);
-
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(&descriptor_set_layouts)
-            .push_constant_ranges(push_constant_ranges);
-
-        let pipeline_layout = unsafe {
-            df.device
-                .create_pipeline_layout(&pipeline_layout_info, None)
-        }
-        .unwrap();
-
-        let shader_stages = [*vertex_c_info, *fragment_c_info];
-
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_info =
-            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
-
-        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-            .primitive_restart_enable(false)
-            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-
-        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
-            .viewport_count(1)
-            .scissor_count(1);
-
-        let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::builder()
-            .depth_clamp_enable(false)
-            .rasterizer_discard_enable(false)
-            .polygon_mode(vk::PolygonMode::FILL)
-            .line_width(1.0)
-            .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::CLOCKWISE)
-            .depth_bias_enable(false);
-
-        let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::builder()
-            .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-
-        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
-            .color_write_mask(
-                vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
-            )
-            .blend_enable(false);
-
-        let color_blend_attachments = [*color_blend_attachment];
-        let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op_enable(false)
-            .attachments(&color_blend_attachments);
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&shader_stages)
-            .vertex_input_state(&vertex_input_info)
-            .input_assembly_state(&input_assembly_info)
-            .viewport_state(&viewport_state_info)
-            .rasterization_state(&rasterizer_info)
-            .multisample_state(&multi_sampling_info)
-            .color_blend_state(&color_blending)
-            .dynamic_state(&dynamic_info)
-            .layout(pipeline_layout)
-            .render_pass(*render_pass)
-            .subpass(0);
-
-        let pipeline_cache = vk::PipelineCache::null();
-        let pipelines = unsafe {
-            device
-                .functions
-                .create_graphics_pipelines(pipeline_cache, &[*pipeline_info], None)
-        }
-        .unwrap();
-
-        let pipeline = pipelines[0];
-
-        // Safety: Pipeline has been created now. Shader module is not referenced anymore.
-        unsafe { vertex_shader.deinitialize(device) };
-        unsafe { fragment_shader.deinitialize(device) };
-
-        Self {
-            pipeline,
-            pipeline_layout,
-            ds_pools,
-            push_constant_size,
-        }
-    }
-}
-
 struct SwapChainData {
     inner: vk::SwapchainKHR,
     image_views: Vec<vk::ImageView>,
@@ -711,7 +556,6 @@ impl Window {
             .await;
 
         let descriptor_config = DescriptorConfig::new([&img]);
-        let writes = descriptor_config.writes_for_push();
 
         // The rendering part:
 
@@ -765,55 +609,30 @@ impl Window {
             .offset(vk::Offset2D::builder().x(0).y(0).build())
             .extent(self.swap_chain.extent);
 
-        let push_constans = PushConstants {
+        let push_constants = PushConstants {
             size: m.dimensions.drop_dim(2).try_into_elem().unwrap().into(),
         };
 
         device.with_cmd_buffer(|cmd| unsafe {
             sync_object.last_use_epoch = cmd.id().epoch;
 
-            device.functions().cmd_bind_pipeline(
-                cmd.raw(),
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline.pipeline,
-            );
+            let mut pipeline = self.pipeline.bind(cmd);
 
             device.functions().cmd_begin_render_pass(
-                cmd.raw(),
+                pipeline.cmd().raw(),
                 &render_pass_info,
                 vk::SubpassContents::INLINE,
             );
             device
                 .functions()
-                .cmd_set_viewport(cmd.raw(), 0, &[*viewport]);
+                .cmd_set_viewport(pipeline.cmd().raw(), 0, &[*viewport]);
             device
                 .functions()
-                .cmd_set_scissor(cmd.raw(), 0, &[*scissor]);
+                .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
 
-            device
-                .functions()
-                .push_descriptor_ext
-                .cmd_push_descriptor_set(
-                    cmd.raw(),
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.pipeline.pipeline_layout,
-                    0,
-                    &writes,
-                );
+            pipeline.push_descriptor_set(0, descriptor_config);
 
-            {
-                let v = push_constans.as_std140();
-                let bytes = v.as_bytes();
-
-                let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
-                device.functions().cmd_push_constants(
-                    cmd.raw(),
-                    self.pipeline.pipeline_layout,
-                    vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    bytes,
-                );
-            }
+            pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::FRAGMENT);
 
             device.functions().cmd_draw(cmd.raw(), 3, 1, 0, 0);
 
