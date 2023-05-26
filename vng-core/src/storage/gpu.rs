@@ -1260,6 +1260,13 @@ impl Allocator {
             }
         };
 
+        // Bind memory to the image
+        unsafe {
+            self.device
+                .bind_image_memory(image, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
+
         Ok(ImageAllocation { allocation, image })
     }
 

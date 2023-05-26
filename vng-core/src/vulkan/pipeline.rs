@@ -146,6 +146,7 @@ impl GraphicsPipeline {
         vertex_shader: impl ShaderSource,
         fragment_shader: impl ShaderSource,
         render_pass: &vk::RenderPass,
+        primitive: vk::PrimitiveTopology,
         use_push_descriptor: bool,
     ) -> Self {
         let df = device.functions();
@@ -201,7 +202,7 @@ impl GraphicsPipeline {
 
         let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
             .primitive_restart_enable(false)
-            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+            .topology(primitive);
 
         let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
             .viewport_count(1)

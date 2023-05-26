@@ -47,3 +47,16 @@ pub fn constant_hash<'op, T: Copy + Hash + 'op>(val: T) -> ScalarOperator<'op, T
         async move { ctx.write(val) }.into()
     })
 }
+
+// TODO: See if we can find a better way here
+pub fn constant_as_array<'op, E: bytemuck::Pod, T: Copy + AsRef<[E; 16]> + 'op>(
+    val: T,
+) -> ScalarOperator<'op, T> {
+    let mut op_id = OperatorId::new(std::any::type_name::<T>());
+    for v in val.as_ref() {
+        op_id = op_id.dependent_on(bytemuck::bytes_of(v));
+    }
+    scalar(op_id, (), move |ctx, _, _| {
+        async move { ctx.write(val) }.into()
+    })
+}

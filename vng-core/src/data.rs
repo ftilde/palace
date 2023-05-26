@@ -1,6 +1,6 @@
 use std::{
     mem::MaybeUninit,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
 };
 
 use crate::array::ChunkInfo;
@@ -297,6 +297,12 @@ impl<const N: usize, T> IntoIterator for Vector<N, T> {
         self.0.into_iter()
     }
 }
+impl<const N: usize, T: Neg + Copy> Neg for Vector<N, T> {
+    type Output = Vector<N, T::Output>;
+    fn neg(self) -> Self::Output {
+        self.map(|v| v.neg())
+    }
+}
 impl<const N: usize, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<Vector<N, U>>
     for Vector<N, T>
 {
@@ -354,9 +360,23 @@ impl<T: Copy> From<Vector<3, T>> for cgmath::Vector3<T> {
         }
     }
 }
+impl<T: Copy> From<Vector<3, T>> for cgmath::Point3<T> {
+    fn from(value: Vector<3, T>) -> Self {
+        cgmath::Point3 {
+            x: value.x(),
+            y: value.y(),
+            z: value.z(),
+        }
+    }
+}
 
 impl<T: Copy> From<cgmath::Vector3<T>> for Vector<3, T> {
     fn from(value: cgmath::Vector3<T>) -> Self {
+        Self::from([value.z, value.y, value.x])
+    }
+}
+impl<T: Copy> From<cgmath::Point3<T>> for Vector<3, T> {
+    fn from(value: cgmath::Point3<T>) -> Self {
         Self::from([value.z, value.y, value.x])
     }
 }

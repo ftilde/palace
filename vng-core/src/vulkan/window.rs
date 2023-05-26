@@ -485,6 +485,7 @@ impl Window {
                 ShaderDefines::new().push_const_block::<PushConstants>(),
             ),
             &render_pass,
+            vk::PrimitiveTopology::TRIANGLE_LIST,
             true,
         );
 
