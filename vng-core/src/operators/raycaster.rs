@@ -5,6 +5,7 @@ use crate::{
     operator::OperatorId,
     operators::tensor::TensorOperator,
     vulkan::{
+        memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipeline},
         state::{RessourceId, VulkanState},
         DstBarrierInfo, SrcBarrierInfo,
@@ -260,10 +261,11 @@ void main() {
 
                 // TODO: Make renderpass a vulkanstate
 
-                let img = device.tmp_buffers.request_image(device, img_info);
+                let img =
+                    TempRessource::new(device, device.storage.allocate_image(device, img_info));
 
                 let info = vk::ImageViewCreateInfo::builder()
-                    .image(img.allocation.image)
+                    .image(img.image)
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(format)
                     .components(vk::ComponentMapping::builder().build())
@@ -276,10 +278,12 @@ void main() {
                             .layer_count(1)
                             .build(),
                     );
-                let img_view =
-                    unsafe { device.functions().create_image_view(&info, None) }.unwrap();
+                let img_view = TempRessource::new(
+                    device,
+                    unsafe { device.functions().create_image_view(&info, None) }.unwrap(),
+                );
 
-                let attachments = [img_view];
+                let attachments = [*img_view];
                 let framebuffer_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(*render_pass)
                     .attachments(&attachments)
@@ -287,12 +291,15 @@ void main() {
                     .height(height)
                     .layers(1);
 
-                let framebuffer = unsafe {
-                    device
-                        .functions()
-                        .create_framebuffer(&framebuffer_info, None)
-                }
-                .unwrap();
+                let framebuffer = TempRessource::new(
+                    device,
+                    unsafe {
+                        device
+                            .functions()
+                            .create_framebuffer(&framebuffer_info, None)
+                    }
+                    .unwrap(),
+                );
 
                 // Actual rendering
                 let clear_values = [vk::ClearValue {
@@ -303,7 +310,7 @@ void main() {
 
                 let render_pass_info = vk::RenderPassBeginInfo::builder()
                     .render_pass(*render_pass)
-                    .framebuffer(framebuffer)
+                    .framebuffer(*framebuffer)
                     .render_area(
                         vk::Rect2D::builder()
                             .offset(vk::Offset2D::builder().x(0).y(0).build())
@@ -384,7 +391,7 @@ void main() {
                 device.with_cmd_buffer(|cmd| unsafe {
                     device.functions().cmd_copy_image_to_buffer(
                         cmd.raw(),
-                        img.allocation.image,
+                        img.image,
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL, /*???*/
                         gpu_brick_out.buffer,
                         &[copy_info],
@@ -400,17 +407,6 @@ void main() {
                         },
                     )
                 };
-
-                // TODO NO_PUSH_main: remove
-                ctx.submit(device.wait_for_current_cmd_buffer_submission())
-                    .await;
-
-                // TODO NO_PUSH_main: Not sure if this flies
-                unsafe { device.functions().destroy_framebuffer(framebuffer, None) };
-
-                unsafe { device.functions().destroy_image_view(img_view, None) };
-
-                unsafe { device.tmp_buffers.return_image(device, img) };
 
                 Ok(())
             }

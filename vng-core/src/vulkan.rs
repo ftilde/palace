@@ -346,7 +346,7 @@ pub struct DeviceContext {
     pub storage: crate::storage::gpu::Storage,
     staging_to_gpu: memory::BufferStash,
     staging_to_cpu: memory::BufferStash,
-    pub tmp_buffers: memory::TempBuffers,
+    pub tmp_states: memory::TempStates,
 }
 
 impl DeviceContext {
@@ -488,7 +488,7 @@ impl DeviceContext {
                 storage,
                 staging_to_cpu,
                 staging_to_gpu,
-                tmp_buffers: Default::default(),
+                tmp_states: Default::default(),
             })
         }
     }
@@ -833,7 +833,7 @@ impl DeviceContext {
 
         // Now that we have marked some cmd buffers as finished, try to collect garbage tmp
         // buffers.
-        self.tmp_buffers.collect_returns(self);
+        self.tmp_states.collect_returns(self);
 
         result
     }
@@ -857,7 +857,7 @@ impl DeviceContext {
 impl Drop for DeviceContext {
     fn drop(&mut self) {
         // Try to return tmp buffers a final time
-        self.tmp_buffers.collect_returns(self);
+        self.tmp_states.collect_returns(self);
 
         for mut vulkan_state in self.vulkan_states.drain() {
             unsafe { vulkan_state.deinitialize(self) };

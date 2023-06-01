@@ -2,6 +2,7 @@ use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
+    mem::MaybeUninit,
 };
 
 use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUManager};
@@ -14,7 +15,8 @@ use crate::{
     runtime::FrameNumber,
     task::OpaqueTaskContext,
     vulkan::{
-        CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
+        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
+        SrcBarrierInfo,
     },
     Error,
 };
@@ -1114,18 +1116,41 @@ impl Storage {
 }
 
 pub struct Allocation {
-    allocation: gpu_allocator::vulkan::Allocation,
+    // Always init except after VulkanState::deinitialize is called
+    allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
+    pub size: u64, //NO_PUSH_main: see if we can remove it here or in wrapping structs
     pub buffer: vk::Buffer,
-}
-
-pub struct ImageAllocation {
-    allocation: gpu_allocator::vulkan::Allocation,
-    pub image: vk::Image,
 }
 
 impl Allocation {
     pub fn mapped_ptr(&self) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
-        self.allocation.mapped_ptr()
+        unsafe { self.allocation.assume_init_ref() }.mapped_ptr()
+    }
+}
+
+impl VulkanState for Allocation {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        let alloc = Allocation {
+            allocation: std::mem::replace(&mut self.allocation, MaybeUninit::uninit()),
+            size: self.size,
+            buffer: self.buffer,
+        };
+        context.storage.deallocate(alloc)
+    }
+}
+
+pub struct ImageAllocation {
+    allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
+    pub image: vk::Image,
+}
+
+impl VulkanState for ImageAllocation {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        let alloc = ImageAllocation {
+            allocation: std::mem::replace(&mut self.allocation, MaybeUninit::uninit()),
+            image: self.image,
+        };
+        context.storage.deallocate_image(alloc)
     }
 }
 
@@ -1175,9 +1200,11 @@ impl Allocator {
             }
         }
 
+        let size = layout.size() as u64;
+
         // Setup vulkan info
         let vk_info = vk::BufferCreateInfo::builder()
-            .size(layout.size() as u64)
+            .size(size)
             .usage(use_flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
 
         let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
@@ -1211,15 +1238,20 @@ impl Allocator {
         self.num_alloced
             .set(self.num_alloced.get() + allocation.size());
 
-        Ok(Allocation { allocation, buffer })
+        Ok(Allocation {
+            allocation: MaybeUninit::new(allocation),
+            size,
+            buffer,
+        })
     }
 
     /// Safety: Allocation must come from this allocator
     pub unsafe fn deallocate(&self, allocation: Allocation) {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
-        let size = allocation.allocation.size();
-        allocator.free(allocation.allocation).unwrap();
+        let allocation_inner = allocation.allocation.assume_init();
+        let size = allocation_inner.size();
+        allocator.free(allocation_inner).unwrap();
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
 
         self.num_alloced
@@ -1267,15 +1299,18 @@ impl Allocator {
                 .unwrap()
         };
 
-        Ok(ImageAllocation { allocation, image })
+        Ok(ImageAllocation {
+            allocation: MaybeUninit::new(allocation),
+            image,
+        })
     }
 
     /// Safety: Allocation must come from this allocator
     pub unsafe fn deallocate_image(&self, allocation: ImageAllocation) {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
-        let size = allocation.allocation.size();
-        allocator.free(allocation.allocation).unwrap();
+        let size = allocation.allocation.assume_init_ref().size();
+        allocator.free(allocation.allocation.assume_init()).unwrap();
         unsafe { self.device.destroy_image(allocation.image, None) };
 
         self.num_alloced

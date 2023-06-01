@@ -3,16 +3,17 @@ use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
+    mem::MaybeUninit,
 };
 
 use crate::{
     operator::OperatorId,
-    storage::gpu::{Allocation, ImageAllocation},
+    storage::gpu::Allocation,
     task::{OpaqueTaskContext, Task},
     task_graph::TaskId,
 };
 
-use super::{CmdBufferEpoch, DeviceContext};
+use super::{state::VulkanState, CmdBufferEpoch, DeviceContext};
 
 pub struct CachedAllocation {
     inner: Allocation,
@@ -27,59 +28,61 @@ impl std::ops::Deref for CachedAllocation {
     }
 }
 
-pub struct TempBuffer {
-    pub allocation: Allocation,
-    pub size: u64,
+pub struct TempRessource<'a, R: VulkanState> {
+    // Always init except after drop is called
+    pub ressource: MaybeUninit<R>,
+    device: &'a DeviceContext,
 }
 
-pub struct TempImage {
-    pub allocation: ImageAllocation,
+impl<'a, R: VulkanState> TempRessource<'a, R> {
+    pub fn new(device: &'a DeviceContext, ressource: R) -> Self {
+        TempRessource {
+            ressource: MaybeUninit::new(ressource),
+            device,
+        }
+    }
 }
 
-pub enum TempAlloc {
-    Buf(Allocation),
-    Img(ImageAllocation),
+impl<'a, R: VulkanState> std::ops::Deref for TempRessource<'a, R> {
+    type Target = R;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ressource.assume_init_ref() }
+    }
+}
+
+impl<'a, R: VulkanState> std::ops::DerefMut for TempRessource<'a, R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.ressource.assume_init_mut() }
+    }
+}
+
+impl<R: VulkanState> Drop for TempRessource<'_, R> {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.tmp_states.release(
+                self.device,
+                std::mem::replace(&mut self.ressource, MaybeUninit::uninit()).assume_init(),
+            )
+        };
+    }
 }
 
 #[derive(Default)]
-pub struct TempBuffers {
-    returns: RefCell<BTreeMap<CmdBufferEpoch, Vec<TempAlloc>>>,
+pub struct TempStates {
+    returns: RefCell<BTreeMap<CmdBufferEpoch, Vec<Box<dyn VulkanState>>>>,
 }
 
-impl TempBuffers {
-    pub fn request(&self, device: &DeviceContext, layout: Layout) -> TempBuffer {
-        let flags = vk::BufferUsageFlags::TRANSFER_SRC
-            | vk::BufferUsageFlags::TRANSFER_DST
-            | vk::BufferUsageFlags::STORAGE_BUFFER;
-        let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-        TempBuffer {
-            allocation: device.storage.allocate(device, layout, flags, buf_type),
-            size: layout.size() as u64,
-        }
-    }
-
-    pub fn request_image(&self, device: &DeviceContext, desc: vk::ImageCreateInfo) -> TempImage {
-        TempImage {
-            allocation: device.storage.allocate_image(device, desc),
-        }
-    }
-
-    /// Safety: The buffer must have previously been allocated from tmp buffer manager
-    pub unsafe fn return_buf(&self, device: &DeviceContext, buf: TempBuffer) {
+impl TempStates {
+    /// Release a VulkanState for deinitialization and freeing after the current epoch has finished.
+    ///
+    /// Safety: The state must have previously been initialized from the device of these TempStates
+    pub unsafe fn release(&self, device: &DeviceContext, state: impl VulkanState) {
         let mut returns = self.returns.borrow_mut();
         returns
             .entry(device.current_epoch())
             .or_default()
-            .push(TempAlloc::Buf(buf.allocation));
-    }
-
-    /// Safety: The image must have previously been allocated from tmp buffer manager
-    pub unsafe fn return_image(&self, device: &DeviceContext, buf: TempImage) {
-        let mut returns = self.returns.borrow_mut();
-        returns
-            .entry(device.current_epoch())
-            .or_default()
-            .push(TempAlloc::Img(buf.allocation));
+            .push(Box::new(state));
     }
 
     pub fn collect_returns(&self, device: &DeviceContext) {
@@ -90,12 +93,9 @@ impl TempBuffers {
             .unwrap_or(false)
         {
             let (_, allocs) = returns.pop_first().unwrap();
-            for alloc in allocs {
+            for mut alloc in allocs {
                 unsafe {
-                    match alloc {
-                        TempAlloc::Buf(a) => device.storage.deallocate(a),
-                        TempAlloc::Img(a) => device.storage.deallocate_image(a),
-                    }
+                    alloc.deinitialize(device);
                 }
             }
         }

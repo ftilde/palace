@@ -8,13 +8,12 @@ use crevice::std140::{AsStd140, Std140};
 
 use crate::{
     data::Vector,
-    storage::gpu::{IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
+    storage::gpu::{Allocation, IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
     vulkan::shader::Shader,
 };
 
 use super::{
-    memory::TempBuffer, shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer,
-    DeviceContext,
+    shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext,
 };
 
 pub trait PipelineType {
@@ -424,10 +423,10 @@ trait AsDescriptor {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
 }
 
-impl AsDescriptor for TempBuffer {
+impl AsDescriptor for Allocation {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
-            .buffer(self.allocation.buffer)
+            .buffer(self.buffer)
             .range(self.size)
             .build()
     }

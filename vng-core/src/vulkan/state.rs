@@ -1,3 +1,4 @@
+use ash::vk;
 use std::{
     any::Any,
     cell::{RefCell, UnsafeCell},
@@ -67,5 +68,17 @@ impl dyn VulkanState {
         } else {
             None
         }
+    }
+}
+
+impl VulkanState for vk::Framebuffer {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        unsafe { context.functions().destroy_framebuffer(*self, None) };
+    }
+}
+
+impl VulkanState for vk::ImageView {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        unsafe { context.functions().destroy_image_view(*self, None) };
     }
 }

@@ -10,6 +10,7 @@ use crate::{
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
+        memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
         state::RessourceId,
@@ -381,14 +382,20 @@ void main()
                     .unpack();
 
                 let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
-                let request_table_buffer = device
-                    .tmp_buffers
-                    .request(device, request_table_buffer_layout);
+                let request_table_buffer = TempRessource::new(device, {
+                    let flags = vk::BufferUsageFlags::TRANSFER_SRC
+                        | vk::BufferUsageFlags::TRANSFER_DST
+                        | vk::BufferUsageFlags::STORAGE_BUFFER;
+                    let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
+                    device
+                        .storage
+                        .allocate(device, request_table_buffer_layout, flags, buf_type)
+                });
 
                 device.with_cmd_buffer(|cmd| unsafe {
                     device.functions().cmd_fill_buffer(
                         cmd.raw(),
-                        request_table_buffer.allocation.buffer,
+                        request_table_buffer.buffer,
                         0,
                         vk::WHOLE_SIZE,
                         0xffffffff,
@@ -429,7 +436,7 @@ void main()
                             &gpu_brick_out,
                             &transform_gpu,
                             &brick_index,
-                            &request_table_buffer,
+                            &*request_table_buffer,
                             &state_initialized,
                             &state_values,
                         ]);
@@ -460,7 +467,7 @@ void main()
                         crate::vulkan::memory::copy_to_cpu(
                             *ctx,
                             device,
-                            request_table_buffer.allocation.buffer,
+                            request_table_buffer.buffer,
                             request_table_buffer_layout,
                             request_table_cpu_bytes.as_mut_ptr(),
                         )
@@ -492,7 +499,7 @@ void main()
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_fill_buffer(
                             cmd.raw(),
-                            request_table_buffer.allocation.buffer,
+                            request_table_buffer.buffer,
                             0,
                             vk::WHOLE_SIZE,
                             0xffffffff,
@@ -519,9 +526,6 @@ void main()
                     .await;
                     it += 1;
                 };
-
-                // Safety: The buffer was requested above from the same device
-                unsafe { device.tmp_buffers.return_buf(device, request_table_buffer) };
 
                 let src_info = SrcBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
