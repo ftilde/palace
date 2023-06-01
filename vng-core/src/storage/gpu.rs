@@ -1118,7 +1118,7 @@ impl Storage {
 pub struct Allocation {
     // Always init except after VulkanState::deinitialize is called
     allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
-    pub size: u64, //NO_PUSH_main: see if we can remove it here or in wrapping structs
+    pub size: u64,
     pub buffer: vk::Buffer,
 }
 
