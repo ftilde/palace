@@ -211,15 +211,20 @@ fn eval_network(
             .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
             .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
-            .chain(OnWheelMove(|delta, _| *fov -= delta))
+            //.chain(OnWheelMove(|delta, _| *fov -= delta))
+            .chain(OnWheelMove(|delta, _| {
+                let look = *center - *eye;
+                let new_look = look.scale(1.0 - delta * 0.1);
+                *eye = *center - new_look;
+            }))
             .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
                 let look = *center - *eye;
                 let look_len = look.length();
                 let left = up.cross(look).normalized();
-                let move_factor = 0.01;
+                let move_factor = 0.005;
                 let delta = delta.map(|v| v as f32 * move_factor);
 
-                let new_look = (look + up.scale(delta.y()) + left.scale(-delta.x()))
+                let new_look = (look.normalized() + up.scale(delta.y()) + left.scale(-delta.x()))
                     .normalized()
                     .scale(look_len);
 
