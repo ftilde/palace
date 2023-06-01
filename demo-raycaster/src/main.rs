@@ -6,7 +6,6 @@ use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
@@ -120,10 +119,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     };
 
-    let mut fov: f32 = 1.0;
-    let mut eye = [1.0, 0.0, 0.0].into();
-    let mut center = [0.0, 0.0, 0.0].into();
-    let mut up = [0.0, 1.0, 0.0].into();
+    let mut fov: f32 = 30.0;
+    let mut eye = [5.5, 0.5, 0.5].into();
+    let mut center = [0.5, 0.5, 0.5].into();
+    let mut up = [1.0, 1.0, 0.0].into();
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
 
@@ -212,9 +211,22 @@ fn eval_network(
             .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
             .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
-        //.chain(OnMouseClick(MouseButton::Left, |pos| {
-        //    println!("Click left!: {:?}", pos)
-        //}))
+            .chain(OnWheelMove(|delta, _| *fov -= delta))
+            .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
+                let look = *center - *eye;
+                let look_len = look.length();
+                let left = up.cross(look).normalized();
+                let move_factor = 0.01;
+                let delta = delta.map(|v| v as f32 * move_factor);
+
+                let new_look = (look + up.scale(delta.y()) + left.scale(-delta.x()))
+                    .normalized()
+                    .scale(look_len);
+
+                *eye = *center - new_look;
+                let left = up.cross(new_look);
+                *up = new_look.cross(left).normalized();
+            }))
     });
 
     let vol = vol.operate();

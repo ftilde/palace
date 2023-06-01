@@ -1,5 +1,4 @@
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
@@ -7,7 +6,6 @@ use crate::{
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{DescriptorConfig, GraphicsPipeline},
-        shader::ShaderDefines,
         state::{RessourceId, VulkanState},
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -40,20 +38,20 @@ layout(std430, binding = 0) buffer Transform {
 } projection;
 
 vec3 positions[14] = vec3[](
-    vec3(1.0, 0.0, 0.0), // Front-top-left
-    vec3(0.0, 0.0, 0.0), // Front-top-right
-    vec3(1.0, 1.0, 0.0), // Front-bottom-left
-    vec3(0.0, 1.0, 0.0), // Front-bottom-right
-    vec3(0.0, 1.0, 1.0), // Back-bottom-right
-    vec3(0.0, 0.0, 0.0), // Front-top-right
-    vec3(0.0, 0.0, 1.0), // Back-top-right
-    vec3(1.0, 0.0, 0.0), // Front-top-left
-    vec3(1.0, 0.0, 1.0), // Back-top-left
-    vec3(1.0, 1.0, 0.0), // Front-bottom-left
-    vec3(1.0, 1.0, 1.0), // Back-bottom-left
-    vec3(0.0, 1.0, 1.0), // Back-bottom-right
-    vec3(1.0, 0.0, 1.0), // Back-top-left
-    vec3(0.0, 0.0, 1.0)  // Back-top-right
+    vec3(0.0, 1.0, 1.0),
+    vec3(0.0, 1.0, 0.0),
+    vec3(1.0, 1.0, 1.0),
+    vec3(1.0, 1.0, 0.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(0.0, 1.0, 0.0),
+    vec3(0.0, 0.0, 0.0),
+    vec3(0.0, 1.0, 1.0),
+    vec3(0.0, 0.0, 1.0),
+    vec3(1.0, 1.0, 1.0),
+    vec3(1.0, 0.0, 1.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(0.0, 0.0, 1.0),
+    vec3(0.0, 0.0, 0.0)
 );
 
 layout(location = 0) out vec3 norm_pos;
@@ -71,7 +69,11 @@ layout(location = 0) out vec4 out_color;
 layout(location = 0) in vec3 norm_pos;
 
 void main() {
-    out_color = vec4(norm_pos, 1.0);
+    //if(gl_FrontFacing) {
+        out_color = vec4(norm_pos, 1.0);
+    //} else {
+    //    out_color = vec4(0.0, 0.0, 1.0, 1.0);
+    //}
 }
 ";
     const N_CHANNELS: u32 = 4;
@@ -162,8 +164,70 @@ void main() {
                             FRAG_SHADER,
                             //ShaderDefines::new().push_const_block::<PushConstants>(),
                             //),
-                            &render_pass,
-                            vk::PrimitiveTopology::TRIANGLE_STRIP,
+                            |shader_stages, pipeline_layout, build_pipeline| {
+                                let dynamic_states =
+                                    [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                                let dynamic_info = vk::PipelineDynamicStateCreateInfo::builder()
+                                    .dynamic_states(&dynamic_states);
+
+                                let vertex_input_info =
+                                    vk::PipelineVertexInputStateCreateInfo::builder();
+
+                                let input_assembly_info =
+                                    vk::PipelineInputAssemblyStateCreateInfo::builder()
+                                        .primitive_restart_enable(false)
+                                        .topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
+
+                                let viewport_state_info =
+                                    vk::PipelineViewportStateCreateInfo::builder()
+                                        .viewport_count(1)
+                                        .scissor_count(1);
+
+                                let rasterizer_info =
+                                    vk::PipelineRasterizationStateCreateInfo::builder()
+                                        .depth_clamp_enable(false)
+                                        .rasterizer_discard_enable(false)
+                                        .polygon_mode(vk::PolygonMode::FILL)
+                                        .line_width(1.0)
+                                        .cull_mode(vk::CullModeFlags::FRONT)
+                                        .front_face(vk::FrontFace::CLOCKWISE)
+                                        .depth_bias_enable(false);
+
+                                let multi_sampling_info =
+                                    vk::PipelineMultisampleStateCreateInfo::builder()
+                                        .sample_shading_enable(false)
+                                        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+                                let color_blend_attachment =
+                                    vk::PipelineColorBlendAttachmentState::builder()
+                                        .color_write_mask(
+                                            vk::ColorComponentFlags::R
+                                                | vk::ColorComponentFlags::G
+                                                | vk::ColorComponentFlags::B
+                                                | vk::ColorComponentFlags::A,
+                                        )
+                                        .blend_enable(false);
+
+                                let color_blend_attachments = [*color_blend_attachment];
+                                let color_blending =
+                                    vk::PipelineColorBlendStateCreateInfo::builder()
+                                        .logic_op_enable(false)
+                                        .attachments(&color_blend_attachments);
+
+                                let info = vk::GraphicsPipelineCreateInfo::builder()
+                                    .stages(shader_stages)
+                                    .vertex_input_state(&vertex_input_info)
+                                    .input_assembly_state(&input_assembly_info)
+                                    .viewport_state(&viewport_state_info)
+                                    .rasterization_state(&rasterizer_info)
+                                    .multisample_state(&multi_sampling_info)
+                                    .color_blend_state(&color_blending)
+                                    .dynamic_state(&dynamic_info)
+                                    .layout(pipeline_layout)
+                                    .render_pass(*render_pass)
+                                    .subpass(0);
+                                build_pipeline(&info)
+                            },
                             true,
                         )
                     });
@@ -284,7 +348,7 @@ void main() {
 
                     //pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::FRAGMENT);
 
-                    device.functions().cmd_draw(cmd.raw(), 12, 1, 0, 0);
+                    device.functions().cmd_draw(cmd.raw(), 14, 1, 0, 0);
 
                     device.functions().cmd_end_render_pass(cmd.raw());
                 });

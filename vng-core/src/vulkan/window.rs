@@ -484,8 +484,63 @@ impl Window {
                 FRAG_SHADER,
                 ShaderDefines::new().push_const_block::<PushConstants>(),
             ),
-            &render_pass,
-            vk::PrimitiveTopology::TRIANGLE_LIST,
+            |shader_stages, pipeline_layout, build_pipeline| {
+                let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                let dynamic_info =
+                    vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+
+                let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
+
+                let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+                    .primitive_restart_enable(false)
+                    .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+                let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
+                    .viewport_count(1)
+                    .scissor_count(1);
+
+                let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::builder()
+                    .depth_clamp_enable(false)
+                    .rasterizer_discard_enable(false)
+                    .polygon_mode(vk::PolygonMode::FILL)
+                    .line_width(1.0)
+                    .cull_mode(vk::CullModeFlags::BACK)
+                    .front_face(vk::FrontFace::CLOCKWISE)
+                    .depth_bias_enable(false);
+
+                let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::builder()
+                    .sample_shading_enable(false)
+                    .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+                let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+                    .color_write_mask(
+                        vk::ColorComponentFlags::R
+                            | vk::ColorComponentFlags::G
+                            | vk::ColorComponentFlags::B
+                            | vk::ColorComponentFlags::A,
+                    )
+                    .blend_enable(false);
+
+                let color_blend_attachments = [*color_blend_attachment];
+                let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
+                    .logic_op_enable(false)
+                    .attachments(&color_blend_attachments);
+
+                let info = vk::GraphicsPipelineCreateInfo::builder()
+                    .stages(shader_stages)
+                    .vertex_input_state(&vertex_input_info)
+                    .input_assembly_state(&input_assembly_info)
+                    .viewport_state(&viewport_state_info)
+                    .rasterization_state(&rasterizer_info)
+                    .multisample_state(&multi_sampling_info)
+                    .color_blend_state(&color_blending)
+                    .dynamic_state(&dynamic_info)
+                    .layout(pipeline_layout)
+                    .render_pass(render_pass)
+                    .subpass(0)
+                    .build();
+                build_pipeline(&info)
+            },
             true,
         );
 

@@ -141,12 +141,18 @@ impl<T: 'static> VulkanState for Pipeline<T> {
 }
 
 impl GraphicsPipeline {
-    pub fn new(
-        device: &DeviceContext,
+    pub fn new<
+        'a,
+        B: FnOnce(
+            &[vk::PipelineShaderStageCreateInfo],
+            vk::PipelineLayout,
+            Box<dyn FnOnce(&vk::GraphicsPipelineCreateInfo) -> vk::Pipeline + 'a>,
+        ) -> vk::Pipeline,
+    >(
+        device: &'a DeviceContext,
         vertex_shader: impl ShaderSource,
         fragment_shader: impl ShaderSource,
-        render_pass: &vk::RenderPass,
-        primitive: vk::PrimitiveTopology,
+        build_info: B,
         use_push_descriptor: bool,
     ) -> Self {
         let df = device.functions();
@@ -194,69 +200,22 @@ impl GraphicsPipeline {
 
         let shader_stages = [*vertex_c_info, *fragment_c_info];
 
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_info =
-            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
-
-        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-            .primitive_restart_enable(false)
-            .topology(primitive);
-
-        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
-            .viewport_count(1)
-            .scissor_count(1);
-
-        let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::builder()
-            .depth_clamp_enable(false)
-            .rasterizer_discard_enable(false)
-            .polygon_mode(vk::PolygonMode::FILL)
-            .line_width(1.0)
-            .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::CLOCKWISE)
-            .depth_bias_enable(false);
-
-        let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::builder()
-            .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-
-        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
-            .color_write_mask(
-                vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
-            )
-            .blend_enable(false);
-
-        let color_blend_attachments = [*color_blend_attachment];
-        let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op_enable(false)
-            .attachments(&color_blend_attachments);
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&shader_stages)
-            .vertex_input_state(&vertex_input_info)
-            .input_assembly_state(&input_assembly_info)
-            .viewport_state(&viewport_state_info)
-            .rasterization_state(&rasterizer_info)
-            .multisample_state(&multi_sampling_info)
-            .color_blend_state(&color_blending)
-            .dynamic_state(&dynamic_info)
-            .layout(pipeline_layout)
-            .render_pass(*render_pass)
-            .subpass(0);
-
         let pipeline_cache = vk::PipelineCache::null();
-        let pipelines = unsafe {
-            device
-                .functions
-                .create_graphics_pipelines(pipeline_cache, &[*pipeline_info], None)
-        }
-        .unwrap();
 
-        let pipeline = pipelines[0];
+        let pipeline = build_info(
+            &shader_stages[..],
+            pipeline_layout,
+            Box::new(move |info| {
+                let pipelines = unsafe {
+                    device
+                        .functions
+                        .create_graphics_pipelines(pipeline_cache, &[*info], None)
+                }
+                .unwrap();
+
+                pipelines[0]
+            }),
+        );
 
         // Safety: Pipeline has been created now. Shader module is not referenced anymore.
         unsafe { vertex_shader.deinitialize(device) };

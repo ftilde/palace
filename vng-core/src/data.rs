@@ -220,6 +220,11 @@ impl<const N: usize, T: Copy> Vector<N, T> {
         Ok(Vector(out.map(|v| unsafe { v.assume_init() })))
     }
 }
+impl<const N: usize, T: std::ops::Mul<Output = T> + Copy> Vector<N, T> {
+    pub fn scale(self, v: T) -> Self {
+        self.map(|w| w * v)
+    }
+}
 impl<const N: usize, T> std::ops::Index<usize> for Vector<N, T> {
     type Output = T;
 
@@ -425,6 +430,22 @@ impl Vector<2, f32> {
 impl Vector<3, f32> {
     pub fn to_homogeneous_coord(self) -> Vector<4, f32> {
         Vector::from([1.0, self.z(), self.y(), self.x()])
+    }
+
+    pub fn length(self) -> f32 {
+        self.map(|v| v * v).fold(0.0, f32::add).sqrt()
+    }
+
+    pub fn normalized(self) -> Self {
+        let len = self.length();
+        let len_inv = 1.0 / len;
+        self.map(|v| v * len_inv)
+    }
+
+    pub fn cross(self, other: Self) -> Self {
+        let v1: cgmath::Vector3<f32> = self.into();
+        let v2: cgmath::Vector3<f32> = other.into();
+        v1.cross(v2).into()
     }
 }
 
