@@ -38,20 +38,20 @@ layout(std430, binding = 0) buffer Transform {
 } projection;
 
 vec3 positions[14] = vec3[](
-    vec3(0.0, 1.0, 1.0),
-    vec3(0.0, 1.0, 0.0),
-    vec3(1.0, 1.0, 1.0),
-    vec3(1.0, 1.0, 0.0),
     vec3(1.0, 0.0, 0.0),
-    vec3(0.0, 1.0, 0.0),
-    vec3(0.0, 0.0, 0.0),
-    vec3(0.0, 1.0, 1.0),
-    vec3(0.0, 0.0, 1.0),
-    vec3(1.0, 1.0, 1.0),
     vec3(1.0, 0.0, 1.0),
-    vec3(1.0, 0.0, 0.0),
+    vec3(0.0, 0.0, 0.0),
     vec3(0.0, 0.0, 1.0),
-    vec3(0.0, 0.0, 0.0)
+    vec3(0.0, 1.0, 1.0),
+    vec3(1.0, 0.0, 1.0),
+    vec3(1.0, 1.0, 1.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(1.0, 1.0, 0.0),
+    vec3(0.0, 0.0, 0.0),
+    vec3(0.0, 1.0, 0.0),
+    vec3(0.0, 1.0, 1.0),
+    vec3(1.0, 1.0, 0.0),
+    vec3(1.0, 1.0, 1.0)
 );
 
 layout(location = 0) out vec3 norm_pos;
@@ -69,11 +69,11 @@ layout(location = 0) out vec4 out_color;
 layout(location = 0) in vec3 norm_pos;
 
 void main() {
-    //if(gl_FrontFacing) {
+    if(gl_FrontFacing) {
         out_color = vec4(norm_pos, 1.0);
-    //} else {
-    //    out_color = vec4(0.0, 0.0, 1.0, 1.0);
-    //}
+    } else {
+        out_color = vec4(0.0, 0.0, 1.0, 1.0);
+    }
 }
 ";
     const N_CHANNELS: u32 = 4;
@@ -189,7 +189,7 @@ void main() {
                                         .rasterizer_discard_enable(false)
                                         .polygon_mode(vk::PolygonMode::FILL)
                                         .line_width(1.0)
-                                        .cull_mode(vk::CullModeFlags::FRONT)
+                                        .cull_mode(vk::CullModeFlags::BACK)
                                         .front_face(vk::FrontFace::CLOCKWISE)
                                         .depth_bias_enable(false);
 
