@@ -66,14 +66,18 @@ void main() {
     const FRAG_SHADER: &str = "
 #version 450
 
-layout(location = 0) out vec4 out_color;
+layout(location = 0) out vec4 out_color_front;
+layout(location = 1) out vec4 out_color_back;
+
 layout(location = 0) in vec3 norm_pos;
 
 void main() {
     if(gl_FrontFacing) {
-        out_color = vec4(norm_pos, 1.0);
+        out_color_front = vec4(norm_pos, 1.0);
+        out_color_back = vec4(0.0);
     } else {
-        out_color = vec4(0.0, 0.0, 1.0, 1.0);
+        out_color_back = vec4(norm_pos, 1.0);
+        out_color_front = vec4(0.0);
     }
 }
 ";
@@ -123,11 +127,16 @@ void main() {
                             .initial_layout(vk::ImageLayout::UNDEFINED)
                             .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
-                        let color_attachment_ref = vk::AttachmentReference::builder()
+                        let color_attachment_front_ref = vk::AttachmentReference::builder()
                             .attachment(0)
                             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-                        let color_attachment_refs = &[*color_attachment_ref];
+                        let color_attachment_back_ref = vk::AttachmentReference::builder()
+                            .attachment(1)
+                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+                        let color_attachment_refs =
+                            &[*color_attachment_front_ref, *color_attachment_back_ref];
                         let subpass = vk::SubpassDescription::builder()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                             .color_attachments(color_attachment_refs);
@@ -140,7 +149,7 @@ void main() {
                             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
                             .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-                        let attachments = &[*color_attachment];
+                        let attachments = &[*color_attachment, *color_attachment];
                         let subpasses = &[*subpass];
                         let dependency_infos = &[*dependency_info];
                         let render_pass_info = vk::RenderPassCreateInfo::builder()
@@ -190,7 +199,7 @@ void main() {
                                         .rasterizer_discard_enable(false)
                                         .polygon_mode(vk::PolygonMode::FILL)
                                         .line_width(1.0)
-                                        .cull_mode(vk::CullModeFlags::BACK)
+                                        .cull_mode(vk::CullModeFlags::NONE)
                                         .front_face(vk::FrontFace::CLOCKWISE)
                                         .depth_bias_enable(false);
 
@@ -207,9 +216,16 @@ void main() {
                                                 | vk::ColorComponentFlags::B
                                                 | vk::ColorComponentFlags::A,
                                         )
-                                        .blend_enable(false);
+                                        .src_color_blend_factor(vk::BlendFactor::ONE)
+                                        .dst_color_blend_factor(vk::BlendFactor::ONE)
+                                        .color_blend_op(vk::BlendOp::ADD)
+                                        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                                        .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+                                        .alpha_blend_op(vk::BlendOp::ADD)
+                                        .blend_enable(true);
 
-                                let color_blend_attachments = [*color_blend_attachment];
+                                let color_blend_attachments =
+                                    [*color_blend_attachment, *color_blend_attachment];
                                 let color_blending =
                                     vk::PipelineColorBlendStateCreateInfo::builder()
                                         .logic_op_enable(false)
@@ -261,11 +277,13 @@ void main() {
 
                 // TODO: Make renderpass a vulkanstate
 
-                let img =
+                let img_front =
+                    TempRessource::new(device, device.storage.allocate_image(device, img_info));
+                let img_back =
                     TempRessource::new(device, device.storage.allocate_image(device, img_info));
 
                 let info = vk::ImageViewCreateInfo::builder()
-                    .image(img.image)
+                    .image(img_front.image)
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(format)
                     .components(vk::ComponentMapping::builder().build())
@@ -278,12 +296,30 @@ void main() {
                             .layer_count(1)
                             .build(),
                     );
-                let img_view = TempRessource::new(
+                let img_view_front = TempRessource::new(
+                    device,
+                    unsafe { device.functions().create_image_view(&info, None) }.unwrap(),
+                );
+                let info = vk::ImageViewCreateInfo::builder()
+                    .image(img_back.image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format)
+                    .components(vk::ComponentMapping::builder().build())
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    );
+                let img_view_back = TempRessource::new(
                     device,
                     unsafe { device.functions().create_image_view(&info, None) }.unwrap(),
                 );
 
-                let attachments = [*img_view];
+                let attachments = [*img_view_front, *img_view_back];
                 let framebuffer_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(*render_pass)
                     .attachments(&attachments)
@@ -302,11 +338,12 @@ void main() {
                 );
 
                 // Actual rendering
-                let clear_values = [vk::ClearValue {
+                let clear_value = vk::ClearValue {
                     color: vk::ClearColorValue {
                         float32: [0.0, 0.0, 0.0, 0.0],
                     },
-                }];
+                };
+                let clear_values = [clear_value, clear_value];
 
                 let render_pass_info = vk::RenderPassBeginInfo::builder()
                     .render_pass(*render_pass)
@@ -391,7 +428,7 @@ void main() {
                 device.with_cmd_buffer(|cmd| unsafe {
                     device.functions().cmd_copy_image_to_buffer(
                         cmd.raw(),
-                        img.image,
+                        img_front.image,
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL, /*???*/
                         gpu_brick_out.buffer,
                         &[copy_info],
