@@ -1,3 +1,7 @@
+uint to_linear2(uvec2 vec_pos, uvec2 size) {
+    return vec_pos.x + size.x*vec_pos.y;
+}
+
 uvec2 from_linear2(uint linear_pos, uvec2 size) {
     uvec2 vec_pos;
     vec_pos.x = linear_pos % size.x;
