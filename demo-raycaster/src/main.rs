@@ -253,11 +253,12 @@ fn eval_network(
     );
     let matrix =
         perspective * cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into());
-    let frame = vng_core::operators::raycaster::render_entry_exit(
-        scaled.metadata,
+    let eep = vng_core::operators::raycaster::entry_exit_points(
+        scaled.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_as_array(matrix),
     );
+    let frame = vng_core::operators::raycaster::raycast(scaled, eep);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor(Some(deadline));

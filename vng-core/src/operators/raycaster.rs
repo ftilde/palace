@@ -3,11 +3,12 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
+    data::Vector,
     operator::OperatorId,
     operators::tensor::TensorOperator,
     vulkan::{
         memory::TempRessource,
-        pipeline::{DescriptorConfig, GraphicsPipeline},
+        pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
         shader::ShaderDefines,
         state::{RessourceId, VulkanState},
         DstBarrierInfo, SrcBarrierInfo,
@@ -23,7 +24,7 @@ impl VulkanState for vk::RenderPass {
     }
 }
 
-pub fn render_entry_exit<'a>(
+pub fn entry_exit_points<'a>(
     input_metadata: ScalarOperator<'a, VolumeMetaData>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,
     projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
@@ -79,7 +80,7 @@ layout(location = 0) in vec3 norm_pos;
 declare_push_consts(consts);
 
 void main() {
-    uint n_channels = 4;
+    uint n_channels = 8;
     uvec2 pos = uvec2(gl_FragCoord.xy);
     uint linear_pos = n_channels * to_linear2(pos, consts.size);
 
@@ -89,13 +90,13 @@ void main() {
             outputData.values[linear_pos + c] = color[c];
         }
     } else {
-        //for(int c=0; c<4; ++c) {
-        //    outputData.values[linear_pos + c] = color[c];
-        //}
+        for(int c=0; c<4; ++c) {
+            outputData.values[linear_pos + c + 4] = color[c];
+        }
     }
 }
 ";
-    const N_CHANNELS: u32 = 4;
+    const N_CHANNELS: u32 = 8;
     fn full_info(r: ImageMetaData) -> VolumeMetaData {
         VolumeMetaData {
             dimensions: [r.dimensions.y(), r.dimensions.x(), N_CHANNELS.into()].into(),
@@ -104,7 +105,7 @@ void main() {
     }
 
     TensorOperator::unbatched(
-        OperatorId::new("render_entry_exit")
+        OperatorId::new("entry_exit_points")
             .dependent_on(&input_metadata)
             .dependent_on(&result_metadata)
             .dependent_on(&projection_mat),
@@ -123,7 +124,7 @@ void main() {
                 let device = ctx.vulkan_device();
 
                 let dst_info = DstBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    stage: vk::PipelineStageFlags2::VERTEX_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
@@ -357,6 +358,146 @@ void main() {
                         *ctx,
                         SrcBarrierInfo {
                             stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    )
+                };
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
+pub fn raycast<'a>(
+    input: VolumeOperator<'a>,
+    entry_exit_points: VolumeOperator<'a>,
+) -> VolumeOperator<'a> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        out_mem_dim: cgmath::Vector2<u32>,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+#include <util.glsl>
+
+layout (local_size_x = 32, local_size_y = 32) in;
+
+layout(std430, binding = 0) buffer OutputBuffer{
+    float values[];
+} output_data;
+
+layout(std430, binding = 1) buffer EntryExitPoints{
+    float values[];
+} entry_exit_points;
+
+declare_push_consts(consts);
+
+void main()
+{
+    uvec2 out_pos = gl_GlobalInvocationID.xy;
+    uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
+    if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
+        vec4 entry_point;
+        vec4 exit_point;
+        for(int c=0; c<4; ++c) {
+            entry_point[c] = entry_exit_points.values[8*gID+c];
+            exit_point[c] = entry_exit_points.values[8*gID+c+4];
+        }
+
+        for(int c=0; c<4; ++c) {
+            output_data.values[4*gID+c] = exit_point[c];
+        }
+    }
+}
+"#;
+    const N_CHANNELS: u32 = 4;
+    fn full_info(r: VolumeMetaData) -> VolumeMetaData {
+        assert_eq!(r.dimensions.x().raw, 2 * N_CHANNELS);
+        VolumeMetaData {
+            dimensions: [r.dimensions.z(), r.dimensions.y(), N_CHANNELS.into()].into(),
+            chunk_size: [r.chunk_size.z(), r.chunk_size.y(), N_CHANNELS.into()].into(),
+        }
+    }
+
+    TensorOperator::unbatched(
+        OperatorId::new("raycast")
+            .dependent_on(&input)
+            .dependent_on(&entry_exit_points),
+        entry_exit_points.clone(),
+        (input, entry_exit_points),
+        move |ctx, entry_exit_points, _| {
+            async move {
+                let r = ctx
+                    .submit(entry_exit_points.metadata.request_scalar())
+                    .await;
+                let m = full_info(r);
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, pos, (input, entry_exit_points), _| {
+            async move {
+                let device = ctx.vulkan_device();
+
+                let dst_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+
+                let (_vm, im, eep) = futures::join! {
+                    ctx.submit(input.metadata.request_scalar()),
+                    ctx.submit(entry_exit_points.metadata.request_scalar()),
+                    ctx.submit(entry_exit_points.bricks.request_gpu(device.id, Vector::fill(0.into()), dst_info)),
+                };
+                let m_out = full_info(im);
+                let out_info = m_out.chunk_info(pos);
+
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(), //.add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
+                                                                                          //.add("NUM_BRICKS", num_bricks)
+                                                                                          //.add("REQUEST_TABLE_SIZE", request_table_size),
+                            ),
+                            false,
+                        )
+                    });
+
+                // Actual rendering
+                let gpu_brick_out = ctx
+                    .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                    .unwrap();
+
+                let chunk_size = out_info.mem_dimensions.drop_dim(2).raw();
+                let consts = PushConstants {
+                    out_mem_dim: chunk_size.into(),
+                };
+
+                let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                device.with_cmd_buffer(|cmd| {
+                    let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep]);
+
+                    unsafe {
+                        let mut pipeline = pipeline.bind(cmd);
+
+                        pipeline.push_constant(consts);
+                        pipeline.write_descriptor_set(0, descriptor_config);
+                        pipeline.dispatch3d(global_size);
+                    }
+                });
+
+                unsafe {
+                    gpu_brick_out.initialized(
+                        *ctx,
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             access: vk::AccessFlags2::SHADER_WRITE,
                         },
                     )
