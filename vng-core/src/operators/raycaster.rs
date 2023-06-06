@@ -455,7 +455,8 @@ void main()
 
                 bool found;
                 uint sample_brick_pos_linear;
-                float sampled_intensity = try_sample(pos_voxel, m_in, bricks.values, found, sample_brick_pos_linear);
+                float sampled_intensity;
+                try_sample(pos_voxel, m_in, bricks.values, found, sample_brick_pos_linear, sampled_intensity);
                 if(found) {
                     state.intensity = max(state.intensity, sampled_intensity);
                 } else {

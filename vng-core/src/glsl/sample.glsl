@@ -15,24 +15,24 @@ uvec3 dim_in_bricks(VolumeMetaData vm) {
     return div_round_up3(vm.dimensions, vm.chunk_size);
 }
 
-float try_sample(uvec3 sample_pos, VolumeMetaData vm, BrickType[NUM_BRICKS] bricks, out bool found, out uint sample_brick_pos_linear) {
-    uvec3 sample_brick = sample_pos / vm.chunk_size;
-    uvec3 dim_in_bricks = dim_in_bricks(vm);
-
-    sample_brick_pos_linear = to_linear3(sample_brick, dim_in_bricks);
-
-    BrickType brick = bricks[sample_brick_pos_linear];
-    float v = 0.0;
-    if(uint64_t(brick) == 0) {
-        found = false;
-    } else {
-        uvec3 brick_begin = sample_brick * vm.chunk_size;
-        uvec3 local = sample_pos - brick_begin;
-        uint local_index = to_linear3(local, vm.chunk_size);
-        float v = brick.values[local_index];
-        found = true;
-        return v;
-    }
+#define try_sample(sample_pos, vm, bricks, found, sample_brick_pos_linear, value) {\
+    uvec3 sample_brick = (sample_pos) / (vm).chunk_size;\
+    uvec3 dim_in_bricks = dim_in_bricks((vm));\
+\
+    (sample_brick_pos_linear) = to_linear3(sample_brick, dim_in_bricks);\
+\
+    BrickType brick = (bricks)[(sample_brick_pos_linear)];\
+    float v = 0.0;\
+    if(uint64_t(brick) == 0) {\
+        (found) = false;\
+    } else {\
+        uvec3 brick_begin = sample_brick * (vm).chunk_size;\
+        uvec3 local = (sample_pos) - brick_begin;\
+        uint local_index = to_linear3(local, (vm).chunk_size);\
+        float v = brick.values[local_index];\
+        (found) = true;\
+        (value) = v;\
+    }\
 }
 
 //#define sample_or_request(sample_pos, chunk_dim, dim_in_bricks) {
