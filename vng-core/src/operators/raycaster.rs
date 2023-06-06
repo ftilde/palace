@@ -412,6 +412,15 @@ layout(std430, binding = 3) buffer QueryTable {
     uint64_t values[REQUEST_TABLE_SIZE];
 } request_table;
 
+struct State {
+    uint iteration;
+    float intensity;
+};
+
+layout(std430, binding = 4) buffer StateBuffer {
+    State values[];
+} state_cache;
+
 declare_push_consts(consts);
 
 void main()
@@ -435,11 +444,11 @@ void main()
         vec4 color;
         if(entry_point.a > 0.0 && exit_point.a > 0.0) {
 
-            float intensity = 0.0;
+            State state = state_cache.values[gID];
 
             uint sample_points = 100;
-            for(int i=0; i<sample_points; ++i) {
-                float a = float(i)/float(sample_points-1);
+            for(; state.iteration < sample_points; ++state.iteration) {
+                float a = float(state.iteration)/float(sample_points-1);
                 vec3 p = a * exit_point.xyz + (1-a) * entry_point.xyz;
 
                 uvec3 pos_voxel = uvec3(round(p * vec3(m_in.dimensions - uvec3(1))));
@@ -448,15 +457,16 @@ void main()
                 uint sample_brick_pos_linear;
                 float sampled_intensity = try_sample(pos_voxel, m_in, bricks.values, found, sample_brick_pos_linear);
                 if(found) {
-                    intensity = max(intensity, sampled_intensity);
+                    state.intensity = max(state.intensity, sampled_intensity);
                 } else {
                     uint64_t sbp = uint64_t(sample_brick_pos_linear);
                     try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                    break; //TODO NO_PUSH_main: possibly remove
+                    break;
                 }
             }
+            state_cache.values[gID] = state;
 
-            color = vec4(intensity, intensity, intensity, 1.0);
+            color = vec4(vec3(state.intensity), 1.0);
         } else {
             color = vec4(0.0);
         }
@@ -532,6 +542,26 @@ void main()
                         )
                     });
 
+                let state_initialized = ctx
+                    .access_state_cache(
+                        device,
+                        pos,
+                        "initialized",
+                        Layout::array::<(u32, f32)>(hmul(im.chunk_size)).unwrap(),
+                    )
+                    .unwrap();
+                let state_initialized = state_initialized.init(|v| {
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        device.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            v.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0,
+                        );
+                    });
+                });
+
                 let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
                 let request_table_buffer = TempRessource::new(device, {
                     let flags = vk::BufferUsageFlags::TRANSFER_SRC
@@ -584,7 +614,8 @@ void main()
                     let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep, &brick_index, &*request_table_buffer]);
+                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep,
+                            &brick_index, &*request_table_buffer, &state_initialized]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
