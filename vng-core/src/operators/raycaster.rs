@@ -8,8 +8,8 @@ use crate::{
     data::{from_linear, hmul, Vector},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
-    storage::{gpu::Allocation, DataVersionType},
-    task::OpaqueTaskContext,
+    storage::{gpu::StateCacheHandle, DataVersionType},
+    task::{OpaqueTaskContext, TaskContext},
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
@@ -374,29 +374,35 @@ void main() {
     )
 }
 
-pub struct BrickRequestTable {
+pub struct BrickRequestTable<'a> {
     num_elements: usize,
-    allocation: Allocation,
+    allocation: StateCacheHandle<'a>,
     layout: Layout,
 }
 
-impl BrickRequestTable {
+impl<'a> BrickRequestTable<'a> {
     // Note: a barrier is needed after initialization to make values visible
-    pub fn new(num_elements: usize, device: &DeviceContext) -> Self {
-        let request_table_buffer_layout = Layout::array::<u64>(num_elements).unwrap();
-        let flags = vk::BufferUsageFlags::TRANSFER_SRC
-            | vk::BufferUsageFlags::TRANSFER_DST
-            | vk::BufferUsageFlags::STORAGE_BUFFER;
-        let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-        let allocation =
-            device
-                .storage
-                .allocate(device, request_table_buffer_layout, flags, buf_type);
+    pub fn new<'cref, 'inv, ItemDescriptor: std::hash::Hash + 'a, Output: 'a>(
+        num_elements: usize,
+        device: &'a DeviceContext,
+        pos: ItemDescriptor,
+        ctx: &'a TaskContext<'cref, 'inv, ItemDescriptor, Output>,
+    ) -> Self {
+        let layout = Layout::array::<u64>(num_elements).unwrap();
+        let allocation = ctx
+            .access_state_cache(device, pos, "brick_request_table", layout)
+            .unwrap();
+        let allocation = allocation.init(|h| {
+            device.with_cmd_buffer(|cmd| unsafe {
+                cmd.functions()
+                    .cmd_fill_buffer(cmd.raw(), h.buffer, 0, vk::WHOLE_SIZE, 0xffffffff)
+            });
+        });
 
         let ret = BrickRequestTable {
             num_elements,
             allocation,
-            layout: request_table_buffer_layout,
+            layout,
         };
 
         device.with_cmd_buffer(|cmd| ret.clear(cmd));
@@ -417,7 +423,7 @@ impl BrickRequestTable {
         };
     }
 
-    pub fn buffer(&self) -> &Allocation {
+    pub fn buffer(&self) -> &'a StateCacheHandle {
         &self.allocation
     }
 
@@ -446,12 +452,6 @@ impl BrickRequestTable {
             .collect::<Vec<u64>>();
 
         to_request_linear
-    }
-}
-
-impl VulkanState for BrickRequestTable {
-    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
-        self.allocation.deinitialize(context);
     }
 }
 
@@ -633,6 +633,7 @@ void main()
                         Layout::array::<(u32, f32)>(hmul(im.chunk_size)).unwrap(),
                     )
                     .unwrap();
+
                 let state_initialized = state_initialized.init(|v| {
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_fill_buffer(
@@ -644,8 +645,7 @@ void main()
                         );
                     });
                 });
-
-                let request_table = TempRessource::new(device, BrickRequestTable::new(request_table_size, device));
+                let request_table = BrickRequestTable::new(request_table_size, device, pos, &ctx);
 
                 ctx.submit(device.barrier(
                     SrcBarrierInfo {
@@ -674,22 +674,7 @@ void main()
                     .unwrap();
                 let mut it = 0;
                 let timed_out = loop {
-
-                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
-
-                    device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep,
-                            &brick_index, request_table.buffer(), &state_initialized]);
-
-                        unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
-
-                            pipeline.push_constant(consts);
-                            pipeline.write_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch3d(global_size);
-                        }
-                    });
-
+                    // First handle brick requests from previous iteration or previous operator evaluation
                     let src_info = SrcBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                         access: vk::AccessFlags2::SHADER_WRITE,
@@ -698,17 +683,15 @@ void main()
                         stage: vk::PipelineStageFlags2::TRANSFER,
                         access: vk::AccessFlags2::TRANSFER_READ,
                     };
+                    // Make any writes to the brick_request_table visible
                     ctx.submit(device.barrier(src_info, dst_info)).await;
 
                     let to_request_linear = request_table.download_requested(*ctx, device).await;
 
-                    if to_request_linear.is_empty() {
-                        break false;
-                    }
-                    if ctx.past_deadline() && it > 0 {
+                    let done = to_request_linear.is_empty();
+                    if (done || ctx.past_deadline()) && it > 0 {
                         // We need at least one iteration to make any kind of progress
-                        // TODO: Potentially remove once we have global volume page tables
-                        break true;
+                        break !done;
                     }
 
                     let to_request = to_request_linear.iter().map(|v| {
@@ -740,6 +723,22 @@ void main()
                         },
                     ))
                     .await;
+
+                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep,
+                            &brick_index, request_table.buffer(), &state_initialized]);
+
+                        unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
+
+                            pipeline.push_constant(consts);
+                            pipeline.write_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch3d(global_size);
+                        }
+                    });
+
                     it += 1;
                 };
 
