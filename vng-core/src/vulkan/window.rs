@@ -16,6 +16,7 @@ use super::state::VulkanState;
 use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 use crate::data::{BrickPosition, GlobalCoordinate, Vector};
 use crate::operators::volume::VolumeOperator;
+use crate::storage::DataVersionType;
 use crate::task::OpaqueTaskContext;
 
 type WindowSize = winit::dpi::PhysicalSize<u32>;
@@ -587,7 +588,7 @@ impl Window {
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         input: &'inv VolumeOperator<'op>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<DataVersionType, crate::Error> {
         let m = ctx.submit(input.metadata.request_scalar()).await;
 
         if m.dimensions != m.chunk_size.global() {
@@ -610,6 +611,8 @@ impl Window {
                 },
             ))
             .await;
+
+        let version = img.version;
 
         let descriptor_config = DescriptorConfig::new([&img]);
 
@@ -723,7 +726,7 @@ impl Window {
         }
         .unwrap();
 
-        Ok(())
+        Ok(version)
     }
 }
 #[derive(Copy, Clone, AsStd140, GlslStruct)]
