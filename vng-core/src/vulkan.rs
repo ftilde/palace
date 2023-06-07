@@ -257,7 +257,7 @@ pub struct CommandBuffer {
 }
 
 impl CommandBuffer {
-    pub unsafe fn raw(&mut self) -> vk::CommandBuffer {
+    pub unsafe fn raw(&self) -> vk::CommandBuffer {
         self.buffer
     }
 

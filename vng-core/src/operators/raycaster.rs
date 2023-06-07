@@ -8,13 +8,14 @@ use crate::{
     data::{from_linear, hmul, Vector},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{gpu::Allocation, DataVersionType},
+    task::OpaqueTaskContext,
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
         shader::ShaderDefines,
         state::{RessourceId, VulkanState},
-        DstBarrierInfo, SrcBarrierInfo,
+        CommandBuffer, DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -373,6 +374,87 @@ void main() {
     )
 }
 
+pub struct BrickRequestTable {
+    num_elements: usize,
+    allocation: Allocation,
+    layout: Layout,
+}
+
+impl BrickRequestTable {
+    // Note: a barrier is needed after initialization to make values visible
+    pub fn new(num_elements: usize, device: &DeviceContext) -> Self {
+        let request_table_buffer_layout = Layout::array::<u64>(num_elements).unwrap();
+        let flags = vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::STORAGE_BUFFER;
+        let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
+        let allocation =
+            device
+                .storage
+                .allocate(device, request_table_buffer_layout, flags, buf_type);
+
+        let ret = BrickRequestTable {
+            num_elements,
+            allocation,
+            layout: request_table_buffer_layout,
+        };
+
+        device.with_cmd_buffer(|cmd| ret.clear(cmd));
+
+        ret
+    }
+
+    // Note: a barrier is needed after clearing to make values visible
+    pub fn clear(&self, cmd: &mut CommandBuffer) {
+        unsafe {
+            cmd.functions().cmd_fill_buffer(
+                cmd.raw(),
+                self.allocation.buffer,
+                0,
+                vk::WHOLE_SIZE,
+                0xffffffff,
+            )
+        };
+    }
+
+    pub fn buffer(&self) -> &Allocation {
+        &self.allocation
+    }
+
+    // Note: any changes to the buffer have to be made visible to the cpu side via a barrier first
+    pub async fn download_requested<'cref, 'inv>(
+        &self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        device: &'cref DeviceContext,
+    ) -> Vec<u64> {
+        let mut request_table_cpu = vec![0u64; self.num_elements];
+        let request_table_cpu_bytes = bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
+        unsafe {
+            crate::vulkan::memory::copy_to_cpu(
+                ctx,
+                device,
+                self.allocation.buffer,
+                self.layout,
+                request_table_cpu_bytes.as_mut_ptr(),
+            )
+            .await
+        };
+
+        let to_request_linear = request_table_cpu
+            .into_iter()
+            .filter(|v| *v != u64::max_value())
+            .collect::<Vec<u64>>();
+
+        to_request_linear
+    }
+}
+
+impl VulkanState for BrickRequestTable {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        self.allocation.deinitialize(context);
+    }
+}
+
 pub fn raycast<'a>(
     input: VolumeOperator<'a>,
     entry_exit_points: VolumeOperator<'a>,
@@ -563,26 +645,7 @@ void main()
                     });
                 });
 
-                let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
-                let request_table_buffer = TempRessource::new(device, {
-                    let flags = vk::BufferUsageFlags::TRANSFER_SRC
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::STORAGE_BUFFER;
-                    let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-                    device
-                        .storage
-                        .allocate(device, request_table_buffer_layout, flags, buf_type)
-                });
-
-                device.with_cmd_buffer(|cmd| unsafe {
-                    device.functions().cmd_fill_buffer(
-                        cmd.raw(),
-                        request_table_buffer.buffer,
-                        0,
-                        vk::WHOLE_SIZE,
-                        0xffffffff,
-                    );
-                });
+                let request_table = TempRessource::new(device, BrickRequestTable::new(request_table_size, device));
 
                 ctx.submit(device.barrier(
                     SrcBarrierInfo {
@@ -616,7 +679,7 @@ void main()
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep,
-                            &brick_index, &*request_table_buffer, &state_initialized]);
+                            &brick_index, request_table.buffer(), &state_initialized]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -637,24 +700,8 @@ void main()
                     };
                     ctx.submit(device.barrier(src_info, dst_info)).await;
 
-                    let mut request_table_cpu = vec![0u64; request_table_size];
-                    let request_table_cpu_bytes =
-                        bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
-                    unsafe {
-                        crate::vulkan::memory::copy_to_cpu(
-                            *ctx,
-                            device,
-                            request_table_buffer.buffer,
-                            request_table_buffer_layout,
-                            request_table_cpu_bytes.as_mut_ptr(),
-                        )
-                        .await
-                    };
+                    let to_request_linear = request_table.download_requested(*ctx, device).await;
 
-                    let to_request_linear = request_table_cpu
-                        .into_iter()
-                        .filter(|v| *v != u64::max_value())
-                        .collect::<Vec<u64>>();
                     if to_request_linear.is_empty() {
                         break false;
                     }
@@ -673,15 +720,7 @@ void main()
                     });
                     let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        device.functions().cmd_fill_buffer(
-                            cmd.raw(),
-                            request_table_buffer.buffer,
-                            0,
-                            vk::WHOLE_SIZE,
-                            0xffffffff,
-                        );
-                    });
+                    device.with_cmd_buffer(|cmd| request_table.clear(cmd));
 
                     for (brick, brick_linear_pos) in requested_bricks
                         .into_iter()
