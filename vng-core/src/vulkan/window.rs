@@ -437,7 +437,10 @@ impl Window {
         ctx: &VulkanContext,
         target: &EventLoopWindowTarget<T>,
     ) -> Result<Self, crate::Error> {
-        let winit_win = WindowBuilder::new().build(&target).unwrap();
+        let winit_win = WindowBuilder::new()
+            .with_title("voreen-ng")
+            .build(&target)
+            .unwrap();
         let surface = create_surface(&ctx.entry, &ctx.instance, &winit_win);
         let (device, swap_chain_support) = ctx
             .device_contexts
