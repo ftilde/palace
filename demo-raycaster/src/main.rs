@@ -185,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .unwrap();
                 if version == DataVersionType::Final {
-                    control_flow.set_exit();
+                    //control_flow.set_exit();
                 }
             }
             _ => (),
