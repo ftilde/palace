@@ -405,8 +405,6 @@ impl<'a> BrickRequestTable<'a> {
             layout,
         };
 
-        device.with_cmd_buffer(|cmd| ret.clear(cmd));
-
         ret
     }
 
