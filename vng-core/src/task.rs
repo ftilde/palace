@@ -572,11 +572,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std43
             .storage
             .alloc_slot::<Output>(device, self.current_frame, id, size)
     }
-}
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output>
-    TaskContext<'cref, 'inv, ItemDescriptor, Output>
-{
     pub fn access_state_cache<'a>(
         &'a self,
         device: &'a DeviceContext,
