@@ -21,13 +21,6 @@ use crate::{
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
-//TODO NO_PUSH_main move
-impl VulkanState for vk::RenderPass {
-    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
-        unsafe { context.functions().destroy_render_pass(*self, None) };
-    }
-}
-
 pub fn entry_exit_points<'a>(
     input_metadata: ScalarOperator<'a, VolumeMetaData>,
     result_metadata: ScalarOperator<'a, ImageMetaData>,

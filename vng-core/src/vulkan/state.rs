@@ -89,3 +89,9 @@ impl VulkanState for vk::ImageView {
         unsafe { context.functions().destroy_image_view(*self, None) };
     }
 }
+
+impl VulkanState for vk::RenderPass {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        unsafe { context.functions().destroy_render_pass(*self, None) };
+    }
+}
