@@ -601,7 +601,9 @@ void main()
                 };
                 let m_out = full_info(im);
                 let out_info = m_out.chunk_info(pos);
-                let request_table_size = 32;
+
+                let request_table_size = 256;
+                let request_batch_size = 32;
 
                 let num_bricks = hmul(m_in.dimension_in_bricks());
 
@@ -661,7 +663,7 @@ void main()
                     .alloc_slot_gpu(device, pos, out_info.mem_elements())
                     .unwrap();
                 let mut it = 1;
-                let timed_out = loop {
+                let timed_out = 'outer: loop {
 
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
@@ -703,35 +705,39 @@ void main()
                         access: vk::AccessFlags2::TRANSFER_READ,
                     })).await;
 
-                    let to_request_linear = request_table.download_requested(*ctx, device).await;
+                    let mut to_request_linear = request_table.download_requested(*ctx, device).await;
 
                     if to_request_linear.is_empty() {
                         break false;
                     }
 
                     // Fulfill requests
-                    let to_request = to_request_linear.iter().map(|v| {
-                        assert!(*v < num_bricks as _);
-                        input.bricks.request_gpu(
-                            device.id,
-                            from_linear(*v as usize, dim_in_bricks),
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_READ,
-                            },
-                        )
-                    });
-                    let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+                    to_request_linear.sort_unstable();
 
-                    for (brick, brick_linear_pos) in requested_bricks
-                        .into_iter()
-                        .zip(to_request_linear.into_iter())
-                    {
-                        brick_index.insert(brick_linear_pos, brick);
-                    }
+                    for batch in to_request_linear.chunks(request_batch_size) {
+                        let to_request = batch.iter().map(|v| {
+                            assert!(*v < num_bricks as _);
+                            input.bricks.request_gpu(
+                                device.id,
+                                from_linear(*v as usize, dim_in_bricks),
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            )
+                        });
+                        let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-                    if ctx.past_deadline() {
-                        break true;
+                        for (brick, brick_linear_pos) in requested_bricks
+                            .into_iter()
+                            .zip(batch.into_iter())
+                        {
+                            brick_index.insert(*brick_linear_pos, brick);
+                        }
+
+                        if ctx.past_deadline() {
+                            break 'outer true;
+                        }
                     }
 
                     // Clear request table for the next iteration
