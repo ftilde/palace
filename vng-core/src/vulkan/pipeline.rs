@@ -176,9 +176,18 @@ impl GraphicsPipeline {
         let vertex_info = vertex_shader.collect_info(entry_point_name);
         let fragment_info = fragment_shader.collect_info(entry_point_name);
 
-        let push_const = vertex_info.push_const.or(fragment_info.push_const);
-        let push_constant_size = push_const.map(|i| i.size as usize);
-        let push_constant_ranges = push_const.as_ref().map(std::slice::from_ref).unwrap_or(&[]);
+        let push_consts = vertex_info
+            .push_const
+            .into_iter()
+            .chain(fragment_info.push_const.into_iter())
+            .collect::<Vec<_>>();
+        let push_constant_size = push_consts.first().map(|i| i.size as usize);
+        if let Some(push_constant_size) = push_constant_size {
+            for v in &push_consts {
+                assert_eq!(v.size, push_constant_size as u32);
+            }
+        }
+        let push_constant_ranges = &push_consts;
 
         let descriptor_bindings = vertex_info
             .descriptor_bindings

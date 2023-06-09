@@ -5,7 +5,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
-    data::{from_linear, hmul, Vector},
+    data::{from_linear, hmul},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::{gpu::Allocation, DataVersionType},
@@ -28,7 +28,7 @@ pub fn entry_exit_points<'a>(
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
-        size: cgmath::Vector2<u32>,
+        out_mem_dim: cgmath::Vector2<u32>,
     }
 
     const VERTEX_SHADER: &str = "
@@ -79,7 +79,7 @@ declare_push_consts(consts);
 void main() {
     uint n_channels = 8;
     uvec2 pos = uvec2(gl_FragCoord.xy);
-    uint linear_pos = n_channels * to_linear2(pos, consts.size);
+    uint linear_pos = n_channels * to_linear2(pos, consts.out_mem_dim);
 
     vec4 color = vec4(norm_pos, 1.0);
     if(gl_FrontFacing) {
@@ -118,6 +118,7 @@ void main() {
         },
         move |ctx, pos, (_m_in, result_metadata, projection_mat), _| {
             async move {
+                //TODO: Use spacing information of _m_in (or similar) here
                 let device = ctx.vulkan_device();
 
                 let dst_info = DstBarrierInfo {
@@ -309,11 +310,20 @@ void main() {
                     )
                     .clear_values(&[]);
 
+                // Setup the viewport such that only the content of the current tile is rendered
+                let offset = out_info.begin().drop_dim(2).map(|v| v.raw as f32);
+                let full_size = m_out.dimensions.drop_dim(2).map(|v| v.raw as f32);
+                let tile_size = out_info
+                    .logical_dimensions
+                    .drop_dim(2)
+                    .map(|v| v.raw as f32);
+                let scale_factor = full_size / tile_size;
+                let size = tile_size * scale_factor;
                 let viewport = vk::Viewport::builder()
-                    .x(0.0)
-                    .y(0.0)
-                    .width(width as _)
-                    .height(height as _)
+                    .x(-offset.x())
+                    .y(-offset.y())
+                    .width(size.x())
+                    .height(size.y())
                     .min_depth(0.0)
                     .max_depth(1.0);
 
@@ -322,7 +332,12 @@ void main() {
                     .extent(extent);
 
                 let push_constants = PushConstants {
-                    size: m_out.dimensions.drop_dim(2).try_into_elem().unwrap().into(),
+                    out_mem_dim: out_info
+                        .mem_dimensions
+                        .drop_dim(2)
+                        .try_into_elem()
+                        .unwrap()
+                        .into(),
                 };
                 let descriptor_config = DescriptorConfig::new([&transform_gpu, &gpu_brick_out]);
 
@@ -590,7 +605,7 @@ void main()
                 let (m_in, im, eep) = futures::join! {
                     ctx.submit(input.metadata.request_scalar()),
                     ctx.submit(entry_exit_points.metadata.request_scalar()),
-                    ctx.submit(entry_exit_points.bricks.request_gpu(device.id, Vector::fill(0.into()), dst_info)),
+                    ctx.submit(entry_exit_points.bricks.request_gpu(device.id, pos, dst_info)),
                 };
                 let m_out = full_info(im);
                 let out_info = m_out.chunk_info(pos);
@@ -611,7 +626,8 @@ void main()
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().push_const_block::<PushConstants>()
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
                                     .add("BRICK_MEM_SIZE", hmul(m_out.chunk_size))
                                     .add("NUM_BRICKS", num_bricks)
                                     .add("REQUEST_TABLE_SIZE", request_table_size),
@@ -640,7 +656,8 @@ void main()
                     });
                 });
 
-                let request_table = TempRessource::new(device, BrickRequestTable::new(request_table_size, device));
+                let request_table =
+                    TempRessource::new(device, BrickRequestTable::new(request_table_size, device));
 
                 let dim_in_bricks = m_in.dimension_in_bricks();
 
@@ -657,7 +674,6 @@ void main()
                     .unwrap();
                 let mut it = 1;
                 let timed_out = 'outer: loop {
-
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -671,14 +687,18 @@ void main()
                     ))
                     .await;
 
-
                     // Now first try a render pass to collect bricks to load (or just to finish the
                     // rendering
                     let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out, &eep,
-                            &brick_index, request_table.buffer(), &state_initialized]);
+                        let descriptor_config = DescriptorConfig::new([
+                            &gpu_brick_out,
+                            &eep,
+                            &brick_index,
+                            request_table.buffer(),
+                            &state_initialized,
+                        ]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -690,15 +710,20 @@ void main()
                     });
 
                     // Make requests visible
-                    ctx.submit(device.barrier(SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_WRITE,
-                    }, DstBarrierInfo {
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_READ,
-                    })).await;
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_READ,
+                        },
+                    ))
+                    .await;
 
-                    let mut to_request_linear = request_table.download_requested(*ctx, device).await;
+                    let mut to_request_linear =
+                        request_table.download_requested(*ctx, device).await;
 
                     if to_request_linear.is_empty() {
                         break false;
@@ -721,9 +746,8 @@ void main()
                         });
                         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-                        for (brick, brick_linear_pos) in requested_bricks
-                            .into_iter()
-                            .zip(batch.into_iter())
+                        for (brick, brick_linear_pos) in
+                            requested_bricks.into_iter().zip(batch.into_iter())
                         {
                             brick_index.insert(*brick_linear_pos, brick);
                         }

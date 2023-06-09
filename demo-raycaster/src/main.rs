@@ -6,6 +6,7 @@ use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
+use vng_core::operators::volume::ChunkSize;
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
@@ -246,7 +247,8 @@ fn eval_network(
 
     let md = ImageMetaData {
         dimensions: window.size(),
-        chunk_size: window.size().local(),
+        //chunk_size: window.size().local(),
+        chunk_size: Vector::fill(512.into()),
     };
 
     let perspective = cgmath::perspective(
@@ -263,6 +265,7 @@ fn eval_network(
         crate::operators::scalar::constant_as_array(matrix),
     );
     let frame = vng_core::operators::raycaster::raycast(scaled, eep);
+    let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor(Some(deadline));
