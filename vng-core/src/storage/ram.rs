@@ -560,7 +560,8 @@ impl Storage {
                 Err(_e) => {
                     // Always try to free half of available ram
                     // TODO: Other solutions may be better.
-                    let garbage_collect_goal = self.allocator.size() / 2;
+                    let garbage_collect_goal =
+                        self.allocator.size() / super::GARBAGE_COLLECT_GOAL_FRACTION as usize;
                     self.try_garbage_collect(garbage_collect_goal);
                     self.allocator.alloc(layout)?
                 }

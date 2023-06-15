@@ -779,7 +779,8 @@ impl Storage {
         match self.allocator.allocate(layout, use_flags, location) {
             Ok(a) => a,
             Err(_e) => {
-                let garbage_collect_goal = self.allocator.allocated() / 2;
+                let garbage_collect_goal =
+                    self.allocator.allocated() / super::GARBAGE_COLLECT_GOAL_FRACTION;
                 self.try_garbage_collect(device, garbage_collect_goal as _);
                 self.allocator
                     .allocate(layout, use_flags, location)
@@ -801,7 +802,8 @@ impl Storage {
         match self.allocator.allocate_image(create_desc) {
             Ok(a) => a,
             Err(_e) => {
-                let garbage_collect_goal = self.allocator.allocated() / 2;
+                let garbage_collect_goal =
+                    self.allocator.allocated() / super::GARBAGE_COLLECT_GOAL_FRACTION;
                 self.try_garbage_collect(device, garbage_collect_goal as _);
                 self.allocator
                     .allocate_image(create_desc)
