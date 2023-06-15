@@ -10,6 +10,7 @@ use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
+use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;
 //use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
@@ -170,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // this event rather than in MainEventsCleared, since rendering in here allows
                 // the program to gracefully handle redraws requested by the OS.
                 next_timeout = Instant::now() + Duration::from_millis(10);
-                eval_network(
+                let version = eval_network(
                     &mut runtime,
                     &mut window,
                     &*vol_state,
@@ -184,6 +185,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next_timeout,
                 )
                 .unwrap();
+                if version == DataVersionType::Final {
+                    //control_flow.set_exit();
+                }
             }
             _ => (),
         }
@@ -288,7 +292,7 @@ fn eval_network(
     offset: &mut f32,
     mut events: EventStream,
     deadline: Instant,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<DataVersionType, Box<dyn std::error::Error>> {
     events.act(|c| {
         c.chain(OnKeyPress(Key::Plus, || *slice_num += 1))
             .chain(OnKeyPress(Key::Minus, || *slice_num -= 1))
@@ -327,9 +331,10 @@ fn eval_network(
     let mut executor = c.executor(Some(deadline));
 
     let slice_ref = &frame;
-    executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
+    let version =
+        executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
     //let tasks_executed = executor.statistics().tasks_executed;
     //println!("Rendering done ({} tasks)", tasks_executed);
 
-    Ok(())
+    Ok(version)
 }
