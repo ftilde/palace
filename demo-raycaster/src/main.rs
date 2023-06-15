@@ -7,8 +7,8 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::ChunkSize;
+use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
-use vng_core::operators::{bin_ops, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;

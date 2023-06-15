@@ -23,11 +23,11 @@ use super::{
     volume::{ChunkSize, VolumeOperator},
 };
 
-pub fn linear_rescale<'op>(
-    input: VolumeOperator<'op>,
+pub fn linear_rescale<'op, const N: usize>(
+    input: TensorOperator<'op, N>,
     scale: ScalarOperator<'op, f32>,
     offset: ScalarOperator<'op, f32>,
-) -> VolumeOperator<'op> {
+) -> TensorOperator<'op, N> {
     const SHADER: &'static str = r#"
 #version 450
 

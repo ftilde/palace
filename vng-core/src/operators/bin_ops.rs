@@ -13,15 +13,13 @@ use crate::{
     },
 };
 
-use super::{tensor::TensorOperator, volume::VolumeOperator};
+use super::tensor::TensorOperator;
 
-//TODO: generalize for other dimensions. Nothing really needs 3D here
-
-fn bin_op<'op>(
-    input1: VolumeOperator<'op>,
-    input2: VolumeOperator<'op>,
+fn bin_op<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
     body: &'static str,
-) -> VolumeOperator<'op> {
+) -> TensorOperator<'op, N> {
     let shader = format!(
         "{}{}{}",
         r#"
@@ -154,22 +152,37 @@ void main()
     )
 }
 
-pub fn add<'op>(input1: VolumeOperator<'op>, input2: VolumeOperator<'op>) -> VolumeOperator<'op> {
+pub fn add<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
+) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = v1 + v2;")
 }
 
-pub fn sub<'op>(input1: VolumeOperator<'op>, input2: VolumeOperator<'op>) -> VolumeOperator<'op> {
+pub fn sub<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
+) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = v1 - v2;")
 }
 
-pub fn mul<'op>(input1: VolumeOperator<'op>, input2: VolumeOperator<'op>) -> VolumeOperator<'op> {
+pub fn mul<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
+) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = v1 * v2;")
 }
 
-pub fn min<'op>(input1: VolumeOperator<'op>, input2: VolumeOperator<'op>) -> VolumeOperator<'op> {
+pub fn min<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
+) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = min(v1, v2);")
 }
 
-pub fn max<'op>(input1: VolumeOperator<'op>, input2: VolumeOperator<'op>) -> VolumeOperator<'op> {
+pub fn max<'op, const N: usize>(
+    input1: TensorOperator<'op, N>,
+    input2: TensorOperator<'op, N>,
+) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = max(v1, v2);")
 }
