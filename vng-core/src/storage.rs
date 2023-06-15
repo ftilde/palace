@@ -21,6 +21,8 @@ pub enum VisibleDataLocation {
     VRam(DeviceId, DstBarrierInfo),
 }
 
+const GARBAGE_COLLECT_GOAL_FRACTION: u64 = 10;
+
 type LRUIndex = u64;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]

@@ -1,4 +1,5 @@
 pub mod array;
+pub mod chunk_utils;
 pub mod data;
 pub mod event;
 pub mod id;

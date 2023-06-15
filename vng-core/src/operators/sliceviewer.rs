@@ -5,6 +5,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
+    chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Vector},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
@@ -330,11 +331,8 @@ void main()
                     .get_index(*ctx, device, input.bricks.id(), num_bricks, dst_info)
                     .await;
 
-                //let load_factor = 3.0;
-                //let request_table_size = (((num_bricks as f32).powf(2.0 / 3.0) * load_factor)
-                //    .round() as usize)
-                //    .next_power_of_two();
-                let request_table_size = 32;
+                let request_table_size = 256;
+                let request_batch_size = 32;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -381,38 +379,8 @@ void main()
                     .unwrap()
                     .unpack();
 
-                let request_table_buffer_layout = Layout::array::<u64>(request_table_size).unwrap();
-                let request_table_buffer = TempRessource::new(device, {
-                    let flags = vk::BufferUsageFlags::TRANSFER_SRC
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::STORAGE_BUFFER;
-                    let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-                    device
-                        .storage
-                        .allocate(device, request_table_buffer_layout, flags, buf_type)
-                });
-
-                device.with_cmd_buffer(|cmd| unsafe {
-                    device.functions().cmd_fill_buffer(
-                        cmd.raw(),
-                        request_table_buffer.buffer,
-                        0,
-                        vk::WHOLE_SIZE,
-                        0xffffffff,
-                    );
-                });
-
-                ctx.submit(device.barrier(
-                    SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_WRITE,
-                    },
-                    DstBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                    },
-                ))
-                .await;
+                let request_table =
+                    TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
 
                 let dim_in_bricks = m_in.dimension_in_bricks();
                 let consts = PushConstants {
@@ -429,14 +397,29 @@ void main()
                 let chunk_size = m2d.chunk_size.raw();
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
-                let mut it = 0;
-                let timed_out = loop {
+                let mut it = 1;
+                let timed_out = 'outer: loop {
+                    // Make writes to the request table visible (including initialization)
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    ))
+                    .await;
+
+                    // Now first try a render pass to collect bricks to load (or just to finish the
+                    // rendering
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
                             &transform_gpu,
                             &brick_index,
-                            &*request_table_buffer,
+                            request_table.buffer(),
                             &state_initialized,
                             &state_values,
                         ]);
@@ -450,80 +433,57 @@ void main()
                         }
                     });
 
-                    let src_info = SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_WRITE,
-                    };
-                    let dst_info = DstBarrierInfo {
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_READ,
-                    };
-                    ctx.submit(device.barrier(src_info, dst_info)).await;
-
-                    let mut request_table_cpu = vec![0u64; request_table_size];
-                    let request_table_cpu_bytes =
-                        bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
-                    unsafe {
-                        crate::vulkan::memory::copy_to_cpu(
-                            *ctx,
-                            device,
-                            request_table_buffer.buffer,
-                            request_table_buffer_layout,
-                            request_table_cpu_bytes.as_mut_ptr(),
-                        )
-                        .await
-                    };
-
-                    let to_request_linear = request_table_cpu
-                        .into_iter()
-                        .filter(|v| *v != u64::max_value())
-                        .collect::<Vec<u64>>();
-                    if to_request_linear.is_empty() {
-                        break false;
-                    }
-                    if ctx.past_deadline() && it > 0 {
-                        // We need at least one iteration to make any kind of progress
-                        // TODO: Potentially remove once we have global volume page tables
-                        break true;
-                    }
-
-                    let to_request = to_request_linear.iter().map(|v| {
-                        input.bricks.request_gpu(
-                            device.id,
-                            from_linear(*v as usize, dim_in_bricks),
-                            dst_info,
-                        )
-                    });
-                    let requested_bricks = ctx.submit(ctx.group(to_request)).await;
-
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        device.functions().cmd_fill_buffer(
-                            cmd.raw(),
-                            request_table_buffer.buffer,
-                            0,
-                            vk::WHOLE_SIZE,
-                            0xffffffff,
-                        );
-                    });
-
-                    for (brick, brick_linear_pos) in requested_bricks
-                        .into_iter()
-                        .zip(to_request_linear.into_iter())
-                    {
-                        brick_index.insert(brick_linear_pos, brick);
-                    }
-
+                    // Make requests visible
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
                         },
                         DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_READ,
                         },
                     ))
                     .await;
+
+                    let mut to_request_linear =
+                        request_table.download_requested(*ctx, device).await;
+
+                    if to_request_linear.is_empty() {
+                        break false;
+                    }
+
+                    // Fulfill requests
+                    to_request_linear.sort_unstable();
+
+                    for batch in to_request_linear.chunks(request_batch_size) {
+                        let to_request = batch.iter().map(|v| {
+                            assert!(*v < num_bricks as _);
+                            input.bricks.request_gpu(
+                                device.id,
+                                from_linear(*v as usize, dim_in_bricks),
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            )
+                        });
+                        let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+
+                        for (brick, brick_linear_pos) in
+                            requested_bricks.into_iter().zip(batch.into_iter())
+                        {
+                            brick_index.insert(*brick_linear_pos, brick);
+                        }
+
+                        if ctx.past_deadline() {
+                            break 'outer true;
+                        }
+                    }
+
+                    // Clear request table for the next iteration
+                    device.with_cmd_buffer(|cmd| request_table.clear(cmd));
+
                     it += 1;
                 };
 

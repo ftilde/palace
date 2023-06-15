@@ -5,17 +5,17 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
+    chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
-    storage::{gpu::Allocation, DataVersionType},
-    task::OpaqueTaskContext,
+    storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
         shader::ShaderDefines,
-        state::{RessourceId, VulkanState},
-        CommandBuffer, DeviceContext, DstBarrierInfo, SrcBarrierInfo,
+        state::RessourceId,
+        DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -382,87 +382,6 @@ void main() {
     )
 }
 
-pub struct BrickRequestTable {
-    num_elements: usize,
-    allocation: Allocation,
-    layout: Layout,
-}
-
-impl BrickRequestTable {
-    // Note: a barrier is needed after initialization to make values visible
-    pub fn new(num_elements: usize, device: &DeviceContext) -> Self {
-        let request_table_buffer_layout = Layout::array::<u64>(num_elements).unwrap();
-        let flags = vk::BufferUsageFlags::TRANSFER_SRC
-            | vk::BufferUsageFlags::TRANSFER_DST
-            | vk::BufferUsageFlags::STORAGE_BUFFER;
-        let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-        let allocation =
-            device
-                .storage
-                .allocate(device, request_table_buffer_layout, flags, buf_type);
-
-        let ret = BrickRequestTable {
-            num_elements,
-            allocation,
-            layout: request_table_buffer_layout,
-        };
-
-        device.with_cmd_buffer(|cmd| ret.clear(cmd));
-
-        ret
-    }
-
-    // Note: a barrier is needed after clearing to make values visible
-    pub fn clear(&self, cmd: &mut CommandBuffer) {
-        unsafe {
-            cmd.functions().cmd_fill_buffer(
-                cmd.raw(),
-                self.allocation.buffer,
-                0,
-                vk::WHOLE_SIZE,
-                0xffffffff,
-            )
-        };
-    }
-
-    pub fn buffer(&self) -> &Allocation {
-        &self.allocation
-    }
-
-    // Note: any changes to the buffer have to be made visible to the cpu side via a barrier first
-    pub async fn download_requested<'cref, 'inv>(
-        &self,
-        ctx: OpaqueTaskContext<'cref, 'inv>,
-        device: &'cref DeviceContext,
-    ) -> Vec<u64> {
-        let mut request_table_cpu = vec![0u64; self.num_elements];
-        let request_table_cpu_bytes = bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
-        unsafe {
-            crate::vulkan::memory::copy_to_cpu(
-                ctx,
-                device,
-                self.allocation.buffer,
-                self.layout,
-                request_table_cpu_bytes.as_mut_ptr(),
-            )
-            .await
-        };
-
-        let to_request_linear = request_table_cpu
-            .into_iter()
-            .filter(|v| *v != u64::max_value())
-            .collect::<Vec<u64>>();
-
-        to_request_linear
-    }
-}
-
-impl VulkanState for BrickRequestTable {
-    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
-        self.allocation.deinitialize(context);
-    }
-}
-
 pub fn raycast<'a>(
     input: VolumeOperator<'a>,
     entry_exit_points: VolumeOperator<'a>,
@@ -657,7 +576,7 @@ void main()
                 });
 
                 let request_table =
-                    TempRessource::new(device, BrickRequestTable::new(request_table_size, device));
+                    TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
 
                 let dim_in_bricks = m_in.dimension_in_bricks();
 
@@ -672,6 +591,8 @@ void main()
                 let gpu_brick_out = ctx
                     .alloc_slot_gpu(device, pos, out_info.mem_elements())
                     .unwrap();
+                let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
                 let mut it = 1;
                 let timed_out = 'outer: loop {
                     // Make writes to the request table visible (including initialization)
@@ -689,8 +610,6 @@ void main()
 
                     // Now first try a render pass to collect bricks to load (or just to finish the
                     // rendering
-                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
-
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
