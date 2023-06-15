@@ -808,26 +808,21 @@ void main()
     )
 }
 
-pub struct VoxelRasterizerGLSL {
-    pub body: String,
-    pub metadata: VolumeMetaData,
-}
+pub fn rasterize_gpu<'a>(
+    body: &str,
+    metadata: ScalarOperator<'a, VolumeMetaData>,
+) -> VolumeOperator<'a> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        offset: cgmath::Vector3<u32>,
+        mem_dim: cgmath::Vector3<u32>,
+        logical_dim: cgmath::Vector3<u32>,
+        vol_dim: cgmath::Vector3<u32>,
+    }
 
-impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
-    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        #[derive(Copy, Clone, AsStd140, GlslStruct)]
-        struct PushConstants {
-            offset: cgmath::Vector3<u32>,
-            mem_dim: cgmath::Vector3<u32>,
-            logical_dim: cgmath::Vector3<u32>,
-            vol_dim: cgmath::Vector3<u32>,
-        }
-
-        let m = self.metadata;
-
-        let shader = format!(
-            "{}{}{}",
-            r#"
+    let shader = format!(
+        "{}{}{}",
+        r#"
 #version 450
 
 #include <util.glsl>
@@ -852,8 +847,8 @@ void main()
 
         if(all(lessThan(out_local, consts.logical_dim))) {
         "#,
-            self.body,
-            r#"
+        body,
+        r#"
         } else {
             result = NaN;
         }
@@ -862,79 +857,100 @@ void main()
     }
 }
 "#
-        );
+    );
 
-        TensorOperator::with_state(
-            OperatorId::new("rasterize_gpu")
-                .dependent_on(Id::hash(&shader))
-                .dependent_on(Id::hash(&m)),
-            (),
-            shader,
-            move |ctx, _, _| async move { ctx.write(m) }.into(),
-            move |ctx, positions, shader, _| {
-                async move {
-                    let device = ctx.vulkan_device();
+    TensorOperator::with_state(
+        OperatorId::new("rasterize_gpu")
+            .dependent_on(Id::hash(body))
+            .dependent_on(&metadata),
+        metadata.clone(),
+        (metadata, shader),
+        move |ctx, metadata, _| {
+            async move {
+                let m = ctx.submit(metadata.request_scalar()).await;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, (metadata, shader), _| {
+            async move {
+                let device = ctx.vulkan_device();
 
-                    let pipeline = device.request_state(
-                        RessourceId::new("pipeline")
-                            .of(ctx.current_op())
-                            .dependent_on(Id::hash(&m.chunk_size)),
-                        || {
-                            ComputePipeline::new(
-                                device,
-                                (
-                                    shader.as_str(),
-                                    ShaderDefines::new()
-                                        .push_const_block::<PushConstants>()
-                                        .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
-                                ),
-                                true,
-                            )
-                        },
-                    );
+                let m = ctx.submit(metadata.request_scalar()).await;
 
-                    for pos in positions {
-                        let brick_info = m.chunk_info(pos);
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(Id::hash(&m.chunk_size)),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                shader.as_str(),
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
+                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
+                            ),
+                            true,
+                        )
+                    },
+                );
 
-                        let gpu_brick_out =
-                            ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
-                        device.with_cmd_buffer(|cmd| {
-                            let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
+                for pos in positions {
+                    let brick_info = m.chunk_info(pos);
 
-                            let global_size = brick_info.mem_elements();
+                    let gpu_brick_out =
+                        ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
-                            unsafe {
-                                let mut pipeline = pipeline.bind(cmd);
-
-                                pipeline.push_constant(PushConstants {
-                                    offset: brick_info.begin.into_elem::<u32>().into(),
-                                    logical_dim: brick_info
-                                        .logical_dimensions
-                                        .into_elem::<u32>()
-                                        .into(),
-                                    mem_dim: m.chunk_size.into_elem::<u32>().into(),
-                                    vol_dim: m.dimensions.into_elem::<u32>().into(),
-                                });
-                                pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch(global_size);
-                            }
-                        });
+                        let global_size = brick_info.mem_elements();
 
                         unsafe {
-                            gpu_brick_out.initialized(
-                                *ctx,
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            )
-                        };
-                    }
+                            let mut pipeline = pipeline.bind(cmd);
 
-                    Ok(())
+                            pipeline.push_constant(PushConstants {
+                                offset: brick_info.begin.into_elem::<u32>().into(),
+                                logical_dim: brick_info
+                                    .logical_dimensions
+                                    .into_elem::<u32>()
+                                    .into(),
+                                mem_dim: m.chunk_size.into_elem::<u32>().into(),
+                                vol_dim: m.dimensions.into_elem::<u32>().into(),
+                            });
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch(global_size);
+                        }
+                    });
+
+                    unsafe {
+                        gpu_brick_out.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
+                    };
                 }
-                .into()
-            },
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
+pub struct VoxelRasterizerGLSL {
+    pub body: String,
+    pub metadata: VolumeMetaData,
+}
+
+impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
+    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
+        rasterize_gpu(
+            &self.body,
+            crate::operators::scalar::constant_hash(self.metadata),
         )
     }
 }
