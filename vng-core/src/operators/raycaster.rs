@@ -434,6 +434,8 @@ declare_push_consts(consts);
 
 void main()
 {
+    float step_size = 0.01; //In voxel coordinates, i.e. normalized to [0, 1]
+
     uvec2 out_pos = gl_GlobalInvocationID.xy;
     uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
     if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
@@ -456,9 +458,14 @@ void main()
             State state = state_cache.values[gID];
 
             uint sample_points = 100;
-            for(; state.iteration < sample_points; ++state.iteration) {
-                float a = float(state.iteration)/float(sample_points-1);
-                vec3 p = a * exit_point.xyz + (1-a) * entry_point.xyz;
+
+            vec3 start = entry_point.xyz;
+            vec3 end = exit_point.xyz;
+            float t_end = distance(start, end);
+            vec3 dir = normalize(end - start);
+
+            for(float t = 0.0; t <= t_end; t += step_size) {
+                vec3 p = start + t*dir;
 
                 uvec3 pos_voxel = uvec3(round(p * vec3(m_in.dimensions - uvec3(1))));
 
