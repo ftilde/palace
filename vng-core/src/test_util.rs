@@ -1,6 +1,9 @@
 use crate::{
-    data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
-    operators::volume::{rechunk, ChunkSize, VolumeOperator, VolumeOperatorState},
+    data::{from_linear, hmul, BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
+    operators::{
+        tensor::TensorOperator,
+        volume::{rechunk, ChunkSize, VolumeOperator, VolumeOperatorState},
+    },
     runtime::RunTime,
 };
 
@@ -29,6 +32,45 @@ pub fn compare_volume(
                 let mut comp = crate::data::chunk_mut(&mut comp, &info);
                 fill_expected(&mut comp);
                 assert_eq!(vol, comp);
+                Ok(())
+            }
+            .into()
+        })
+        .unwrap();
+}
+
+pub fn compare_tensor<'a, const N: usize>(
+    result: TensorOperator<'a, N>,
+    expected: TensorOperator<'a, N>,
+) {
+    let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
+
+    let mut c = runtime.context_anchor();
+    let mut executor = c.executor(None);
+
+    executor
+        .resolve(|ctx| {
+            let result = &result;
+            let expected = &expected;
+            async move {
+                let m = {
+                    let m_r = ctx.submit(result.metadata.request_scalar()).await;
+                    let m_e = ctx.submit(expected.metadata.request_scalar()).await;
+
+                    assert_eq!(m_r, m_e);
+
+                    m_r
+                };
+                let dib = m.dimension_in_bricks();
+                let n_chunks = hmul(dib);
+                for i in 0..n_chunks {
+                    let pos = from_linear(i, dib);
+
+                    let b_l = ctx.submit(result.bricks.request(pos)).await;
+                    let b_r = ctx.submit(expected.bricks.request(pos)).await;
+
+                    assert_eq!(&*b_l, &*b_r);
+                }
                 Ok(())
             }
             .into()

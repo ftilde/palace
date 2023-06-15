@@ -186,3 +186,64 @@ pub fn max<'op, const N: usize>(
 ) -> TensorOperator<'op, N> {
     bin_op(input1, input2, "res = max(v1, v2);")
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{operators::array::from_static, test_util::compare_tensor};
+
+    #[test]
+    fn test_add_gpu() {
+        let input1 = [1.0, 2.0, 3.0, 4.0];
+        let input2 = [0.0, 0.0, 7.0, -4.0];
+        let expected = [1.0, 2.0, 10.0, 0.0];
+
+        let output = add(from_static(&input1), from_static(&input2));
+
+        compare_tensor(output, from_static(&expected));
+    }
+
+    #[test]
+    fn test_sub_gpu() {
+        let input1 = [1.0, 2.0, 3.0, 4.0];
+        let input2 = [0.0, 0.0, 7.0, -4.0];
+        let expected = [1.0, 2.0, -4.0, 8.0];
+
+        let output = sub(from_static(&input1), from_static(&input2));
+
+        compare_tensor(output, from_static(&expected));
+    }
+
+    #[test]
+    fn test_mul_gpu() {
+        let input1 = [1.0, 2.0, 3.0, 4.0];
+        let input2 = [0.0, 0.0, 7.0, -4.0];
+        let expected = [0.0, 0.0, 21.0, -16.0];
+
+        let output = mul(from_static(&input1), from_static(&input2));
+
+        compare_tensor(output, from_static(&expected));
+    }
+
+    #[test]
+    fn test_min_gpu() {
+        let input1 = [1.0, 2.0, 3.0, 4.0];
+        let input2 = [0.0, 0.0, 7.0, -4.0];
+        let expected = [0.0, 0.0, 3.0, -4.0];
+
+        let output = min(from_static(&input1), from_static(&input2));
+
+        compare_tensor(output, from_static(&expected));
+    }
+
+    #[test]
+    fn test_max_gpu() {
+        let input1 = [1.0, 2.0, 3.0, 4.0];
+        let input2 = [0.0, 0.0, 7.0, -4.0];
+        let expected = [1.0, 2.0, 7.0, 4.0];
+
+        let output = max(from_static(&input1), from_static(&input2));
+
+        compare_tensor(output, from_static(&expected));
+    }
+}
