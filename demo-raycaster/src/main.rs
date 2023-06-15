@@ -7,8 +7,8 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::ChunkSize;
-use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
+use vng_core::operators::{bin_ops, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;
@@ -245,6 +245,21 @@ fn eval_network(
 
     let scaled = volume_gpu::linear_rescale(rechunked, (*scale).into(), (*offset).into());
 
+    let vol = scaled;
+
+    //let gen = volume_gpu::rasterize_gpu(
+    //    vol.metadata.clone(),
+    //    r#"{
+    //        vec3 cs = pos_normalized-vec3(0.5);
+    //        float d_sq = dot(cs, cs);
+    //        result = sqrt(d_sq);
+    //        //result = pos_normalized.x;
+    //        //vec3 c = abs(cs);
+    //        //result = min(min(c.x, c.y), c.z);
+    //    }"#,
+    //);
+    //let vol = bin_ops::sub(vol, gen);
+
     let md = ImageMetaData {
         dimensions: window.size(),
         //chunk_size: window.size().local(),
@@ -260,11 +275,11 @@ fn eval_network(
     let matrix =
         perspective * cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into());
     let eep = vng_core::operators::raycaster::entry_exit_points(
-        scaled.metadata.clone(),
+        vol.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_as_array(matrix),
     );
-    let frame = vng_core::operators::raycaster::raycast(scaled, eep);
+    let frame = vng_core::operators::raycaster::raycast(vol, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let mut c = runtime.context_anchor();

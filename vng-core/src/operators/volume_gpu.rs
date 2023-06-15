@@ -809,8 +809,8 @@ void main()
 }
 
 pub fn rasterize_gpu<'a>(
-    body: &str,
     metadata: ScalarOperator<'a, VolumeMetaData>,
+    body: &str,
 ) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -949,8 +949,8 @@ pub struct VoxelRasterizerGLSL {
 impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
     fn operate<'a>(&'a self) -> VolumeOperator<'a> {
         rasterize_gpu(
-            &self.body,
             crate::operators::scalar::constant_hash(self.metadata),
+            &self.body,
         )
     }
 }
