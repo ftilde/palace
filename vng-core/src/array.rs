@@ -95,20 +95,16 @@ impl ImageMetaData {
     }
 }
 
-#[allow(unused)]
-mod unused {
-    use super::*;
-    pub type ArrayMetaData = TensorMetaData<1>;
-    impl ArrayMetaData {
-        pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
-            let bp = self.dimension_in_bricks();
-            (0..bp[0].raw).into_iter().map(|x| Vector::from([x]))
-        }
-        pub fn as_image(&self) -> ImageMetaData {
-            ImageMetaData {
-                dimensions: [1.into(), self.dimensions[0]].into(),
-                chunk_size: [1.into(), self.chunk_size[0]].into(),
-            }
+pub type ArrayMetaData = TensorMetaData<1>;
+impl ArrayMetaData {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
+        let bp = self.dimension_in_bricks();
+        (0..bp[0].raw).into_iter().map(|x| Vector::from([x]))
+    }
+    pub fn as_image(&self) -> ImageMetaData {
+        ImageMetaData {
+            dimensions: [1.into(), self.dimensions[0]].into(),
+            chunk_size: [1.into(), self.chunk_size[0]].into(),
         }
     }
 }

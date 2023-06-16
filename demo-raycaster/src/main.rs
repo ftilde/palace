@@ -7,8 +7,8 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::ChunkSize;
-use vng_core::operators::volume_gpu;
 use vng_core::operators::{self, volume::VolumeOperatorState};
+use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;
@@ -127,6 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut up = [1.0, 1.0, 0.0].into();
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
+    let mut stddev = 1.0;
 
     let mut event_loop = winit::event_loop::EventLoop::new();
 
@@ -181,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut up,
                     &mut scale,
                     &mut offset,
+                    &mut stddev,
                     events.current_batch(),
                     next_timeout,
                 )
@@ -208,6 +210,7 @@ fn eval_network(
     up: &mut Vector<3, f32>,
     scale: &mut f32,
     offset: &mut f32,
+    stddev: &mut f32,
     mut events: EventStream,
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
@@ -216,6 +219,8 @@ fn eval_network(
             .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
             .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
+            .chain(OnKeyPress(Key::Plus, || *stddev *= 1.10))
+            .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
             //.chain(OnWheelMove(|delta, _| *fov -= delta))
             .chain(OnWheelMove(|delta, _| {
                 let look = *center - *eye;
@@ -241,9 +246,13 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let scaled = volume_gpu::linear_rescale(rechunked, (*scale).into(), (*offset).into());
+    let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
+    let after_kernel =
+        volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
+
+    let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
 
     let vol = scaled;
 
@@ -276,8 +285,8 @@ fn eval_network(
         perspective * cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into());
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.metadata.clone(),
-        crate::operators::scalar::constant_hash(md),
-        crate::operators::scalar::constant_as_array(matrix),
+        scalar::constant_hash(md),
+        scalar::constant_as_array(matrix),
     );
     let frame = vng_core::operators::raycaster::raycast(vol, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));

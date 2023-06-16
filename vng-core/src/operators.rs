@@ -1,5 +1,6 @@
 pub mod array;
 pub mod bin_ops;
+pub mod kernels;
 pub mod png_writer;
 pub mod rasterize_function;
 pub mod raw;
