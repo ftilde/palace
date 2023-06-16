@@ -215,8 +215,8 @@ fn eval_network(
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
     events.act(|c| {
-        c.chain(OnKeyPress(Key::Key1, || *scale += 0.01))
-            .chain(OnKeyPress(Key::Key2, || *scale -= 0.01))
+        c.chain(OnKeyPress(Key::Key1, || *scale *= 1.10))
+            .chain(OnKeyPress(Key::Key2, || *scale /= 1.10))
             .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
             .chain(OnKeyPress(Key::Plus, || *stddev *= 1.10))
@@ -248,9 +248,10 @@ fn eval_network(
 
     let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
-    let after_kernel =
-        volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
+    //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
+    //let after_kernel =
+    //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
+    let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
 
     let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
 

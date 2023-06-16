@@ -1,0 +1,187 @@
+use ash::vk;
+use futures::StreamExt;
+
+use crate::data::hmul;
+use crate::operator::OperatorId;
+use crate::operators::array::ArrayOperator;
+use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
+use crate::vulkan::shader::ShaderDefines;
+use crate::vulkan::state::RessourceId;
+use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
+
+use super::{kernels::*, volume_gpu};
+use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
+
+pub fn vesselness<'a>(
+    input: VolumeOperator<'a>,
+    scale: ScalarOperator<'a, f32>,
+) -> VolumeOperator<'a> {
+    const SHADER: &'static str = r#"
+#version 450
+
+#include <eigenvalues.glsl>
+#include <vesselness.glsl>
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputBufferXX{
+    float values[BRICK_MEM_SIZE];
+} b_xx;
+
+layout(std430, binding = 1) readonly buffer InputBufferXY{
+    float values[BRICK_MEM_SIZE];
+} b_xy;
+
+layout(std430, binding = 2) readonly buffer InputBufferXZ{
+    float values[BRICK_MEM_SIZE];
+} b_xz;
+
+layout(std430, binding = 3) readonly buffer InputBufferYY{
+    float values[BRICK_MEM_SIZE];
+} b_yy;
+
+layout(std430, binding = 4) readonly buffer InputBufferYZ{
+    float values[BRICK_MEM_SIZE];
+} b_yz;
+
+layout(std430, binding = 5) readonly buffer InputBufferZZ{
+    float values[BRICK_MEM_SIZE];
+} b_zz;
+
+layout(std430, binding = 6) buffer OutputBuffer{
+    float values[BRICK_MEM_SIZE];
+} outputData;
+
+//declare_push_consts(consts);
+
+void main() {
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < BRICK_MEM_SIZE) {
+
+        SymMat3 m;
+        m.xx = b_xx.values[gID];
+        m.xy = b_xy.values[gID];
+        m.xz = b_xz.values[gID];
+        m.yy = b_yy.values[gID];
+        m.yz = b_yz.values[gID];
+        m.zz = b_zz.values[gID];
+
+        float l1, l2, l3;
+        eigenvalues(m, l1, l2, l3);
+
+        float vesselness = sato_vesselness(l1, l2, l3, 0.5 /* = 2*0.5*0.5 */, 8.0 /* = 2*2*2 */);
+
+        outputData.values[gID] = vesselness;
+    }
+}
+"#;
+
+    type Conv<'b> = fn(ScalarOperator<'b, f32>) -> ArrayOperator<'b>;
+
+    let g = |f1: Conv<'a>, f2: Conv<'a>, f3: Conv<'a>| {
+        volume_gpu::separable_convolution(
+            input.clone(),
+            [f1(scale.clone()), f2(scale.clone()), f3(scale.clone())],
+        )
+    };
+
+    let xx = g(gauss, gauss, ddgauss_dxdx);
+    let xy = g(gauss, dgauss_dx, dgauss_dx);
+    let xz = g(dgauss_dx, gauss, dgauss_dx);
+    let yy = g(gauss, ddgauss_dxdx, gauss);
+    let yz = g(dgauss_dx, dgauss_dx, gauss);
+    let zz = g(ddgauss_dxdx, gauss, gauss);
+
+    TensorOperator::with_state(
+        OperatorId::new("vesselness")
+            .dependent_on(&input)
+            .dependent_on(&scale),
+        input.clone(),
+        (input, [xx, xy, xz, yy, yz, zz]),
+        move |ctx, input, _| {
+            async move {
+                let m = ctx.submit(input.metadata.request_scalar()).await;
+                ctx.write(m)
+            }
+            .into()
+        },
+        move |ctx, positions, (input, hessian), _| {
+            async move {
+                let device = ctx.vulkan_device();
+
+                let m = ctx.submit(input.metadata.request_scalar()).await;
+
+                let requests = positions.into_iter().map(|pos| {
+                    let hessian_bricks = ctx.group(hessian.into_iter().map(|entry| {
+                        entry.bricks.request_gpu(
+                            device.id,
+                            pos,
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        )
+                    }));
+
+                    (hessian_bricks, pos)
+                });
+
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new().add("BRICK_MEM_SIZE", hmul(m.chunk_size)), //.push_const_block::<PushConstants>(),
+                            ),
+                            true,
+                        )
+                    });
+
+                let mut stream = ctx.submit_unordered_with_data(requests);
+                while let Some((hessian_bricks, pos)) = stream.next().await {
+                    let out_info = m.chunk_info(pos);
+
+                    let global_size = hmul(out_info.mem_dimensions);
+
+                    let gpu_brick_out = ctx
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                        .unwrap();
+
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([
+                            &hessian_bricks[0],
+                            &hessian_bricks[1],
+                            &hessian_bricks[2],
+                            &hessian_bricks[3],
+                            &hessian_bricks[4],
+                            &hessian_bricks[5],
+                            &gpu_brick_out,
+                        ]);
+
+                        unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
+
+                            //pipeline.push_constant(consts);
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch(global_size);
+                        }
+                    });
+
+                    unsafe {
+                        gpu_brick_out.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
+                    };
+                }
+                Ok(())
+            }
+            .into()
+        },
+    )
+}

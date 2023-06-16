@@ -26,4 +26,11 @@ uvec3 from_linear3(uint linear_pos, uvec3 size) {
     return vec_pos;
 }
 
+void swap(inout float v1, inout float v2) {
+    float tmp = v1;
+    v1 = v2;
+    v2 = tmp;
+}
+
+
 #define NaN (intBitsToFloat(int(0xFFC00000u)));

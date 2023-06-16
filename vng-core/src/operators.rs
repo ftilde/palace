@@ -9,5 +9,6 @@ pub mod scalar;
 pub mod sliceviewer;
 pub mod splitter;
 pub mod tensor;
+pub mod vesselness;
 pub mod volume;
 pub mod volume_gpu;
