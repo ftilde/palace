@@ -229,6 +229,10 @@ declare_push_consts(consts);
 #define INIT_VAL 1
 #define INIT_EMPTY 2
 
+vec4 map_to_color(float v) {
+    return vec4(v, v, v, 1.0);
+}
+
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
@@ -239,7 +243,7 @@ void main()
         vec4 val;
         if(s == INIT_VAL) {
             float v = brick_values.values[gID];
-            val = vec4(v, v, v, 1.0);
+            val = map_to_color(v);
         } else if(s == INIT_EMPTY) {
             val = vec4(0.0, 0.0, 1.0, 0.0);
         } else {
@@ -264,7 +268,7 @@ void main()
                     uvec3 local = sample_pos - brick_begin;
                     uint local_index = to_linear3(local, consts.chunk_dim);
                     float v = brick.values[local_index];
-                    val = vec4(v, v, v, 1.0);
+                    val = map_to_color(v);
 
                     state.values[gID] = INIT_VAL;
                     brick_values.values[gID] = v;
