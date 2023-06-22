@@ -12,6 +12,48 @@ use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 use super::{kernels::*, volume_gpu};
 use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
 
+pub fn multiscale_vesselness<'a>(
+    input: VolumeOperator<'a>,
+    min_scale: ScalarOperator<'a, f32>,
+    max_scale: ScalarOperator<'a, f32>,
+    num_steps: usize,
+) -> VolumeOperator<'a> {
+    assert!(num_steps > 0);
+    if num_steps == 1 {
+        return vesselness(input.clone(), min_scale.clone());
+    }
+
+    let mut out = vesselness(input.clone(), min_scale.clone());
+
+    let scales = min_scale.clone().zip(max_scale.clone());
+
+    let num_reductions = num_steps - 1;
+    for step in 1..num_steps {
+        let alpha = step as f32 / num_reductions as f32;
+
+        let step_scale = scales.clone().map(alpha, |(min, max), alpha| {
+            let min_log = min.ln();
+            let max_log = max.ln();
+
+            let inter_log = min_log * (1.0 - alpha) + max_log * alpha;
+
+            let scale = inter_log.exp();
+            eprintln!("scale: {}", scale);
+            scale
+        });
+
+        let vesselness = vesselness(input.clone(), step_scale.clone());
+        let step_vesselness = crate::operators::volume_gpu::linear_rescale(
+            vesselness,
+            step_scale.map((), |v, _| v * v),
+            crate::operators::scalar::constant_pod(0.0),
+        );
+        out = crate::operators::bin_ops::max(out, step_vesselness);
+    }
+
+    out
+}
+
 pub fn vesselness<'a>(
     input: VolumeOperator<'a>,
     scale: ScalarOperator<'a, f32>,

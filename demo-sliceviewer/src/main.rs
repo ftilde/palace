@@ -127,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut slice_zoom_level = 1.0;
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
-    let mut stddev: f32 = 1.0;
+    let mut stddev: f32 = 5.0;
 
     let mut event_loop = EventLoop::new();
 
@@ -314,7 +314,13 @@ fn eval_network(
 
     let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+    let after_kernel = operators::vesselness::multiscale_vesselness(
+        vol,
+        scalar::constant_pod(3.0),
+        scalar::constant_pod(*stddev),
+        3,
+    );
+    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
     let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
 
     let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
