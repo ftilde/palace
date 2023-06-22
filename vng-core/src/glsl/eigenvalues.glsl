@@ -9,9 +9,8 @@ struct SymMat3 {
     float zz;
 };
 
-//TODO: not sure if we need double precision here
-#define complex dvec2
-#define scalar double
+#define complex vec2
+#define scalar float
 
 complex c_mul(complex a, complex b) {
     return complex(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x);
@@ -43,23 +42,27 @@ complex c_pow(complex a, float n) {
 }
 
 void eigenvalues_impl(float xx, float xy, float xz, float yy, float yz, float zz, out float l1, out float l2, out float l3) {
-    // Set up characteristic equation:   det( A - lambda I ) = 0
-    //    as a cubic in lambda:  a.lambda^3 + b.lambda^2 + c.lambda + d = 0
-    complex a = complex(-1.0);                // -1
-    complex b = complex(xx + yy + zz);        // trace
-    complex c = complex(yz * yz - yy * zz     // -sum of diagonal minors
+    // Set up characteristic polynomial:   det( A - lambda I ) = 0
+    // The coefficients are:
+    // a = -1
+    // b = the trace
+    // c = -sum of diagonal minors
+    // d = the negative determinant
+    complex b = complex(xx + yy + zz);
+    complex c = complex(yz * yz - yy * zz
                       + xz * xz - zz * xx
                       + xy * xy - xx * yy);
     complex d = complex(xx*yy*zz + 2*xy*yz*xz - xx*yz*yz - yy*xz*xz - zz*xy*xy);
 
-    // Solve cubic by Cardano's method (easier in complex numbers!)
-    complex p = c_div(c_mul(b, b) - 3.0 * c_mul(a, c), 9.0 * c_mul(a, a));
-    complex q = c_div(9.0 * c_mul3(a, b, c) - 27.0 * c_mul3(a, a, d) - 2.0 * c_mul3(b, b, b), 54.0 * c_mul3(a, a, a));
+    // Solve cubic by Cardano's method (a is already factored into the
+    // equations below as a constant).
+    complex p = (c_mul(b, b) + 3.0 * c) / 9.0;
+    complex q = (-9.0 * c_mul(b, c) - 27.0 * d - 2.0 * c_mul3(b, b, b)) / -54.0;
     complex delta = c_mul(q, q) - c_mul3(p, p, p);
     complex deltaSqrt = c_sqrt(delta);
     complex g1 = c_pow(q + deltaSqrt, 1.0 / 3.0);
     complex g2 = c_pow(q - deltaSqrt, 1.0 / 3.0);
-    complex offset = c_div(-b, 3.0 * a);
+    complex offset = b / 3.0;
     complex omega = complex(-0.5, 0.5 * sqrt( 3.0 ));
     complex omega2 = c_mul(omega, omega);
 
