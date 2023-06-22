@@ -9,6 +9,7 @@ uint hash(uint64_t k) {
     return uint(k);
 }
 
+
 #define MAX_TRIES 5
 #define EMPTY 0xffffffffffffffffUL
 #define try_insert_into_hash_table(table, size_expr, value_expr) {\
