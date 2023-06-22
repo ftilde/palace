@@ -10,7 +10,8 @@ struct SymMat3 {
 };
 
 //TODO: not sure if we need double precision here
-#define complex vec2
+#define complex dvec2
+#define scalar double
 
 complex c_mul(complex a, complex b) {
     return complex(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x);
@@ -24,18 +25,18 @@ complex c_div(complex a, complex b) {
 }
 
 complex c_sqrt(complex a) {
-    float l = length(a);
-    float real = sqrt(0.5*(l+a.x));
-    float imag = sqrt(0.5*(l-a.x));
+    scalar l = length(a);
+    scalar real = sqrt(0.5*(l+a.x));
+    scalar imag = sqrt(0.5*(l-a.x));
     if (a.y < 0.0) {
         imag = -imag;
     }
     return complex(real, imag);
 }
 
-vec2 c_pow(complex a, float n) {
-    float angle = atan(a.y, a.x);
-    float r = length(a);
+complex c_pow(complex a, float n) {
+    float angle = atan(float(a.y), float(a.x));
+    float r = float(length(a));
     float real = pow(r, n) * cos(n*angle);
     float imag = pow(r, n) * sin(n*angle);
     return complex(real, imag);
@@ -66,9 +67,9 @@ void eigenvalues_impl(float xx, float xy, float xz, float yy, float yz, float zz
     complex cl2 = c_mul(g1, omega)  + c_mul(g2, omega2) + offset;
     complex cl3 = c_mul(g1, omega2) + c_mul(g2, omega)  + offset;
 
-    l1=cl1.x;
-    l2=cl2.x;
-    l3=cl3.x;
+    l1=float(cl1.x);
+    l2=float(cl2.x);
+    l3=float(cl3.x);
 }
 
 void eigenvalues(SymMat3 m, out float l1, out float l2, out float l3) {
