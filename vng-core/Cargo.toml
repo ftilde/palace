@@ -32,3 +32,4 @@ cgmath = { version="0.18.0" }
 winit = "0.28"
 winapi = "0.3.9"
 im-rc = "15.1"
+egui = "0.22"

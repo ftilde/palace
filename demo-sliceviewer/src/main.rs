@@ -327,17 +327,17 @@ fn eval_network(
 
     let (events_l, events_r) = splitter.split_events(&mut events);
 
-    let frame = splitter.operate(
-        slice_viewer_z(
-            scaled.clone(),
-            splitter.metadata_l(),
-            slice_num,
-            slice_offset,
-            slice_zoom_level,
-            events_l,
-        ),
-        slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r),
+    let left = slice_viewer_z(
+        scaled.clone(),
+        splitter.metadata_l(),
+        slice_num,
+        slice_offset,
+        slice_zoom_level,
+        events_l,
     );
+    let left = crate::operators::gui::gui(left);
+    let right = slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r);
+    let frame = splitter.operate(left, right);
 
     let mut c = runtime.context_anchor();
     let mut executor = c.executor(Some(deadline));
