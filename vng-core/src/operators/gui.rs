@@ -1,5 +1,8 @@
+use std::ffi::c_void;
+
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use crevice::{glsl::GlslStruct, std140::AsStd140, std430::AsStd430};
+use egui::Rect;
 
 use crate::{
     data::Vector,
@@ -19,23 +22,44 @@ use super::volume::VolumeOperator;
 pub fn gui<'a>(input: VolumeOperator<'a>) -> VolumeOperator<'a> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
-        out_mem_dim: cgmath::Vector2<u32>,
+        frame_size: cgmath::Vector2<u32>,
+    }
+
+    #[derive(Debug, Copy, Clone, AsStd430, GlslStruct)]
+    #[repr(C)]
+    struct Vertex {
+        pos: cgmath::Vector2<f32>,
+        uv: cgmath::Vector2<f32>,
+        color: cgmath::Vector4<f32>,
     }
 
     const VERTEX_SHADER: &str = "
 #version 450
 
-vec2 positions[3] = vec2[](
-    vec2(-1.0, 0.0),
-    vec2(1.0, 1.0),
-    vec2(0.0, 0.0)
-);
+struct Vertex {
+    vec2 pos;
+    vec2 uv;
+    vec4 color;
+};
 
-layout(location = 0) out vec2 norm_pos;
+layout(std430, binding = 1) buffer VertexBuffer{
+    Vertex values[];
+} vertices;
+
+layout(std430, binding = 2) buffer IndexBuffer{
+    uint values[];
+} indices;
+
+layout(location = 0) out vec4 color;
+
+declare_push_consts(consts);
 
 void main() {
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-    norm_pos = positions[gl_VertexIndex];
+    uint index = indices.values[gl_VertexIndex];
+    Vertex vert = vertices.values[index];
+    vec2 pos = 2.0 * vert.pos / consts.frame_size - vec2(1.0);
+    gl_Position = vec4(pos, 0.0, 1.0);
+    color = vert.color;
 }
 ";
 
@@ -48,16 +72,15 @@ layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
 
-layout(location = 0) in vec2 norm_pos;
+layout(location = 0) in vec4 color;
 
 declare_push_consts(consts);
 
 void main() {
     uint n_channels = 4;
     uvec2 pos = uvec2(gl_FragCoord.xy);
-    uint linear_pos = n_channels * to_linear2(pos, consts.out_mem_dim);
+    uint linear_pos = n_channels * to_linear2(pos, consts.frame_size);
 
-    vec4 color = vec4(norm_pos, 0.0, 1.0);
     for(int c=0; c<4; ++c) {
         outputData.values[linear_pos + c] = color[c];
     }
@@ -116,7 +139,10 @@ void main() {
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                         GraphicsPipeline::new(
                             device,
-                            VERTEX_SHADER,
+                            (
+                                VERTEX_SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
                             (
                                 FRAG_SHADER,
                                 ShaderDefines::new()
@@ -135,7 +161,7 @@ void main() {
                                 let input_assembly_info =
                                     vk::PipelineInputAssemblyStateCreateInfo::builder()
                                         .primitive_restart_enable(false)
-                                        .topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
+                                        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
                                 let viewport_state_info =
                                     vk::PipelineViewportStateCreateInfo::builder()
@@ -149,7 +175,7 @@ void main() {
                                         .polygon_mode(vk::PolygonMode::FILL)
                                         .line_width(1.0)
                                         .cull_mode(vk::CullModeFlags::NONE)
-                                        .front_face(vk::FrontFace::CLOCKWISE)
+                                        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                                         .depth_bias_enable(false);
 
                                 let multi_sampling_info =
@@ -276,20 +302,12 @@ void main() {
                     )
                     .clear_values(&[]);
 
-                // Setup the viewport such that only the content of the current tile is rendered
-                let offset = out_info.begin().drop_dim(2).map(|v| v.raw as f32);
-                let full_size = m_out.dimensions.drop_dim(2).map(|v| v.raw as f32);
-                let tile_size = out_info
-                    .logical_dimensions
-                    .drop_dim(2)
-                    .map(|v| v.raw as f32);
-                let scale_factor = full_size / tile_size;
-                let size = tile_size * scale_factor;
+                let size2d = m_out.dimensions.drop_dim(2).raw();
                 let viewport = vk::Viewport::builder()
-                    .x(-offset.x())
-                    .y(-offset.y())
-                    .width(size.x())
-                    .height(size.y())
+                    .x(0.0)
+                    .y(0.0)
+                    .width(size2d.x() as f32)
+                    .height(size2d.y() as f32)
                     .min_depth(0.0)
                     .max_depth(1.0);
 
@@ -298,38 +316,158 @@ void main() {
                     .extent(extent);
 
                 let push_constants = PushConstants {
-                    out_mem_dim: out_info
+                    frame_size: out_info
                         .mem_dimensions
                         .drop_dim(2)
                         .try_into_elem()
                         .unwrap()
                         .into(),
                 };
-                let descriptor_config = DescriptorConfig::new([gpu_brick_out]);
 
-                device.with_cmd_buffer(|cmd| unsafe {
-                    let mut pipeline = pipeline.bind(cmd);
+                let raw_input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        Default::default(),
+                        egui::Vec2 {
+                            x: size2d.x() as f32,
+                            y: size2d.y() as f32,
+                        },
+                    )),
+                    pixels_per_point: Some(1.0),
+                    max_texture_side: None,
+                    time: None,               //TODO: specify
+                    predicted_dt: 1.0 / 60.0, //TODO: specify
+                    modifiers: egui::Modifiers::NONE,
+                    events: Vec::new(),
+                    hovered_files: Vec::new(),
+                    dropped_files: Vec::new(),
+                    focused: true,
+                };
 
-                    device.functions().cmd_begin_render_pass(
-                        pipeline.cmd().raw(),
-                        &render_pass_info,
-                        vk::SubpassContents::INLINE,
-                    );
-                    device
-                        .functions()
-                        .cmd_set_viewport(pipeline.cmd().raw(), 0, &[*viewport]);
-                    device
-                        .functions()
-                        .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
+                let egui_ctx = egui::Context::default();
 
-                    pipeline.push_descriptor_set(0, descriptor_config);
-
-                    pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::FRAGMENT);
-
-                    device.functions().cmd_draw(cmd.raw(), 3, 1, 0, 0);
-
-                    device.functions().cmd_end_render_pass(cmd.raw());
+                let mut counter = 0;
+                let full_output = egui_ctx.run(raw_input, |ctx| {
+                    egui::CentralPanel::default().show(&ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("-").clicked() {
+                                counter -= 1;
+                            }
+                            ui.label(counter.to_string());
+                            if ui.button("+").clicked() {
+                                counter += 1;
+                            }
+                        });
+                    });
                 });
+                let clipped_primitives = egui_ctx.tessellate(full_output.shapes);
+
+                for primitive in clipped_primitives {
+                    let mesh = match primitive.primitive {
+                        egui::epaint::Primitive::Mesh(m) => m,
+                        egui::epaint::Primitive::Callback(_) => {
+                            panic!("egui callback not supported")
+                        }
+                    };
+
+                    let indices = mesh.indices;
+                    let vertices = mesh
+                        .vertices
+                        .into_iter()
+                        .map(|v| Vertex {
+                            pos: cgmath::Vector2 {
+                                x: v.pos.x,
+                                y: v.pos.y,
+                            },
+                            color: cgmath::Vector4 {
+                                x: v.color.r() as f32 / 255.0,
+                                y: v.color.g() as f32 / 255.0,
+                                z: v.color.b() as f32 / 255.0,
+                                w: v.color.a() as f32 / 255.0,
+                            },
+                            uv: cgmath::Vector2 {
+                                x: v.uv.x,
+                                y: v.uv.y,
+                            },
+                        })
+                        .collect::<Vec<_>>();
+
+                    println!("{:?}", vertices);
+
+                    let vertex_buf_layout =
+                        std::alloc::Layout::array::<Vertex>(vertices.len()).unwrap();
+                    let index_buf_layout = std::alloc::Layout::array::<u32>(indices.len()).unwrap();
+
+                    let flags = vk::BufferUsageFlags::TRANSFER_SRC
+                        | vk::BufferUsageFlags::TRANSFER_DST
+                        | vk::BufferUsageFlags::STORAGE_BUFFER;
+                    let buf_type = gpu_allocator::MemoryLocation::CpuToGpu;
+
+                    let vertex_buffer = TempRessource::new(
+                        device,
+                        device
+                            .storage
+                            .allocate(device, vertex_buf_layout, flags, buf_type),
+                    );
+                    let index_buffer = TempRessource::new(
+                        device,
+                        device
+                            .storage
+                            .allocate(device, index_buf_layout, flags, buf_type),
+                    );
+
+                    for (out, in_, layout) in [
+                        (
+                            &vertex_buffer,
+                            vertices.as_ptr() as *const c_void,
+                            vertex_buf_layout,
+                        ),
+                        (
+                            &index_buffer,
+                            indices.as_ptr() as *const c_void,
+                            index_buf_layout,
+                        ),
+                    ] {
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                in_,
+                                out.mapped_ptr().unwrap().as_ptr(),
+                                layout.size(),
+                            )
+                        }
+                    }
+
+                    let descriptor_config =
+                        DescriptorConfig::new([gpu_brick_out, &*vertex_buffer, &*index_buffer]);
+
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        let mut pipeline = pipeline.bind(cmd);
+
+                        device.functions().cmd_begin_render_pass(
+                            pipeline.cmd().raw(),
+                            &render_pass_info,
+                            vk::SubpassContents::INLINE,
+                        );
+                        device
+                            .functions()
+                            .cmd_set_viewport(pipeline.cmd().raw(), 0, &[*viewport]);
+                        device
+                            .functions()
+                            .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
+
+                        pipeline.push_descriptor_set(0, descriptor_config);
+
+                        pipeline.push_constant_at(
+                            push_constants,
+                            vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::VERTEX,
+                        );
+
+                        device
+                            .functions()
+                            .cmd_draw(cmd.raw(), indices.len() as _, 1, 0, 0);
+
+                        device.functions().cmd_end_render_pass(cmd.raw());
+                    });
+                }
 
                 unsafe {
                     inplace_result.initialized(
