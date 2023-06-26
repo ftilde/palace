@@ -9,11 +9,8 @@ use crate::{
     operator::OperatorId,
     operators::tensor::TensorOperator,
     vulkan::{
-        memory::TempRessource,
-        pipeline::{DescriptorConfig, GraphicsPipeline},
-        shader::ShaderDefines,
-        state::RessourceId,
-        DstBarrierInfo, SrcBarrierInfo,
+        memory::TempRessource, pipeline::GraphicsPipeline, shader::ShaderDefines,
+        state::RessourceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -48,22 +45,11 @@ void main() {
 
 #include <util.glsl>
 
-layout(std430, binding = 0) buffer OutputBuffer{
-    float values[BRICK_MEM_SIZE];
-} outputData;
-
 layout(location = 0) in vec4 color;
-
-declare_push_consts(consts);
+layout(location = 0) out vec4 out_color;
 
 void main() {
-    uint n_channels = 4;
-    uvec2 pos = uvec2(gl_FragCoord.xy);
-    uint linear_pos = n_channels * to_linear2(pos, consts.frame_size);
-
-    for(int c=0; c<4; ++c) {
-        outputData.values[linear_pos + c] = color[c];
-    }
+    out_color = vec4(color.rgb, color.a*0.8); //NO_PUSH_main
 }
 ";
     TensorOperator::unbatched(
@@ -85,12 +71,30 @@ void main() {
                 let m_out = ctx.submit(input.metadata.request_scalar()).await;
                 let out_info = m_out.chunk_info(pos);
 
+                let format = vk::Format::R32G32B32A32_SFLOAT;
+
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),
                     || {
+                        let color_attachment = vk::AttachmentDescription::builder()
+                            .format(format)
+                            .samples(vk::SampleCountFlags::TYPE_1)
+                            .load_op(vk::AttachmentLoadOp::LOAD)
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                            .initial_layout(vk::ImageLayout::GENERAL)
+                            .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+
+                        let color_attachment_ref = vk::AttachmentReference::builder()
+                            .attachment(0)
+                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+                        let color_attachment_refs = &[*color_attachment_ref];
+
                         let subpass = vk::SubpassDescription::builder()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                            .color_attachments(&[]);
+                            .color_attachments(color_attachment_refs);
 
                         let dependency_info = vk::SubpassDependency::builder()
                             .src_subpass(vk::SUBPASS_EXTERNAL)
@@ -102,8 +106,9 @@ void main() {
 
                         let subpasses = &[*subpass];
                         let dependency_infos = &[*dependency_info];
+                        let attachments = &[*color_attachment];
                         let render_pass_info = vk::RenderPassCreateInfo::builder()
-                            .attachments(&[])
+                            .attachments(attachments)
                             .subpasses(subpasses)
                             .dependencies(dependency_infos);
 
@@ -125,9 +130,7 @@ void main() {
                             ),
                             (
                                 FRAG_SHADER,
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", out_info.mem_elements()),
+                                ShaderDefines::new().add("BRICK_MEM_SIZE", out_info.mem_elements()),
                             ),
                             |shader_stages, pipeline_layout, build_pipeline| {
                                 let dynamic_states =
@@ -213,8 +216,7 @@ void main() {
                                         )
                                         .blend_enable(true);
 
-                                let color_blend_attachments =
-                                    [*color_blend_attachment, *color_blend_attachment];
+                                let color_blend_attachments = [*color_blend_attachment];
                                 let color_blending =
                                     vk::PipelineColorBlendStateCreateInfo::builder()
                                         .attachments(&color_blend_attachments);
@@ -242,9 +244,51 @@ void main() {
                 let height = out_dim.y().into();
                 let extent = vk::Extent2D::builder().width(width).height(height).build();
 
+                let img_info = vk::ImageCreateInfo::builder()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .extent(extent.into())
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .format(format)
+                    .tiling(vk::ImageTiling::LINEAR)
+                    .initial_layout(vk::ImageLayout::PREINITIALIZED)
+                    .usage(
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT
+                            | vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST,
+                    )
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .build();
+
+                let output_texture =
+                    TempRessource::new(device, device.storage.allocate_image(device, img_info));
+
+                let info = vk::ImageViewCreateInfo::builder()
+                    .image(output_texture.image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format)
+                    .components(vk::ComponentMapping::builder().build())
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    );
+
+                let img_view = TempRessource::new(
+                    device,
+                    unsafe { device.functions().create_image_view(&info, None) }.unwrap(),
+                );
+
+                let attachments = [*img_view];
+
                 let framebuffer_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(*render_pass)
-                    .attachments(&[])
+                    .attachments(&attachments)
                     .width(width)
                     .height(height)
                     .layers(1);
@@ -275,33 +319,66 @@ void main() {
                     .await
                     .unwrap();
 
-                let gpu_brick_out = match &inplace_result {
-                    crate::storage::gpu::InplaceResult::Inplace(rw, _) => rw,
-                    crate::storage::gpu::InplaceResult::New(r, w) => {
-                        let copy_info = vk::BufferCopy::builder().size(r.layout.size() as u64);
-                        device.with_cmd_buffer(|cmd| unsafe {
-                            device.functions().cmd_copy_buffer(
-                                cmd.raw(),
-                                r.buffer,
-                                w.buffer,
-                                &[*copy_info],
-                            );
-                        });
-                        ctx.submit(device.barrier(
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_WRITE,
-                            },
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
-                            },
-                        ))
-                        .await;
-
-                        w
-                    }
+                let (gpu_brick_in_buffer, gpu_brick_out) = match &inplace_result {
+                    crate::storage::gpu::InplaceResult::Inplace(rw, _) => (rw.buffer, rw),
+                    crate::storage::gpu::InplaceResult::New(r, w) => (r.buffer, w),
                 };
+
+                let copy_info = vk::BufferImageCopy::builder()
+                    .image_extent(extent.into())
+                    .buffer_row_length(width)
+                    .buffer_image_height(height)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::builder()
+                            .mip_level(0)
+                            .layer_count(1)
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .build(),
+                    )
+                    .build();
+
+                let barriers = [vk::ImageMemoryBarrier2::builder()
+                    .image(output_texture.image)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .level_count(1)
+                            .layer_count(1)
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .build(),
+                    )
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .build()];
+                let dep_info = vk::DependencyInfo::builder()
+                    .image_memory_barriers(&barriers)
+                    .build();
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device
+                        .functions()
+                        .cmd_pipeline_barrier2(cmd.raw(), &dep_info);
+                });
+
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device.functions().cmd_copy_buffer_to_image(
+                        cmd.raw(),
+                        gpu_brick_in_buffer,
+                        output_texture.image,
+                        vk::ImageLayout::GENERAL,
+                        &[copy_info],
+                    );
+                });
+
+                ctx.submit(device.barrier(
+                    SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                    },
+                    DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
+                    },
+                ))
+                .await;
 
                 // Actual rendering
                 let render_pass_info = vk::RenderPassBeginInfo::builder()
@@ -370,8 +447,6 @@ void main() {
                     });
                 });
                 let clipped_primitives = egui_ctx.tessellate(full_output.shapes);
-
-                println!("{:?}", clipped_primitives.len());
 
                 for primitive in clipped_primitives {
                     let mesh = match primitive.primitive {
@@ -442,8 +517,6 @@ void main() {
                         }
                     }
 
-                    let descriptor_config = DescriptorConfig::new([gpu_brick_out]);
-
                     device.with_cmd_buffer(|cmd| unsafe {
                         let mut pipeline = pipeline.bind(cmd);
 
@@ -472,12 +545,7 @@ void main() {
                             .functions()
                             .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
 
-                        pipeline.push_descriptor_set(0, descriptor_config);
-
-                        pipeline.push_constant_at(
-                            push_constants,
-                            vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::VERTEX,
-                        );
+                        pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::VERTEX);
 
                         device.functions().cmd_draw_indexed(
                             cmd.raw(),
@@ -491,6 +559,28 @@ void main() {
                         device.functions().cmd_end_render_pass(cmd.raw());
                     });
                 }
+
+                let copy_info = vk::BufferImageCopy::builder()
+                    .image_extent(extent.into())
+                    .buffer_row_length(width)
+                    .buffer_image_height(height)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::builder()
+                            .mip_level(0)
+                            .layer_count(1)
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .build(),
+                    )
+                    .build();
+                device.with_cmd_buffer(|cmd| unsafe {
+                    device.functions().cmd_copy_image_to_buffer(
+                        cmd.raw(),
+                        output_texture.image,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        gpu_brick_out.buffer,
+                        &[copy_info],
+                    );
+                });
 
                 unsafe {
                     inplace_result.initialized(
