@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140, std430::AsStd430};
+use crevice::{glsl::GlslStruct, std140::AsStd140};
 use egui::Rect;
 
 use crate::{
@@ -25,41 +25,21 @@ pub fn gui<'a>(input: VolumeOperator<'a>) -> VolumeOperator<'a> {
         frame_size: cgmath::Vector2<u32>,
     }
 
-    #[derive(Debug, Copy, Clone, AsStd430, GlslStruct)]
-    #[repr(C)]
-    struct Vertex {
-        pos: cgmath::Vector2<f32>,
-        uv: cgmath::Vector2<f32>,
-        color: cgmath::Vector4<f32>,
-    }
-
     const VERTEX_SHADER: &str = "
 #version 450
 
-struct Vertex {
-    vec2 pos;
-    vec2 uv;
-    vec4 color;
-};
+layout(location = 0) in vec2 pos;
+layout(location = 1) in vec2 uv;
+layout(location = 2) in vec4 color;
 
-layout(std430, binding = 1) buffer VertexBuffer{
-    Vertex values[];
-} vertices;
-
-layout(std430, binding = 2) buffer IndexBuffer{
-    uint values[];
-} indices;
-
-layout(location = 0) out vec4 color;
+layout(location = 0) out vec4 out_color;
 
 declare_push_consts(consts);
 
 void main() {
-    uint index = indices.values[gl_VertexIndex];
-    Vertex vert = vertices.values[index];
-    vec2 pos = 2.0 * vert.pos / consts.frame_size - vec2(1.0);
-    gl_Position = vec4(pos, 0.0, 1.0);
-    color = vert.color;
+    vec2 out_pos = 2.0 * pos / consts.frame_size - vec2(1.0);
+    gl_Position = vec4(out_pos, 0.0, 1.0);
+    out_color = color;
 }
 ";
 
@@ -155,8 +135,44 @@ void main() {
                                 let dynamic_info = vk::PipelineDynamicStateCreateInfo::builder()
                                     .dynamic_states(&dynamic_states);
 
+                                let vertex_bindings =
+                                    [vk::VertexInputBindingDescription::builder()
+                                        .binding(0)
+                                        .input_rate(vk::VertexInputRate::VERTEX)
+                                        .stride(
+                                            4 * std::mem::size_of::<f32>() as u32
+                                                + 4 * std::mem::size_of::<u8>() as u32,
+                                        )
+                                        .build()];
+
+                                let vertex_attributes = [
+                                    // position
+                                    vk::VertexInputAttributeDescription::builder()
+                                        .binding(0)
+                                        .offset(0)
+                                        .location(0)
+                                        .format(vk::Format::R32G32_SFLOAT)
+                                        .build(),
+                                    // uv
+                                    vk::VertexInputAttributeDescription::builder()
+                                        .binding(0)
+                                        .offset(8)
+                                        .location(1)
+                                        .format(vk::Format::R32G32_SFLOAT)
+                                        .build(),
+                                    // color
+                                    vk::VertexInputAttributeDescription::builder()
+                                        .binding(0)
+                                        .offset(16)
+                                        .location(2)
+                                        .format(vk::Format::R8G8B8A8_UNORM)
+                                        .build(),
+                                ];
+
                                 let vertex_input_info =
-                                    vk::PipelineVertexInputStateCreateInfo::builder();
+                                    vk::PipelineVertexInputStateCreateInfo::builder()
+                                        .vertex_attribute_descriptions(&vertex_attributes)
+                                        .vertex_binding_descriptions(&vertex_bindings);
 
                                 let input_assembly_info =
                                     vk::PipelineInputAssemblyStateCreateInfo::builder()
@@ -383,47 +399,29 @@ void main() {
                         .extent(clip_rect_extent);
 
                     let indices = mesh.indices;
-                    let vertices = mesh
-                        .vertices
-                        .into_iter()
-                        .map(|v| Vertex {
-                            pos: cgmath::Vector2 {
-                                x: v.pos.x,
-                                y: v.pos.y,
-                            },
-                            color: cgmath::Vector4 {
-                                x: v.color.r() as f32 / 255.0,
-                                y: v.color.g() as f32 / 255.0,
-                                z: v.color.b() as f32 / 255.0,
-                                w: v.color.a() as f32 / 255.0,
-                            },
-                            uv: cgmath::Vector2 {
-                                x: v.uv.x,
-                                y: v.uv.y,
-                            },
-                        })
-                        .collect::<Vec<_>>();
+                    let vertices = mesh.vertices;
 
                     let vertex_buf_layout =
-                        std::alloc::Layout::array::<Vertex>(vertices.len()).unwrap();
+                        std::alloc::Layout::array::<egui::epaint::Vertex>(vertices.len()).unwrap();
                     let index_buf_layout = std::alloc::Layout::array::<u32>(indices.len()).unwrap();
 
-                    let flags = vk::BufferUsageFlags::TRANSFER_SRC
-                        | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::STORAGE_BUFFER;
+                    let vertex_flags =
+                        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER;
+                    let index_flags =
+                        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER;
                     let buf_type = gpu_allocator::MemoryLocation::CpuToGpu;
 
                     let vertex_buffer = TempRessource::new(
                         device,
                         device
                             .storage
-                            .allocate(device, vertex_buf_layout, flags, buf_type),
+                            .allocate(device, vertex_buf_layout, vertex_flags, buf_type),
                     );
                     let index_buffer = TempRessource::new(
                         device,
                         device
                             .storage
-                            .allocate(device, index_buf_layout, flags, buf_type),
+                            .allocate(device, index_buf_layout, index_flags, buf_type),
                     );
 
                     for (out, in_, layout) in [
@@ -447,11 +445,23 @@ void main() {
                         }
                     }
 
-                    let descriptor_config =
-                        DescriptorConfig::new([gpu_brick_out, &*vertex_buffer, &*index_buffer]);
+                    let descriptor_config = DescriptorConfig::new([gpu_brick_out]);
 
                     device.with_cmd_buffer(|cmd| unsafe {
                         let mut pipeline = pipeline.bind(cmd);
+
+                        device.functions().cmd_bind_vertex_buffers(
+                            pipeline.cmd().raw(),
+                            0,
+                            &[vertex_buffer.buffer],
+                            &[0],
+                        );
+                        device.functions().cmd_bind_index_buffer(
+                            pipeline.cmd().raw(),
+                            index_buffer.buffer,
+                            0,
+                            vk::IndexType::UINT32,
+                        );
 
                         device.functions().cmd_begin_render_pass(
                             pipeline.cmd().raw(),
@@ -472,9 +482,14 @@ void main() {
                             vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::VERTEX,
                         );
 
-                        device
-                            .functions()
-                            .cmd_draw(cmd.raw(), indices.len() as _, 1, 0, 0);
+                        device.functions().cmd_draw_indexed(
+                            cmd.raw(),
+                            indices.len() as _,
+                            1,
+                            0,
+                            0,
+                            0,
+                        );
 
                         device.functions().cmd_end_render_pass(cmd.raw());
                     });
