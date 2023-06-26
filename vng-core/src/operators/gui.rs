@@ -208,18 +208,15 @@ void main() {
                                                 | vk::ColorComponentFlags::A,
                                         )
                                         .src_color_blend_factor(vk::BlendFactor::ONE)
-                                        .dst_color_blend_factor(vk::BlendFactor::ONE)
-                                        .color_blend_op(vk::BlendOp::ADD)
-                                        .src_alpha_blend_factor(vk::BlendFactor::ONE)
-                                        .dst_alpha_blend_factor(vk::BlendFactor::ONE)
-                                        .alpha_blend_op(vk::BlendOp::ADD)
+                                        .dst_color_blend_factor(
+                                            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                                        )
                                         .blend_enable(true);
 
                                 let color_blend_attachments =
                                     [*color_blend_attachment, *color_blend_attachment];
                                 let color_blending =
                                     vk::PipelineColorBlendStateCreateInfo::builder()
-                                        .logic_op_enable(false)
                                         .attachments(&color_blend_attachments);
 
                                 let info = vk::GraphicsPipelineCreateInfo::builder()
