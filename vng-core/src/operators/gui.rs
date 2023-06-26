@@ -311,10 +311,6 @@ void main() {
                     .min_depth(0.0)
                     .max_depth(1.0);
 
-                let scissor = vk::Rect2D::builder()
-                    .offset(vk::Offset2D::builder().x(0).y(0).build())
-                    .extent(extent);
-
                 let push_constants = PushConstants {
                     frame_size: out_info
                         .mem_dimensions
@@ -347,6 +343,7 @@ void main() {
 
                 let mut counter = 0;
                 let full_output = egui_ctx.run(raw_input, |ctx| {
+                    //egui::Window::new("Some title").show(&ctx, |ui| {
                     egui::CentralPanel::default().show(&ctx, |ui| {
                         ui.horizontal(|ui| {
                             if ui.button("-").clicked() {
@@ -361,6 +358,8 @@ void main() {
                 });
                 let clipped_primitives = egui_ctx.tessellate(full_output.shapes);
 
+                println!("{:?}", clipped_primitives.len());
+
                 for primitive in clipped_primitives {
                     let mesh = match primitive.primitive {
                         egui::epaint::Primitive::Mesh(m) => m,
@@ -368,6 +367,20 @@ void main() {
                             panic!("egui callback not supported")
                         }
                     };
+
+                    let clip_rect = primitive.clip_rect;
+                    let clip_rect_extent = vk::Extent2D::builder()
+                        .width(clip_rect.width().round() as u32)
+                        .height(clip_rect.height().round() as u32)
+                        .build();
+                    let scissor = vk::Rect2D::builder()
+                        .offset(
+                            vk::Offset2D::builder()
+                                .x(clip_rect.left().round() as i32)
+                                .y(clip_rect.top().round() as i32)
+                                .build(),
+                        )
+                        .extent(clip_rect_extent);
 
                     let indices = mesh.indices;
                     let vertices = mesh
@@ -390,8 +403,6 @@ void main() {
                             },
                         })
                         .collect::<Vec<_>>();
-
-                    println!("{:?}", vertices);
 
                     let vertex_buf_layout =
                         std::alloc::Layout::array::<Vertex>(vertices.len()).unwrap();
