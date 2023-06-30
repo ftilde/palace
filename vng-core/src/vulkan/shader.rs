@@ -230,7 +230,9 @@ impl Shader {
                     assert!(*nbind > 0, "Dynamic SSBOs are currently not supported (since we are using push descriptors, see https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-VkDescriptorSetLayoutCreateInfo-flags-00280)");
                     let d_type = match desc_ty {
                         spirq::DescriptorType::Sampler() => todo!(),
-                        spirq::DescriptorType::CombinedImageSampler() => todo!(),
+                        spirq::DescriptorType::CombinedImageSampler() => {
+                            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                        }
                         spirq::DescriptorType::SampledImage() => todo!(),
                         spirq::DescriptorType::StorageImage(_) => todo!(),
                         spirq::DescriptorType::UniformTexelBuffer() => todo!(),

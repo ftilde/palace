@@ -6,6 +6,7 @@ use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
+use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::operators::{scalar, volume_gpu};
@@ -128,6 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev: f32 = 5.0;
+    let mut gui = GuiState::default();
 
     let mut event_loop = EventLoop::new();
 
@@ -183,6 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut scale,
                     &mut offset,
                     &mut stddev,
+                    &mut gui,
                     events.current_batch(),
                     next_timeout,
                 )
@@ -208,7 +211,7 @@ fn slice_viewer_z<'op>(
     slice_num: &mut i32,
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
-    mut events: EventStream,
+    events: &mut EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
@@ -247,6 +250,7 @@ fn slice_viewer_z<'op>(
         slice_proj_z,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+
     slice
 }
 
@@ -293,6 +297,7 @@ fn eval_network(
     scale: &mut f32,
     offset: &mut f32,
     stddev: &mut f32,
+    gui: &mut GuiState,
     mut events: EventStream,
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
@@ -305,9 +310,32 @@ fn eval_network(
             .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
             .chain(OnKeyPress(Key::Plus, || *stddev *= 1.10))
             .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
-        //.chain(OnMouseClick(MouseButton::Left, |pos| {
-        //    println!("Click left!: {:?}", pos)
-        //}))
+    });
+
+    let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
+
+    let (mut events_l, events_r) = splitter.split_events(&mut events);
+
+    let gui = gui.setup(&mut events_l, |ctx| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Slice: ");
+                    if ui.button("-").clicked() {
+                        *slice_num -= 1;
+                    }
+                    ui.label(slice_num.to_string());
+                    if ui.button("+").clicked() {
+                        *slice_num += 1;
+                    }
+                });
+                ui.add(egui::Slider::new(scale, 0.1..=10.0).text("Scale"));
+                ui.add(egui::Slider::new(offset, -10.0..=10.0).text("Offset"));
+            });
+        });
+        //dbg!(egui::Window::new("My Window").show(ctx, |ui| {
+        //    ui.label("Hello World!");
+        //}));
     });
 
     let vol = vol.operate();
@@ -323,19 +351,16 @@ fn eval_network(
     //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
     let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
 
-    let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
-
-    let (events_l, events_r) = splitter.split_events(&mut events);
-
     let left = slice_viewer_z(
         scaled.clone(),
         splitter.metadata_l(),
         slice_num,
         slice_offset,
         slice_zoom_level,
-        events_l,
+        &mut events_l,
     );
-    let left = crate::operators::gui::gui(left);
+
+    let left = gui.render(left);
     let right = slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r);
     let frame = splitter.operate(left, right);
 

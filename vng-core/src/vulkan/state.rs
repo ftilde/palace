@@ -95,3 +95,9 @@ impl VulkanState for vk::RenderPass {
         unsafe { context.functions().destroy_render_pass(*self, None) };
     }
 }
+
+impl VulkanState for vk::Sampler {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        unsafe { context.functions().destroy_sampler(*self, None) };
+    }
+}

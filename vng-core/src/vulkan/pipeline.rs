@@ -428,11 +428,16 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
     }
 }
 
-trait AsDescriptor {
+pub enum DescriptorInfos {
+    Buffer(Vec<vk::DescriptorBufferInfo>),
+    CombinedImageSampler(Vec<vk::DescriptorImageInfo>),
+}
+
+trait AsBufferDescriptor {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
 }
 
-impl AsDescriptor for Allocation {
+impl AsBufferDescriptor for Allocation {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -441,7 +446,7 @@ impl AsDescriptor for Allocation {
     }
 }
 
-impl<'a> AsDescriptor for ReadHandle<'a> {
+impl<'a> AsBufferDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -450,7 +455,7 @@ impl<'a> AsDescriptor for ReadHandle<'a> {
     }
 }
 
-impl<'a> AsDescriptor for WriteHandle<'a> {
+impl<'a> AsBufferDescriptor for WriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -459,7 +464,7 @@ impl<'a> AsDescriptor for WriteHandle<'a> {
     }
 }
 
-impl<'a> AsDescriptor for IndexHandle<'a> {
+impl<'a> AsBufferDescriptor for IndexHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -468,7 +473,7 @@ impl<'a> AsDescriptor for IndexHandle<'a> {
     }
 }
 
-impl<'a> AsDescriptor for StateCacheHandle<'a> {
+impl<'a> AsBufferDescriptor for StateCacheHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
@@ -478,29 +483,39 @@ impl<'a> AsDescriptor for StateCacheHandle<'a> {
 }
 
 pub trait AsDescriptors {
-    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo>;
+    fn gen_buffer_info(&self) -> DescriptorInfos;
 }
 
-impl<T: AsDescriptor> AsDescriptors for T {
-    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
-        vec![self.gen_buffer_info()]
+impl<T: AsBufferDescriptor> AsDescriptors for T {
+    fn gen_buffer_info(&self) -> DescriptorInfos {
+        DescriptorInfos::Buffer(vec![self.gen_buffer_info()])
     }
 }
 
-impl<const N: usize, T: AsDescriptor> AsDescriptors for [&T; N] {
-    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
-        self.iter().map(|i| i.gen_buffer_info()).collect()
+impl AsDescriptors for (vk::ImageView, vk::ImageLayout, vk::Sampler) {
+    fn gen_buffer_info(&self) -> DescriptorInfos {
+        DescriptorInfos::CombinedImageSampler(vec![vk::DescriptorImageInfo::builder()
+            .image_view(self.0)
+            .image_layout(self.1)
+            .sampler(self.2)
+            .build()])
     }
 }
 
-impl<T: AsDescriptor> AsDescriptors for &[&T] {
-    fn gen_buffer_info(&self) -> Vec<vk::DescriptorBufferInfo> {
-        self.iter().map(|i| i.gen_buffer_info()).collect()
+impl<const N: usize, T: AsBufferDescriptor> AsDescriptors for [&T; N] {
+    fn gen_buffer_info(&self) -> DescriptorInfos {
+        DescriptorInfos::Buffer(self.iter().map(|i| i.gen_buffer_info()).collect())
+    }
+}
+
+impl<T: AsBufferDescriptor> AsDescriptors for &[&T] {
+    fn gen_buffer_info(&self) -> DescriptorInfos {
+        DescriptorInfos::Buffer(self.iter().map(|i| i.gen_buffer_info()).collect())
     }
 }
 
 pub struct DescriptorConfig<const N: usize> {
-    buffer_infos: [Vec<vk::DescriptorBufferInfo>; N],
+    buffer_infos: [DescriptorInfos; N],
 }
 impl<const N: usize> DescriptorConfig<N> {
     pub fn new(buffers: [&dyn AsDescriptors; N]) -> Self {
@@ -512,14 +527,21 @@ impl<const N: usize> DescriptorConfig<N> {
     }
 
     pub fn writes_for_set(&self, set: vk::DescriptorSet) -> [vk::WriteDescriptorSet; N] {
-        std::array::from_fn(|i| {
-            vk::WriteDescriptorSet::builder()
+        std::array::from_fn(|i| match &self.buffer_infos[i] {
+            DescriptorInfos::Buffer(b) => vk::WriteDescriptorSet::builder()
                 .dst_binding(i as u32)
                 .dst_array_element(0)
                 .dst_set(set)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&self.buffer_infos[i])
-                .build()
+                .buffer_info(b)
+                .build(),
+            DescriptorInfos::CombinedImageSampler(b) => vk::WriteDescriptorSet::builder()
+                .dst_binding(i as u32)
+                .dst_array_element(0)
+                .dst_set(set)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(b)
+                .build(),
         })
     }
 }
