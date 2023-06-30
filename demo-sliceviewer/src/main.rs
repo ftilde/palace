@@ -317,7 +317,7 @@ fn eval_network(
     let (mut events_l, events_r) = splitter.split_events(&mut events);
 
     let gui = gui.setup(&mut events_l, |ctx| {
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::Window::new("Settings").show(ctx, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.label("Slice: ");
@@ -333,9 +333,6 @@ fn eval_network(
                 ui.add(egui::Slider::new(offset, -10.0..=10.0).text("Offset"));
             });
         });
-        //dbg!(egui::Window::new("My Window").show(ctx, |ui| {
-        //    ui.label("Hello World!");
-        //}));
     });
 
     let vol = vol.operate();
