@@ -32,6 +32,7 @@ pub struct GuiState {
     egui_ctx: egui::Context,
     version: u64,
     latest_size: Cell<Vector<2, u32>>,
+    events_last_iter: Cell<bool>,
     textures_delta: RefCell<TexturesDelta>,
     textures: RefCell<BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>>,
 }
@@ -196,6 +197,7 @@ impl Default for GuiState {
         Self {
             egui_ctx: Default::default(),
             version: Default::default(),
+            events_last_iter: Cell::new(false),
             latest_size: Cell::new(Vector::fill(0)),
             textures_delta: RefCell::new(Default::default()),
             textures: RefCell::new(Default::default()),
@@ -246,9 +248,11 @@ impl GuiState {
             }
             _ => e.into(),
         });
-        if !latest_events.is_empty() {
+        let events_now = !latest_events.is_empty();
+        if self.events_last_iter.get() || events_now {
             self.version += 1;
         }
+        self.events_last_iter.set(events_now);
 
         let size2d = self.latest_size.get();
         let raw_input = egui::RawInput {
