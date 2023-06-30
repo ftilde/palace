@@ -432,6 +432,11 @@ layout(std430, binding = 4) buffer StateBuffer {
 
 declare_push_consts(consts);
 
+vec4 map_to_color(float v) {
+    v = clamp(v, 0.0, 1.0);
+    return vec4(v, v, v, 1.0);
+}
+
 void main()
 {
     float step_size = 0.01; //In voxel coordinates, i.e. normalized to [0, 1]
@@ -483,7 +488,7 @@ void main()
             }
             state_cache.values[gID] = state;
 
-            color = vec4(vec3(state.intensity), 1.0);
+            color = map_to_color(state.intensity);
         } else {
             color = vec4(0.0);
         }

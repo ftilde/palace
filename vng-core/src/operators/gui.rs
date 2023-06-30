@@ -335,10 +335,18 @@ layout(location = 1) out vec2 out_uv;
 
 declare_push_consts(consts);
 
+vec3 srgb_to_linear(vec3 srgb) {
+    bvec3 cutoff = lessThan(srgb, vec3(0.04045));
+    vec3 lower = srgb / vec3(12.92);
+    vec3 higher = pow((srgb + vec3(0.055)) / vec3(1.055), vec3(2.4));
+    return mix(higher, lower, cutoff);
+}
+
 void main() {
     vec2 out_pos = 2.0 * pos / consts.frame_size - vec2(1.0);
     gl_Position = vec4(out_pos, 0.0, 1.0);
     out_color = color;
+    out_color.xyz = srgb_to_linear(out_color.xyz);
     out_uv = uv;
 }
 ";
@@ -357,7 +365,7 @@ layout(binding = 0, set = 0) uniform sampler2D img_tex;
 
 void main() {
     vec4 col = color * texture(img_tex, uv);
-    out_color = vec4(col.rgb, col.a*0.8); //NO_PUSH_main
+    out_color = vec4(col.rgb, col.a * 0.8);
     //out_color = col;
 }
 ";
@@ -529,6 +537,12 @@ void main() {
                                             .dst_color_blend_factor(
                                                 vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
                                             )
+                                            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                                            .dst_color_blend_factor(
+                                                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                                            )
+                                            .color_blend_op(vk::BlendOp::ADD)
+                                            .alpha_blend_op(vk::BlendOp::MAX)
                                             .blend_enable(true);
 
                                     let color_blend_attachments = [*color_blend_attachment];

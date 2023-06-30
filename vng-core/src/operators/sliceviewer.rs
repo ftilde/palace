@@ -230,6 +230,7 @@ declare_push_consts(consts);
 #define INIT_EMPTY 2
 
 vec4 map_to_color(float v) {
+    v = clamp(v, 0.0, 1.0);
     return vec4(v, v, v, 1.0);
 }
 
