@@ -298,8 +298,8 @@ fn transistion_image_layout(
         )
         .old_layout(from)
         .new_layout(to)
-        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_WRITE)
-        .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_WRITE)
+        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
+        .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .build()];
@@ -408,7 +408,7 @@ void main() {
 
                             let color_attachment_ref = vk::AttachmentReference::builder()
                                 .attachment(0)
-                                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+                                .layout(vk::ImageLayout::GENERAL);
 
                             let color_attachment_refs = &[*color_attachment_ref];
 
@@ -419,7 +419,7 @@ void main() {
                             let dependency_info = vk::SubpassDependency::builder()
                                 .src_subpass(vk::SUBPASS_EXTERNAL)
                                 .dst_subpass(0)
-                                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                                .src_stage_mask(vk::PipelineStageFlags::ALL_COMMANDS)
                                 .src_access_mask(vk::AccessFlags::empty())
                                 .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
                                 .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
@@ -688,26 +688,12 @@ void main() {
                         )
                         .build();
 
-                    let barriers = [vk::ImageMemoryBarrier2::builder()
-                        .image(output_texture.image)
-                        .subresource_range(
-                            vk::ImageSubresourceRange::builder()
-                                .level_count(1)
-                                .layer_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .build(),
-                        )
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::GENERAL)
-                        .build()];
-                    let dep_info = vk::DependencyInfo::builder()
-                        .image_memory_barriers(&barriers)
-                        .build();
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        device
-                            .functions()
-                            .cmd_pipeline_barrier2(cmd.raw(), &dep_info);
-                    });
+                    transistion_image_layout(
+                        device,
+                        output_texture.image,
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::GENERAL,
+                    );
 
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_copy_buffer_to_image(
@@ -718,18 +704,6 @@ void main() {
                             &[copy_info],
                         );
                     });
-
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        },
-                    ))
-                    .await;
 
                     // Actual rendering
                     let render_pass_info = vk::RenderPassBeginInfo::builder()
@@ -762,6 +736,20 @@ void main() {
                     };
 
                     state.inner.update(device, size2d);
+
+                    // Sync writes (1) to output buffer and (2) to textures (within
+                    // state.inner.update)
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    ))
+                    .await;
 
                     let textures = state.inner.textures.borrow();
                     for primitive in state.clipped_primitives.iter() {
@@ -897,6 +885,18 @@ void main() {
                         });
                     }
 
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_READ,
+                        },
+                    ))
+                    .await;
+
                     let copy_info = vk::BufferImageCopy::builder()
                         .image_extent(extent.into())
                         .buffer_row_length(width)
@@ -909,6 +909,7 @@ void main() {
                                 .build(),
                         )
                         .build();
+
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_copy_image_to_buffer(
                             cmd.raw(),
@@ -923,8 +924,8 @@ void main() {
                         inplace_result.initialized(
                             *ctx,
                             SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_WRITE,
                             },
                         )
                     };
