@@ -294,7 +294,7 @@ void main() {
                     },
                     DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                        access: vk::AccessFlags2::SHADER_WRITE,
+                        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                     },
                 ))
                 .await;
