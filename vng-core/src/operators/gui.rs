@@ -21,7 +21,7 @@ use crate::{
         memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipeline},
         shader::ShaderDefines,
-        state::RessourceId,
+        state::{RessourceId, VulkanState},
         DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -35,7 +35,6 @@ pub struct GuiState {
     textures_delta: RefCell<TexturesDelta>,
     textures: RefCell<BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>>,
 }
-// TODO: NO_PUSH_main we need to free the textures
 
 impl GuiState {
     fn update(&self, device: &DeviceContext, size: Vector<2, u32>) {
@@ -187,6 +186,15 @@ impl GuiState {
             let (img, img_view) = textures.remove(&id).unwrap();
             let _ = TempRessource::new(device, img);
             let _ = TempRessource::new(device, img_view);
+        }
+    }
+}
+
+impl VulkanState for GuiState {
+    unsafe fn deinitialize(&mut self, context: &DeviceContext) {
+        for (mut img, mut img_view) in std::mem::take(self.textures.get_mut()).into_values() {
+            img.deinitialize(context);
+            img_view.deinitialize(context);
         }
     }
 }

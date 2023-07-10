@@ -12,6 +12,7 @@ use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
+use vng_core::vulkan::state::VulkanState;
 use vng_core::vulkan::window::Window;
 //use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
@@ -198,6 +199,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    //TODO: Hm, not sure if this works out to well in a multi-device scenario... We have to
+    //investigate how to fix that.
+    unsafe { gui.deinitialize(&runtime.vulkan.device_contexts()[0]) };
     unsafe { window.deinitialize(&runtime.vulkan) };
 
     Ok(())
