@@ -294,7 +294,7 @@ fn transistion_image_layout(
     from: vk::ImageLayout,
     to: vk::ImageLayout,
 ) {
-    //NO_PUSH_main TODO: figure how synchronization here. the below is not actually required
+    //TODO: figure how synchronization here. the below is not actually required
     let barriers = [vk::ImageMemoryBarrier2::builder()
         .image(image)
         .subresource_range(
