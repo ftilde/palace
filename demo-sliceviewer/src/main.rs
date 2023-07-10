@@ -329,7 +329,11 @@ fn eval_network(
                         *slice_num += 1;
                     }
                 });
-                ui.add(egui::Slider::new(scale, 0.1..=10.0).text("Scale"));
+                ui.add(
+                    egui::Slider::new(scale, 0.01..=100.0)
+                        .text("Scale")
+                        .logarithmic(true),
+                );
                 ui.add(egui::Slider::new(offset, -10.0..=10.0).text("Offset"));
             });
         });
