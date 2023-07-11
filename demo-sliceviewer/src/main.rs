@@ -369,14 +369,10 @@ fn eval_network(
     let right = slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r);
     let frame = splitter.operate(left, right);
 
-    let mut c = runtime.context_anchor();
-    let mut executor = c.executor(Some(deadline));
-
     let slice_ref = &frame;
-    let version =
-        executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
-    //let tasks_executed = executor.statistics().tasks_executed;
-    //println!("Rendering done ({} tasks)", tasks_executed);
+    let version = runtime.resolve(Some(deadline), |ctx, _| {
+        async move { window.render(ctx, slice_ref).await }.into()
+    })?;
 
     Ok(version)
 }

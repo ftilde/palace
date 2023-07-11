@@ -229,23 +229,62 @@ impl RunTime {
         })
     }
 
-    pub fn context_anchor(&mut self) -> ContextAnchor {
-        let frame = self.frame;
-        self.frame = FrameNumber(frame.0.checked_add(1).unwrap());
-        ContextAnchor {
-            data: ContextData::new(&self.ram, self.vulkan.device_contexts(), frame),
-            compute_thread_pool: &mut self.compute_thread_pool,
-            io_thread_pool: &mut self.io_thread_pool,
-            async_result_receiver: &mut self.async_result_receiver,
-        }
+    pub fn resolve<
+        'call,
+        R: 'static,
+        F: for<'cref, 'inv> FnOnce(
+            OpaqueTaskContext<'cref, 'inv>,
+            &'inv &'call (), //Note: This is just a marker to indicate that 'call: 'inv
+        ) -> Task<'cref, R>,
+    >(
+        &'call mut self,
+        deadline: Option<Instant>,
+        task: F,
+    ) -> Result<R, Error> {
+        let request_queue = RequestQueue::new();
+        let hints = TaskHints::default();
+        let thread_spawner = ThreadSpawner::new();
+        let barrier_completions = Default::default();
+        let predicted_preview_tasks = Default::default();
+        let data = ContextData {
+            request_queue,
+            hints,
+            barrier_completions,
+            thread_spawner,
+            storage: &self.ram,
+            device_contexts: self.vulkan.device_contexts(),
+            frame: self.frame,
+            predicted_preview_tasks,
+        };
+        let mut executor = {
+            Executor {
+                data: &data,
+                task_manager: TaskManager::new(
+                    &mut self.compute_thread_pool,
+                    &mut self.io_thread_pool,
+                    &mut self.async_result_receiver,
+                ),
+                waker: dummy_waker(),
+                task_graph: TaskGraph::new(),
+                statistics: Statistics::new(),
+                transfer_manager: Default::default(),
+                request_batcher: Default::default(),
+                barrier_batcher: BarrierBatcher::new(),
+                deadline: deadline.unwrap_or_else(|| {
+                    Instant::now() + std::time::Duration::from_secs(1 << 32)
+                } /* basically: never */),
+            }
+        };
+
+        executor.resolve(|ctx| task(ctx, &&()))
     }
 }
+
 impl Drop for RunTime {
     fn drop(&mut self) {
-        let anchored = self.context_anchor();
         // Safety: The runtime (including all references to storage) is dropped now, so no dangling
         // references will be left behind
-        for device in anchored.data.device_contexts {
+        for device in self.vulkan.device_contexts() {
             unsafe { device.storage.free_vram() };
         }
     }
@@ -258,42 +297,13 @@ pub struct FrameNumber(NonZeroU64);
 /// An object that contains all data that will be later lent out to `TaskContexts` via `Executor`.
 ///
 /// A note on lifetime names:
-/// `'cref` refers to lifetimes that live at least as long as the context data (i.e., this anchor).
-/// This is also the lifetime of all `Tasks`, for example.
+/// `'cref` refers to lifetimes that live at least as long as the context data (i.e., storage,
+/// device contexts). This is also the lifetime of all `Tasks`, for example.
 ///
 /// `'inv`, an invariant (!) lifetime (due to the use in a `RefCell` in `RequestQueue`), specifies
 /// the lifetime of `OpaqueOperator` references as handled during the evaluation of the operator
 /// network (used in `RequestQueue` and `RequestBatcher`).
-pub struct ContextAnchor<'cref, 'inv> {
-    data: ContextData<'cref, 'inv>,
-    compute_thread_pool: &'cref mut ComputeThreadPool,
-    io_thread_pool: &'cref mut IoThreadPool,
-    pub async_result_receiver: &'cref mut mpsc::Receiver<JobInfo>,
-}
-
-impl<'cref, 'inv> ContextAnchor<'cref, 'inv> {
-    pub fn executor(&'cref mut self, deadline: Option<Instant>) -> Executor<'cref, 'inv> {
-        Executor {
-            data: &self.data,
-            task_manager: TaskManager::new(
-                self.compute_thread_pool,
-                self.io_thread_pool,
-                self.async_result_receiver,
-            ),
-            waker: dummy_waker(),
-            task_graph: TaskGraph::new(),
-            statistics: Statistics::new(),
-            transfer_manager: Default::default(),
-            request_batcher: Default::default(),
-            barrier_batcher: BarrierBatcher::new(),
-            deadline: deadline.unwrap_or_else(|| {
-                Instant::now() + std::time::Duration::from_secs(1 << 32)
-            } /* basically: never */),
-        }
-    }
-}
-
-pub struct ContextData<'cref, 'inv> {
+struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
     barrier_completions: CompletedBarrierItems,
@@ -304,31 +314,7 @@ pub struct ContextData<'cref, 'inv> {
     predicted_preview_tasks: RefCell<BTreeSet<TaskId>>,
 }
 
-impl<'cref> ContextData<'cref, '_> {
-    pub fn new(
-        storage: &'cref Storage,
-        device_contexts: &'cref [DeviceContext],
-        frame: FrameNumber,
-    ) -> Self {
-        let request_queue = RequestQueue::new();
-        let hints = TaskHints::default();
-        let thread_spawner = ThreadSpawner::new();
-        let barrier_completions = Default::default();
-        let predicted_preview_tasks = Default::default();
-        ContextData {
-            request_queue,
-            barrier_completions,
-            hints,
-            thread_spawner,
-            storage,
-            device_contexts,
-            frame,
-            predicted_preview_tasks,
-        }
-    }
-}
-
-pub struct Executor<'cref, 'inv> {
+struct Executor<'cref, 'inv> {
     pub data: &'cref ContextData<'cref, 'inv>,
     task_manager: TaskManager<'cref>,
     request_batcher: RequestBatcher<'inv>,
@@ -341,9 +327,9 @@ pub struct Executor<'cref, 'inv> {
 }
 
 impl<'cref, 'inv> Executor<'cref, 'inv> {
-    pub fn statistics(&self) -> &Statistics {
-        &self.statistics
-    }
+    //pub fn statistics(&self) -> &Statistics {
+    //    &self.statistics
+    //}
     fn context(&self, current_task: TaskId) -> OpaqueTaskContext<'cref, 'inv> {
         OpaqueTaskContext {
             requests: &self.data.request_queue,
@@ -703,7 +689,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    pub fn resolve<'call, R, F: FnOnce(OpaqueTaskContext<'cref, 'inv>) -> Task<'call, R>>(
+    fn resolve<'call, R, F: FnOnce(OpaqueTaskContext<'cref, 'inv>) -> Task<'call, R>>(
         &'call mut self,
         task: F,
     ) -> Result<R, Error> {

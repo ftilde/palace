@@ -145,27 +145,18 @@ fn eval_network(
     let mean = volume_gpu::mean(scaled3);
     let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
-    let mut c = runtime.context_anchor();
-    let mut executor = c.executor(None);
-
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
-    let mean_val = executor
-        .resolve(|ctx| async move { Ok(ctx.submit(mean_ref.request_scalar()).await) }.into())?;
-
-    let tasks_executed = executor.statistics().tasks_executed;
-    println!(
-        "Computed scaled mean val: {} ({} tasks)",
-        mean_val, tasks_executed
-    );
+    let _mean_val = runtime.resolve(None, |ctx, _| {
+        async move { Ok(ctx.submit(mean_ref.request_scalar()).await) }.into()
+    })?;
 
     // Neat: We can even write to references in the closure/future below to get results out.
     let mean_unscaled_ref = &mean_unscaled;
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
-    let tasks_executed_prev = executor.statistics().tasks_executed;
-    executor.resolve(|ctx| {
+    runtime.resolve(None, |ctx, _| {
         async move {
             let req = mean_unscaled_ref.request_scalar();
             *muv_ref = ctx.submit(req).await;
@@ -173,11 +164,6 @@ fn eval_network(
         }
         .into()
     })?;
-    let tasks_executed = executor.statistics().tasks_executed - tasks_executed_prev;
-    println!(
-        "Computed unscaled mean val: {} ({} tasks)",
-        mean_val_unscaled, tasks_executed
-    );
 
     Ok(())
 }

@@ -292,12 +292,10 @@ fn eval_network(
     let frame = vng_core::operators::raycaster::raycast(vol, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
-    let mut c = runtime.context_anchor();
-    let mut executor = c.executor(Some(deadline));
-
     let slice_ref = &frame;
-    let version =
-        executor.resolve(|ctx| async move { window.render(ctx, slice_ref).await }.into())?;
+    let version = runtime.resolve(Some(deadline), |ctx, _| {
+        async move { window.render(ctx, slice_ref).await }.into()
+    })?;
     //let tasks_executed = executor.statistics().tasks_executed;
     //println!("Rendering done ({} tasks)", tasks_executed);
 
