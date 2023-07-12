@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use vng_core::cgmath;
-use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::volume::{ChunkSize, VolumeOperator};
@@ -411,6 +411,57 @@ fn slice_viewer_rot<'op>(
     frame
 }
 
+fn raycaster<'op>(
+    input: VolumeOperator<'op>,
+    size: Vector<2, GlobalCoordinate>,
+    state: &'op mut RaycastingState,
+    mut events: EventStream,
+) -> VolumeOperator<'op> {
+    events.act(|c| {
+        c.chain(OnWheelMove(|delta, _| {
+            let look = state.center - state.eye;
+            let new_look = look.scale(1.0 - delta * 0.1);
+            state.eye = state.center - new_look;
+        }))
+        .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
+            let look = state.center - state.eye;
+            let look_len = look.length();
+            let left = state.up.cross(look).normalized();
+            let move_factor = 0.005;
+            let delta = delta.map(|v| v as f32 * move_factor);
+
+            let new_look = (look.normalized() + state.up.scale(delta.y()) + left.scale(-delta.x()))
+                .normalized()
+                .scale(look_len);
+
+            state.eye = state.center - new_look;
+            let left = state.up.cross(new_look);
+            state.up = new_look.cross(left).normalized();
+        }))
+    });
+
+    let md = ImageMetaData {
+        dimensions: size,
+        //chunk_size: window.size().local(),
+        chunk_size: Vector::fill(512.into()),
+    };
+
+    let perspective = cgmath::perspective(
+        cgmath::Deg(state.fov),
+        md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
+        0.001,
+        100.0,
+    );
+    let matrix = perspective
+        * cgmath::Matrix4::look_at_rh(state.eye.into(), state.center.into(), state.up.into());
+    let eep = vng_core::operators::raycaster::entry_exit_points(
+        input.metadata.clone(),
+        scalar::constant_hash(md),
+        scalar::constant_as_array(matrix),
+    );
+    vng_core::operators::raycaster::raycast(input, eep)
+}
+
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
@@ -568,30 +619,7 @@ fn eval_network(
             splitter.render(left, right)
         }
         RenderingState::Raycasting => {
-            let md = ImageMetaData {
-                dimensions: window.size(),
-                //chunk_size: window.size().local(),
-                chunk_size: Vector::fill(512.into()),
-            };
-
-            let perspective = cgmath::perspective(
-                cgmath::Deg(app_state.raycasting.fov),
-                md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
-                0.001,
-                100.0,
-            );
-            let matrix = perspective
-                * cgmath::Matrix4::look_at_rh(
-                    app_state.raycasting.eye.into(),
-                    app_state.raycasting.center.into(),
-                    app_state.raycasting.up.into(),
-                );
-            let eep = vng_core::operators::raycaster::entry_exit_points(
-                processed.metadata.clone(),
-                scalar::constant_hash(md),
-                scalar::constant_as_array(matrix),
-            );
-            vng_core::operators::raycaster::raycast(processed, eep)
+            raycaster(processed, window.size(), &mut app_state.raycasting, events)
         }
     };
 
