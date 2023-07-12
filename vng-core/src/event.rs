@@ -131,6 +131,13 @@ impl EventState {
             .cloned()
             .unwrap_or(ButtonState::Up)
     }
+    pub fn transform(mut self, mut t: impl FnMut(MousePosition) -> MousePosition) -> Self {
+        self.mouse_state = self.mouse_state.map(|m| MouseState {
+            delta: m.delta,
+            pos: t(m.pos),
+        });
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -220,7 +227,10 @@ impl EventSource {
     }
 
     pub fn current_batch(&mut self) -> EventStream {
-        EventStream(std::mem::take(&mut self.batch))
+        EventStream {
+            latest_state: self.current_state.clone(),
+            events: std::mem::take(&mut self.batch),
+        }
     }
 }
 
@@ -246,16 +256,34 @@ impl EventChain {
     }
 }
 
-#[derive(Default)]
-pub struct EventStream(Vec<Event>);
+pub struct EventStream {
+    latest_state: EventState,
+    events: Vec<Event>,
+}
 
 impl EventStream {
+    pub fn empty() -> Self {
+        Self {
+            events: Default::default(),
+            latest_state: Default::default(),
+        }
+    }
+    pub fn with_state(latest_state: EventState) -> Self {
+        Self {
+            events: Default::default(),
+            latest_state,
+        }
+    }
+
+    pub fn latest_state(&self) -> &EventState {
+        &self.latest_state
+    }
     pub fn add(&mut self, event: Event) {
-        self.0.push(event);
+        self.events.push(event);
     }
 
     pub fn act(&mut self, mut f: impl FnMut(Event) -> EventChain) {
-        self.0.retain_mut(|e| {
+        self.events.retain_mut(|e| {
             let r = e.clone();
             if let EventChain::Available(returned) = f(r) {
                 *e = returned;

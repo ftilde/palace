@@ -26,10 +26,12 @@ const NUM_CHANNELS: u32 = 4;
 
 impl Splitter {
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
-        let mut left = EventStream::default();
-        let mut right = EventStream::default();
-
         let size_r = self.size_r().x().raw as i32;
+        let t = |p| p - Vector::<2, i32>::from([0i32, size_r]);
+
+        let mut left = EventStream::with_state(e.latest_state().clone());
+        let mut right = EventStream::with_state(e.latest_state().clone().transform(t));
+
         //TODO: This needs some better handling of (for example) CursorLeft/CursorEntered
         //events
         e.act(|e| {
@@ -38,7 +40,7 @@ impl Splitter {
                 if in_left {
                     left.add(e);
                 } else {
-                    right.add(e.transform(|p| p - Vector::<2, i32>::from([0i32, size_r])));
+                    right.add(e.transform(t));
                 };
                 EventChain::Consumed
             } else {
