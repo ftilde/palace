@@ -16,11 +16,8 @@ pub fn compare_volume(
     let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
     let full_vol = &full_vol;
 
-    let mut c = runtime.context_anchor();
-    let mut executor = c.executor(None);
-
-    executor
-        .resolve(|ctx| {
+    runtime
+        .resolve(None, |ctx, _| {
             async move {
                 let pos = BrickPosition::from([0, 0, 0]);
                 let m = ctx.submit(full_vol.metadata.request_scalar()).await;
@@ -45,11 +42,8 @@ pub fn compare_tensor<'a, const N: usize>(
 ) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
 
-    let mut c = runtime.context_anchor();
-    let mut executor = c.executor(None);
-
-    executor
-        .resolve(|ctx| {
+    runtime
+        .resolve(None, |ctx, _| {
             let result = &result;
             let expected = &expected;
             async move {
