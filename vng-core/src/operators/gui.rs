@@ -663,11 +663,10 @@ void main() {
                     );
 
                     assert_eq!(pos, Vector::fill(0.into()));
-                    let inplace_result = ctx
-                        .submit(input.bricks.request_inplace_gpu(
+                    let gpu_brick_in = ctx
+                        .submit(input.bricks.request_gpu(
                             device.id,
                             pos,
-                            ctx.current_op(),
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::FRAGMENT_SHADER
                                     | vk::PipelineStageFlags2::TRANSFER,
@@ -675,13 +674,7 @@ void main() {
                                     | vk::AccessFlags2::TRANSFER_WRITE,
                             },
                         ))
-                        .await
-                        .unwrap();
-
-                    let (gpu_brick_in_buffer, gpu_brick_out) = match &inplace_result {
-                        crate::storage::gpu::InplaceResult::Inplace(rw, _) => (rw.buffer, rw),
-                        crate::storage::gpu::InplaceResult::New(r, w) => (r.buffer, w),
-                    };
+                        .await;
 
                     let copy_info = vk::BufferImageCopy::builder()
                         .image_extent(extent.into())
@@ -706,7 +699,7 @@ void main() {
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_copy_buffer_to_image(
                             cmd.raw(),
-                            gpu_brick_in_buffer,
+                            gpu_brick_in.buffer,
                             output_texture.image,
                             vk::ImageLayout::GENERAL,
                             &[copy_info],
@@ -918,6 +911,10 @@ void main() {
                         )
                         .build();
 
+                    let gpu_brick_out = ctx
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
+                        .unwrap();
+
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_copy_image_to_buffer(
                             cmd.raw(),
@@ -929,7 +926,7 @@ void main() {
                     });
 
                     unsafe {
-                        inplace_result.initialized(
+                        gpu_brick_out.initialized(
                             *ctx,
                             SrcBarrierInfo {
                                 stage: vk::PipelineStageFlags2::TRANSFER,
