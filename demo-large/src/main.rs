@@ -104,6 +104,7 @@ struct SliceviewState {
 #[derive(Debug, PartialEq)]
 enum ProcessState {
     PassThrough,
+    Smooth,
     Vesselness,
 }
 
@@ -121,6 +122,7 @@ struct State {
     raycasting: RaycastingState,
     sliceview: SliceviewState,
     rotslice: RotSliceState,
+    smoothing_std: f32,
 }
 
 struct RotSliceState {
@@ -192,6 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             gui: GuiState::default(),
             angle: 0.0,
         },
+        smoothing_std: 1.0,
     };
 
     let mut event_loop = EventLoop::new();
@@ -249,6 +252,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if version == DataVersionType::Final {
                     //control_flow.set_exit();
                 }
+                //std::thread::sleep(dbg!(
+                //    next_timeout.saturating_duration_since(std::time::Instant::now())
+                //));
             }
             _ => (),
         }
@@ -487,6 +493,13 @@ fn eval_network(
 
     let processed = match app_state.process {
         ProcessState::PassThrough => vol,
+        ProcessState::Smooth => {
+            let kernel = operators::kernels::gauss(scalar::constant_pod(app_state.smoothing_std));
+            operators::volume_gpu::separable_convolution(
+                vol,
+                [kernel.clone(), kernel.clone(), kernel],
+            )
+        }
         ProcessState::Vesselness => operators::vesselness::multiscale_vesselness(
             vol,
             scalar::constant_pod(app_state.vesselness.min_rad),
@@ -504,8 +517,9 @@ fn eval_network(
                         ui.selectable_value(
                             &mut app_state.process,
                             ProcessState::PassThrough,
-                            "None",
+                            "Passthrough",
                         );
+                        ui.selectable_value(&mut app_state.process, ProcessState::Smooth, "Smooth");
                         ui.selectable_value(
                             &mut app_state.process,
                             ProcessState::Vesselness,
@@ -514,6 +528,13 @@ fn eval_network(
                     });
                 match app_state.process {
                     ProcessState::PassThrough => {}
+                    ProcessState::Smooth => {
+                        ui.add(
+                            egui::Slider::new(&mut app_state.smoothing_std, 0.01..=100.0)
+                                .text("Standard deviation")
+                                .logarithmic(true),
+                        );
+                    }
                     ProcessState::Vesselness => {
                         ui.add(
                             egui::Slider::new(&mut app_state.vesselness.min_rad, 0.5..=100.0)
