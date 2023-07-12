@@ -125,6 +125,9 @@ impl EventState {
     pub fn shift_pressed(&self) -> bool {
         self.key(Key::LShift).down() || self.key(Key::RShift).down()
     }
+    pub fn ctrl_pressed(&self) -> bool {
+        self.key(Key::LControl).down() || self.key(Key::RControl).down()
+    }
     pub fn mouse_button(&self, button: MouseButton) -> ButtonState {
         self.mouse_buttons
             .get(&button)

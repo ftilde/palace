@@ -378,7 +378,7 @@ impl GuiState {
                     if let Some(key) = key {
                         let modifiers = egui::Modifiers {
                             alt: false,
-                            ctrl: false,
+                            ctrl: e.state.ctrl_pressed(),
                             shift: e.state.shift_pressed(),
                             mac_cmd: false,
                             command: false,
@@ -401,6 +401,14 @@ impl GuiState {
         });
         self.version = self.version.wrapping_add(1);
 
+        let modifiers = egui::Modifiers {
+            alt: false,
+            ctrl: events.latest_state().ctrl_pressed(),
+            shift: events.latest_state().shift_pressed(),
+            mac_cmd: false,
+            command: false,
+        };
+
         let size2d = self.latest_size.get();
         let raw_input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -414,7 +422,7 @@ impl GuiState {
             max_texture_side: None,
             time: None,               //TODO: specify
             predicted_dt: 1.0 / 60.0, //TODO: specify
-            modifiers: egui::Modifiers::NONE,
+            modifiers,
             events: latest_events,
             hovered_files: Vec::new(),
             dropped_files: Vec::new(),
