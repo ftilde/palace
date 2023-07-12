@@ -542,7 +542,10 @@ mod test {
                             let val = if c == num_channels - 1 {
                                 1.0
                             } else {
-                                voxel_x.round() + voxel_y.round() + z as f32
+                                // Note: We are dividing by 32 here to avoid running into clamping
+                                // between [0, 1]. We may be able to avoid this once we have proper
+                                // color mapping.
+                                (voxel_x.round() + voxel_y.round() + z as f32) / 32.0
                             };
                             comp[pos.as_index()] = val;
                         }
@@ -555,7 +558,7 @@ mod test {
                     dimensions: vol_size,
                     chunk_size: (vol_size / Vector::fill(2u32)).local(),
                 },
-                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z);"#.to_owned(),
+                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0;"#.to_owned(),
             };
 
             let img_meta = ImageMetaData {
