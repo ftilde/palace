@@ -8,6 +8,7 @@ members = [
     "demo-sliceviewer",
     "demo-mean",
     "demo-raycaster",
+    "demo-large",
 ]
 
 [profile.release]
