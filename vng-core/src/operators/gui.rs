@@ -216,6 +216,107 @@ pub struct GuiRenderState<'a> {
     clipped_primitives: Vec<egui::ClippedPrimitive>,
 }
 
+// Taken from egui (License MIT/Apatche)
+fn is_printable_char(chr: char) -> bool {
+    let is_in_private_use_area = '\u{e000}' <= chr && chr <= '\u{f8ff}'
+        || '\u{f0000}' <= chr && chr <= '\u{ffffd}'
+        || '\u{100000}' <= chr && chr <= '\u{10fffd}';
+
+    !is_in_private_use_area && !chr.is_ascii_control()
+}
+fn translate_virtual_key_code(key: winit::event::VirtualKeyCode) -> Option<egui::Key> {
+    use egui::Key;
+    use winit::event::VirtualKeyCode;
+
+    Some(match key {
+        VirtualKeyCode::Down => Key::ArrowDown,
+        VirtualKeyCode::Left => Key::ArrowLeft,
+        VirtualKeyCode::Right => Key::ArrowRight,
+        VirtualKeyCode::Up => Key::ArrowUp,
+
+        VirtualKeyCode::Escape => Key::Escape,
+        VirtualKeyCode::Tab => Key::Tab,
+        VirtualKeyCode::Back => Key::Backspace,
+        VirtualKeyCode::Return => Key::Enter,
+        VirtualKeyCode::Space => Key::Space,
+
+        VirtualKeyCode::Insert => Key::Insert,
+        VirtualKeyCode::Delete => Key::Delete,
+        VirtualKeyCode::Home => Key::Home,
+        VirtualKeyCode::End => Key::End,
+        VirtualKeyCode::PageUp => Key::PageUp,
+        VirtualKeyCode::PageDown => Key::PageDown,
+
+        VirtualKeyCode::Minus => Key::Minus,
+        // Using Mac the key with the Plus sign on it is reported as the Equals key
+        // (with both English and Swedish keyboard).
+        VirtualKeyCode::Equals => Key::PlusEquals,
+
+        VirtualKeyCode::Key0 | VirtualKeyCode::Numpad0 => Key::Num0,
+        VirtualKeyCode::Key1 | VirtualKeyCode::Numpad1 => Key::Num1,
+        VirtualKeyCode::Key2 | VirtualKeyCode::Numpad2 => Key::Num2,
+        VirtualKeyCode::Key3 | VirtualKeyCode::Numpad3 => Key::Num3,
+        VirtualKeyCode::Key4 | VirtualKeyCode::Numpad4 => Key::Num4,
+        VirtualKeyCode::Key5 | VirtualKeyCode::Numpad5 => Key::Num5,
+        VirtualKeyCode::Key6 | VirtualKeyCode::Numpad6 => Key::Num6,
+        VirtualKeyCode::Key7 | VirtualKeyCode::Numpad7 => Key::Num7,
+        VirtualKeyCode::Key8 | VirtualKeyCode::Numpad8 => Key::Num8,
+        VirtualKeyCode::Key9 | VirtualKeyCode::Numpad9 => Key::Num9,
+
+        VirtualKeyCode::A => Key::A,
+        VirtualKeyCode::B => Key::B,
+        VirtualKeyCode::C => Key::C,
+        VirtualKeyCode::D => Key::D,
+        VirtualKeyCode::E => Key::E,
+        VirtualKeyCode::F => Key::F,
+        VirtualKeyCode::G => Key::G,
+        VirtualKeyCode::H => Key::H,
+        VirtualKeyCode::I => Key::I,
+        VirtualKeyCode::J => Key::J,
+        VirtualKeyCode::K => Key::K,
+        VirtualKeyCode::L => Key::L,
+        VirtualKeyCode::M => Key::M,
+        VirtualKeyCode::N => Key::N,
+        VirtualKeyCode::O => Key::O,
+        VirtualKeyCode::P => Key::P,
+        VirtualKeyCode::Q => Key::Q,
+        VirtualKeyCode::R => Key::R,
+        VirtualKeyCode::S => Key::S,
+        VirtualKeyCode::T => Key::T,
+        VirtualKeyCode::U => Key::U,
+        VirtualKeyCode::V => Key::V,
+        VirtualKeyCode::W => Key::W,
+        VirtualKeyCode::X => Key::X,
+        VirtualKeyCode::Y => Key::Y,
+        VirtualKeyCode::Z => Key::Z,
+
+        VirtualKeyCode::F1 => Key::F1,
+        VirtualKeyCode::F2 => Key::F2,
+        VirtualKeyCode::F3 => Key::F3,
+        VirtualKeyCode::F4 => Key::F4,
+        VirtualKeyCode::F5 => Key::F5,
+        VirtualKeyCode::F6 => Key::F6,
+        VirtualKeyCode::F7 => Key::F7,
+        VirtualKeyCode::F8 => Key::F8,
+        VirtualKeyCode::F9 => Key::F9,
+        VirtualKeyCode::F10 => Key::F10,
+        VirtualKeyCode::F11 => Key::F11,
+        VirtualKeyCode::F12 => Key::F12,
+        VirtualKeyCode::F13 => Key::F13,
+        VirtualKeyCode::F14 => Key::F14,
+        VirtualKeyCode::F15 => Key::F15,
+        VirtualKeyCode::F16 => Key::F16,
+        VirtualKeyCode::F17 => Key::F17,
+        VirtualKeyCode::F18 => Key::F18,
+        VirtualKeyCode::F19 => Key::F19,
+        VirtualKeyCode::F20 => Key::F20,
+
+        _ => {
+            return None;
+        }
+    })
+}
+
 impl GuiState {
     pub fn setup<'a>(
         &'a mut self,
@@ -223,15 +324,22 @@ impl GuiState {
         run_ui: impl FnOnce(&egui::Context),
     ) -> GuiRenderState<'a> {
         let mut latest_events = Vec::new();
+
         events.act(|e| match e.change {
             winit::event::WindowEvent::CursorMoved { .. } => {
-                let pos = e.state.mouse_state.unwrap().pos;
+                let pos = e.state.mouse_state.as_ref().unwrap().pos;
                 latest_events.push(egui::Event::PointerMoved(
                     (pos.x() as f32, pos.y() as f32).into(),
                 ));
-                EventChain::Consumed
+                if self.egui_ctx.is_using_pointer() {
+                    EventChain::Consumed
+                } else {
+                    e.into()
+                }
             }
-            winit::event::WindowEvent::MouseInput { state, button, .. } => {
+            winit::event::WindowEvent::MouseInput { state, button, .. }
+                if self.egui_ctx.is_pointer_over_area() =>
+            {
                 if let Some(m_state) = e.state.mouse_state {
                     let pos = m_state.pos;
                     use egui::PointerButton;
@@ -248,6 +356,43 @@ impl GuiState {
                         modifiers: egui::Modifiers::NONE, //TODO
                     });
                     EventChain::Consumed
+                } else {
+                    e.into()
+                }
+            }
+            winit::event::WindowEvent::ReceivedCharacter(c)
+                if self.egui_ctx.wants_keyboard_input() =>
+            {
+                if is_printable_char(c) {
+                    latest_events.push(egui::Event::Text(c.into()));
+                    EventChain::Consumed
+                } else {
+                    e.into()
+                }
+            }
+            winit::event::WindowEvent::KeyboardInput { input, .. }
+                if self.egui_ctx.wants_keyboard_input() =>
+            {
+                if let Some(key_orig) = input.virtual_keycode {
+                    let key = translate_virtual_key_code(key_orig);
+                    if let Some(key) = key {
+                        let modifiers = egui::Modifiers {
+                            alt: false,
+                            ctrl: false,
+                            shift: e.state.shift_pressed(),
+                            mac_cmd: false,
+                            command: false,
+                        };
+                        latest_events.push(egui::Event::Key {
+                            key,
+                            pressed: matches!(input.state, winit::event::ElementState::Pressed),
+                            repeat: false,
+                            modifiers,
+                        });
+                        EventChain::Consumed
+                    } else {
+                        e.into()
+                    }
                 } else {
                     e.into()
                 }

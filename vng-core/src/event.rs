@@ -74,15 +74,18 @@ pub struct OnMouseDrag<F: FnMut(MousePosition, MouseDelta)>(pub MouseButton, pub
 
 impl<F: FnMut(MousePosition, MouseDelta)> Behavior for OnMouseDrag<F> {
     fn input(&mut self, event: Event) -> EventChain {
-        if event.state.mouse_button(self.0) == ButtonState::Down {
-            if let Some(state) = event.state.mouse_state {
-                (self.1)(state.pos, state.delta);
-                EventChain::Consumed
-            } else {
-                event.into()
+        match &event.change {
+            WindowEvent::CursorMoved { .. }
+                if event.state.mouse_button(self.0) == ButtonState::Down =>
+            {
+                if let Some(state) = event.state.mouse_state {
+                    (self.1)(state.pos, state.delta);
+                    EventChain::Consumed
+                } else {
+                    event.into()
+                }
             }
-        } else {
-            event.into()
+            _ => event.into(),
         }
     }
 }
@@ -91,6 +94,15 @@ impl<F: FnMut(MousePosition, MouseDelta)> Behavior for OnMouseDrag<F> {
 pub enum ButtonState {
     Down,
     Up,
+}
+
+impl ButtonState {
+    pub fn down(self) -> bool {
+        matches!(self, ButtonState::Down)
+    }
+    pub fn up(self) -> bool {
+        matches!(self, ButtonState::Up)
+    }
 }
 
 #[derive(Clone)]
@@ -104,6 +116,21 @@ pub struct EventState {
     keys: im_rc::HashMap<Key, ButtonState>,
     mouse_buttons: im_rc::HashMap<MouseButton, ButtonState>,
     pub mouse_state: Option<MouseState>,
+}
+
+impl EventState {
+    pub fn key(&self, key: Key) -> ButtonState {
+        self.keys.get(&key).cloned().unwrap_or(ButtonState::Up)
+    }
+    pub fn shift_pressed(&self) -> bool {
+        self.key(Key::LShift).down() || self.key(Key::RShift).down()
+    }
+    pub fn mouse_button(&self, button: MouseButton) -> ButtonState {
+        self.mouse_buttons
+            .get(&button)
+            .cloned()
+            .unwrap_or(ButtonState::Up)
+    }
 }
 
 #[derive(Clone)]
@@ -141,18 +168,6 @@ impl Event {
             };
         }
         self
-    }
-}
-
-impl EventState {
-    pub fn key(&self, key: Key) -> ButtonState {
-        self.keys.get(&key).cloned().unwrap_or(ButtonState::Up)
-    }
-    pub fn mouse_button(&self, button: MouseButton) -> ButtonState {
-        self.mouse_buttons
-            .get(&button)
-            .cloned()
-            .unwrap_or(ButtonState::Up)
     }
 }
 
