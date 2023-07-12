@@ -16,5 +16,8 @@ pub mod threadpool;
 pub mod util;
 pub mod vulkan;
 
+// Reexports of dependencies
+pub use cgmath;
+
 // TODO look into thiserror/anyhow
 pub type Error = Box<(dyn std::error::Error + 'static)>;
