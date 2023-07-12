@@ -246,6 +246,9 @@ impl RunTime {
         let thread_spawner = ThreadSpawner::new();
         let barrier_completions = Default::default();
         let predicted_preview_tasks = Default::default();
+        let frame = self.frame;
+        self.frame = FrameNumber(frame.0.checked_add(1).unwrap());
+
         let data = ContextData {
             request_queue,
             hints,
