@@ -85,8 +85,8 @@ impl Splitter {
         }
     }
 
-    pub fn operate<'op>(
-        &'op self,
+    pub fn render<'op>(
+        self,
         input_l: VolumeOperator<'op>,
         input_r: VolumeOperator<'op>,
     ) -> VolumeOperator<'op> {
@@ -150,10 +150,10 @@ void main()
             OperatorId::new("splitter")
                 .dependent_on(&input_l)
                 .dependent_on(&input_r),
-            (),
-            (input_l.clone(), input_r.clone()),
-            move |ctx, (), _| async move { ctx.write(self.metadata_out()) }.into(),
-            move |ctx, positions, (input_l, input_r), _| {
+            self.metadata_out(),
+            (input_l.clone(), input_r.clone(), self),
+            move |ctx, m_out, _| async move { ctx.write(*m_out) }.into(),
+            move |ctx, positions, (input_l, input_r, this), _| {
                 async move {
                     let device = ctx.vulkan_device();
 
@@ -169,10 +169,10 @@ void main()
                         ctx.submit(input_r.bricks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
                     };
 
-                    assert_eq!(m_l.dimensions.drop_dim(2), self.metadata_l().dimensions);
-                    assert_eq!(m_r.dimensions.drop_dim(2), self.metadata_r().dimensions);
+                    assert_eq!(m_l.dimensions.drop_dim(2), this.metadata_l().dimensions);
+                    assert_eq!(m_r.dimensions.drop_dim(2), this.metadata_r().dimensions);
 
-                    let m = self.metadata_out();
+                    let m = this.metadata_out();
 
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {

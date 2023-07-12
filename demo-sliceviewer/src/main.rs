@@ -367,7 +367,7 @@ fn eval_network(
 
     let left = gui.render(left);
     let right = slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r);
-    let frame = splitter.operate(left, right);
+    let frame = splitter.render(left, right);
 
     let slice_ref = &frame;
     let version = runtime.resolve(Some(deadline), |ctx, _| {
