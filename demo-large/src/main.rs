@@ -136,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runtime = RunTime::new(storage_size, gpu_storage_size, args.compute_pool_size)?;
 
-    let brick_size = LocalVoxelPosition::fill(64.into());
+    let brick_size = LocalVoxelPosition::fill(32.into());
 
     let vol_state = match args.input {
         Input::File(path) => open_volume(path.vol, brick_size)?,
@@ -175,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vesselness: VesselnessState {
             min_rad: 1.0,
             max_rad: 5.0,
-            steps: 3,
+            steps: 2,
         },
         raycasting: RaycastingState {
             fov: 30.0,
