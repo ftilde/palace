@@ -120,7 +120,12 @@ struct State {
     vesselness: VesselnessState,
     raycasting: RaycastingState,
     sliceview: SliceviewState,
-    slice_angle: f32,
+    rotslice: RotSliceState,
+}
+
+struct RotSliceState {
+    gui: GuiState,
+    angle: f32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -183,7 +188,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             offset: [0.0, 0.0].into(),
             zoom_level: 1.0,
         },
-        slice_angle: 0.0,
+        rotslice: RotSliceState {
+            gui: GuiState::default(),
+            angle: 0.0,
+        },
     };
 
     let mut event_loop = EventLoop::new();
@@ -303,16 +311,17 @@ fn slice_viewer_z<'op>(
 }
 
 fn slice_viewer_rot<'op>(
+    runtime: &mut RunTime,
     slice_input: VolumeOperator<'op>,
     md: ImageMetaData,
-    angle: &mut f32,
+    state: &'op mut RotSliceState,
     mut events: EventStream,
 ) -> VolumeOperator<'op> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-            *angle += delta.x() as f32 * 0.01;
+            state.angle += delta.x() as f32 * 0.01;
         }))
-        .chain(OnWheelMove(|delta, _| *angle += delta * 0.05))
+        .chain(OnWheelMove(|delta, _| state.angle += delta * 0.05))
     });
 
     let md = ImageMetaData {
@@ -323,15 +332,83 @@ fn slice_viewer_rot<'op>(
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
-        crate::operators::scalar::constant_pod(*angle),
+        crate::operators::scalar::constant_pod(state.angle),
     );
+
+    let mat_ref = &slice_proj_rot;
+    let vol_ref = &slice_input;
+
+    let info = if let Some(mouse_state) = &events.latest_state().mouse_state {
+        let mouse_pos = mouse_state.pos;
+        runtime
+            .resolve(None, move |ctx, _| {
+                async move {
+                    let mat = ctx.submit(mat_ref.request_scalar()).await;
+                    let m_in = ctx.submit(vol_ref.metadata.request_scalar()).await;
+
+                    let mouse_pos = Vector::<4, f32>::from([
+                        1.0,
+                        0.0,
+                        mouse_pos.y() as f32,
+                        mouse_pos.x() as f32,
+                    ]);
+                    let vol_pos = mat * mouse_pos;
+                    let vol_pos = vol_pos.drop_dim(0).map(|v| v.round() as i32);
+
+                    let dim = m_in.dimensions.raw();
+
+                    let inside = vol_pos
+                        .zip(dim, |p, d| 0 <= p && p < d as i32)
+                        .fold(true, |a, b| a && b);
+                    let ret = if inside {
+                        let vol_pos = vol_pos.map(|v| (v as u32)).global();
+                        let chunk_pos = m_in.chunk_pos(vol_pos);
+                        let chunk_info = m_in.chunk_info(chunk_pos);
+
+                        let brick = ctx.submit(vol_ref.bricks.request(chunk_pos)).await;
+
+                        let local_pos = chunk_info.in_chunk(vol_pos);
+                        let brick = vng_core::data::chunk(&brick, &chunk_info);
+
+                        let val = *brick.get(local_pos.as_index()).unwrap();
+                        Some((val, vol_pos))
+                    } else {
+                        None
+                    };
+
+                    Ok(ret)
+                }
+                .into()
+            })
+            .unwrap()
+    } else {
+        None
+    };
+
+    let gui = state.gui.setup(&mut events, |ctx| {
+        egui::Window::new("Info").show(ctx, |ui| {
+            let s = if let Some((val, pos)) = info {
+                format!(
+                    "Pos: [{}, {}, {}]\n Value: {}",
+                    pos.x().raw,
+                    pos.y().raw,
+                    pos.z().raw,
+                    val
+                )
+            } else {
+                format!("Outside the volume")
+            };
+            ui.label(s);
+        });
+    });
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
     );
-    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
-    slice
+    let frame = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let frame = gui.render(frame);
+    frame
 }
 
 fn eval_network(
@@ -450,7 +527,7 @@ fn eval_network(
                         ui.horizontal(|ui| {
                             ui.label("Angle: ");
                             ui.add(egui::Slider::new(
-                                &mut app_state.slice_angle,
+                                &mut app_state.rotslice.angle,
                                 0.0..=std::f32::consts::TAU,
                             ));
                         });
@@ -481,9 +558,10 @@ fn eval_network(
             );
 
             let right = slice_viewer_rot(
+                runtime,
                 processed,
                 splitter.metadata_r(),
-                &mut app_state.slice_angle,
+                &mut app_state.rotslice,
                 events_r,
             );
 
