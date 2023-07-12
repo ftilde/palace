@@ -38,7 +38,6 @@ pub fn multiscale_vesselness<'a>(
             let inter_log = min_log * (1.0 - alpha) + max_log * alpha;
 
             let scale = inter_log.exp();
-            eprintln!("scale: {}", scale);
             scale
         });
 
