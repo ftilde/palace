@@ -379,7 +379,7 @@ void main() {
 ";
 
         TensorOperator::unbatched(
-            OperatorId::new("entry_exit_points")
+            OperatorId::new("gui")
                 .dependent_on(&input)
                 .dependent_on(Id::hash(&self.inner.version)),
             input.clone(),
