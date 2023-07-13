@@ -34,9 +34,14 @@ pub struct GuiState {
     latest_size: Cell<Vector<2, u32>>,
     textures_delta: RefCell<TexturesDelta>,
     textures: RefCell<BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>>,
+    scale_factor: f32,
 }
 
 impl GuiState {
+    pub fn set_scale_factor(&mut self, factor: f32) {
+        self.scale_factor = factor;
+    }
+
     fn update(&self, device: &DeviceContext, size: Vector<2, u32>) {
         self.latest_size.set(size);
 
@@ -207,6 +212,7 @@ impl Default for GuiState {
             latest_size: Cell::new(Vector::fill(0)),
             textures_delta: RefCell::new(Default::default()),
             textures: RefCell::new(Default::default()),
+            scale_factor: 1.0,
         }
     }
 }
@@ -318,6 +324,10 @@ fn translate_virtual_key_code(key: winit::event::VirtualKeyCode) -> Option<egui:
 }
 
 impl GuiState {
+    fn pointer_pos(&self, p: Vector<2, i32>) -> egui::Pos2 {
+        let pos = p.map(|v| v as f32 / self.scale_factor);
+        (pos.x(), pos.y()).into()
+    }
     pub fn setup<'a>(
         &'a mut self,
         events: &mut EventStream,
@@ -327,10 +337,8 @@ impl GuiState {
 
         events.act(|e| match e.change {
             winit::event::WindowEvent::CursorMoved { .. } => {
-                let pos = e.state.mouse_state.as_ref().unwrap().pos;
-                latest_events.push(egui::Event::PointerMoved(
-                    (pos.x() as f32, pos.y() as f32).into(),
-                ));
+                let pos = self.pointer_pos(e.state.mouse_state.as_ref().unwrap().pos);
+                latest_events.push(egui::Event::PointerMoved(pos));
                 if self.egui_ctx.is_using_pointer() {
                     EventChain::Consumed
                 } else {
@@ -341,11 +349,11 @@ impl GuiState {
                 if self.egui_ctx.is_pointer_over_area() =>
             {
                 if let Some(m_state) = e.state.mouse_state {
-                    let pos = m_state.pos;
+                    let pos = self.pointer_pos(m_state.pos);
                     use egui::PointerButton;
                     use winit::event::MouseButton;
                     latest_events.push(egui::Event::PointerButton {
-                        pos: (pos.x() as f32, pos.y() as f32).into(),
+                        pos,
                         button: match button {
                             MouseButton::Left => PointerButton::Primary,
                             MouseButton::Right => PointerButton::Secondary,
@@ -409,16 +417,16 @@ impl GuiState {
             command: false,
         };
 
-        let size2d = self.latest_size.get();
+        let size2d = self.latest_size.get().map(|v| v as f32 / self.scale_factor);
         let raw_input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 Default::default(),
                 egui::Vec2 {
-                    x: size2d.x() as f32,
-                    y: size2d.y() as f32,
+                    x: size2d.x(),
+                    y: size2d.y(),
                 },
             )),
-            pixels_per_point: Some(1.0),
+            pixels_per_point: Some(self.scale_factor),
             max_texture_side: None,
             time: None,               //TODO: specify
             predicted_dt: 1.0 / 60.0, //TODO: specify
@@ -872,11 +880,12 @@ void main() {
                         .clear_values(&[]);
 
                     let size2d = m_out.dimensions.drop_dim(2).raw();
+                    let vp_size = size2d.map(|v| v as f32 * state.inner.scale_factor);
                     let viewport = vk::Viewport::builder()
                         .x(0.0)
                         .y(0.0)
-                        .width(size2d.x() as f32)
-                        .height(size2d.y() as f32)
+                        .width(vp_size.x())
+                        .height(vp_size.y())
                         .min_depth(0.0)
                         .max_depth(1.0);
 
@@ -914,7 +923,11 @@ void main() {
                             }
                         };
 
-                        let clip_rect = primitive.clip_rect;
+                        let mut clip_rect = primitive.clip_rect;
+                        *clip_rect.left_mut() *= state.inner.scale_factor;
+                        *clip_rect.right_mut() *= state.inner.scale_factor;
+                        *clip_rect.top_mut() *= state.inner.scale_factor;
+                        *clip_rect.bottom_mut() *= state.inner.scale_factor;
                         let clip_rect_extent = vk::Extent2D::builder()
                             .width(clip_rect.width().round() as u32)
                             .height(clip_rect.height().round() as u32)

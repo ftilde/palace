@@ -207,6 +207,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
 
+        if let Event::WindowEvent {
+            event: winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. },
+            ..
+        } = event
+        {
+            state.gui.set_scale_factor(scale_factor as f32);
+            state.rotslice.gui.set_scale_factor(scale_factor as f32);
+        }
+
         let Some(event) = event.to_static() else {
             return;
         };
