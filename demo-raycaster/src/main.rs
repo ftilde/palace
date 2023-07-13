@@ -139,9 +139,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run_return(|event, _, control_flow| {
         control_flow.set_wait();
 
-        let Some(event) = event.to_static() else {
-            return;
-        };
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,

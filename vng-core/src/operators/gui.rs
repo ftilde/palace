@@ -38,10 +38,6 @@ pub struct GuiState {
 }
 
 impl GuiState {
-    pub fn set_scale_factor(&mut self, factor: f32) {
-        self.scale_factor = factor;
-    }
-
     fn update(&self, device: &DeviceContext, size: Vector<2, u32>) {
         self.latest_size.set(size);
 
@@ -334,6 +330,7 @@ impl GuiState {
         run_ui: impl FnOnce(&egui::Context),
     ) -> GuiRenderState<'a> {
         let mut latest_events = Vec::new();
+        self.scale_factor = events.latest_state().scale_factor;
 
         events.act(|e| match e.change {
             winit::event::WindowEvent::CursorMoved { .. } => {

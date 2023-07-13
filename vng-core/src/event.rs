@@ -111,11 +111,23 @@ pub struct MouseState {
     pub delta: MouseDelta,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EventState {
     keys: im_rc::HashMap<Key, ButtonState>,
     mouse_buttons: im_rc::HashMap<MouseButton, ButtonState>,
     pub mouse_state: Option<MouseState>,
+    pub scale_factor: f32,
+}
+
+impl Default for EventState {
+    fn default() -> Self {
+        Self {
+            scale_factor: 1.0,
+            keys: Default::default(),
+            mouse_buttons: Default::default(),
+            mouse_state: Default::default(),
+        }
+    }
 }
 
 impl EventState {
@@ -188,7 +200,7 @@ pub struct EventSource {
 }
 
 impl EventSource {
-    pub fn add(&mut self, diff: Change) {
+    pub fn add<'a>(&mut self, diff: WindowEvent<'a>) {
         match diff {
             WindowEvent::KeyboardInput { input, .. } => {
                 if let Some(code) = input.virtual_keycode {
@@ -221,12 +233,21 @@ impl EventSource {
             }
             //WindowEvent::CursorEntered { device_id } => todo!(),
             WindowEvent::CursorLeft { .. } => self.current_state.mouse_state = None,
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // It would be nicer to just pass these to the widgets as an actual event, but
+                // there is no way to do that because to_static removes precisely this event. (Also
+                // there may be issues with events not propagating splitters and similar
+                // operators.)
+                self.current_state.scale_factor = scale_factor as f32;
+            }
             _ => {}
         }
-        self.batch.push(Event {
-            change: diff,
-            state: self.current_state.clone(),
-        });
+        if let Some(diff) = diff.to_static() {
+            self.batch.push(Event {
+                change: diff,
+                state: self.current_state.clone(),
+            });
+        }
     }
 
     pub fn current_batch(&mut self) -> EventStream {
