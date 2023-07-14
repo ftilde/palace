@@ -129,7 +129,7 @@ impl GuiState {
                 })
                 .build();
 
-            transistion_image_layout(
+            transistion_image_layout_with_barrier(
                 device,
                 img.image,
                 vk::ImageLayout::UNDEFINED,
@@ -146,7 +146,7 @@ impl GuiState {
                 );
             });
 
-            transistion_image_layout(
+            transistion_image_layout_with_barrier(
                 device,
                 img.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -446,13 +446,15 @@ impl GuiState {
     }
 }
 
-fn transistion_image_layout(
+fn transistion_image_layout_with_barrier(
     device: &DeviceContext,
     image: vk::Image,
     from: vk::ImageLayout,
     to: vk::ImageLayout,
 ) {
-    //TODO: figure how synchronization here. the below is not actually required
+    //TODO: Figure out finer grained synchronization here. We do not actually require ALL_COMMANDS
+    //and MEMORY_READ/MEMORY_WRITE for src/dst. I _think_ this is not problematic though (at least
+    //for now) since the barrier is associated with this specific image.
     let barriers = [vk::ImageMemoryBarrier2::builder()
         .image(image)
         .subresource_range(
@@ -569,12 +571,12 @@ void main() {
                                 .store_op(vk::AttachmentStoreOp::STORE)
                                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                                .initial_layout(vk::ImageLayout::GENERAL)
-                                .final_layout(vk::ImageLayout::GENERAL);
+                                .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
                             let color_attachment_ref = vk::AttachmentReference::builder()
                                 .attachment(0)
-                                .layout(vk::ImageLayout::GENERAL);
+                                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
                             let color_attachment_refs = &[*color_attachment_ref];
 
@@ -826,10 +828,8 @@ void main() {
                             device.id,
                             pos,
                             DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER
-                                    | vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::SHADER_WRITE
-                                    | vk::AccessFlags2::TRANSFER_WRITE,
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_READ,
                             },
                         ))
                         .await;
@@ -847,11 +847,11 @@ void main() {
                         )
                         .build();
 
-                    transistion_image_layout(
+                    transistion_image_layout_with_barrier(
                         device,
                         output_texture.image,
                         vk::ImageLayout::UNDEFINED,
-                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     );
 
                     device.with_cmd_buffer(|cmd| unsafe {
@@ -859,10 +859,17 @@ void main() {
                             cmd.raw(),
                             gpu_brick_in.buffer,
                             output_texture.image,
-                            vk::ImageLayout::GENERAL,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                             &[copy_info],
                         );
                     });
+
+                    transistion_image_layout_with_barrier(
+                        device,
+                        output_texture.image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    );
 
                     // Actual rendering
                     let render_pass_info = vk::RenderPassBeginInfo::builder()
@@ -896,20 +903,6 @@ void main() {
                     };
 
                     state.inner.update(device, size2d);
-
-                    // Sync writes (1) to output buffer and (2) to textures (within
-                    // state.inner.update)
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        },
-                    ))
-                    .await;
 
                     let textures = state.inner.textures.borrow();
                     for primitive in state.clipped_primitives.iter() {
@@ -1049,17 +1042,12 @@ void main() {
                         });
                     }
 
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_READ,
-                        },
-                    ))
-                    .await;
+                    transistion_image_layout_with_barrier(
+                        device,
+                        output_texture.image,
+                        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    );
 
                     let copy_info = vk::BufferImageCopy::builder()
                         .image_extent(extent.into())
@@ -1082,7 +1070,7 @@ void main() {
                         device.functions().cmd_copy_image_to_buffer(
                             cmd.raw(),
                             output_texture.image,
-                            vk::ImageLayout::GENERAL,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                             gpu_brick_out.buffer,
                             &[copy_info],
                         );
