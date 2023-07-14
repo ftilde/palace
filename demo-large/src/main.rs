@@ -259,6 +259,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //TODO: Hm, not sure if this works out to well in a multi-device scenario... We have to
     //investigate how to fix that.
+    unsafe {
+        state
+            .rotslice
+            .gui
+            .deinitialize(&runtime.vulkan.device_contexts()[0])
+    };
     unsafe { state.gui.deinitialize(&runtime.vulkan.device_contexts()[0]) };
     unsafe { window.deinitialize(&runtime.vulkan) };
 
