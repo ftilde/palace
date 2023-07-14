@@ -1,2 +1,2 @@
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-Ctarget-cpu=skylake"] #TODO: replace with native again when https://github.com/rust-lang/rust/issues/112398 is fixed
+rustflags = ["-Ctarget-cpu=native"]
