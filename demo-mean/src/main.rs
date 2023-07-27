@@ -80,8 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
     let storage_size = args.mem_size << 30; //in gigabyte
+    let gpu_storage_size = args.gpu_mem_size.map(|v| v << 30); //in gigabyte
 
-    let mut runtime = RunTime::new(storage_size, args.gpu_mem_size, args.compute_pool_size)?;
+    let mut runtime = RunTime::new(storage_size, gpu_storage_size, args.compute_pool_size)?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
@@ -164,6 +165,8 @@ fn eval_network(
         }
         .into()
     })?;
+
+    println!("Computed mean: {}", mean_val_unscaled);
 
     Ok(())
 }
