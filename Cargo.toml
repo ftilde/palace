@@ -9,6 +9,7 @@ members = [
     "demo-mean",
     "demo-raycaster",
     "demo-large",
+    "py-vng",
 ]
 
 [profile.release]

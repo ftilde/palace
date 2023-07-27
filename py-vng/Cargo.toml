@@ -1,0 +1,12 @@
+[package]
+name = "vng"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vng"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.19.1", features = ["extension-module"] }
+vng-core = { path = "../vng-core" }
