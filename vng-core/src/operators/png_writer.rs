@@ -9,7 +9,7 @@ use super::volume::VolumeOperator;
 
 pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
-    input: &'inv VolumeOperator<'op>,
+    input: &'inv VolumeOperator,
     path: PathBuf,
 ) -> Result<(), crate::Error> {
     let m = ctx.submit(input.metadata.request_scalar()).await;

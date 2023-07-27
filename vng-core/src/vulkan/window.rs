@@ -590,7 +590,7 @@ impl Window {
     pub async fn render<'cref, 'inv: 'cref, 'op: 'inv>(
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
-        input: &'inv VolumeOperator<'op>,
+        input: &'inv VolumeOperator,
     ) -> Result<DataVersionType, crate::Error> {
         let m = ctx.submit(input.metadata.request_scalar()).await;
 

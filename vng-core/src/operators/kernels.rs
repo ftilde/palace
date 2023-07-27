@@ -105,7 +105,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
     gen_kernel_sum_zero(func, norm_nom, extent)
 }
 
-pub fn gauss<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
+pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
     gen_kernel_operator(
         OperatorId::new("gauss").dependent_on(&stddev),
         stddev,
@@ -113,7 +113,7 @@ pub fn gauss<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
         comp_kernel_gauss,
     )
 }
-pub fn dgauss_dx<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
+pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
     gen_kernel_operator(
         OperatorId::new("dgauss_dx").dependent_on(&stddev),
         stddev,
@@ -121,7 +121,7 @@ pub fn dgauss_dx<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
         comp_kernel_dgauss_dx,
     )
 }
-pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
+pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
     gen_kernel_operator(
         OperatorId::new("ddgauss_dxdx").dependent_on(&stddev),
         stddev,
@@ -130,17 +130,17 @@ pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<'a, f32>) -> ArrayOperator<'a> {
     )
 }
 
-fn gen_kernel_operator<'a, Params: Send + Copy + 'a>(
+fn gen_kernel_operator<Params: Send + Copy + 'static>(
     id: OperatorId,
-    get_params: ScalarOperator<'a, Params>,
-    get_size: impl Fn(&Params) -> usize + 'a + Clone,
-    gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'a,
-) -> ArrayOperator<'a> {
+    get_params: ScalarOperator<Params>,
+    get_size: impl Fn(&Params) -> usize + Clone + 'static,
+    gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'static,
+) -> ArrayOperator {
     TensorOperator::unbatched(
         id,
         (get_params.clone(), get_size.clone()),
         (get_params, get_size.clone(), gen_kernel),
-        move |ctx, (get_params, get_size), _| {
+        move |ctx, (get_params, get_size)| {
             async move {
                 let params = ctx.submit(get_params.request_scalar()).await;
                 let size = get_size(&params) as u32;
@@ -151,7 +151,7 @@ fn gen_kernel_operator<'a, Params: Send + Copy + 'a>(
             }
             .into()
         },
-        move |ctx, pos, (get_params, get_size, gen_kernel), _| {
+        move |ctx, pos, (get_params, get_size, gen_kernel)| {
             assert_eq!(pos.raw, 0);
             async move {
                 let params = ctx.submit(get_params.request_scalar()).await;

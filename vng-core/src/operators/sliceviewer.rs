@@ -21,18 +21,18 @@ use crate::{
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
-pub fn slice_projection_mat_z_scaled_fit<'a>(
-    input_data: ScalarOperator<'a, VolumeMetaData>,
-    output_data: ScalarOperator<'a, ImageMetaData>,
-    selected_slice: ScalarOperator<'a, GlobalCoordinate>,
-) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
+pub fn slice_projection_mat_z_scaled_fit(
+    input_data: ScalarOperator<VolumeMetaData>,
+    output_data: ScalarOperator<ImageMetaData>,
+    selected_slice: ScalarOperator<GlobalCoordinate>,
+) -> ScalarOperator<cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
             .dependent_on(&output_data)
             .dependent_on(&selected_slice),
         (input_data, output_data, selected_slice),
-        move |ctx, (input_data, output_data, selected_slice), _| {
+        move |ctx, (input_data, output_data, selected_slice)| {
             async move {
                 let (input_data, output_data, selected_slice) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
@@ -58,13 +58,13 @@ pub fn slice_projection_mat_z_scaled_fit<'a>(
     )
 }
 
-pub fn slice_projection_mat_z<'a>(
-    input_data: ScalarOperator<'a, VolumeMetaData>,
-    output_data: ScalarOperator<'a, ImageMetaData>,
-    selected_slice: ScalarOperator<'a, GlobalCoordinate>,
-    offset: ScalarOperator<'a, Vector<2, f32>>,
-    zoom_level: ScalarOperator<'a, f32>,
-) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
+pub fn slice_projection_mat_z(
+    input_data: ScalarOperator<VolumeMetaData>,
+    output_data: ScalarOperator<ImageMetaData>,
+    selected_slice: ScalarOperator<GlobalCoordinate>,
+    offset: ScalarOperator<Vector<2, f32>>,
+    zoom_level: ScalarOperator<f32>,
+) -> ScalarOperator<cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
@@ -73,7 +73,7 @@ pub fn slice_projection_mat_z<'a>(
             .dependent_on(&offset)
             .dependent_on(&zoom_level),
         (input_data, output_data, selected_slice, offset, zoom_level),
-        move |ctx, (input_data, output_data, selected_slice, offset, zoom_level), _| {
+        move |ctx, (input_data, output_data, selected_slice, offset, zoom_level)| {
             async move {
                 let (input_data, output_data, selected_slice, offset, zoom_level) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
@@ -124,18 +124,18 @@ pub fn slice_projection_mat_z<'a>(
     )
 }
 
-pub fn slice_projection_mat_centered_rotate<'a>(
-    input_data: ScalarOperator<'a, VolumeMetaData>,
-    output_data: ScalarOperator<'a, ImageMetaData>,
-    rotation: ScalarOperator<'a, f32>,
-) -> ScalarOperator<'a, cgmath::Matrix4<f32>> {
+pub fn slice_projection_mat_centered_rotate(
+    input_data: ScalarOperator<VolumeMetaData>,
+    output_data: ScalarOperator<ImageMetaData>,
+    rotation: ScalarOperator<f32>,
+) -> ScalarOperator<cgmath::Matrix4<f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_centered_rotate")
             .dependent_on(&input_data)
             .dependent_on(&output_data)
             .dependent_on(&rotation),
         (input_data, output_data, rotation),
-        move |ctx, (input_data, output_data, rotation), _| {
+        move |ctx, (input_data, output_data, rotation)| {
             async move {
                 let (input_data, output_data, rotation) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
@@ -168,11 +168,11 @@ pub fn slice_projection_mat_centered_rotate<'a>(
     )
 }
 
-pub fn render_slice<'a>(
-    input: VolumeOperator<'a>,
-    result_metadata: ScalarOperator<'a, ImageMetaData>,
-    projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
-) -> VolumeOperator<'a> {
+pub fn render_slice(
+    input: VolumeOperator,
+    result_metadata: ScalarOperator<ImageMetaData>,
+    projection_mat: ScalarOperator<cgmath::Matrix4<f32>>,
+) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         vol_dim: cgmath::Vector3<u32>,
@@ -303,7 +303,7 @@ void main()
             .dependent_on(&projection_mat),
         result_metadata.clone(),
         (input, result_metadata, projection_mat),
-        move |ctx, result_metadata, _| {
+        move |ctx, result_metadata| {
             async move {
                 let r = ctx.submit(result_metadata.request_scalar()).await;
                 let m = full_info(r);
@@ -311,7 +311,7 @@ void main()
             }
             .into()
         },
-        move |ctx, pos, (input, result_metadata, projection_mat), _| {
+        move |ctx, pos, (input, result_metadata, projection_mat)| {
             async move {
                 let device = ctx.vulkan_device();
 

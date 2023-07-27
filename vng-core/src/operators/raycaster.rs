@@ -21,11 +21,11 @@ use crate::{
 
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
-pub fn entry_exit_points<'a>(
-    input_metadata: ScalarOperator<'a, VolumeMetaData>,
-    result_metadata: ScalarOperator<'a, ImageMetaData>,
-    projection_mat: ScalarOperator<'a, cgmath::Matrix4<f32>>,
-) -> VolumeOperator<'a> {
+pub fn entry_exit_points(
+    input_metadata: ScalarOperator<VolumeMetaData>,
+    result_metadata: ScalarOperator<ImageMetaData>,
+    projection_mat: ScalarOperator<cgmath::Matrix4<f32>>,
+) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
@@ -108,7 +108,7 @@ void main() {
             .dependent_on(&projection_mat),
         result_metadata.clone(),
         (input_metadata, result_metadata, projection_mat),
-        move |ctx, result_metadata, _| {
+        move |ctx, result_metadata| {
             async move {
                 let r = ctx.submit(result_metadata.request_scalar()).await;
                 let m = full_info(r);
@@ -116,7 +116,7 @@ void main() {
             }
             .into()
         },
-        move |ctx, pos, (_m_in, result_metadata, projection_mat), _| {
+        move |ctx, pos, (_m_in, result_metadata, projection_mat)| {
             async move {
                 //TODO: Use spacing information of _m_in (or similar) here
                 let device = ctx.vulkan_device();
@@ -382,10 +382,7 @@ void main() {
     )
 }
 
-pub fn raycast<'a>(
-    input: VolumeOperator<'a>,
-    entry_exit_points: VolumeOperator<'a>,
-) -> VolumeOperator<'a> {
+pub fn raycast(input: VolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
@@ -514,7 +511,7 @@ void main()
             .dependent_on(&entry_exit_points),
         entry_exit_points.clone(),
         (input, entry_exit_points),
-        move |ctx, entry_exit_points, _| {
+        move |ctx, entry_exit_points| {
             async move {
                 let r = ctx
                     .submit(entry_exit_points.metadata.request_scalar())
@@ -524,7 +521,7 @@ void main()
             }
             .into()
         },
-        move |ctx, pos, (input, entry_exit_points), _| {
+        move |ctx, pos, (input, entry_exit_points)| {
             async move {
                 let device = ctx.vulkan_device();
 

@@ -15,6 +15,7 @@ use vng_core::{
     Error,
 };
 
+#[derive(Clone)]
 pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
     metadata: VolumeMetaData,
@@ -42,15 +43,17 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
 }
 
 impl VolumeOperatorState for VvdVolumeSourceState {
-    fn operate<'op>(&'op self) -> VolumeOperator<'op> {
-        TensorOperator::new(
+    fn operate(&self) -> VolumeOperator {
+        TensorOperator::with_state(
             OperatorId::new("VvdVolumeSourceState::operate")
                 .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
-            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, positions, _, _| {
+            self.metadata.clone(),
+            self.clone(),
+            move |ctx, m| async move { ctx.write(*m) }.into(),
+            move |ctx, positions, this| {
                 async move {
-                    self.raw
-                        .load_raw_bricks(self.metadata.chunk_size, ctx, positions)
+                    this.raw
+                        .load_raw_bricks(this.metadata.chunk_size, ctx, positions)
                         .await
                 }
                 .into()

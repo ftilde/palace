@@ -2,10 +2,12 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     ffi::c_void,
+    rc::Rc,
 };
 
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
+use derive_more::Deref;
 use egui::{Rect, TextureId, TexturesDelta};
 
 pub use egui;
@@ -28,21 +30,26 @@ use crate::{
 
 use super::volume::VolumeOperator;
 
-pub struct GuiState {
+// TODO: We really need to clean this up for this to work properly with python. (Also we need to
+// generate some kind of accessor for all the egui functionality anyway)
+#[derive(Clone, Deref)]
+pub struct GuiState(Rc<RefCell<GuiStateInner>>);
+
+pub struct GuiStateInner {
     egui_ctx: egui::Context,
     version: u64,
     latest_size: Cell<Vector<2, u32>>,
-    textures_delta: RefCell<TexturesDelta>,
-    textures: RefCell<BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>>,
+    textures_delta: TexturesDelta,
+    textures: BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>,
     scale_factor: f32,
 }
 
-impl GuiState {
-    fn update(&self, device: &DeviceContext, size: Vector<2, u32>) {
+impl GuiStateInner {
+    fn update(&mut self, device: &DeviceContext, size: Vector<2, u32>) {
         self.latest_size.set(size);
 
-        let mut textures_delta = self.textures_delta.borrow_mut();
-        let mut textures = self.textures.borrow_mut();
+        let textures_delta = &mut self.textures_delta;
+        let textures = &mut self.textures;
         for (id, delta) in textures_delta.set.drain(..) {
             // Extract pixel data from egui
             let data: Vec<u8> = match &delta.image {
@@ -189,11 +196,16 @@ impl GuiState {
             let _ = TempRessource::new(device, img_view);
         }
     }
+    fn pointer_pos(&self, p: Vector<2, i32>) -> egui::Pos2 {
+        let pos = p.map(|v| v as f32 / self.scale_factor);
+        (pos.x(), pos.y()).into()
+    }
 }
 
 impl VulkanState for GuiState {
     unsafe fn deinitialize(&mut self, context: &DeviceContext) {
-        for (mut img, mut img_view) in std::mem::take(self.textures.get_mut()).into_values() {
+        let mut inner = self.0.borrow_mut();
+        for (mut img, mut img_view) in std::mem::take(&mut inner.textures).into_values() {
             img.deinitialize(context);
             img_view.deinitialize(context);
         }
@@ -202,19 +214,19 @@ impl VulkanState for GuiState {
 
 impl Default for GuiState {
     fn default() -> Self {
-        Self {
+        Self(Rc::new(RefCell::new(GuiStateInner {
             egui_ctx: Default::default(),
             version: Default::default(),
             latest_size: Cell::new(Vector::fill(0)),
-            textures_delta: RefCell::new(Default::default()),
-            textures: RefCell::new(Default::default()),
+            textures_delta: Default::default(),
+            textures: Default::default(),
             scale_factor: 1.0,
-        }
+        })))
     }
 }
 
-pub struct GuiRenderState<'a> {
-    inner: &'a GuiState,
+pub struct GuiRenderState {
+    inner: GuiState,
     clipped_primitives: Vec<egui::ClippedPrimitive>,
 }
 
@@ -320,33 +332,31 @@ fn translate_virtual_key_code(key: winit::event::VirtualKeyCode) -> Option<egui:
 }
 
 impl GuiState {
-    fn pointer_pos(&self, p: Vector<2, i32>) -> egui::Pos2 {
-        let pos = p.map(|v| v as f32 / self.scale_factor);
-        (pos.x(), pos.y()).into()
-    }
-    pub fn setup<'a>(
-        &'a mut self,
+    pub fn setup(
+        &self,
         events: &mut EventStream,
         run_ui: impl FnOnce(&egui::Context),
-    ) -> GuiRenderState<'a> {
+    ) -> GuiRenderState {
+        let mut this = self.borrow_mut();
+
         let mut latest_events = Vec::new();
-        self.scale_factor = events.latest_state().scale_factor;
+        this.scale_factor = events.latest_state().scale_factor;
 
         events.act(|e| match e.change {
             winit::event::WindowEvent::CursorMoved { .. } => {
-                let pos = self.pointer_pos(e.state.mouse_state.as_ref().unwrap().pos);
+                let pos = this.pointer_pos(e.state.mouse_state.as_ref().unwrap().pos);
                 latest_events.push(egui::Event::PointerMoved(pos));
-                if self.egui_ctx.is_using_pointer() {
+                if this.egui_ctx.is_using_pointer() {
                     EventChain::Consumed
                 } else {
                     e.into()
                 }
             }
             winit::event::WindowEvent::MouseInput { state, button, .. }
-                if self.egui_ctx.is_pointer_over_area() =>
+                if this.egui_ctx.is_pointer_over_area() =>
             {
                 if let Some(m_state) = e.state.mouse_state {
-                    let pos = self.pointer_pos(m_state.pos);
+                    let pos = this.pointer_pos(m_state.pos);
                     use egui::PointerButton;
                     use winit::event::MouseButton;
                     latest_events.push(egui::Event::PointerButton {
@@ -366,7 +376,7 @@ impl GuiState {
                 }
             }
             winit::event::WindowEvent::ReceivedCharacter(c)
-                if self.egui_ctx.wants_keyboard_input() =>
+                if this.egui_ctx.wants_keyboard_input() =>
             {
                 if is_printable_char(c) {
                     latest_events.push(egui::Event::Text(c.into()));
@@ -376,7 +386,7 @@ impl GuiState {
                 }
             }
             winit::event::WindowEvent::KeyboardInput { input, .. }
-                if self.egui_ctx.wants_keyboard_input() =>
+                if this.egui_ctx.wants_keyboard_input() =>
             {
                 if let Some(key_orig) = input.virtual_keycode {
                     let key = translate_virtual_key_code(key_orig);
@@ -404,7 +414,7 @@ impl GuiState {
             }
             _ => e.into(),
         });
-        self.version = self.version.wrapping_add(1);
+        this.version = this.version.wrapping_add(1);
 
         let modifiers = egui::Modifiers {
             alt: false,
@@ -414,7 +424,7 @@ impl GuiState {
             command: false,
         };
 
-        let size2d = self.latest_size.get().map(|v| v as f32 / self.scale_factor);
+        let size2d = this.latest_size.get().map(|v| v as f32 / this.scale_factor);
         let raw_input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
                 Default::default(),
@@ -423,7 +433,7 @@ impl GuiState {
                     y: size2d.y(),
                 },
             )),
-            pixels_per_point: Some(self.scale_factor),
+            pixels_per_point: Some(this.scale_factor),
             max_texture_side: None,
             time: None,               //TODO: specify
             predicted_dt: 1.0 / 60.0, //TODO: specify
@@ -434,13 +444,13 @@ impl GuiState {
             focused: true,
         };
 
-        let full_output = self.egui_ctx.run(raw_input, run_ui);
-        let clipped_primitives = self.egui_ctx.tessellate(full_output.shapes);
+        let full_output = this.egui_ctx.run(raw_input, run_ui);
+        let clipped_primitives = this.egui_ctx.tessellate(full_output.shapes);
 
-        *self.textures_delta.borrow_mut() = full_output.textures_delta;
+        this.textures_delta = full_output.textures_delta;
 
         GuiRenderState {
-            inner: self,
+            inner: self.clone(),
             clipped_primitives,
         }
     }
@@ -481,11 +491,8 @@ fn transistion_image_layout_with_barrier(
     });
 }
 
-impl<'c> GuiRenderState<'c> {
-    pub fn render<'a>(self, input: VolumeOperator<'a>) -> VolumeOperator<'a>
-    where
-        'c: 'a,
-    {
+impl GuiRenderState {
+    pub fn render(self, input: VolumeOperator) -> VolumeOperator {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             frame_size: cgmath::Vector2<u32>,
@@ -538,13 +545,14 @@ void main() {
 }
 ";
 
+        let version = self.inner.0.borrow().version;
         TensorOperator::unbatched(
             OperatorId::new("gui")
                 .dependent_on(&input)
-                .dependent_on(Id::hash(&self.inner.version)),
+                .dependent_on(Id::hash(&version)),
             input.clone(),
             (input, self),
-            move |ctx, input, _| {
+            move |ctx, input| {
                 async move {
                     let m = ctx.submit(input.metadata.request_scalar()).await;
                     assert_eq!(m.dimension_in_bricks(), Vector::fill(1.into()));
@@ -552,7 +560,7 @@ void main() {
                 }
                 .into()
             },
-            move |ctx, pos, (input, state), _| {
+            move |ctx, pos, (input, state)| {
                 async move {
                     let device = ctx.vulkan_device();
 
@@ -883,8 +891,9 @@ void main() {
                         )
                         .clear_values(&[]);
 
+                    let mut state_i = state.inner.borrow_mut();
                     let size2d = m_out.dimensions.drop_dim(2).raw();
-                    let vp_size = size2d.map(|v| v as f32 * state.inner.scale_factor);
+                    let vp_size = size2d.map(|v| v as f32 * state_i.scale_factor);
                     let viewport = vk::Viewport::builder()
                         .x(0.0)
                         .y(0.0)
@@ -902,9 +911,9 @@ void main() {
                             .into(),
                     };
 
-                    state.inner.update(device, size2d);
+                    state_i.update(device, size2d);
 
-                    let textures = state.inner.textures.borrow();
+                    let textures = &state_i.textures;
                     for primitive in state.clipped_primitives.iter() {
                         let mesh = match &primitive.primitive {
                             egui::epaint::Primitive::Mesh(m) => m,
@@ -914,10 +923,10 @@ void main() {
                         };
 
                         let mut clip_rect = primitive.clip_rect;
-                        *clip_rect.left_mut() *= state.inner.scale_factor;
-                        *clip_rect.right_mut() *= state.inner.scale_factor;
-                        *clip_rect.top_mut() *= state.inner.scale_factor;
-                        *clip_rect.bottom_mut() *= state.inner.scale_factor;
+                        *clip_rect.left_mut() *= state_i.scale_factor;
+                        *clip_rect.right_mut() *= state_i.scale_factor;
+                        *clip_rect.top_mut() *= state_i.scale_factor;
+                        *clip_rect.bottom_mut() *= state_i.scale_factor;
                         let clip_rect_extent = vk::Extent2D::builder()
                             .width(clip_rect.width().round() as u32)
                             .height(clip_rect.height().round() as u32)

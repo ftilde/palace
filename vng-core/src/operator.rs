@@ -33,7 +33,7 @@ impl Into<Id> for OperatorId {
         self.0
     }
 }
-impl<I, O> Into<Id> for &Operator<'_, I, O> {
+impl<I, O> Into<Id> for &Operator<I, O> {
     fn into(self) -> Id {
         self.id.into()
     }
@@ -70,18 +70,12 @@ impl TypeErased {
     }
 }
 
-// Workaround because to limit the lifetime of allowed values in HRTBs. For example, we cannot
-// write for<'a: 'b> or restrict 'a in a where clause.
-// See https://stackoverflow.com/questions/75147315/rust-returning-this-value-requires-that-op-must-outlive-static-with-hrt
-pub type OutlivesMarker<'longer, 'shorter> = &'shorter &'longer ();
-pub type ComputeFunction<'op, ItemDescriptor, Output> = Rc<
+pub type ComputeFunction<ItemDescriptor, Output> = Rc<
     dyn for<'cref, 'inv> Fn(
-            TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-            Vec<ItemDescriptor>,
-            &'inv TypeErased,
-            OutlivesMarker<'op, 'inv>,
-        ) -> Task<'cref>
-        + 'op,
+        TaskContext<'cref, 'inv, ItemDescriptor, Output>,
+        Vec<ItemDescriptor>,
+        &'inv TypeErased,
+    ) -> Task<'cref>,
 >;
 
 #[derive(Copy, Clone)]
@@ -101,14 +95,14 @@ pub trait OpaqueOperator {
 }
 
 #[derive(Clone)]
-pub struct Operator<'op, ItemDescriptor, Output: ?Sized> {
+pub struct Operator<ItemDescriptor, Output: ?Sized> {
     id: OperatorId,
     state: Rc<TypeErased>,
     granularity: ItemGranularity,
-    compute: ComputeFunction<'op, ItemDescriptor, Output>,
+    compute: ComputeFunction<ItemDescriptor, Output>,
 }
 
-impl<'op, Output: Copy> Operator<'op, (), Output> {
+impl<Output: Copy> Operator<(), Output> {
     #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
@@ -149,17 +143,14 @@ impl<'op, Output: Copy> Operator<'op, (), Output> {
     }
 }
 
-impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
-    Operator<'op, ItemDescriptor, Output>
-{
+impl<ItemDescriptor: std::hash::Hash + 'static, Output: Copy> Operator<ItemDescriptor, Output> {
     pub fn new<
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 Vec<ItemDescriptor>,
                 &'inv (),
-                OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         id: OperatorId,
         compute: F,
@@ -168,14 +159,13 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     }
 
     pub fn with_state<
-        S: 'op,
+        S: 'static,
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 Vec<ItemDescriptor>,
                 &'inv S,
-                OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         id: OperatorId,
         state: S,
@@ -185,24 +175,23 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             id,
             state: Rc::new(TypeErased::pack(state)),
             granularity: ItemGranularity::Batched,
-            compute: Rc::new(move |ctx, items, state, marker| {
+            compute: Rc::new(move |ctx, items, state| {
                 // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
                 // then packed and then unpacked again here to `S: 'op`.
                 let state = unsafe { state.unpack_ref() };
-                compute(ctx, items, state, marker)
+                compute(ctx, items, state)
             }),
         }
     }
 
     pub fn unbatched<
-        S: 'op,
+        S: 'static,
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 ItemDescriptor,
                 &'inv S,
-                OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         id: OperatorId,
         state: S,
@@ -212,13 +201,13 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
             id,
             state: Rc::new(TypeErased::pack(state)),
             granularity: ItemGranularity::Single,
-            compute: Rc::new(move |ctx, items, state, marker| {
+            compute: Rc::new(move |ctx, items, state| {
                 // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
                 // then packed and then unpacked again here to `S: 'op`.
                 let state = unsafe { state.unpack_ref() };
                 assert_eq!(items.len(), 1);
                 let item = items.into_iter().next().unwrap();
-                compute(ctx, item, state, marker)
+                compute(ctx, item, state)
             }),
         }
     }
@@ -369,8 +358,8 @@ impl<'op, ItemDescriptor: std::hash::Hash + 'static, Output: Copy>
     }
 }
 
-impl<'op, ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
-    for Operator<'op, ItemDescriptor, Output>
+impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
+    for Operator<ItemDescriptor, Output>
 {
     fn id(&self) -> OperatorId {
         self.id
@@ -388,6 +377,6 @@ impl<'op, ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
             .map(|v| unsafe { v.unpack() })
             .collect::<Vec<_>>();
         let ctx = TaskContext::new(ctx);
-        (self.compute)(ctx, items, &self.state, &&())
+        (self.compute)(ctx, items, &self.state)
     }
 }

@@ -36,10 +36,7 @@ pub fn compare_volume(
         .unwrap();
 }
 
-pub fn compare_tensor<'a, const N: usize>(
-    result: TensorOperator<'a, N>,
-    expected: TensorOperator<'a, N>,
-) {
+pub fn compare_tensor<const N: usize>(result: TensorOperator<N>, expected: TensorOperator<N>) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
 
     runtime

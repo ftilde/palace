@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, rc::Rc};
 
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 
@@ -18,7 +18,10 @@ enum Type {
     Separate { header: PathBuf, data: PathBuf },
 }
 
-pub struct NiftiVolumeSourceState {
+#[derive(Clone)]
+pub struct NiftiVolumeSourceState(Rc<NiftiVolumeSourceStateInner>);
+
+pub struct NiftiVolumeSourceStateInner {
     metadata: VolumeMetaData,
     type_: Type,
     header: NiftiHeader,
@@ -59,11 +62,11 @@ impl NiftiVolumeSourceState {
         check_type(header)?;
         let metadata = read_metadata(header)?;
 
-        Ok(NiftiVolumeSourceState {
+        Ok(Self(Rc::new(NiftiVolumeSourceStateInner {
             metadata,
             type_: Type::Single(path),
             header: header.clone(),
-        })
+        })))
     }
     pub fn open_separate(header_path: PathBuf, data: PathBuf) -> Result<Self, Error> {
         let obj = nifti::ReaderStreamedOptions::new().read_file_pair(&header_path, &data)?;
@@ -71,21 +74,21 @@ impl NiftiVolumeSourceState {
         check_type(header)?;
         let metadata = read_metadata(header)?;
 
-        Ok(NiftiVolumeSourceState {
+        Ok(Self(Rc::new(NiftiVolumeSourceStateInner {
             metadata,
             type_: Type::Separate {
                 header: header_path,
                 data,
             },
             header: header.clone(),
-        })
+        })))
     }
 }
 
 impl VolumeOperatorState for NiftiVolumeSourceState {
-    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        TensorOperator::new(
-            match &self.type_ {
+    fn operate(&self) -> VolumeOperator {
+        TensorOperator::with_state(
+            match &self.0.type_ {
                 Type::Single(path) => OperatorId::new("NiftiVolumeSourceState::operate")
                     .dependent_on(path.to_string_lossy().as_bytes()),
                 Type::Separate { header, data } => {
@@ -94,11 +97,13 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                         .dependent_on(data.to_string_lossy().as_bytes())
                 }
             },
-            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, mut positions, _, _| {
+            self.0.metadata.clone(),
+            self.clone(),
+            move |ctx, m| async move { ctx.write(*m) }.into(),
+            move |ctx, mut positions, this| {
                 positions.sort_by_key(|p| p.z());
                 async move {
-                    let obj = match &self.type_ {
+                    let obj = match &this.0.type_ {
                         Type::Single(path) => {
                             nifti::ReaderStreamedOptions::new().read_file(path)?
                         }
@@ -106,13 +111,13 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                             nifti::ReaderStreamedOptions::new().read_file_pair(header, data)?
                         }
                     };
-                    if self.header != *obj.header() {
+                    if this.0.header != *obj.header() {
                         return Err(format!("File has changed").into());
                     }
                     let mut vol = obj.into_volume();
                     for pos in positions {
                         let z = pos.z().raw as usize;
-                        let chunk = self.metadata.chunk_info(pos);
+                        let chunk = this.0.metadata.chunk_info(pos);
                         let mut brick_handle = ctx.alloc_slot(pos, chunk.mem_elements())?;
 
                         let brick_data = &mut *brick_handle;

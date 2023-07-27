@@ -206,14 +206,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
-fn slice_viewer_z<'op>(
-    slice_input: VolumeOperator<'op>,
+fn slice_viewer_z(
+    slice_input: VolumeOperator,
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     events: &mut EventStream,
-) -> VolumeOperator<'op> {
+) -> VolumeOperator {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -255,12 +255,12 @@ fn slice_viewer_z<'op>(
     slice
 }
 
-fn slice_viewer_rot<'op>(
-    slice_input: VolumeOperator<'op>,
+fn slice_viewer_rot(
+    slice_input: VolumeOperator,
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
-) -> VolumeOperator<'op> {
+) -> VolumeOperator {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             *angle += delta.x() as f32 * 0.01;

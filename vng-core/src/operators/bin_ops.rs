@@ -15,11 +15,11 @@ use crate::{
 
 use super::tensor::TensorOperator;
 
-fn bin_op<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
+fn bin_op<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
     body: &'static str,
-) -> TensorOperator<'op, N> {
+) -> TensorOperator<N> {
     let shader = format!(
         "{}{}{}",
         r#"
@@ -67,7 +67,7 @@ void main()
             .dependent_on(Id::hash(body)),
         (input1.clone(), input2.clone()),
         (input1.clone(), input2.clone(), shader),
-        move |ctx, (input1, input2), _| {
+        move |ctx, (input1, input2)| {
             async move {
                 let (m1, m2) = futures::join! {
                     ctx.submit(input1.metadata.request_scalar()),
@@ -78,7 +78,7 @@ void main()
             }
             .into()
         },
-        move |ctx, positions, (input1, input2, shader), _| {
+        move |ctx, positions, (input1, input2, shader)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -152,38 +152,38 @@ void main()
     )
 }
 
-pub fn add<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
-) -> TensorOperator<'op, N> {
+pub fn add<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
+) -> TensorOperator<N> {
     bin_op(input1, input2, "res = v1 + v2;")
 }
 
-pub fn sub<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
-) -> TensorOperator<'op, N> {
+pub fn sub<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
+) -> TensorOperator<N> {
     bin_op(input1, input2, "res = v1 - v2;")
 }
 
-pub fn mul<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
-) -> TensorOperator<'op, N> {
+pub fn mul<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
+) -> TensorOperator<N> {
     bin_op(input1, input2, "res = v1 * v2;")
 }
 
-pub fn min<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
-) -> TensorOperator<'op, N> {
+pub fn min<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
+) -> TensorOperator<N> {
     bin_op(input1, input2, "res = min(v1, v2);")
 }
 
-pub fn max<'op, const N: usize>(
-    input1: TensorOperator<'op, N>,
-    input2: TensorOperator<'op, N>,
-) -> TensorOperator<'op, N> {
+pub fn max<const N: usize>(
+    input1: TensorOperator<N>,
+    input2: TensorOperator<N>,
+) -> TensorOperator<N> {
     bin_op(input1, input2, "res = max(v1, v2);")
 }
 
@@ -194,56 +194,56 @@ mod test {
 
     #[test]
     fn test_add_gpu() {
-        let input1 = [1.0, 2.0, 3.0, 4.0];
-        let input2 = [0.0, 0.0, 7.0, -4.0];
-        let expected = [1.0, 2.0, 10.0, 0.0];
+        let input1 = &[1.0, 2.0, 3.0, 4.0];
+        let input2 = &[0.0, 0.0, 7.0, -4.0];
+        let expected = &[1.0, 2.0, 10.0, 0.0];
 
-        let output = add(from_static(&input1), from_static(&input2));
+        let output = add(from_static(input1), from_static(input2));
 
-        compare_tensor(output, from_static(&expected));
+        compare_tensor(output, from_static(expected));
     }
 
     #[test]
     fn test_sub_gpu() {
-        let input1 = [1.0, 2.0, 3.0, 4.0];
-        let input2 = [0.0, 0.0, 7.0, -4.0];
-        let expected = [1.0, 2.0, -4.0, 8.0];
+        let input1 = &[1.0, 2.0, 3.0, 4.0];
+        let input2 = &[0.0, 0.0, 7.0, -4.0];
+        let expected = &[1.0, 2.0, -4.0, 8.0];
 
-        let output = sub(from_static(&input1), from_static(&input2));
+        let output = sub(from_static(input1), from_static(input2));
 
-        compare_tensor(output, from_static(&expected));
+        compare_tensor(output, from_static(expected));
     }
 
     #[test]
     fn test_mul_gpu() {
-        let input1 = [1.0, 2.0, 3.0, 4.0];
-        let input2 = [0.0, 0.0, 7.0, -4.0];
-        let expected = [0.0, 0.0, 21.0, -16.0];
+        let input1 = &[1.0, 2.0, 3.0, 4.0];
+        let input2 = &[0.0, 0.0, 7.0, -4.0];
+        let expected = &[0.0, 0.0, 21.0, -16.0];
 
-        let output = mul(from_static(&input1), from_static(&input2));
+        let output = mul(from_static(input1), from_static(input2));
 
-        compare_tensor(output, from_static(&expected));
+        compare_tensor(output, from_static(expected));
     }
 
     #[test]
     fn test_min_gpu() {
-        let input1 = [1.0, 2.0, 3.0, 4.0];
-        let input2 = [0.0, 0.0, 7.0, -4.0];
-        let expected = [0.0, 0.0, 3.0, -4.0];
+        let input1 = &[1.0, 2.0, 3.0, 4.0];
+        let input2 = &[0.0, 0.0, 7.0, -4.0];
+        let expected = &[0.0, 0.0, 3.0, -4.0];
 
-        let output = min(from_static(&input1), from_static(&input2));
+        let output = min(from_static(input1), from_static(input2));
 
-        compare_tensor(output, from_static(&expected));
+        compare_tensor(output, from_static(expected));
     }
 
     #[test]
     fn test_max_gpu() {
-        let input1 = [1.0, 2.0, 3.0, 4.0];
-        let input2 = [0.0, 0.0, 7.0, -4.0];
-        let expected = [1.0, 2.0, 7.0, 4.0];
+        let input1 = &[1.0, 2.0, 3.0, 4.0];
+        let input2 = &[0.0, 0.0, 7.0, -4.0];
+        let expected = &[1.0, 2.0, 7.0, 4.0];
 
-        let output = max(from_static(&input1), from_static(&input2));
+        let output = max(from_static(input1), from_static(input2));
 
-        compare_tensor(output, from_static(&expected));
+        compare_tensor(output, from_static(expected));
     }
 }

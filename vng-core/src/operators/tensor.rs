@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use futures::StreamExt;
 
 use crate::{
@@ -12,26 +14,24 @@ use crate::{
 use super::scalar::ScalarOperator;
 
 #[derive(Clone)]
-pub struct TensorOperator<'op, const N: usize> {
-    pub metadata: Operator<'op, (), TensorMetaData<N>>,
-    pub bricks: Operator<'op, Vector<N, ChunkCoordinate>, f32>,
+pub struct TensorOperator<const N: usize> {
+    pub metadata: Operator<(), TensorMetaData<N>>,
+    pub bricks: Operator<Vector<N, ChunkCoordinate>, f32>,
 }
 
-impl<'op, const N: usize> TensorOperator<'op, N> {
+impl<const N: usize> TensorOperator<N> {
     pub fn new<
         M: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, (), TensorMetaData<N>>,
                 &'inv (),
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
                 Vec<Vector<N, ChunkCoordinate>>,
                 &'inv (),
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         base_id: OperatorId,
         metadata: M,
@@ -41,21 +41,19 @@ impl<'op, const N: usize> TensorOperator<'op, N> {
     }
 
     pub fn with_state<
-        SM: 'op,
-        SB: 'op,
+        SM: 'static,
+        SB: 'static,
         M: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, (), TensorMetaData<N>>,
                 &'inv SM,
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
                 Vec<Vector<N, ChunkCoordinate>>,
                 &'inv SB,
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         base_id: OperatorId,
         state_metadata: SM,
@@ -70,21 +68,19 @@ impl<'op, const N: usize> TensorOperator<'op, N> {
     }
 
     pub fn unbatched<
-        SM: 'op,
-        SB: 'op,
+        SM: 'static,
+        SB: 'static,
         M: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, (), TensorMetaData<N>>,
                 &'inv SM,
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
                 Vector<N, ChunkCoordinate>,
                 &'inv SB,
-                crate::operator::OutlivesMarker<'op, 'inv>,
             ) -> Task<'cref>
-            + 'op,
+            + 'static,
     >(
         base_id: OperatorId,
         state_metadata: SM,
@@ -99,7 +95,7 @@ impl<'op, const N: usize> TensorOperator<'op, N> {
     }
 }
 
-impl<const N: usize> Into<Id> for &TensorOperator<'_, N> {
+impl<const N: usize> Into<Id> for &TensorOperator<N> {
     fn into(self) -> Id {
         Id::combine(&[(&self.metadata).into(), (&self.bricks).into()])
     }
@@ -114,7 +110,7 @@ pub async fn map_values<
     const N: usize,
 >(
     ctx: TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
-    input: &'op Operator<'_, Vector<N, ChunkCoordinate>, f32>,
+    input: &'op Operator<Vector<N, ChunkCoordinate>, f32>,
     positions: Vec<Vector<N, ChunkCoordinate>>,
     f: F,
 ) where
@@ -158,17 +154,14 @@ pub async fn map_values<
 }
 
 #[allow(unused)]
-pub fn map<'op, const N: usize>(
-    input: TensorOperator<'op, N>,
-    f: fn(f32) -> f32,
-) -> TensorOperator<'op, N> {
+pub fn map<const N: usize>(input: TensorOperator<N>, f: fn(f32) -> f32) -> TensorOperator<N> {
     TensorOperator::with_state(
         OperatorId::new("tensor_map")
             .dependent_on(&input)
             .dependent_on(Id::hash(&f)),
         input.clone(),
         input,
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -176,7 +169,7 @@ pub fn map<'op, const N: usize>(
             }
             .into()
         },
-        move |ctx, positions, input, _| {
+        move |ctx, positions, input| {
             async move {
                 map_values(ctx, &input.bricks, positions, f).await;
 
@@ -188,11 +181,11 @@ pub fn map<'op, const N: usize>(
 }
 
 #[allow(unused)]
-pub fn linear_rescale<'op, const N: usize>(
-    input: TensorOperator<'op, N>,
-    factor: ScalarOperator<'op, f32>,
-    offset: ScalarOperator<'op, f32>,
-) -> TensorOperator<'op, N> {
+pub fn linear_rescale<const N: usize>(
+    input: TensorOperator<N>,
+    factor: ScalarOperator<f32>,
+    offset: ScalarOperator<f32>,
+) -> TensorOperator<N> {
     TensorOperator::with_state(
         OperatorId::new("tensor_linear_scale")
             .dependent_on(&input)
@@ -200,7 +193,7 @@ pub fn linear_rescale<'op, const N: usize>(
             .dependent_on(&offset),
         input.clone(),
         (input.clone(), factor, offset),
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -208,7 +201,7 @@ pub fn linear_rescale<'op, const N: usize>(
             }
             .into()
         },
-        move |ctx, positions, (input, factor, offset), _| {
+        move |ctx, positions, (input, factor, offset)| {
             async move {
                 let (factor, offset) = futures::join! {
                     ctx.submit(factor.request_scalar()),
@@ -224,10 +217,10 @@ pub fn linear_rescale<'op, const N: usize>(
     )
 }
 
-pub fn from_static<'op, const N: usize>(
+pub fn from_static<const N: usize>(
     size: Vector<N, GlobalCoordinate>,
-    values: &'op [f32],
-) -> Result<TensorOperator<'op, N>, crate::Error> {
+    values: &'static [f32],
+) -> Result<TensorOperator<N>, crate::Error> {
     let m = TensorMetaData {
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
@@ -241,17 +234,66 @@ pub fn from_static<'op, const N: usize>(
         )
         .into());
     }
-    Ok(TensorOperator::new(
+    Ok(TensorOperator::with_state(
         OperatorId::new("tensor_from_static")
             .dependent_on(Id::hash(&size))
-            .dependent_on(bytemuck::cast_slice(values)), //TODO: this is a performance problem for
-        move |ctx, _, _| async move { ctx.write(m) }.into(),
-        move |ctx, _, _, _| {
+            .dependent_on(bytemuck::cast_slice(&values)), //TODO: this is a performance problem for
+        m,
+        values,
+        move |ctx, m| async move { ctx.write(*m) }.into(),
+        move |ctx, _, values| {
             async move {
                 let mut out = ctx
                     .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
                     .unwrap();
                 let mut out_data = &mut *out;
+                let values: &[f32] = &values;
+                ctx.submit(ctx.spawn_compute(move || {
+                    crate::data::write_slice_uninit(&mut out_data, values);
+                }))
+                .await;
+
+                // Safety: slot and values are of the exact same size. Thus all values are
+                // initialized.
+                unsafe { out.initialized(*ctx) };
+                Ok(())
+            }
+            .into()
+        },
+    ))
+}
+
+pub fn from_rc<const N: usize>(
+    size: Vector<N, GlobalCoordinate>,
+    values: Rc<[f32]>,
+) -> Result<TensorOperator<N>, crate::Error> {
+    let m = TensorMetaData {
+        dimensions: size,
+        chunk_size: size.map(LocalCoordinate::interpret_as),
+    };
+    let n_elem = crate::data::hmul(size);
+    if n_elem != values.len() {
+        return Err(format!(
+            "Tensor ({}) and data ({}) size do not match",
+            n_elem,
+            values.len()
+        )
+        .into());
+    }
+    Ok(TensorOperator::with_state(
+        OperatorId::new("tensor_from_static")
+            .dependent_on(Id::hash(&size))
+            .dependent_on(bytemuck::cast_slice(&values)), //TODO: this is a performance problem for
+        m,
+        values,
+        move |ctx, m| async move { ctx.write(*m) }.into(),
+        move |ctx, _, values| {
+            async move {
+                let mut out = ctx
+                    .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
+                    .unwrap();
+                let mut out_data = &mut *out;
+                let values: &[f32] = &values;
                 ctx.submit(ctx.spawn_compute(move || {
                     crate::data::write_slice_uninit(&mut out_data, values);
                 }))

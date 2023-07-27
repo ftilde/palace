@@ -1,5 +1,6 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf, rc::Rc};
 
+use derive_more::Deref;
 use futures::StreamExt;
 
 use crate::{
@@ -10,7 +11,10 @@ use crate::{
     Error,
 };
 
-pub struct RawVolumeSourceState {
+#[derive(Clone, Deref)]
+pub struct RawVolumeSourceState(Rc<RawVolumeSourceStateInner>);
+
+pub struct RawVolumeSourceStateInner {
     pub path: PathBuf,
     _file: File,
     mmap: memmap::Mmap,
@@ -25,12 +29,12 @@ impl RawVolumeSourceState {
         let byte_size = crate::data::hmul(size) * std::mem::size_of::<f32>();
         assert_eq!(file.metadata()?.len(), byte_size as u64);
 
-        Ok(Self {
+        Ok(Self(Rc::new(RawVolumeSourceStateInner {
             path,
             _file: file,
             mmap,
             size,
-        })
+        })))
     }
     pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
@@ -39,7 +43,7 @@ impl RawVolumeSourceState {
         mut positions: Vec<BrickPosition>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {
-            dimensions: self.size,
+            dimensions: self.0.size,
             chunk_size: brick_size,
         };
         let dim_in_bricks = m.dimension_in_bricks();
@@ -80,7 +84,7 @@ impl RawVolumeSourceState {
             batches.push(current_batch);
         }
 
-        let in_: &[f32] = bytemuck::cast_slice(&self.mmap[..]);
+        let in_: &[f32] = bytemuck::cast_slice(&self.0.mmap[..]);
         let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
             .unwrap();
         let work = batches.into_iter().map(|positions| {
@@ -162,15 +166,13 @@ impl RawVolumeSourceState {
     }
 
     #[allow(unused)] // We probably will use it directly at some point
-    pub fn operate<'op>(
-        &'op self,
-        brick_size: LocalVoxelPosition,
-    ) -> Operator<'op, BrickPosition, f32> {
-        Operator::new(
+    pub fn operate(&self, brick_size: LocalVoxelPosition) -> Operator<BrickPosition, f32> {
+        Operator::with_state(
             OperatorId::new("RawVolumeSourceState::operate")
-                .dependent_on(self.path.to_string_lossy().as_bytes()),
-            move |ctx, positions, _, _| {
-                async move { self.load_raw_bricks(brick_size, ctx, positions).await }.into()
+                .dependent_on(self.0.path.to_string_lossy().as_bytes()),
+            self.clone(),
+            move |ctx, positions, this| {
+                async move { this.load_raw_bricks(brick_size, ctx, positions).await }.into()
             },
         )
     }

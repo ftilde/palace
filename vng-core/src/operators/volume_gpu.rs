@@ -24,10 +24,10 @@ use super::{
 };
 
 pub fn linear_rescale<'op, const N: usize>(
-    input: TensorOperator<'op, N>,
-    scale: ScalarOperator<'op, f32>,
-    offset: ScalarOperator<'op, f32>,
-) -> TensorOperator<'op, N> {
+    input: TensorOperator<N>,
+    scale: ScalarOperator<f32>,
+    offset: ScalarOperator<f32>,
+) -> TensorOperator<N> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -70,7 +70,7 @@ void main()
             .dependent_on(&offset),
         input.clone(),
         (input.clone(), scale, offset),
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -78,7 +78,7 @@ void main()
             }
             .into()
         },
-        move |ctx, positions, (input, scale, offset), _| {
+        move |ctx, positions, (input, scale, offset)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -163,10 +163,7 @@ void main()
     )
 }
 
-pub fn rechunk<'op>(
-    input: VolumeOperator<'op>,
-    brick_size: Vector<3, ChunkSize>,
-) -> VolumeOperator<'op> {
+pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_size_in: cgmath::Vector3<u32>,
@@ -215,7 +212,7 @@ void main() {
             .dependent_on(Id::hash(&brick_size)),
         input.clone(),
         input,
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let req = input.metadata.request_scalar();
                 let mut m = ctx.submit(req).await;
@@ -224,7 +221,7 @@ void main() {
             }
             .into()
         },
-        move |ctx, positions, input, _| {
+        move |ctx, positions, input| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let device = ctx.vulkan_device();
@@ -353,10 +350,10 @@ void main() {
 
 /// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
 /// only supported (and thus always applied) border handling routine.
-pub fn convolution_1d<'op, const DIM: usize>(
-    input: VolumeOperator<'op>,
-    kernel: ArrayOperator<'op>,
-) -> VolumeOperator<'op> {
+pub fn convolution_1d<const DIM: usize>(
+    input: VolumeOperator,
+    kernel: ArrayOperator,
+) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -444,7 +441,7 @@ void main() {
             .dependent_on(&kernel),
         input.clone(),
         (input, kernel),
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let req = input.metadata.request_scalar();
                 let m = ctx.submit(req).await;
@@ -452,7 +449,7 @@ void main() {
             }
             .into()
         },
-        move |ctx, positions, (input, kernel), _| {
+        move |ctx, positions, (input, kernel)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -627,17 +624,17 @@ void main() {
     .into()
 }
 
-pub fn separable_convolution<'op>(
-    v: VolumeOperator<'op>,
-    [k0, k1, k2]: [ArrayOperator<'op>; 3],
-) -> VolumeOperator<'op> {
+pub fn separable_convolution(
+    v: VolumeOperator,
+    [k0, k1, k2]: [ArrayOperator; 3],
+) -> VolumeOperator {
     let v = convolution_1d::<2>(v, k2);
     let v = convolution_1d::<1>(v, k1);
     let v = convolution_1d::<0>(v, k0);
     v
 }
 
-pub fn mean<'op>(input: VolumeOperator<'op>) -> ScalarOperator<'op, f32> {
+pub fn mean<'op>(input: VolumeOperator) -> ScalarOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -701,7 +698,7 @@ void main()
     crate::operators::scalar::scalar(
         OperatorId::new("volume_mean_gpu").dependent_on(&input),
         input,
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -808,10 +805,7 @@ void main()
     )
 }
 
-pub fn rasterize_gpu<'a>(
-    metadata: ScalarOperator<'a, VolumeMetaData>,
-    body: &str,
-) -> VolumeOperator<'a> {
+pub fn rasterize_gpu(metadata: ScalarOperator<VolumeMetaData>, body: &str) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         offset: cgmath::Vector3<u32>,
@@ -865,14 +859,14 @@ void main()
             .dependent_on(&metadata),
         metadata.clone(),
         (metadata, shader),
-        move |ctx, metadata, _| {
+        move |ctx, metadata| {
             async move {
                 let m = ctx.submit(metadata.request_scalar()).await;
                 ctx.write(m)
             }
             .into()
         },
-        move |ctx, positions, (metadata, shader), _| {
+        move |ctx, positions, (metadata, shader)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -947,7 +941,7 @@ pub struct VoxelRasterizerGLSL {
 }
 
 impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
-    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
+    fn operate(&self) -> VolumeOperator {
         rasterize_gpu(
             crate::operators::scalar::constant_hash(self.metadata),
             &self.body,
@@ -1055,7 +1049,7 @@ mod test {
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {
         let input = input.operate();
-        let output = convolution_1d::<DIM>(input, crate::operators::array::from_static(kernel));
+        let output = convolution_1d::<DIM>(input, crate::operators::array::from_rc(kernel.into()));
         compare_volume(output, fill_expected);
     }
 

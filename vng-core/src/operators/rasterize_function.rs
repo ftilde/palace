@@ -14,6 +14,7 @@ use super::{
     volume::{VolumeOperator, VolumeOperatorState},
 };
 
+#[derive(Clone)]
 pub struct VoxelPosRasterizer<F> {
     function: F,
     metadata: VolumeMetaData,
@@ -36,8 +37,8 @@ pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 pub fn normalized(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
-    f: impl 'static + Fn(Vector<3, f32>) -> f32 + Sync,
-) -> VoxelPosRasterizer<impl 'static + Fn(VoxelPosition) -> f32 + Sync> {
+    f: impl 'static + Fn(Vector<3, f32>) -> f32 + Sync + Clone,
+) -> VoxelPosRasterizer<impl 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> {
     let dim_f = dimensions.map(|v| v.raw as f32);
     voxel(dimensions, brick_size, move |pos: VoxelPosition| {
         f(pos.map(|v| v.raw as f32) / dim_f)
@@ -84,18 +85,22 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     Ok(())
 }
 
-impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync> VolumeOperatorState for VoxelPosRasterizer<F> {
-    fn operate<'a>(&'a self) -> VolumeOperator<'a> {
-        TensorOperator::new(
+impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VolumeOperatorState
+    for VoxelPosRasterizer<F>
+{
+    fn operate(&self) -> VolumeOperator {
+        TensorOperator::with_state(
             OperatorId::new("ImplicitFunctionRasterizer::operate")
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
                 //same type!
                 .dependent_on(crate::id::func_id::<F>())
                 .dependent_on(Id::hash(&self.metadata)),
-            move |ctx, _, _| async move { ctx.write(self.metadata) }.into(),
-            move |ctx, positions, _, _| {
-                async move { rasterize(&self.metadata, &self.function, ctx, positions).await }
+            self.metadata.clone(),
+            self.clone(),
+            move |ctx, m| async move { ctx.write(*m) }.into(),
+            move |ctx, positions, this| {
+                async move { rasterize(&this.metadata, &this.function, ctx, positions).await }
                     .into()
             },
         )

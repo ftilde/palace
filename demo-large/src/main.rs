@@ -273,12 +273,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
-fn slice_viewer_z<'op>(
-    slice_input: VolumeOperator<'op>,
+fn slice_viewer_z(
+    slice_input: VolumeOperator,
     md: ImageMetaData,
     state: &mut SliceviewState,
     events: &mut EventStream,
-) -> VolumeOperator<'op> {
+) -> VolumeOperator {
     events.act(|c| {
         c.chain(state.offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -319,13 +319,13 @@ fn slice_viewer_z<'op>(
     slice
 }
 
-fn slice_viewer_rot<'op>(
+fn slice_viewer_rot(
     runtime: &mut RunTime,
-    slice_input: VolumeOperator<'op>,
+    slice_input: VolumeOperator,
     md: ImageMetaData,
-    state: &'op mut RotSliceState,
+    state: &mut RotSliceState,
     mut events: EventStream,
-) -> VolumeOperator<'op> {
+) -> VolumeOperator {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             state.angle += delta.x() as f32 * 0.01;
@@ -420,12 +420,12 @@ fn slice_viewer_rot<'op>(
     frame
 }
 
-fn raycaster<'op>(
-    input: VolumeOperator<'op>,
+fn raycaster(
+    input: VolumeOperator,
     size: Vector<2, GlobalCoordinate>,
-    state: &'op mut RaycastingState,
+    state: &mut RaycastingState,
     mut events: EventStream,
-) -> VolumeOperator<'op> {
+) -> VolumeOperator {
     events.act(|c| {
         c.chain(OnWheelMove(|delta, _| {
             let look = state.center - state.eye;

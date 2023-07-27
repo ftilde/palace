@@ -87,11 +87,7 @@ impl Splitter {
         }
     }
 
-    pub fn render<'op>(
-        self,
-        input_l: VolumeOperator<'op>,
-        input_r: VolumeOperator<'op>,
-    ) -> VolumeOperator<'op> {
+    pub fn render(self, input_l: VolumeOperator, input_r: VolumeOperator) -> VolumeOperator {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             dim_out: cgmath::Vector2<u32>,
@@ -154,8 +150,8 @@ void main()
                 .dependent_on(&input_r),
             self.metadata_out(),
             (input_l.clone(), input_r.clone(), self),
-            move |ctx, m_out, _| async move { ctx.write(*m_out) }.into(),
-            move |ctx, positions, (input_l, input_r, this), _| {
+            move |ctx, m_out| async move { ctx.write(*m_out) }.into(),
+            move |ctx, positions, (input_l, input_r, this)| {
                 async move {
                     let device = ctx.vulkan_device();
 

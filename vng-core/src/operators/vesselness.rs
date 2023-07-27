@@ -12,12 +12,12 @@ use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 use super::{kernels::*, volume_gpu};
 use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
 
-pub fn multiscale_vesselness<'a>(
-    input: VolumeOperator<'a>,
-    min_scale: ScalarOperator<'a, f32>,
-    max_scale: ScalarOperator<'a, f32>,
+pub fn multiscale_vesselness(
+    input: VolumeOperator,
+    min_scale: ScalarOperator<f32>,
+    max_scale: ScalarOperator<f32>,
     num_steps: usize,
-) -> VolumeOperator<'a> {
+) -> VolumeOperator {
     assert!(num_steps > 0);
     if num_steps == 1 {
         return vesselness(input.clone(), min_scale.clone());
@@ -53,10 +53,7 @@ pub fn multiscale_vesselness<'a>(
     out
 }
 
-pub fn vesselness<'a>(
-    input: VolumeOperator<'a>,
-    scale: ScalarOperator<'a, f32>,
-) -> VolumeOperator<'a> {
+pub fn vesselness(input: VolumeOperator, scale: ScalarOperator<f32>) -> VolumeOperator {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -118,9 +115,9 @@ void main() {
 }
 "#;
 
-    type Conv<'b> = fn(ScalarOperator<'b, f32>) -> ArrayOperator<'b>;
+    type Conv = fn(ScalarOperator<f32>) -> ArrayOperator;
 
-    let g = |f1: Conv<'a>, f2: Conv<'a>, f3: Conv<'a>| {
+    let g = |f1: Conv, f2: Conv, f3: Conv| {
         volume_gpu::separable_convolution(
             input.clone(),
             [f1(scale.clone()), f2(scale.clone()), f3(scale.clone())],
@@ -140,14 +137,14 @@ void main() {
             .dependent_on(&scale),
         input.clone(),
         (input, [xx, xy, xz, yy, yz, zz]),
-        move |ctx, input, _| {
+        move |ctx, input| {
             async move {
                 let m = ctx.submit(input.metadata.request_scalar()).await;
                 ctx.write(m)
             }
             .into()
         },
-        move |ctx, positions, (input, hessian), _| {
+        move |ctx, positions, (input, hessian)| {
             async move {
                 let device = ctx.vulkan_device();
 
