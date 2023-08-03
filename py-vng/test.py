@@ -2,22 +2,47 @@ import numpy as np
 import time
 from threading import Thread
 import vng
+import math
 
-ram_size = 1 << 32
-vram_size = 1 << 32
+ram_size = 8 << 30
+vram_size = 10 << 30
+
+print(vram_size)
 
 rt = vng.RunTime(ram_size, vram_size)
 
-v1 = vng.open_volume("/nosnapshot/test-volumes/walnut_float.vvd")
-m1 = rt.resolve(vng.mean(v1))
+window = vng.Window(rt)
 
-kx = np.array([1, 2, 1.0]).astype(np.float32)
-ky = np.array([-1, 2, -1.0]).astype(np.float32)
-kz = np.array([1, 1, 1.0]).astype(np.float32)
+v = vng.open_volume("/nosnapshot/test-volumes/larger.vvd")
 
-v2 = vng.linear_rescale(v1, 2, m1)
-v2 = vng.separable_convolution(v2, [kx, ky, kz])
-m2 = vng.mean(v2)
+k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
-print(m1)
-print(rt.resolve(m2))
+#v2 = vng.linear_rescale(v1, 2, m1)
+v = vng.separable_convolution(v, [k]*3)
+
+fov = 30.0
+eye = [5.5, 0.5, 0.5]
+center = [0.5, 0.5, 0.5]
+up = [1.0, 1.0, 0.0]
+
+i = 0
+
+def render(size):
+    global i
+    i += 1
+
+    fov_r = fov# * 1 + math.sin(i/20) * 0.6
+
+    md = vng.PyImageMetadata(size, [512]*2)
+
+    look_at = vng.look_at(eye, center, up);
+    perspective = vng.perspective(md, fov_r, 0.01, 100)
+    proj = perspective.dot(look_at)
+
+    eep = vng.entry_exit_points(v.metadata, md, proj)
+    frame = vng.raycast(v, eep)
+    frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
+
+    return frame
+
+window.run(rt, render, timeout_ms=10)

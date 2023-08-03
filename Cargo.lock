@@ -2318,6 +2318,7 @@ dependencies = [
  "pyo3",
  "vng-core",
  "vng-vvd",
+ "winit",
 ]
 
 [[package]]

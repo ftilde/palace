@@ -1,13 +1,27 @@
 use derive_more::{From, Into};
-use numpy::PyReadonlyArray1;
-use pyo3::{exceptions::PyIOError, prelude::*};
+use numpy::PyReadonlyArray2;
+use pyo3::{
+    exceptions::{PyException, PyIOError},
+    prelude::*,
+};
 use vng_core::{
-    array::{ArrayMetaData, VolumeMetaData},
+    array::{ArrayMetaData, ImageMetaData, VolumeMetaData},
+    cgmath::Matrix,
     data::{ChunkCoordinate, LocalVoxelPosition, Vector},
     operator::Operator,
-    operators::{array::ArrayOperator, volume::VolumeOperator},
+    operators::{
+        array::ArrayOperator,
+        volume::{ChunkSize, VolumeOperator},
+    },
 };
 use vng_vvd::VvdVolumeSourceState;
+use winit::{
+    event::{Event, WindowEvent},
+    platform::run_return::EventLoopExtRunReturn,
+};
+
+mod conversion;
+use conversion::ToOperator;
 
 #[pyclass(unsendable)]
 struct RunTime {
@@ -42,12 +56,22 @@ impl RunTime {
 }
 
 fn map_err<T>(e: Result<T, vng_core::Error>) -> PyResult<T> {
-    e.map_err(|e| PyErr::new::<PyIOError, _>(format!("{}", e)))
+    e.map_err(|e| PyErr::new::<PyException, _>(format!("{}", e)))
 }
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
 struct ScalarOperatorF32(Operator<(), f32>);
+impl conversion::FromPyValue<f32> for ScalarOperatorF32 {
+    fn from_py(v: f32) -> PyResult<Self> {
+        Ok(ScalarOperatorF32(
+            vng_core::operators::scalar::constant_pod(v),
+        ))
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for ScalarOperatorF32 {
+    type Converter = conversion::ToOperatorFrom<Self, (f32,)>;
+}
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
@@ -55,7 +79,64 @@ struct ArrayMetadataOperator(Operator<(), ArrayMetaData>);
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
+struct Mat4Operator(Operator<(), vng_core::cgmath::Matrix4<f32>>);
+
+impl<'a> conversion::FromPyValue<PyReadonlyArray2<'a, f32>> for Mat4Operator {
+    fn from_py(v: PyReadonlyArray2<'a, f32>) -> PyResult<Self> {
+        if v.shape() != [4, 4] {
+            return Err(PyException::new_err(format!(
+                "Array must be of size [4, 4], but is of size {:?}",
+                v.shape()
+            )));
+        }
+
+        let vals: [f32; 16] = v.as_slice()?.try_into().unwrap();
+        let mat: &vng_core::cgmath::Matrix4<f32> = (&vals).into();
+
+        assert!(v.is_c_contiguous());
+        // Array is in row major order, but cgmath matrices are column major, so we need to
+        // transpose
+        let mat = mat.transpose();
+        Ok(Mat4Operator(
+            vng_core::operators::scalar::constant_as_array(mat),
+        ))
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for Mat4Operator {
+    type Converter = conversion::ToOperatorFrom<Self, (PyReadonlyArray2<'source, f32>,)>;
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
 struct VolumeMetadataOperator(Operator<(), VolumeMetaData>);
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
+struct ImageMetadataOperator(Operator<(), ImageMetaData>);
+
+impl<'a> conversion::FromPyValue<PyImageMetadata> for ImageMetadataOperator {
+    fn from_py(v: PyImageMetadata) -> PyResult<Self> {
+        Ok(vng_core::operators::scalar::constant_hash(v.0).into())
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for ImageMetadataOperator {
+    type Converter = conversion::ToOperatorFrom<Self, (PyImageMetadata,)>;
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
+struct PyImageMetadata(ImageMetaData);
+
+#[pymethods]
+impl PyImageMetadata {
+    #[new]
+    fn new(dimensions: [u32; 2], chunk_size: [u32; 2]) -> Self {
+        Self(ImageMetaData {
+            dimensions: dimensions.into(),
+            chunk_size: chunk_size.into(),
+        })
+    }
+}
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
@@ -68,7 +149,9 @@ struct VolumeValueOperator(Operator<Vector<3, ChunkCoordinate>, f32>);
 #[pyclass(unsendable)]
 #[derive(Clone)]
 struct PyVolumeOperator {
+    #[pyo3(get, set)]
     pub metadata: VolumeMetadataOperator,
+    #[pyo3(get, set)]
     pub bricks: VolumeValueOperator,
 }
 
@@ -115,6 +198,110 @@ impl From<ArrayOperator> for PyArrayOperator {
     }
 }
 
+impl<'a> conversion::FromPyValue<numpy::borrow::PyReadonlyArray1<'a, f32>> for PyArrayOperator {
+    fn from_py(v: numpy::borrow::PyReadonlyArray1<'a, f32>) -> PyResult<Self> {
+        Ok(vng_core::operators::array::from_rc(v.as_slice()?.into()).into())
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for PyArrayOperator {
+    type Converter =
+        conversion::ToOperatorFrom<Self, (numpy::borrow::PyReadonlyArray1<'source, f32>,)>;
+}
+
+#[pyclass(unsendable)]
+struct Window {
+    event_loop: winit::event_loop::EventLoop<()>,
+    window: vng_core::vulkan::window::Window,
+}
+
+#[pymethods]
+impl Window {
+    #[new]
+    fn new(runtime: &RunTime) -> PyResult<Self> {
+        let event_loop = winit::event_loop::EventLoop::new();
+
+        let window = map_err(vng_core::vulkan::window::Window::new(
+            &runtime.inner.vulkan,
+            &event_loop,
+        ))?;
+        Ok(Self { event_loop, window })
+    }
+    fn run(
+        &mut self,
+        runtime: &mut RunTime,
+        gen_frame: &pyo3::types::PyFunction,
+        timeout_ms: Option<u64>,
+    ) {
+        self.event_loop.run_return(|event, _, control_flow| {
+            control_flow.set_wait();
+
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    control_flow.set_exit();
+                }
+                Event::MainEventsCleared => {
+                    // Application update code.
+                    self.window.inner().request_redraw();
+                }
+                Event::WindowEvent {
+                    window_id: _,
+                    event: winit::event::WindowEvent::Resized(new_size),
+                } => {
+                    self.window.resize(new_size, &runtime.inner.vulkan);
+                }
+                Event::WindowEvent {
+                    window_id: _,
+                    event: _,
+                } => {
+                    //events.add(event);
+                }
+                Event::RedrawRequested(_) => {
+                    let end = timeout_ms
+                        .map(|to| std::time::Instant::now() + std::time::Duration::from_millis(to));
+                    let size = self.window.size();
+                    let size = [size.y().raw, size.x().raw];
+                    let frame = gen_frame.call((size,), None).unwrap();
+                    let frame = frame.extract::<PyVolumeOperator>().unwrap().into();
+
+                    let frame_ref = &frame;
+                    let window = &mut self.window;
+                    runtime
+                        .inner
+                        .resolve(end, |ctx, _| {
+                            async move { window.render(ctx, frame_ref).await }.into()
+                        })
+                        .unwrap();
+                    // Redraw the application.
+                    //
+                    // It's preferable for applications that do not render continuously to render in
+                    // this event rather than in MainEventsCleared, since rendering in here allows
+                    // the program to gracefully handle redraws requested by the OS.
+                    //next_timeout = Instant::now() + Duration::from_millis(10);
+                    //let version = eval_network(
+                    //    &mut runtime,
+                    //    &mut window,
+                    //    &*vol_state,
+                    //    &mut state,
+                    //    events.current_batch(),
+                    //    next_timeout,
+                    //)
+                    //.unwrap();
+                    //if version == DataVersionType::Final {
+                    //    //control_flow.set_exit();
+                    //}
+                    //std::thread::sleep(dbg!(
+                    //    next_timeout.saturating_duration_since(std::time::Instant::now())
+                    //));
+                }
+                _ => (),
+            }
+        });
+    }
+}
+
 #[pyfunction]
 fn open_volume(path: std::path::PathBuf) -> PyResult<PyVolumeOperator> {
     let brick_size_hint = LocalVoxelPosition::fill(32.into());
@@ -153,59 +340,39 @@ fn open_volume(path: std::path::PathBuf) -> PyResult<PyVolumeOperator> {
     })
 }
 
-//fn unpack_f32(val: PyObject, py: Python) -> PyResult<Operator<(), f32>> {
-//    if let Ok(v) = val.extract::<f32>(py) {
-//        Ok(vng_core::operators::scalar::constant_pod(v))
-//    } else {
-//        val.extract::<ScalarOperatorF32>(py).map(|v| v.0)
-//    }
-//}
-
-trait PyPresentValue<'a>: FromPyObject<'a> {
-    type Operator: FromPyObject<'a>;
-
-    fn make_operator(v: Self) -> Self::Operator;
-}
-
-impl<'a> PyPresentValue<'a> for f32 {
-    type Operator = ScalarOperatorF32;
-
-    fn make_operator(v: Self) -> Self::Operator {
-        ScalarOperatorF32(vng_core::operators::scalar::constant_pod(v))
-    }
-}
-
-impl<'a> PyPresentValue<'a> for numpy::borrow::PyReadonlyArray1<'a, f32> {
-    type Operator = PyArrayOperator;
-
-    fn make_operator(v: Self) -> Self::Operator {
-        vng_core::operators::array::from_rc(v.as_slice().unwrap().into()).into()
-    }
-}
-
-struct ToOperator<'a, S: PyPresentValue<'a>>(S::Operator);
-
-impl<'source, S: PyPresentValue<'source>> FromPyObject<'source> for ToOperator<'source, S> {
-    fn extract(val: &'source PyAny) -> PyResult<Self> {
-        let v = if let Ok(v) = val.extract::<S::Operator>() {
-            v
-        } else {
-            S::make_operator(val.extract::<S>()?)
-        };
-        Ok(ToOperator(v))
-    }
-}
-
 #[pyfunction]
 fn mean(vol: PyVolumeOperator) -> ScalarOperatorF32 {
     vng_core::operators::volume_gpu::mean(vol.into()).into()
 }
 
+#[pyclass]
+#[derive(Clone)]
+struct ChunkSizeFull;
+
+#[derive(Copy, Clone)]
+struct PyChunkSize(ChunkSize);
+
+impl<'source> FromPyObject<'source> for PyChunkSize {
+    fn extract(val: &'source PyAny) -> PyResult<Self> {
+        Ok(PyChunkSize(if let Ok(_) = val.extract::<ChunkSizeFull>() {
+            ChunkSize::Full
+        } else {
+            ChunkSize::Fixed(val.extract::<u32>()?.into())
+        }))
+    }
+}
+
+#[pyfunction]
+fn rechunk(vol: PyVolumeOperator, size: [PyChunkSize; 3]) -> PyVolumeOperator {
+    let size = Vector::from(size).map(|s: PyChunkSize| s.0);
+    vng_core::operators::volume_gpu::rechunk(vol.into(), size).into()
+}
+
 #[pyfunction]
 fn linear_rescale(
     vol: PyVolumeOperator,
-    scale: ToOperator<f32>,
-    offset: ToOperator<f32>,
+    scale: ToOperator<ScalarOperatorF32>,
+    offset: ToOperator<ScalarOperatorF32>,
 ) -> PyResult<PyVolumeOperator> {
     Ok(
         vng_core::operators::volume_gpu::linear_rescale(
@@ -220,7 +387,7 @@ fn linear_rescale(
 #[pyfunction]
 fn separable_convolution<'py>(
     vol: PyVolumeOperator,
-    zyx: [ToOperator<'py, PyReadonlyArray1<'py, f32>>; 3],
+    zyx: [ToOperator<PyArrayOperator>; 3],
 ) -> PyResult<PyVolumeOperator> {
     let [z, y, x] = zyx;
     Ok(vng_core::operators::volume_gpu::separable_convolution(
@@ -230,14 +397,72 @@ fn separable_convolution<'py>(
     .into())
 }
 
-/// A Python module implemented in Rust.
+#[pyfunction]
+fn entry_exit_points(
+    input_md: VolumeMetadataOperator,
+    output_md: ToOperator<ImageMetadataOperator>,
+    projection: ToOperator<Mat4Operator>,
+) -> PyVolumeOperator {
+    vng_core::operators::raycaster::entry_exit_points(
+        input_md.into(),
+        output_md.0.into(),
+        projection.0.into(),
+    )
+    .into()
+}
+
+#[pyfunction]
+fn raycast(vol: PyVolumeOperator, entry_exit_points: PyVolumeOperator) -> PyVolumeOperator {
+    vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
+}
+
+fn cgmat4_to_numpy(py: Python, mat: vng_core::cgmath::Matrix4<f32>) -> &numpy::PyArray2<f32> {
+    // cgmath matrices are row major, but we want column major, so we flip the indices (i, j) below:
+    numpy::PyArray2::from_owned_array(
+        py,
+        numpy::ndarray::Array::from_shape_fn((4, 4), |(j, i)| mat[i][j]),
+    )
+}
+
+#[pyfunction]
+fn look_at(py: Python, eye: [f32; 3], center: [f32; 3], up: [f32; 3]) -> &numpy::PyArray2<f32> {
+    let mat = vng_core::cgmath::Matrix4::look_at_rh(eye.into(), center.into(), up.into());
+    cgmat4_to_numpy(py, mat)
+}
+
+#[pyfunction]
+fn perspective(
+    py: Python,
+    md: PyImageMetadata,
+    fov_degree: f32,
+    near: f32,
+    far: f32,
+) -> &numpy::PyArray2<f32> {
+    let size = md.0.dimensions;
+    let mat = vng_core::cgmath::perspective(
+        vng_core::cgmath::Deg(fov_degree),
+        size.x().raw as f32 / size.y().raw as f32,
+        near,
+        far,
+    );
+    cgmat4_to_numpy(py, mat)
+}
+
 #[pymodule]
 fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_volume, m)?)?;
     m.add_function(wrap_pyfunction!(mean, m)?)?;
     m.add_function(wrap_pyfunction!(linear_rescale, m)?)?;
+    m.add_function(wrap_pyfunction!(rechunk, m)?)?;
     m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
+    m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
+    m.add_function(wrap_pyfunction!(raycast, m)?)?;
+    m.add_function(wrap_pyfunction!(look_at, m)?)?;
+    m.add_function(wrap_pyfunction!(perspective, m)?)?;
+    m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<ScalarOperatorF32>()?;
+    m.add_class::<PyImageMetadata>()?;
     m.add_class::<RunTime>()?;
+    m.add_class::<Window>()?;
     Ok(())
 }
