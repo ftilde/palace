@@ -20,26 +20,48 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 v = vng.separable_convolution(v, [k]*3)
 
 fov = 30.0
-eye = [5.5, 0.5, 0.5]
-center = [0.5, 0.5, 0.5]
-up = [1.0, 1.0, 0.0]
+eye = np.array([5.5, 0.5, 0.5])
+center = np.array([0.5, 0.5, 0.5])
+up = np.array([1.0, 1.0, 0.0])
 
 i = 0
+
+def normalize(v):
+    l = np.linalg.norm(v)
+    return v/l
+
+def drag(pos, delta):
+    global eye, center, up
+    delta = np.array(delta).astype(np.float64)
+
+    look = center - eye;
+    look_len = np.linalg.norm(look);
+    left = normalize(np.cross(up, look))
+    move_factor = 0.005;
+    delta *= move_factor
+
+    new_look = normalize(normalize(look) + up * delta[0] + left * -delta[1]) * look_len
+
+    eye = center - new_look;
+    left = np.cross(up, new_look)
+    up = normalize(np.cross(new_look, left))
+
+def wheel(delta):
+    global eye, center
+    look = center - eye;
+    print(look)
+    new_look = look * (1.0 - delta * 0.1);
+    eye = center - new_look;
 
 def render(size, events):
     global i
     i += 1
 
-    def foo(pos, delta):
-        print(pos, delta)
-    def bar(pos):
-        print(pos)
-
     events.act([
-        vng.OnMouseDrag(vng.MouseButton.Left, foo),
-        vng.OnMouseClick(vng.MouseButton.Left, bar),
-        vng.OnWheelMove(bar),
-        vng.OnKeyPress("A", lambda: print("indeed a key")),
+        vng.OnMouseDrag(vng.MouseButton.Left, drag),
+        #vng.OnMouseClick(vng.MouseButton.Left, bar),
+        vng.OnWheelMove(wheel),
+        #vng.OnKeyPress("A", lambda: print("indeed a key")),
     ]);
 
     fov_r = fov# * 1 + math.sin(i/20) * 0.6
