@@ -8,7 +8,8 @@ pub struct Events(pub vng_core::event::EventStream);
 
 #[pymethods]
 impl Events {
-    fn act(&mut self, py: Python, behaviours: Vec<Behaviour>) {
+    fn act(&mut self, py: Python, behaviours: Vec<Behaviour>) -> PyResult<()> {
+        let mut err = None;
         self.0.act(|e| {
             let mut e: c::EventChain = e.into();
             for behaviour in &behaviours {
@@ -16,22 +17,27 @@ impl Events {
                     Behaviour::OnMouseDrag(b) => e.chain(c::OnMouseDrag(b.0.into(), |p, d| {
                         let p = [p.y(), p.x()];
                         let d = [d.y(), d.x()];
-                        let _ = b.1.call(py, (p, d), None).unwrap();
+                        err = b.1.call(py, (p, d), None).err();
                     })),
                     Behaviour::OnMouseClick(b) => e.chain(c::OnMouseClick(b.0.into(), |p| {
                         let p = [p.y(), p.x()];
-                        let _ = b.1.call(py, (p,), None).unwrap();
+                        err = b.1.call(py, (p,), None).err();
                     })),
                     Behaviour::OnWheelMove(b) => e.chain(c::OnWheelMove(|d, _s| {
-                        let _ = b.0.call(py, (d,), None).unwrap();
+                        err = b.0.call(py, (d,), None).err();
                     })),
                     Behaviour::OnKeyPress(b) => e.chain(c::OnKeyPress(b.0, || {
-                        let _ = b.1.call0(py).unwrap();
+                        err = b.1.call0(py).err();
                     })),
-                }
+                };
             }
             e
-        })
+        });
+        if let Some(err) = err {
+            Err(err)
+        } else {
+            Ok(())
+        }
     }
 }
 

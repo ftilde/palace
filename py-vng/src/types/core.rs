@@ -79,55 +79,66 @@ impl Window {
         runtime: &mut RunTime,
         gen_frame: &pyo3::types::PyFunction,
         timeout_ms: Option<u64>,
-    ) {
+    ) -> PyResult<()> {
         let mut events = vng_core::event::EventSource::default();
 
+        let mut res = Ok(());
         self.event_loop.run_return(|event, _, control_flow| {
-            control_flow.set_wait();
+            let call_res: PyResult<()> = (|| {
+                control_flow.set_wait();
 
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    control_flow.set_exit();
-                }
-                Event::MainEventsCleared => {
-                    // Application update code.
-                    self.window.inner().request_redraw();
-                }
-                Event::WindowEvent {
-                    window_id: _,
-                    event: winit::event::WindowEvent::Resized(new_size),
-                } => {
-                    self.window.resize(new_size, &runtime.inner.vulkan);
-                }
-                Event::WindowEvent {
-                    window_id: _,
-                    event,
-                } => {
-                    events.add(event);
-                }
-                Event::RedrawRequested(_) => {
-                    let end = timeout_ms
-                        .map(|to| std::time::Instant::now() + std::time::Duration::from_millis(to));
-                    let size = self.window.size();
-                    let size = [size.y().raw, size.x().raw];
-                    let events = Events(events.current_batch());
-                    let frame = gen_frame.call((size, events), None).unwrap();
-                    let frame = frame.extract::<VolumeOperator>().unwrap().into();
+                match event {
+                    Event::WindowEvent {
+                        event: WindowEvent::CloseRequested,
+                        ..
+                    } => {
+                        control_flow.set_exit();
+                    }
+                    Event::MainEventsCleared => {
+                        // Application update code.
+                        self.window.inner().request_redraw();
+                    }
+                    Event::WindowEvent {
+                        window_id: _,
+                        event: winit::event::WindowEvent::Resized(new_size),
+                    } => {
+                        self.window.resize(new_size, &runtime.inner.vulkan);
+                    }
+                    Event::WindowEvent {
+                        window_id: _,
+                        event,
+                    } => {
+                        events.add(event);
+                    }
+                    Event::RedrawRequested(_) => {
+                        let end = timeout_ms.map(|to| {
+                            std::time::Instant::now() + std::time::Duration::from_millis(to)
+                        });
+                        let size = self.window.size();
+                        let size = [size.y().raw, size.x().raw];
+                        let events = Events(events.current_batch());
+                        let frame = gen_frame.call((size, events), None)?;
+                        let frame = frame.extract::<VolumeOperator>().unwrap().into();
 
-                    let frame_ref = &frame;
-                    let window = &mut self.window;
-                    runtime
-                        .inner
-                        .resolve(end, |ctx, _| {
-                            async move { window.render(ctx, frame_ref).await }.into()
-                        })
-                        .unwrap();
+                        let frame_ref = &frame;
+                        let window = &mut self.window;
+                        runtime
+                            .inner
+                            .resolve(end, |ctx, _| {
+                                async move { window.render(ctx, frame_ref).await }.into()
+                            })
+                            .unwrap();
+                    }
+                    _ => (),
                 }
-                _ => (),
+                Ok(())
+            })();
+
+            if call_res.is_err() {
+                res = call_res;
+                control_flow.set_exit();
             }
         });
+        res
     }
 }
