@@ -80,10 +80,10 @@ impl Window {
         gen_frame: &pyo3::types::PyFunction,
         timeout_ms: Option<u64>,
     ) {
+        let mut events = vng_core::event::EventSource::default();
+
         self.event_loop.run_return(|event, _, control_flow| {
             control_flow.set_wait();
-
-            let mut events = vng_core::event::EventSource::default();
 
             match event {
                 Event::WindowEvent {

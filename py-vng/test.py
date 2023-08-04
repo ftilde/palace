@@ -12,7 +12,7 @@ rt = vng.RunTime(ram_size, vram_size)
 
 window = vng.Window(rt)
 
-v = vng.open_volume("/nosnapshot/test-volumes/larger.vvd")
+v = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
@@ -30,9 +30,17 @@ def render(size, events):
     global i
     i += 1
 
-    #events.act([
-    #    MouseDrag("left", lambda pos, delta: pass)
-    #]);
+    def foo(pos, delta):
+        print(pos, delta)
+    def bar(pos):
+        print(pos)
+
+    events.act([
+        vng.OnMouseDrag(vng.MouseButton.Left, foo),
+        vng.OnMouseClick(vng.MouseButton.Left, bar),
+        vng.OnWheelMove(bar),
+        vng.OnKeyPress("A", lambda: print("indeed a key")),
+    ]);
 
     fov_r = fov# * 1 + math.sin(i/20) * 0.6
 

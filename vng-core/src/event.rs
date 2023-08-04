@@ -1,6 +1,6 @@
 use winit::{
     dpi::PhysicalPosition,
-    event::{ElementState, VirtualKeyCode, WindowEvent},
+    event::{ElementState, WindowEvent},
 };
 
 use crate::data::Vector;
@@ -17,7 +17,8 @@ impl<F: FnMut(Event) -> EventChain> Behavior for F {
     }
 }
 
-pub type Key = VirtualKeyCode;
+pub use winit::event::VirtualKeyCode as Key;
+
 pub struct OnKeyPress<F: FnMut()>(pub Key, pub F);
 
 impl<F: FnMut()> Behavior for OnKeyPress<F> {

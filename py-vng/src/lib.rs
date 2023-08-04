@@ -27,5 +27,10 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<ImageMetadata>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;
+    m.add_class::<MouseButton>()?;
+    m.add_class::<OnMouseDrag>()?;
+    m.add_class::<OnMouseClick>()?;
+    m.add_class::<OnWheelMove>()?;
+    m.add_class::<OnKeyPress>()?;
     Ok(())
 }
