@@ -34,7 +34,7 @@ pub fn mean(input: VolumeOperator) -> ScalarOperator<f32> {
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx
                         .submit_unordered_with_data(
-                            chunk.iter().map(|pos| (input.bricks.request(*pos), *pos)),
+                            chunk.iter().map(|pos| (input.chunks.request(*pos), *pos)),
                         )
                         .then_req(ctx.into(), |(brick_handle, brick_pos)| {
                             let chunk_info = vol.chunk_info(brick_pos);
@@ -127,7 +127,7 @@ pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> Volum
                     let intersecting_bricks = ctx.group(
                         in_brick_positions
                             .iter()
-                            .map(|pos| input.bricks.request(*pos)),
+                            .map(|pos| input.chunks.request(*pos)),
                     );
 
                     (intersecting_bricks, (pos, in_brick_positions))
@@ -226,7 +226,7 @@ pub fn convolution_1d<const DIM: usize>(
                 let (m_in, kernel_m, kernel_handle) = futures::join!(
                     ctx.submit(input.metadata.request_scalar()),
                     ctx.submit(kernel.metadata.request_scalar()),
-                    ctx.submit(kernel.bricks.request([0].into())),
+                    ctx.submit(kernel.chunks.request([0].into())),
                 );
 
                 assert_eq!(
@@ -265,7 +265,7 @@ pub fn convolution_1d<const DIM: usize>(
                     let intersecting_bricks = ctx.group(
                         in_brick_positions
                             .iter()
-                            .map(|pos| input.bricks.request(*pos)),
+                            .map(|pos| input.chunks.request(*pos)),
                     );
 
                     (intersecting_bricks, (pos, in_brick_positions))

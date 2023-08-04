@@ -555,7 +555,7 @@ void main() {
             move |ctx, input| {
                 async move {
                     let m = ctx.submit(input.metadata.request_scalar()).await;
-                    assert_eq!(m.dimension_in_bricks(), Vector::fill(1.into()));
+                    assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));
                     ctx.write(m)
                 }
                 .into()
@@ -832,7 +832,7 @@ void main() {
 
                     assert_eq!(pos, Vector::fill(0.into()));
                     let gpu_brick_in = ctx
-                        .submit(input.bricks.request_gpu(
+                        .submit(input.chunks.request_gpu(
                             device.id,
                             pos,
                             DstBarrierInfo {

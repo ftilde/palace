@@ -22,7 +22,7 @@ pub fn compare_volume(
                 let pos = BrickPosition::from([0, 0, 0]);
                 let m = ctx.submit(full_vol.metadata.request_scalar()).await;
                 let info = m.chunk_info(pos);
-                let vol = ctx.submit(full_vol.bricks.request(pos)).await;
+                let vol = ctx.submit(full_vol.chunks.request(pos)).await;
                 let vol = crate::data::chunk(&vol, &info);
 
                 let mut comp = vec![0.0; info.mem_elements()];
@@ -52,13 +52,13 @@ pub fn compare_tensor<const N: usize>(result: TensorOperator<N>, expected: Tenso
 
                     m_r
                 };
-                let dib = m.dimension_in_bricks();
+                let dib = m.dimension_in_chunks();
                 let n_chunks = hmul(dib);
                 for i in 0..n_chunks {
                     let pos = from_linear(i, dib);
 
-                    let b_l = ctx.submit(result.bricks.request(pos)).await;
-                    let b_r = ctx.submit(expected.bricks.request(pos)).await;
+                    let b_l = ctx.submit(result.chunks.request(pos)).await;
+                    let b_r = ctx.submit(expected.chunks.request(pos)).await;
 
                     assert_eq!(&*b_l, &*b_r);
                 }

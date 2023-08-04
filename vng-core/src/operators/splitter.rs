@@ -162,9 +162,9 @@ void main()
 
                     let (m_l, img_l, m_r, img_r) = futures::join! {
                         ctx.submit(input_l.metadata.request_scalar()),
-                        ctx.submit(input_l.bricks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
+                        ctx.submit(input_l.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
                         ctx.submit(input_r.metadata.request_scalar()),
-                        ctx.submit(input_r.bricks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
+                        ctx.submit(input_r.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
                     };
 
                     assert_eq!(m_l.dimensions.drop_dim(2), this.metadata_l().dimensions);

@@ -440,7 +440,7 @@ impl IndexEntry {
 
 pub struct IndexHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
-    pub(crate) num_bricks: usize,
+    pub(crate) num_chunks: usize,
     op: OperatorId,
     device: &'a DeviceContext,
 }
@@ -480,7 +480,7 @@ impl<'a> IndexHandle<'a> {
             .borrow_mut()
             .add((self.op, pos, data_id));
 
-        // Leak ReadHandle: For now we don't ever remove bricks once they are in the index.
+        // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
         std::mem::forget(brick);
 
         entry.present.insert(
@@ -952,7 +952,7 @@ impl Storage {
             buffer,
             op,
             device,
-            num_bricks: size,
+            num_chunks: size,
         }
     }
 

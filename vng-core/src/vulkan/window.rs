@@ -605,7 +605,7 @@ impl Window {
         let device = &ctx.device_contexts[self.device_id];
 
         let img = ctx
-            .submit(input.bricks.request_gpu(
+            .submit(input.chunks.request_gpu(
                 device.id,
                 BrickPosition::fill(0.into()),
                 super::DstBarrierInfo {

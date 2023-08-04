@@ -104,18 +104,18 @@ void main()
                     ctx.submit_unordered_with_data(positions.iter().map(|pos| {
                         (
                             ctx.group([
-                                input1.bricks.request_gpu(device.id, *pos, access_info),
-                                input2.bricks.request_gpu(device.id, *pos, access_info),
+                                input1.chunks.request_gpu(device.id, *pos, access_info),
+                                input2.chunks.request_gpu(device.id, *pos, access_info),
                             ]),
                             *pos,
                         )
                     }));
 
-                while let Some((mut in_bricks, pos)) = brick_stream.next().await {
+                while let Some((mut in_chunks, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
-                    let mut in_bricks = in_bricks.drain(..);
-                    let gpu_brick_in1 = in_bricks.next().unwrap();
-                    let gpu_brick_in2 = in_bricks.next().unwrap();
+                    let mut in_chunks = in_chunks.drain(..);
+                    let gpu_brick_in1 = in_chunks.next().unwrap();
+                    let gpu_brick_in2 = in_chunks.next().unwrap();
 
                     let gpu_brick_out =
                         ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;

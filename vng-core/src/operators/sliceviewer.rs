@@ -329,11 +329,11 @@ void main()
                 let m_out = full_info(m2d);
                 let out_info = m_out.chunk_info(pos);
 
-                let num_bricks = hmul(m_in.dimension_in_bricks()); //TODO: rename
+                let num_bricks = hmul(m_in.dimension_in_chunks()); //TODO: rename
 
                 let brick_index = device
                     .storage
-                    .get_index(*ctx, device, input.bricks.id(), num_bricks, dst_info)
+                    .get_index(*ctx, device, input.chunks.id(), num_bricks, dst_info)
                     .await;
 
                 let request_table_size = 256;
@@ -387,7 +387,7 @@ void main()
                 let request_table =
                     TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
 
-                let dim_in_bricks = m_in.dimension_in_bricks();
+                let dim_in_bricks = m_in.dimension_in_chunks();
                 let consts = PushConstants {
                     vol_dim: m_in.dimensions.raw().into(),
                     chunk_dim: m_in.chunk_size.raw().into(),
@@ -464,7 +464,7 @@ void main()
                     for batch in to_request_linear.chunks(request_batch_size) {
                         let to_request = batch.iter().map(|v| {
                             assert!(*v < num_bricks as _);
-                            input.bricks.request_gpu(
+                            input.chunks.request_gpu(
                                 device.id,
                                 from_linear(*v as usize, dim_in_bricks),
                                 DstBarrierInfo {

@@ -76,14 +76,14 @@ pub struct VolumeOperator {
     #[pyo3(get, set)]
     pub metadata: VolumeMetadataOperator,
     #[pyo3(get, set)]
-    pub bricks: VolumeValueOperator,
+    pub chunks: VolumeValueOperator,
 }
 
 impl Into<CVolumeOperator> for VolumeOperator {
     fn into(self) -> CVolumeOperator {
         CVolumeOperator {
             metadata: self.metadata.into(),
-            bricks: self.bricks.into(),
+            chunks: self.chunks.into(),
         }
     }
 }
@@ -92,7 +92,7 @@ impl From<CVolumeOperator> for VolumeOperator {
     fn from(value: CVolumeOperator) -> Self {
         Self {
             metadata: value.metadata.into(),
-            bricks: value.bricks.into(),
+            chunks: value.chunks.into(),
         }
     }
 }
@@ -101,14 +101,14 @@ impl From<CVolumeOperator> for VolumeOperator {
 #[derive(Clone)]
 pub struct ArrayOperator {
     pub metadata: ArrayMetadataOperator,
-    pub bricks: ArrayValueOperator,
+    pub chunks: ArrayValueOperator,
 }
 
 impl Into<CArrayOperator> for ArrayOperator {
     fn into(self) -> CArrayOperator {
         CArrayOperator {
             metadata: self.metadata.into(),
-            bricks: self.bricks.into(),
+            chunks: self.chunks.into(),
         }
     }
 }
@@ -117,7 +117,7 @@ impl From<CArrayOperator> for ArrayOperator {
     fn from(value: CArrayOperator) -> Self {
         Self {
             metadata: value.metadata.into(),
-            bricks: value.bricks.into(),
+            chunks: value.chunks.into(),
         }
     }
 }

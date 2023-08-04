@@ -468,7 +468,7 @@ impl<'a> AsBufferDescriptor for IndexHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::builder()
             .buffer(self.buffer)
-            .range((self.num_bricks * std::mem::size_of::<vk::DeviceAddress>()) as _)
+            .range((self.num_chunks * std::mem::size_of::<vk::DeviceAddress>()) as _)
             .build()
     }
 }

@@ -16,7 +16,7 @@ use super::scalar::ScalarOperator;
 #[derive(Clone)]
 pub struct TensorOperator<const N: usize> {
     pub metadata: Operator<(), TensorMetaData<N>>,
-    pub bricks: Operator<Vector<N, ChunkCoordinate>, f32>,
+    pub chunks: Operator<Vector<N, ChunkCoordinate>, f32>,
 }
 
 impl<const N: usize> TensorOperator<N> {
@@ -35,9 +35,9 @@ impl<const N: usize> TensorOperator<N> {
     >(
         base_id: OperatorId,
         metadata: M,
-        bricks: B,
+        chunks: B,
     ) -> Self {
-        Self::with_state(base_id, (), (), metadata, bricks)
+        Self::with_state(base_id, (), (), metadata, chunks)
     }
 
     pub fn with_state<
@@ -57,13 +57,13 @@ impl<const N: usize> TensorOperator<N> {
     >(
         base_id: OperatorId,
         state_metadata: SM,
-        state_bricks: SB,
+        state_chunks: SB,
         metadata: M,
-        bricks: B,
+        chunks: B,
     ) -> Self {
         Self {
             metadata: crate::operators::scalar::scalar(base_id.slot(0), state_metadata, metadata),
-            bricks: Operator::with_state(base_id.slot(1), state_bricks, bricks),
+            chunks: Operator::with_state(base_id.slot(1), state_chunks, chunks),
         }
     }
 
@@ -84,20 +84,20 @@ impl<const N: usize> TensorOperator<N> {
     >(
         base_id: OperatorId,
         state_metadata: SM,
-        state_bricks: SB,
+        state_chunks: SB,
         metadata: M,
-        bricks: B,
+        chunks: B,
     ) -> Self {
         Self {
             metadata: crate::operators::scalar::scalar(base_id.slot(0), state_metadata, metadata),
-            bricks: Operator::unbatched(base_id.slot(1), state_bricks, bricks),
+            chunks: Operator::unbatched(base_id.slot(1), state_chunks, chunks),
         }
     }
 }
 
 impl<const N: usize> Into<Id> for &TensorOperator<N> {
     fn into(self) -> Id {
-        Id::combine(&[(&self.metadata).into(), (&self.bricks).into()])
+        Id::combine(&[(&self.metadata).into(), (&self.chunks).into()])
     }
 }
 
@@ -171,7 +171,7 @@ pub fn map<const N: usize>(input: TensorOperator<N>, f: fn(f32) -> f32) -> Tenso
         },
         move |ctx, positions, input| {
             async move {
-                map_values(ctx, &input.bricks, positions, f).await;
+                map_values(ctx, &input.chunks, positions, f).await;
 
                 Ok(())
             }
@@ -208,7 +208,7 @@ pub fn linear_rescale<const N: usize>(
                     ctx.submit(offset.request_scalar()),
                 };
 
-                map_values(ctx, &input.bricks, positions, move |i| i * factor + offset).await;
+                map_values(ctx, &input.chunks, positions, move |i| i * factor + offset).await;
 
                 Ok(())
             }

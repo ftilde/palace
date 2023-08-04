@@ -46,7 +46,7 @@ impl RawVolumeSourceState {
             dimensions: self.0.size,
             chunk_size: brick_size,
         };
-        let dim_in_bricks = m.dimension_in_bricks();
+        let dim_in_bricks = m.dimension_in_chunks();
 
         positions.sort_by_key(|v| crate::data::to_linear(*v, dim_in_bricks));
 

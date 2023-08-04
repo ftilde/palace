@@ -374,7 +374,7 @@ fn slice_viewer_rot(
                         let chunk_pos = m_in.chunk_pos(vol_pos);
                         let chunk_info = m_in.chunk_info(chunk_pos);
 
-                        let brick = ctx.submit(vol_ref.bricks.request(chunk_pos)).await;
+                        let brick = ctx.submit(vol_ref.chunks.request(chunk_pos)).await;
 
                         let local_pos = chunk_info.in_chunk(vol_pos);
                         let brick = vng_core::data::chunk(&brick, &chunk_info);

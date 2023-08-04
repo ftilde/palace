@@ -533,7 +533,7 @@ void main()
                 let (m_in, im, eep) = futures::join! {
                     ctx.submit(input.metadata.request_scalar()),
                     ctx.submit(entry_exit_points.metadata.request_scalar()),
-                    ctx.submit(entry_exit_points.bricks.request_gpu(device.id, pos, dst_info)),
+                    ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
                 };
                 let m_out = full_info(im);
                 let out_info = m_out.chunk_info(pos);
@@ -541,11 +541,11 @@ void main()
                 let request_table_size = 256;
                 let request_batch_size = 32;
 
-                let num_bricks = hmul(m_in.dimension_in_bricks());
+                let num_bricks = hmul(m_in.dimension_in_chunks());
 
                 let brick_index = device
                     .storage
-                    .get_index(*ctx, device, input.bricks.id(), num_bricks, dst_info)
+                    .get_index(*ctx, device, input.chunks.id(), num_bricks, dst_info)
                     .await;
 
                 let pipeline =
@@ -587,7 +587,7 @@ void main()
                 let request_table =
                     TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
 
-                let dim_in_bricks = m_in.dimension_in_bricks();
+                let dim_in_bricks = m_in.dimension_in_chunks();
 
                 let chunk_size = out_info.mem_dimensions.drop_dim(2).raw();
                 let consts = PushConstants {
@@ -663,7 +663,7 @@ void main()
                     for batch in to_request_linear.chunks(request_batch_size) {
                         let to_request = batch.iter().map(|v| {
                             assert!(*v < num_bricks as _);
-                            input.bricks.request_gpu(
+                            input.chunks.request_gpu(
                                 device.id,
                                 from_linear(*v as usize, dim_in_bricks),
                                 DstBarrierInfo {

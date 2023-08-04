@@ -23,7 +23,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     }
 
     let img = ctx
-        .submit(input.bricks.request(BrickPosition::fill(0.into())))
+        .submit(input.chunks.request(BrickPosition::fill(0.into())))
         .await;
 
     let file = File::create(path).unwrap();

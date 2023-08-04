@@ -152,7 +152,7 @@ void main() {
 
                 let requests = positions.into_iter().map(|pos| {
                     let hessian_bricks = ctx.group(hessian.into_iter().map(|entry| {
-                        entry.bricks.request_gpu(
+                        entry.chunks.request_gpu(
                             device.id,
                             pos,
                             DstBarrierInfo {

@@ -107,7 +107,7 @@ void main()
                 let mut brick_stream =
                     ctx.submit_unordered_with_data(positions.iter().map(|pos| {
                         (
-                            input.bricks.request_inplace_gpu(
+                            input.chunks.request_inplace_gpu(
                                 device.id,
                                 *pos,
                                 ctx.current_op(),
@@ -263,7 +263,7 @@ void main() {
                     .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                     .collect::<Vec<_>>();
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                        input.bricks.request_gpu(
+                        input.chunks.request_gpu(
                             device.id,
                             *pos,
                             DstBarrierInfo {
@@ -456,7 +456,7 @@ void main() {
                 let (m_in, kernel_m, kernel_handle) = futures::join!(
                     ctx.submit(input.metadata.request_scalar()),
                     ctx.submit(kernel.metadata.request_scalar()),
-                    ctx.submit(kernel.bricks.request_gpu(
+                    ctx.submit(kernel.chunks.request_gpu(
                         device.id,
                         [0].into(),
                         DstBarrierInfo {
@@ -500,7 +500,7 @@ void main() {
                     .collect::<Vec<_>>();
 
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                        input.bricks.request_gpu(
+                        input.chunks.request_gpu(
                             device.id,
                             *pos,
                             DstBarrierInfo {
@@ -750,7 +750,7 @@ void main()
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
                         (
-                            input.bricks.request_gpu(
+                            input.chunks.request_gpu(
                                 device.id,
                                 *pos,
                                 DstBarrierInfo {

@@ -44,7 +44,7 @@ impl<const N: usize> TensorMetaData<N> {
     pub fn num_elements(&self) -> usize {
         hmul(self.dimensions)
     }
-    pub fn dimension_in_bricks(&self) -> Vector<N, ChunkCoordinate> {
+    pub fn dimension_in_chunks(&self) -> Vector<N, ChunkCoordinate> {
         self.dimensions.zip(self.chunk_size, |a, b| {
             crate::util::div_round_up(a.raw, b.raw).into()
         })
@@ -75,7 +75,7 @@ impl<const N: usize> TensorMetaData<N> {
 pub type VolumeMetaData = TensorMetaData<3>;
 impl VolumeMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
-        let bp = self.dimension_in_bricks();
+        let bp = self.dimension_in_chunks();
         itertools::iproduct! { 0..bp.z().raw, 0..bp.y().raw, 0..bp.x().raw }
             .map(|(z, y, x)| [z, y, x].into())
     }
@@ -84,7 +84,7 @@ impl VolumeMetaData {
 pub type ImageMetaData = TensorMetaData<2>;
 impl ImageMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
-        let bp = self.dimension_in_bricks();
+        let bp = self.dimension_in_chunks();
         itertools::iproduct! { 0..bp.y().raw, 0..bp.x().raw }.map(|(y, x)| [y, x].into())
     }
     pub fn as_vol(&self) -> VolumeMetaData {
@@ -98,7 +98,7 @@ impl ImageMetaData {
 pub type ArrayMetaData = TensorMetaData<1>;
 impl ArrayMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
-        let bp = self.dimension_in_bricks();
+        let bp = self.dimension_in_chunks();
         (0..bp[0].raw).into_iter().map(|x| Vector::from([x]))
     }
     pub fn as_image(&self) -> ImageMetaData {

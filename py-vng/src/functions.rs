@@ -127,7 +127,7 @@ pub fn open_volume(path: std::path::PathBuf) -> PyResult<VolumeOperator> {
     let vol = vol_source.operate();
 
     Ok(VolumeOperator {
-        bricks: VolumeValueOperator(vol.bricks),
+        chunks: VolumeValueOperator(vol.chunks),
         metadata: VolumeMetadataOperator(vol.metadata),
     })
 }
