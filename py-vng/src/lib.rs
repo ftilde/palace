@@ -212,19 +212,39 @@ impl<'source> conversion::FromPyValues<'source> for PyArrayOperator {
 struct Window {
     event_loop: winit::event_loop::EventLoop<()>,
     window: vng_core::vulkan::window::Window,
+    runtime: Py<RunTime>,
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        Python::with_gil(|py| {
+            let rt = self.runtime.borrow(py);
+
+            unsafe { self.window.deinitialize(&rt.inner.vulkan) };
+        });
+    }
 }
 
 #[pymethods]
 impl Window {
     #[new]
-    fn new(runtime: &RunTime) -> PyResult<Self> {
+    fn new(py: Python, runtime: Py<RunTime>) -> PyResult<Self> {
         let event_loop = winit::event_loop::EventLoop::new();
 
-        let window = map_err(vng_core::vulkan::window::Window::new(
-            &runtime.inner.vulkan,
-            &event_loop,
-        ))?;
-        Ok(Self { event_loop, window })
+        let window = {
+            let rt = runtime.borrow(py);
+
+            map_err(vng_core::vulkan::window::Window::new(
+                &rt.inner.vulkan,
+                &event_loop,
+            ))?
+        };
+
+        Ok(Self {
+            event_loop,
+            window,
+            runtime,
+        })
     }
     fn run(
         &mut self,
