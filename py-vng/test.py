@@ -1,6 +1,5 @@
 import numpy as np
 import time
-from threading import Thread
 import vng
 import math
 
@@ -27,13 +26,17 @@ up = [1.0, 1.0, 0.0]
 
 i = 0
 
-def render(size):
+def render(size, events):
     global i
     i += 1
 
+    #events.act([
+    #    MouseDrag("left", lambda pos, delta: pass)
+    #]);
+
     fov_r = fov# * 1 + math.sin(i/20) * 0.6
 
-    md = vng.PyImageMetadata(size, [512]*2)
+    md = vng.ImageMetadata(size, [512]*2)
 
     look_at = vng.look_at(eye, center, up);
     perspective = vng.perspective(md, fov_r, 0.01, 100)
