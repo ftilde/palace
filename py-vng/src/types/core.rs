@@ -9,7 +9,7 @@ use super::{Events, ScalarOperatorF32, VolumeOperator};
 
 #[pyclass(unsendable)]
 pub struct RunTime {
-    inner: vng_core::runtime::RunTime,
+    pub inner: vng_core::runtime::RunTime,
 }
 
 #[pymethods]

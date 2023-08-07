@@ -26,6 +26,8 @@ up = np.array([1.0, 1.0, 0.0])
 
 i = 0
 
+gui_state = vng.GuiState(rt)
+
 def normalize(v):
     l = np.linalg.norm(v)
     return v/l
@@ -49,13 +51,20 @@ def drag(pos, delta):
 def wheel(delta):
     global eye, center
     look = center - eye;
-    print(look)
     new_look = look * (1.0 - delta * 0.1);
     eye = center - new_look;
 
 def render(size, events):
     global i
     i += 1
+
+    gui = gui_state.setup(events, vng.Vertical([
+        vng.Label("Look at all these buttons"),
+        vng.Horizontal([
+            vng.Button("yes?", lambda: print("yes!")),
+            vng.Button("no?", lambda: print("no!")),
+        ]),
+    ]))
 
     events.act([
         vng.OnMouseDrag(vng.MouseButton.Left, drag),
@@ -75,6 +84,7 @@ def render(size, events):
     eep = vng.entry_exit_points(v.metadata, md, proj)
     frame = vng.raycast(v, eep)
     frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
+    frame = gui.render(frame)
 
     return frame
 

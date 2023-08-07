@@ -1,9 +1,11 @@
 mod core;
 mod event;
+mod gui;
 mod tensor;
 
 pub use self::core::*;
 pub use self::event::*;
+pub use self::gui::*;
 pub use self::tensor::*;
 
 use crate::conversion;
