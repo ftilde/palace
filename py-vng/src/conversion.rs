@@ -1,5 +1,8 @@
 use pyo3::{FromPyObject, PyAny, PyResult};
 
+// TODO: Investigate just using an enum with FromPyObject instead. That might be quite a lot
+// simpler...
+
 pub trait FromPyValue<V>: Sized {
     fn from_py(v: V) -> PyResult<Self>;
 }
