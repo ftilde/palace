@@ -19,7 +19,7 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 #v2 = vng.linear_rescale(v1, 2, m1)
 v = vng.separable_convolution(v, [k]*3)
 
-fov = 30.0
+fov = np.array(30.0)
 eye = np.array([5.5, 0.5, 0.5])
 center = np.array([0.5, 0.5, 0.5])
 up = np.array([1.0, 1.0, 0.0])
@@ -63,6 +63,7 @@ def render(size, events):
         vng.Horizontal([
             vng.Button("yes?", lambda: print("yes!")),
             vng.Button("no?", lambda: print("no!")),
+            vng.Slider(fov, 10, 50),
         ]),
     ]))
 

@@ -1,4 +1,5 @@
 use super::{core::RunTime, Events, VolumeOperator};
+use numpy::PyArray0;
 use vng_core::{operators::gui as c, vulkan::state::VulkanState};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -103,6 +104,21 @@ impl Label {
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
+pub struct Slider {
+    val: Py<PyArray0<f64>>,
+    min: f64,
+    max: f64,
+}
+#[pymethods]
+impl Slider {
+    #[new]
+    fn new(val: Py<PyArray0<f64>>, min: f64, max: f64) -> Self {
+        Self { val, min, max }
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
 pub struct Horizontal {
     nodes: Vec<GuiNode>,
 }
@@ -130,6 +146,7 @@ impl Vertical {
 #[derive(FromPyObject, Clone)]
 enum GuiNode {
     Button(Py<Button>),
+    Slider(Py<Slider>),
     Label(Py<Label>),
     Horizontal(Py<Horizontal>),
     Vertical(Py<Vertical>),
@@ -143,6 +160,12 @@ impl GuiNode {
                 if ui.button(&b.text).clicked() {
                     b.action.call0(py)?;
                 }
+            }
+            GuiNode::Slider(b) => {
+                let b = b.borrow(py);
+                let range = b.min..=b.max;
+                let v = unsafe { b.val.as_ref(py).get_mut(()).unwrap() };
+                ui.add(c::egui::Slider::new(v, range));
             }
             GuiNode::Label(b) => {
                 let b = b.borrow(py);
