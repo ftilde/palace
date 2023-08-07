@@ -22,6 +22,8 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
     m.add_function(wrap_pyfunction!(look_at, m)?)?;
     m.add_function(wrap_pyfunction!(perspective, m)?)?;
+    m.add_function(wrap_pyfunction!(slice_projection_mat_z, m)?)?;
+    m.add_function(wrap_pyfunction!(render_slice, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<ScalarOperatorF32>()?;
     m.add_class::<ImageMetadata>()?;

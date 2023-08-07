@@ -28,6 +28,34 @@ impl<'source> conversion::FromPyValues<'source> for ScalarOperatorF32 {
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
+pub struct ScalarOperatorVec2F(pub Operator<(), Vector<2, f32>>);
+impl conversion::FromPyValue<[f32; 2]> for ScalarOperatorVec2F {
+    fn from_py(v: [f32; 2]) -> PyResult<Self> {
+        Ok(ScalarOperatorVec2F(
+            vng_core::operators::scalar::constant_pod(v.into()),
+        ))
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for ScalarOperatorVec2F {
+    type Converter = conversion::ToOperatorFrom<Self, ([f32; 2],)>;
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
+pub struct ScalarOperatorU32(pub Operator<(), u32>);
+impl conversion::FromPyValue<u32> for ScalarOperatorU32 {
+    fn from_py(v: u32) -> PyResult<Self> {
+        Ok(ScalarOperatorU32(
+            vng_core::operators::scalar::constant_pod(v),
+        ))
+    }
+}
+impl<'source> conversion::FromPyValues<'source> for ScalarOperatorU32 {
+    type Converter = conversion::ToOperatorFrom<Self, (u32,)>;
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
 pub struct ArrayMetadataOperator(pub Operator<(), ArrayMetaData>);
 
 #[pyclass(unsendable)]

@@ -90,6 +90,38 @@ pub fn perspective(
 }
 
 #[pyfunction]
+pub fn slice_projection_mat_z(
+    input_data: VolumeMetadataOperator,
+    output_data: ToOperator<ImageMetadataOperator>,
+    selected_slice: ToOperator<ScalarOperatorU32>,
+    offset: ToOperator<ScalarOperatorVec2F>,
+    zoom_level: ToOperator<ScalarOperatorF32>,
+) -> Mat4Operator {
+    vng_core::operators::sliceviewer::slice_projection_mat_z(
+        input_data.into(),
+        output_data.0.into(),
+        selected_slice.0 .0.map((), |v, _| v.into()),
+        offset.0.into(),
+        zoom_level.0.into(),
+    )
+    .into()
+}
+
+#[pyfunction]
+pub fn render_slice(
+    input: VolumeOperator,
+    result_metadata: ToOperator<ImageMetadataOperator>,
+    projection_mat: ToOperator<Mat4Operator>,
+) -> VolumeOperator {
+    vng_core::operators::sliceviewer::render_slice(
+        input.into(),
+        result_metadata.0.into(),
+        projection_mat.0.into(),
+    )
+    .into()
+}
+
+#[pyfunction]
 pub fn mean(vol: VolumeOperator) -> ScalarOperatorF32 {
     vng_core::operators::volume_gpu::mean(vol.into()).into()
 }

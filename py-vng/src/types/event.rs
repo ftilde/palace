@@ -23,8 +23,11 @@ impl Events {
                         let p = [p.y(), p.x()];
                         err = b.1.call(py, (p,), None).err();
                     })),
-                    Behaviour::OnWheelMove(b) => e.chain(c::OnWheelMove(|d, _s| {
-                        err = b.0.call(py, (d,), None).err();
+                    Behaviour::OnWheelMove(b) => e.chain(c::OnWheelMove(|d, s| {
+                        if let Some(m_state) = &s.mouse_state {
+                            let pos = m_state.pos.map(|v| v as f32);
+                            err = b.0.call(py, (d, [pos.y(), pos.x()]), None).err();
+                        }
                     })),
                     Behaviour::OnKeyPress(b) => e.chain(c::OnKeyPress(b.0, || {
                         err = b.1.call0(py).err();
