@@ -36,6 +36,17 @@ def normalize(v):
     l = np.linalg.norm(v)
     return v/l
 
+def split(size, fraction, events, render_left, render_right):
+    splitter = vng.Splitter(size, 0.5)
+
+    events_l, events_r = splitter.split_events(events)
+
+    #TODO: Hmm, is this a more general "module" pattern in terms of renderable components?
+    frame_l = render_left(splitter.metadata_l().dimensions, events_l)
+    frame_r = render_right(splitter.metadata_r().dimensions, events_r)
+
+    return splitter.render(frame_l, frame_r)
+
 def render(size, events):
     global i
     i += 1
@@ -49,14 +60,7 @@ def render(size, events):
         ]),
     ]))
 
-    splitter = vng.Splitter(size, 0.5)
-
-    events_l, events_r = splitter.split_events(events)
-
-    frame_l = render_raycast(splitter.metadata_l().dimensions, events_l)
-    frame_r = render_slice(splitter.metadata_r().dimensions, events_r)
-
-    frame = splitter.render(frame_l, frame_r)
+    frame = split(size, 0.5, events, render_raycast, render_slice)
 
     frame = gui.render(frame)
 
