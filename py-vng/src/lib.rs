@@ -40,5 +40,6 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Slider>()?;
     m.add_class::<Button>()?;
     m.add_class::<Label>()?;
+    m.add_class::<Splitter>()?;
     Ok(())
 }

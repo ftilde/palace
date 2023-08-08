@@ -49,8 +49,15 @@ def render(size, events):
         ]),
     ]))
 
-    #frame = render_raycast(size, events)
-    frame = render_slice(size, events)
+    splitter = vng.Splitter(size, 0.5)
+
+    events_l, events_r = splitter.split_events(events)
+
+    frame_l = render_raycast(splitter.metadata_l().dimensions(), events_l)
+    frame_r = render_slice(splitter.metadata_r().dimensions(), events_r)
+
+    frame = splitter.render(frame_l, frame_r)
+
     frame = gui.render(frame)
 
     return frame

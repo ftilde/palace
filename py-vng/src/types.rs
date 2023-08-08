@@ -1,11 +1,13 @@
 mod core;
 mod event;
 mod gui;
+mod splitter;
 mod tensor;
 
 pub use self::core::*;
 pub use self::event::*;
 pub use self::gui::*;
+pub use self::splitter::*;
 pub use self::tensor::*;
 
 use crate::conversion;

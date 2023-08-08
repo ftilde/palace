@@ -88,6 +88,10 @@ impl ImageMetadata {
             chunk_size: chunk_size.into(),
         })
     }
+
+    fn dimensions(&self) -> [u32; 2] {
+        self.0.dimensions.raw().into()
+    }
 }
 
 #[pyclass(unsendable)]

@@ -17,6 +17,7 @@ use crate::{
 
 use super::volume::VolumeOperator;
 
+#[derive(Clone)]
 pub struct Splitter {
     size: PixelPosition,
     split_pos: f32,
