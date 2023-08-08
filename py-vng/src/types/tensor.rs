@@ -89,8 +89,22 @@ impl ImageMetadata {
         })
     }
 
-    fn dimensions(&self) -> [u32; 2] {
+    #[getter]
+    fn get_dimensions(&self) -> [u32; 2] {
         self.0.dimensions.raw().into()
+    }
+    #[setter]
+    fn set_dimensions(&mut self, dim: [u32; 2]) {
+        self.0.dimensions = Vector::from(dim);
+    }
+
+    #[getter]
+    fn get_chunk_size(&self) -> [u32; 2] {
+        self.0.chunk_size.raw().into()
+    }
+    #[setter]
+    fn set_chunk_size(&mut self, size: [u32; 2]) {
+        self.0.chunk_size = Vector::from(size);
     }
 }
 

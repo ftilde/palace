@@ -53,8 +53,8 @@ def render(size, events):
 
     events_l, events_r = splitter.split_events(events)
 
-    frame_l = render_raycast(splitter.metadata_l().dimensions(), events_l)
-    frame_r = render_slice(splitter.metadata_r().dimensions(), events_r)
+    frame_l = render_raycast(splitter.metadata_l().dimensions, events_l)
+    frame_r = render_slice(splitter.metadata_r().dimensions, events_r)
 
     frame = splitter.render(frame_l, frame_r)
 
