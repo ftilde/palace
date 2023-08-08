@@ -139,4 +139,4 @@ def render_slice(size, events):
 
     return frame
 
-window.run(rt, render, timeout_ms=10)
+window.run(render, timeout_ms=10)

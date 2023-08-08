@@ -76,11 +76,13 @@ impl Window {
     }
     fn run(
         &mut self,
-        runtime: &mut RunTime,
+        py: Python,
         gen_frame: &pyo3::types::PyFunction,
         timeout_ms: Option<u64>,
     ) -> PyResult<()> {
         let mut events = vng_core::event::EventSource::default();
+
+        let mut rt = self.runtime.borrow_mut(py);
 
         let mut res = Ok(());
         self.event_loop.run_return(|event, _, control_flow| {
@@ -102,7 +104,7 @@ impl Window {
                         window_id: _,
                         event: winit::event::WindowEvent::Resized(new_size),
                     } => {
-                        self.window.resize(new_size, &runtime.inner.vulkan);
+                        self.window.resize(new_size, &rt.inner.vulkan);
                     }
                     Event::WindowEvent {
                         window_id: _,
@@ -122,8 +124,7 @@ impl Window {
 
                         let frame_ref = &frame;
                         let window = &mut self.window;
-                        runtime
-                            .inner
+                        rt.inner
                             .resolve(end, |ctx, _| {
                                 async move { window.render(ctx, frame_ref).await }.into()
                             })
