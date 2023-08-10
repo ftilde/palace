@@ -34,7 +34,7 @@ impl<const N: usize> ChunkInfo<N> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TensorMetaData<const N: usize> {
     pub dimensions: Vector<N, GlobalCoordinate>,
     pub chunk_size: Vector<N, LocalCoordinate>,

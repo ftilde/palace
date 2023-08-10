@@ -46,7 +46,9 @@ pub struct ChunkCoordinateType;
 impl CoordinateType for ChunkCoordinateType {}
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(
+    Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub struct Coordinate<T: CoordinateType> {
     pub raw: u32,
     type_: std::marker::PhantomData<T>,
@@ -157,6 +159,54 @@ pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 #[repr(transparent)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vector<const N: usize, T>([T; N]);
+
+impl<const N: usize, T: serde::Serialize> serde::Serialize for Vector<N, T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut s = serializer.serialize_seq(Some(N))?;
+        for v in &self.0 {
+            s.serialize_element(&v)?;
+        }
+        s.end()
+    }
+}
+
+struct VectorVisitor<const N: usize, T> {
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<'de, const N: usize, T: serde::Deserialize<'de>> serde::de::Visitor<'de>
+    for VectorVisitor<N, T>
+{
+    type Value = Vector<N, T>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "a Vector<{}, T>", N)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        Ok(Vector(array_init::try_array_init(
+            |_| Ok(seq.next_element::<T>()?.unwrap()), /* ??? what to do here? how to construct an error? */
+        )?))
+    }
+}
+
+impl<'de, const N: usize, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Vector<N, T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(VectorVisitor {
+            _marker: Default::default(),
+        })
+    }
+}
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
     fn from(value: [I; N]) -> Self {

@@ -6,6 +6,7 @@ pub mod id;
 pub mod operator;
 pub mod operators;
 pub mod runtime;
+pub mod state;
 pub mod storage;
 pub mod task;
 pub mod task_graph;
