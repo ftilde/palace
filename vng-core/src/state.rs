@@ -1,7 +1,5 @@
 use egui::epaint::ahash::HashMap;
 
-use crate::data::Vector;
-
 #[derive(Copy, Clone, Debug)]
 struct NodeRef {
     index: usize,
@@ -26,6 +24,76 @@ enum ResolveResult<'a> {
     Atom(Value),
 }
 
+pub struct NodeHandle<T: ?Sized> {
+    node: NodeRef,
+    path: Vec<PathElm>,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: ?Sized> NodeHandle<T> {
+    fn new_at(node: NodeRef) -> Self {
+        Self {
+            node,
+            path: Vec::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+//struct StoreHandleF32 {
+//    node: NodeRef,
+//    path: Vec<PathElm>,
+//}
+//
+//trait StoreItem<'de>: serde::Serialize + serde::Deserialize<'de> {
+//    type Handle: StoreItemHandle<Item = Self>;
+//}
+//
+//impl StoreItem<'_> for f32 {
+//    type Handle = StoreHandleF32;
+//}
+//
+//trait StoreItemHandle {
+//    type Item;
+//
+//    fn store(item: &Self::Item, store: &mut Store) -> Self;
+//    fn load(&self, store: &mut Store) -> Self::Item;
+//}
+//impl StoreItemHandle for StoreHandleF32 {
+//    type Item = f32;
+//
+//    fn store(item: &Self::Item, store: &mut Store) -> Self {
+//        StoreHandleF32 {
+//            node: store.push(Node::Val(Value::F32(*item))),
+//            path: Vec::new(),
+//        }
+//    }
+//
+//    fn load(&self, store: &mut Store) -> Self::Item {
+//        let node = store.walk(self.node, &self.path[..]).unwrap();
+//        if let ResolveResult::Atom(Value::F32(v)) = store.to_val(node) {
+//            v
+//        } else {
+//            panic!("Expected f32")
+//        }
+//    }
+//}
+
+impl<const N: usize, T> NodeHandle<crate::data::Vector<N, T>> {
+    fn at(&self, i: usize) -> NodeHandle<T> {
+        assert!(i < N);
+        NodeHandle {
+            node: self.node,
+            path: {
+                let mut p = self.path.clone();
+                p.push(PathElm::Index(i));
+                p
+            },
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 impl Store {
     fn push(&mut self, val: Node) -> NodeRef {
         let index = self.elms.len();
@@ -33,12 +101,18 @@ impl Store {
         NodeRef { index }
     }
 
-    fn store<T: serde::Serialize + ?Sized>(&mut self, v: &T) -> NodeRef {
-        v.serialize(self).unwrap()
+    pub fn store<T: serde::Serialize + ?Sized>(&mut self, v: &T) -> NodeHandle<T> {
+        NodeHandle::new_at(v.serialize(self).unwrap())
     }
 
-    fn load<'a, T: serde::Deserialize<'a> + ?Sized>(&'a self, node: NodeRef) -> Result<T, SDError> {
-        T::deserialize(Deserializer { node, store: self })
+    pub fn load<'a, T: serde::Deserialize<'a> + ?Sized>(
+        &'a self,
+        node: NodeHandle<T>,
+    ) -> Result<T, SDError> {
+        T::deserialize(Deserializer {
+            node: self.walk(node.node, &node.path[..]).unwrap(),
+            store: self,
+        })
     }
 
     fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
@@ -68,7 +142,7 @@ impl Store {
     }
 }
 
-#[derive(derive_more::From)]
+#[derive(derive_more::From, Clone)]
 enum PathElm {
     Named(String),
     Index(usize),
@@ -140,7 +214,7 @@ impl serde::ser::SerializeSeq for SerializeSeq<'_> {
     where
         T: serde::Serialize,
     {
-        self.vals.push(self.store.store(value));
+        self.vals.push(self.store.store(value).node);
         Ok(())
     }
 
@@ -167,7 +241,8 @@ impl serde::ser::SerializeStruct for SerializeStruct<'_> {
     where
         T: serde::Serialize,
     {
-        self.vals.insert(key.to_owned(), self.store.store(value));
+        self.vals
+            .insert(key.to_owned(), self.store.store(value).node);
         Ok(())
     }
 
@@ -684,6 +759,8 @@ impl<'de> serde::Deserializer<'de> for Deserializer<'de> {
 
 #[cfg(test)]
 mod test {
+    use crate::data::Vector;
+
     use super::*;
 
     #[test]
@@ -692,7 +769,7 @@ mod test {
         let v = 12.0f32;
         let i = store.store(&v);
 
-        let r = store.load::<f32>(i).unwrap();
+        let r = store.load(i).unwrap();
 
         assert_eq!(v, r);
     }
@@ -700,10 +777,10 @@ mod test {
     #[test]
     fn vec() {
         let mut store = Store::default();
-        let v = Vector::from([2.0, 3.1, 0.55]);
+        let v: Vector<3, f32> = [2.0, 3.1, 0.55f32].into();
         let i = store.store(&v);
 
-        let r = store.load::<Vector<3, f32>>(i).unwrap();
+        let r = store.load(i).unwrap();
 
         assert_eq!(v, r);
     }
@@ -717,8 +794,21 @@ mod test {
         };
         let i = store.store(&v);
 
-        let r = store.load::<crate::array::ImageMetaData>(i).unwrap();
+        let r = store.load(i).unwrap();
 
         assert_eq!(v, r);
+    }
+
+    #[test]
+    fn vec_elms() {
+        let mut store = Store::default();
+        let v: Vector<3, f32> = [2.0, 3.1, 0.55f32].into();
+        let h = store.store(&v);
+
+        for i in 0..3 {
+            let r = store.load(h.at(i)).unwrap();
+
+            assert_eq!(v[i], r);
+        }
     }
 }
