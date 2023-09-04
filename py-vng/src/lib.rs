@@ -24,9 +24,9 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(perspective, m)?)?;
     m.add_function(wrap_pyfunction!(slice_projection_mat_z, m)?)?;
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
+    m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<ScalarOperatorF32>()?;
-    m.add_class::<ImageMetadata>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;
     m.add_class::<MouseButton>()?;

@@ -97,7 +97,7 @@ def render_raycast(size, events):
         #vng.OnKeyPress("A", lambda: print("indeed a key")),
     ]);
 
-    md = vng.ImageMetadata(size, [512]*2)
+    md = vng.tensor_metadata(size, [512]*2)
 
     look_at = vng.look_at(eye, center, up);
     perspective = vng.perspective(md, fov, 0.01, 100)
@@ -134,7 +134,7 @@ def render_slice(size, events):
         vng.OnWheelMove(wheel),
     ]);
 
-    md = vng.ImageMetadata(size, [512]*2)
+    md = vng.tensor_metadata(size, [512]*2)
 
     proj = vng.slice_projection_mat_z(v.metadata, md, selected_slice, offset, zoom_level)
 

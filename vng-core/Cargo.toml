@@ -38,4 +38,5 @@ serde = { version = "1.0.183", features = ["serde_derive"] }
 array-init = "2.1.0"
 
 [features]
+default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
 python = ["dep:pyo3"]

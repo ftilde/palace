@@ -1,6 +1,9 @@
 use crate::{conversion::*, map_err, types::*};
 use pyo3::prelude::*;
-use vng_core::data::{LocalVoxelPosition, Vector};
+use vng_core::{
+    array::ImageMetaData,
+    data::{LocalVoxelPosition, Vector},
+};
 use vng_vvd::VvdVolumeSourceState;
 
 #[pyfunction]
@@ -74,12 +77,12 @@ pub fn look_at(py: Python, eye: [f32; 3], center: [f32; 3], up: [f32; 3]) -> &nu
 #[pyfunction]
 pub fn perspective(
     py: Python,
-    md: ImageMetadata,
+    md: ImageMetaData,
     fov_degree: f32,
     near: f32,
     far: f32,
 ) -> &numpy::PyArray2<f32> {
-    let size = md.0.dimensions;
+    let size = md.dimensions;
     let mat = vng_core::cgmath::perspective(
         vng_core::cgmath::Deg(fov_degree),
         size.x().raw as f32 / size.y().raw as f32,

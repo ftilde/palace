@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
-use vng_core::{data::Vector, operators::splitter as c};
+use vng_core::{array::ImageMetaData, data::Vector, operators::splitter as c};
 
-use super::{Events, ImageMetadata, VolumeOperator};
+use super::{Events, VolumeOperator};
 
 #[pyclass(unsendable)]
 pub struct Splitter(c::Splitter);
@@ -23,11 +23,11 @@ impl Splitter {
         self.0.clone().render(input_l.into(), input_r.into()).into()
     }
 
-    fn metadata_l(&self) -> ImageMetadata {
+    fn metadata_l(&self) -> ImageMetaData {
         self.0.metadata_l().into()
     }
 
-    fn metadata_r(&self) -> ImageMetadata {
+    fn metadata_r(&self) -> ImageMetaData {
         self.0.metadata_r().into()
     }
 }

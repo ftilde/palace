@@ -160,6 +160,45 @@ pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vector<const N: usize, T>([T; N]);
 
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::{prelude::*, types::PyList};
+
+    impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            Ok(Coordinate {
+                raw: ob.extract()?,
+                type_: std::marker::PhantomData,
+            })
+        }
+    }
+
+    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            self.raw.into_py(py)
+        }
+    }
+
+    impl<'source, const N: usize, T: FromPyObject<'source>> FromPyObject<'source> for Vector<N, T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            ob.extract::<[T; N]>().map(Self)
+        }
+    }
+
+    //impl<const N: usize, T: ToPyObject> ToPyObject for Vector<N, T> {
+    //    fn to_object(&self, py: Python<'_>) -> PyObject {
+    //        PyList::new(py, self.0.iter().map(|v| v.to_object(py))).into()
+    //    }
+    //}
+
+    impl<const N: usize, T: IntoPy<PyObject>> IntoPy<PyObject> for Vector<N, T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            PyList::new(py, self.0.into_iter().map(|v| v.into_py(py))).into()
+        }
+    }
+}
+
 impl<const N: usize, T: serde::Serialize> serde::Serialize for Vector<N, T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

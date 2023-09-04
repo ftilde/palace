@@ -1,16 +1,56 @@
 use derive_more::{From, Into};
 
 use crate::conversion;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::{
     array::{ArrayMetaData, VolumeMetaData},
     data::{ChunkCoordinate, Vector},
     operator::Operator,
 };
 
-use vng_core::array::ImageMetaData as CImageMetaData;
+use vng_core::array::ImageMetaData;
 use vng_core::operators::array::ArrayOperator as CArrayOperator;
 use vng_core::operators::volume::VolumeOperator as CVolumeOperator;
+
+#[pyfunction]
+pub fn tensor_metadata(
+    py: Python,
+    dimensions: PyObject,
+    chunk_size: PyObject,
+) -> PyResult<PyObject> {
+    let ld = dimensions.as_ref(py).len()?;
+    let lc = chunk_size.as_ref(py).len()?;
+    if ld == lc {
+        Ok(match ld {
+            1 => ArrayMetaData {
+                dimensions: dimensions.extract(py)?,
+                chunk_size: chunk_size.extract(py)?,
+            }
+            .into_py(py),
+            2 => ImageMetaData {
+                dimensions: dimensions.extract(py)?,
+                chunk_size: chunk_size.extract(py)?,
+            }
+            .into_py(py),
+            3 => VolumeMetaData {
+                dimensions: dimensions.extract(py)?,
+                chunk_size: chunk_size.extract(py)?,
+            }
+            .into_py(py),
+            n => {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "{}-dimensional tensor metadata not yet implemented.",
+                    n
+                )))
+            }
+        })
+    } else {
+        Err(PyErr::new::<PyException, _>(format!(
+            "Len missmatch between dimensions and chunk_size ({} vs {})",
+            ld, lc
+        )))
+    }
+}
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
@@ -64,48 +104,15 @@ pub struct VolumeMetadataOperator(pub Operator<(), VolumeMetaData>);
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
-pub struct ImageMetadataOperator(pub Operator<(), CImageMetaData>);
+pub struct ImageMetadataOperator(pub Operator<(), ImageMetaData>);
 
-impl<'a> conversion::FromPyValue<ImageMetadata> for ImageMetadataOperator {
-    fn from_py(v: ImageMetadata) -> PyResult<Self> {
-        Ok(vng_core::operators::scalar::constant_hash(v.0).into())
+impl<'a> conversion::FromPyValue<ImageMetaData> for ImageMetadataOperator {
+    fn from_py(v: ImageMetaData) -> PyResult<Self> {
+        Ok(vng_core::operators::scalar::constant_hash(v).into())
     }
 }
 impl<'source> conversion::FromPyValues<'source> for ImageMetadataOperator {
-    type Converter = conversion::ToOperatorFrom<Self, (ImageMetadata,)>;
-}
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ImageMetadata(pub CImageMetaData);
-
-#[pymethods]
-impl ImageMetadata {
-    #[new]
-    fn new(dimensions: [u32; 2], chunk_size: [u32; 2]) -> Self {
-        Self(CImageMetaData {
-            dimensions: dimensions.into(),
-            chunk_size: chunk_size.into(),
-        })
-    }
-
-    #[getter]
-    fn get_dimensions(&self) -> [u32; 2] {
-        self.0.dimensions.raw().into()
-    }
-    #[setter]
-    fn set_dimensions(&mut self, dim: [u32; 2]) {
-        self.0.dimensions = Vector::from(dim);
-    }
-
-    #[getter]
-    fn get_chunk_size(&self) -> [u32; 2] {
-        self.0.chunk_size.raw().into()
-    }
-    #[setter]
-    fn set_chunk_size(&mut self, size: [u32; 2]) {
-        self.0.chunk_size = Vector::from(size);
-    }
+    type Converter = conversion::ToOperatorFrom<Self, (ImageMetaData,)>;
 }
 
 #[pyclass(unsendable)]

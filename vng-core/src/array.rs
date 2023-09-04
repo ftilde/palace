@@ -40,6 +40,39 @@ pub struct TensorMetaData<const N: usize> {
     pub chunk_size: Vector<N, LocalCoordinate>,
 }
 
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::prelude::*;
+
+    impl<'source, const N: usize> FromPyObject<'source> for TensorMetaData<N> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            Ok(TensorMetaData {
+                dimensions: ob.getattr("dimensions")?.extract()?,
+                chunk_size: ob.getattr("chunk_size")?.extract()?,
+            })
+        }
+    }
+
+    impl<const N: usize> IntoPy<PyObject> for TensorMetaData<N> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            let m = py.import("collections").unwrap();
+            let ty = m
+                .getattr("namedtuple")
+                .unwrap()
+                .call(("TensorMetaData", ["dimensions", "chunk_size"]), None)
+                .unwrap();
+            let v = ty
+                .call(
+                    (self.dimensions.into_py(py), self.chunk_size.into_py(py)),
+                    None,
+                )
+                .unwrap();
+            v.into_py(py)
+        }
+    }
+}
+
 impl<const N: usize> TensorMetaData<N> {
     pub fn num_elements(&self) -> usize {
         hmul(self.dimensions)
