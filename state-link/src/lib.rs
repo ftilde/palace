@@ -29,18 +29,19 @@ pub enum ResolveResult<'a> {
 }
 
 #[derive(Debug)]
-pub enum LoadError {
+pub enum Error {
     IncorrectType,
     SeqTooShort,
     MissingField(String),
 }
 
-pub type LoadResult<S> = Result<S, LoadError>;
+pub type Result<S> = std::result::Result<S, Error>;
 
 pub trait State: Sized {
     type NodeHandle: NodeHandle;
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()>;
     fn store(&self, store: &mut Store) -> NodeRef;
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self>;
+    fn load(store: &Store, location: NodeRef) -> Result<Self>;
 }
 
 impl State for f32 {
@@ -49,27 +50,37 @@ impl State for f32 {
         store.push(Node::Val(Value::F32(*self)))
     }
 
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
         if let ResolveResult::Atom(Value::F32(v)) = store.to_val(location) {
             Ok(v)
         } else {
-            Err(LoadError::IncorrectType)
+            Err(Error::IncorrectType)
         }
+    }
+
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        store.write_at(Node::Val(Value::F32(*self)), at);
+        Ok(())
     }
 }
 
 impl State for u32 {
     type NodeHandle = NodeHandleSpecialized<Self>;
+
     fn store(&self, store: &mut Store) -> NodeRef {
         store.push(Node::Val(Value::U32(*self)))
     }
 
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
         if let ResolveResult::Atom(Value::U32(v)) = store.to_val(location) {
             Ok(v)
         } else {
-            Err(LoadError::IncorrectType)
+            Err(Error::IncorrectType)
         }
+    }
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        store.write_at(Node::Val(Value::U32(*self)), at);
+        Ok(())
     }
 }
 
@@ -80,19 +91,49 @@ impl<V: State> State for Vec<V> {
         store.push(Node::Seq(refs))
     }
 
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
         if let ResolveResult::Seq(seq) = store.to_val(location) {
             seq.into_iter()
                 .map(|loc| V::load(store, *loc))
-                .collect::<Result<Vec<V>, _>>()
+                .collect::<std::result::Result<Vec<V>, _>>()
         } else {
-            Err(LoadError::IncorrectType)
+            Err(Error::IncorrectType)
         }
+    }
+
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        let mut seq = if let ResolveResult::Seq(seq) = store.to_val(at) {
+            seq.clone() //TODO: instead of cloning we can probably also just take the old value out
+        } else {
+            return Err(Error::IncorrectType);
+        };
+
+        let min_len = self.len().min(seq.len());
+        for (v, slot) in self[..min_len].iter().zip(seq[..min_len].iter()) {
+            v.write(store, *slot)?;
+        }
+
+        match self.len().cmp(&seq.len()) {
+            std::cmp::Ordering::Less => {
+                //TODO: delete other elements somehow?
+            }
+            std::cmp::Ordering::Equal => {
+                // Nothing to do
+            }
+            std::cmp::Ordering::Greater => {
+                for v in &self[min_len..] {
+                    seq.push(v.store(store));
+                }
+            }
+        }
+
+        store.write_at(Node::Seq(seq), at);
+        Ok(())
     }
 }
 
 impl<V: State> NodeHandleSpecialized<Vec<V>> {
-    pub fn at(&self, i: usize) -> <Vec<V> as State>::NodeHandle {
+    pub fn at(&self, i: usize) -> <V as State>::NodeHandle {
         NodeHandle::pack(self.inner.index(i))
     }
 }
@@ -104,13 +145,13 @@ impl<const I: usize, V: State> State for [V; I] {
         store.push(Node::Seq(refs))
     }
 
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
         // If only std::array::try_from_fn were stable...
         // TODO: replace once it is https://github.com/rust-lang/rust/issues/89379
         if let ResolveResult::Seq(seq) = store.to_val(location) {
-            let results: [LoadResult<V>; I] = std::array::from_fn(|i| {
+            let results: [Result<V>; I] = std::array::from_fn(|i| {
                 seq.get(i)
-                    .ok_or(LoadError::SeqTooShort)
+                    .ok_or(Error::SeqTooShort)
                     .and_then(|v| V::load(store, *v))
             });
             for (i, r) in results.iter().enumerate() {
@@ -126,13 +167,32 @@ impl<const I: usize, V: State> State for [V; I] {
                 Err(_) => std::unreachable!(),
             }))
         } else {
-            Err(LoadError::IncorrectType)
+            Err(Error::IncorrectType)
         }
+    }
+
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        let seq = if let ResolveResult::Seq(seq) = store.to_val(at) {
+            seq.clone() //TODO: instead of cloning we can probably also just take the old value out
+        } else {
+            return Err(Error::IncorrectType);
+        };
+
+        if seq.len() != I {
+            return Err(Error::IncorrectType);
+        }
+
+        for (v, slot) in self.iter().zip(seq.iter()) {
+            v.write(store, *slot)?;
+        }
+
+        store.write_at(Node::Seq(seq), at);
+        Ok(())
     }
 }
 
 impl<const I: usize, V: State> NodeHandleSpecialized<[V; I]> {
-    pub fn at(&self, i: usize) -> <[V; I] as State>::NodeHandle {
+    pub fn at(&self, i: usize) -> <V as State>::NodeHandle {
         NodeHandle::pack(self.inner.index(i))
     }
 }
@@ -144,12 +204,16 @@ impl<T> State for std::marker::PhantomData<T> {
         store.push(Node::Val(Value::Unit))
     }
 
-    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
         if let ResolveResult::Atom(Value::Unit) = store.to_val(location) {
             Ok(Default::default())
         } else {
-            Err(LoadError::IncorrectType)
+            Err(Error::IncorrectType)
         }
+    }
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        store.write_at(Node::Val(Value::Unit), at);
+        Ok(())
     }
 }
 
@@ -160,13 +224,44 @@ impl Store {
         NodeRef { index }
     }
 
+    fn resolve_links(&self, mut node: NodeRef) -> NodeRef {
+        while let Node::Link(l) = &self.elms[node.index] {
+            node = *l;
+        }
+        node
+    }
+
+    pub fn write_at(&mut self, val: Node, at: NodeRef) {
+        let at = self.resolve_links(at);
+        self.elms[at.index] = val;
+    }
+
     pub fn store<T: State>(&mut self, v: &T) -> T::NodeHandle {
         T::NodeHandle::pack(GenericNodeHandle::new_at(v.store(self)))
     }
 
-    pub fn load<'a, H: NodeHandle>(&'a self, node: &H) -> Result<H::NodeType, LoadError> {
+    pub fn load<H: NodeHandle>(&self, node: &H) -> H::NodeType {
         let node = node.unpack();
-        H::NodeType::load(self, self.walk(node.node, &node.path[..]).unwrap())
+        H::NodeType::load(self, self.resolve(node).unwrap()).unwrap()
+    }
+
+    pub fn link<H: NodeHandle>(&mut self, src: &H, target: &H) {
+        let src = src.unpack();
+        let target = target.unpack();
+
+        let src_node = self.walk(src.node, &src.path).unwrap();
+        let target_node = self.walk(target.node, &target.path).unwrap();
+        self.elms[src_node.index] = Node::Link(target_node);
+    }
+
+    pub fn resolve(&self, loc: &GenericNodeHandle) -> Option<NodeRef> {
+        self.walk(loc.node, &loc.path)
+    }
+
+    pub fn write<H: NodeHandle>(&mut self, target: &H, value: &H::NodeType) {
+        let loc = self.resolve(target.unpack()).unwrap();
+
+        value.write(self, loc).unwrap();
     }
 
     pub fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
@@ -186,6 +281,7 @@ impl Store {
             },
         }
     }
+
     pub fn to_val(&self, root: NodeRef) -> ResolveResult {
         match &self.elms[root.index] {
             Node::Dir(s) => ResolveResult::Struct(&s),

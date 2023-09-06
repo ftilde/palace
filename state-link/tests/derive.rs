@@ -10,8 +10,8 @@ fn newtype_array() {
 
     let r = store.store(&f);
 
-    let n = store.load(&r).unwrap();
-    let n0 = store.load(&r.elm0()).unwrap();
+    let n = store.load(&r);
+    let n0 = store.load(&r.elm0());
 
     assert_eq!(f, n);
 
@@ -34,8 +34,8 @@ fn simple_struct() {
 
     let r = store.store(&f);
 
-    let n = store.load(&r).unwrap();
-    let nb = store.load(&r.b()).unwrap();
+    let n = store.load(&r);
+    let nb = store.load(&r.b());
 
     assert_eq!(f, n);
 
@@ -47,15 +47,13 @@ struct Unit;
 
 #[test]
 fn unit() {
-    use state_link::State;
-
     let f = Unit;
 
     let mut store = state_link::Store::default();
 
-    let r = f.store(&mut store);
+    let r = store.store(&f);
 
-    let n = Unit::load(&store, r).unwrap();
+    let n = store.load(&r);
 
     assert_eq!(f, n);
 }
@@ -64,16 +62,53 @@ fn unit() {
 struct Generics<T>(T, u32);
 #[test]
 fn generics() {
-    use state_link::State;
-
     let mut f = Generics::<f32>::default();
     f.0 = 0.23;
 
     let mut store = state_link::Store::default();
 
-    let r = f.store(&mut store);
+    let r = store.store(&f);
 
-    let n = Generics::load(&store, r).unwrap();
+    let n = store.load(&r);
 
     assert_eq!(f, n);
+}
+
+#[test]
+fn link_simple() {
+    let mut store = state_link::Store::default();
+
+    let f = Generics::<u32>::default();
+
+    let r = store.store(&f);
+
+    store.link(&r.elm0(), &r.elm1());
+
+    store.write(&r.elm0(), &123);
+
+    assert_eq!(store.load(&r.elm0()), 123);
+    assert_eq!(store.load(&r.elm1()), 123);
+}
+
+#[test]
+fn link_complex() {
+    let mut store = state_link::Store::default();
+
+    let a = Generics::<SimpleStruct>::default();
+    let b = NewtypeArray::default();
+
+    let a = store.store(&a);
+    let b = store.store(&b);
+
+    store.link(&a.elm0().a(), &b.elm0().at(2));
+
+    store.write(&b.elm0(), &[1.0, 2.0, 3.0]);
+
+    assert_eq!(
+        store.load(&a.elm0()),
+        SimpleStruct {
+            a: 3.0,
+            ..Default::default()
+        }
+    );
 }

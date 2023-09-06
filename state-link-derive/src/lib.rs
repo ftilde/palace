@@ -17,7 +17,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
 
     let data = input.data;
 
-    let (store, load, handle_access) = match data {
+    let (store, load, write, handle_access) = match data {
         Data::Struct(s) => match s.fields {
             Fields::Named(fields) => {
                 let field_load = fields.named.iter().map(|f| {
@@ -26,7 +26,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                     quote! {
                         #name: {
                             let field_name = stringify!(#name);
-                            let loc = map.get(field_name).ok_or(state_link::LoadError::MissingField(field_name.to_owned()))?;
+                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name.to_owned()))?;
                             <#ty>::load(store, *loc)?
                         },
                     }
@@ -38,7 +38,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                             #(#field_load)*
                         })
                     } else {
-                        Err(state_link::LoadError::IncorrectType)
+                        Err(state_link::Error::IncorrectType)
                     }
                 };
 
@@ -56,6 +56,30 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                     store.push(::state_link::Node::Dir(map))
                 };
 
+                let field_write = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    quote! {
+                        {
+                            let field_name = stringify!(#name);
+                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name.to_owned()))?;
+                            self.#name.write(store, *loc)?;
+                        }
+                    }
+                });
+
+                let write_code = quote! {
+                    let mut map = if let ::state_link::ResolveResult::Struct(map) = store.to_val(at) {
+                        map.clone()
+                    } else {
+                        return Err(::state_link::Error::IncorrectType);
+                    };
+
+                    #(#field_write)*;
+
+                    store.write_at(::state_link::Node::Dir(map), at);
+                    Ok(())
+                };
+
                 let handle_accesses = fields.named.iter().map(|f| {
                     let name = &f.ident;
                     let ty = &f.ty;
@@ -68,14 +92,14 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
 
                 let handle_access = quote! { #(#handle_accesses)* };
 
-                (store_code, load_code, handle_access)
+                (store_code, load_code, write_code, handle_access)
             }
             Fields::Unnamed(fields) => {
                 let field_load = fields.unnamed.iter().enumerate().map(|(num, f)| {
                     let ty = &f.ty;
                     quote! {
                         {
-                            let loc = seq.get(#num).ok_or(state_link::LoadError::SeqTooShort)?;
+                            let loc = seq.get(#num).ok_or(state_link::Error::SeqTooShort)?;
                             <#ty>::load(store, *loc)?
                         },
                     }
@@ -87,7 +111,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                             #(#field_load)*
                         ))
                     } else {
-                        Err(state_link::LoadError::IncorrectType)
+                        Err(state_link::Error::IncorrectType)
                     }
                 };
 
@@ -105,6 +129,35 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                     store.push(::state_link::Node::Seq(seq))
                 };
 
+                let field_write = fields.unnamed.iter().enumerate().map(|(num, _f)| {
+                    let num = syn::Index::from(num);
+                    quote! {
+                        {
+                            let loc = seq.get(#num).ok_or(state_link::Error::SeqTooShort)?;
+                            self.#num.write(store, *loc)?;
+                        }
+                    }
+                });
+
+                let num_fields = fields.unnamed.len();
+
+                let write_code = quote! {
+                    let mut seq = if let ::state_link::ResolveResult::Seq(seq) = store.to_val(at) {
+                        seq.clone()
+                    } else {
+                        return Err(::state_link::Error::IncorrectType);
+                    };
+
+                    if seq.len() != #num_fields {
+                        return Err(::state_link::Error::IncorrectType);
+                    }
+
+                    #(#field_write)*;
+
+                    store.write_at(::state_link::Node::Seq(seq), at);
+                    Ok(())
+                };
+
                 let handle_accesses = fields.unnamed.iter().enumerate().map(|(num, f)| {
                     let ty = &f.ty;
 
@@ -119,14 +172,14 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
 
                 let handle_access = quote! { #(#handle_accesses)* };
 
-                (store_code, load_code, handle_access)
+                (store_code, load_code, write_code, handle_access)
             }
             Fields::Unit => {
                 let load_code = quote! {
                     if let state_link::ResolveResult::Atom(state_link::Value::Unit) = store.to_val(location) {
                         Ok(#name)
                     } else {
-                        Err(state_link::LoadError::IncorrectType)
+                        Err(state_link::Error::IncorrectType)
                     }
                 };
 
@@ -134,9 +187,13 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                     store.push(::state_link::Node::Val(::state_link::Value::Unit))
                 };
 
+                let write_code = quote! {
+                    Ok(())
+                };
+
                 let handle_access = quote! {};
 
-                (store_code, load_code, handle_access)
+                (store_code, load_code, write_code, handle_access)
             }
         },
         Data::Enum(_) => unimplemented!(),
@@ -175,8 +232,12 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                 #store
             }
 
-            fn load(store: &::state_link::Store, location: ::state_link::NodeRef) -> ::state_link::LoadResult<Self> {
+            fn load(store: &::state_link::Store, location: ::state_link::NodeRef) -> ::state_link::Result<Self> {
                 #load
+            }
+
+            fn write(&self, store: &mut ::state_link::Store, at: ::state_link::NodeRef) -> ::state_link::Result<()> {
+                #write
             }
         }
     };
