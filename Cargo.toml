@@ -9,6 +9,8 @@ members = [
     "demo-mean",
     "demo-raycaster",
     "demo-large",
+    "state-link",
+    "state-link-derive",
     "py-vng",
 ]
 

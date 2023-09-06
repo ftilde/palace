@@ -34,8 +34,8 @@ winapi = "0.3.9"
 im-rc = "15.1"
 egui = "0.22"
 pyo3 = { version = "0.19.1", features = [], optional = true }
-serde = { version = "1.0.183", features = ["serde_derive"] }
 array-init = "2.1.0"
+state-link = { path = "../state-link" }
 
 [features]
 default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets

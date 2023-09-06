@@ -1,0 +1,287 @@
+use std::collections::HashMap;
+
+pub use state_link_derive::*;
+
+pub type Map = HashMap<String, NodeRef>;
+
+#[derive(Copy, Clone, Debug)]
+pub struct NodeRef {
+    index: usize,
+}
+
+#[derive(Default, Debug)]
+pub struct Store {
+    elms: Vec<Node>,
+}
+
+#[derive(Debug)]
+pub enum Node {
+    Dir(Map),
+    Seq(Vec<NodeRef>),
+    Val(Value),
+    Link(NodeRef),
+}
+
+pub enum ResolveResult<'a> {
+    Struct(&'a Map),
+    Seq(&'a Vec<NodeRef>),
+    Atom(Value),
+}
+
+#[derive(Debug)]
+pub enum LoadError {
+    IncorrectType,
+    SeqTooShort,
+    MissingField(String),
+}
+
+pub type LoadResult<S> = Result<S, LoadError>;
+
+pub trait State: Sized {
+    type NodeHandle: NodeHandle;
+    fn store(&self, store: &mut Store) -> NodeRef;
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self>;
+}
+
+impl State for f32 {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+    fn store(&self, store: &mut Store) -> NodeRef {
+        store.push(Node::Val(Value::F32(*self)))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+        if let ResolveResult::Atom(Value::F32(v)) = store.to_val(location) {
+            Ok(v)
+        } else {
+            Err(LoadError::IncorrectType)
+        }
+    }
+}
+
+impl State for u32 {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+    fn store(&self, store: &mut Store) -> NodeRef {
+        store.push(Node::Val(Value::U32(*self)))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+        if let ResolveResult::Atom(Value::U32(v)) = store.to_val(location) {
+            Ok(v)
+        } else {
+            Err(LoadError::IncorrectType)
+        }
+    }
+}
+
+impl<V: State> State for Vec<V> {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+    fn store(&self, store: &mut Store) -> NodeRef {
+        let refs = self.iter().map(|v| v.store(store)).collect();
+        store.push(Node::Seq(refs))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+        if let ResolveResult::Seq(seq) = store.to_val(location) {
+            seq.into_iter()
+                .map(|loc| V::load(store, *loc))
+                .collect::<Result<Vec<V>, _>>()
+        } else {
+            Err(LoadError::IncorrectType)
+        }
+    }
+}
+
+impl<V: State> NodeHandleSpecialized<Vec<V>> {
+    pub fn at(&self, i: usize) -> <Vec<V> as State>::NodeHandle {
+        NodeHandle::pack(self.inner.index(i))
+    }
+}
+
+impl<const I: usize, V: State> State for [V; I] {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+    fn store(&self, store: &mut Store) -> NodeRef {
+        let refs = self.iter().map(|v| v.store(store)).collect();
+        store.push(Node::Seq(refs))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+        // If only std::array::try_from_fn were stable...
+        // TODO: replace once it is https://github.com/rust-lang/rust/issues/89379
+        if let ResolveResult::Seq(seq) = store.to_val(location) {
+            let results: [LoadResult<V>; I] = std::array::from_fn(|i| {
+                seq.get(i)
+                    .ok_or(LoadError::SeqTooShort)
+                    .and_then(|v| V::load(store, *v))
+            });
+            for (i, r) in results.iter().enumerate() {
+                if let Err(_e) = r {
+                    match results.into_iter().nth(i).unwrap() {
+                        Ok(_) => std::unreachable!(),
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Ok(results.map(|v| match v {
+                Ok(e) => e,
+                Err(_) => std::unreachable!(),
+            }))
+        } else {
+            Err(LoadError::IncorrectType)
+        }
+    }
+}
+
+impl<const I: usize, V: State> NodeHandleSpecialized<[V; I]> {
+    pub fn at(&self, i: usize) -> <[V; I] as State>::NodeHandle {
+        NodeHandle::pack(self.inner.index(i))
+    }
+}
+
+impl<T> State for std::marker::PhantomData<T> {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+
+    fn store(&self, store: &mut Store) -> NodeRef {
+        store.push(Node::Val(Value::Unit))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> LoadResult<Self> {
+        if let ResolveResult::Atom(Value::Unit) = store.to_val(location) {
+            Ok(Default::default())
+        } else {
+            Err(LoadError::IncorrectType)
+        }
+    }
+}
+
+impl Store {
+    pub fn push(&mut self, val: Node) -> NodeRef {
+        let index = self.elms.len();
+        self.elms.push(val);
+        NodeRef { index }
+    }
+
+    pub fn store<T: State>(&mut self, v: &T) -> T::NodeHandle {
+        T::NodeHandle::pack(GenericNodeHandle::new_at(v.store(self)))
+    }
+
+    pub fn load<'a, H: NodeHandle>(&'a self, node: &H) -> Result<H::NodeType, LoadError> {
+        let node = node.unpack();
+        H::NodeType::load(self, self.walk(node.node, &node.path[..]).unwrap())
+    }
+
+    pub fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
+        match p {
+            [] => Some(root),
+            [current, rest @ ..] => match &self.elms[root.index] {
+                Node::Dir(d) => {
+                    let e = d.get(current.str()?)?;
+                    self.walk(*e, rest)
+                }
+                Node::Seq(s) => {
+                    let e = s.get(current.index()?)?;
+                    self.walk(*e, rest)
+                }
+                Node::Val(_) => None,
+                Node::Link(l) => self.walk(*l, p),
+            },
+        }
+    }
+    pub fn to_val(&self, root: NodeRef) -> ResolveResult {
+        match &self.elms[root.index] {
+            Node::Dir(s) => ResolveResult::Struct(&s),
+            Node::Seq(s) => ResolveResult::Seq(&s),
+            Node::Val(v) => ResolveResult::Atom(*v),
+            Node::Link(l) => self.to_val(*l),
+        }
+    }
+}
+
+#[derive(derive_more::From, Clone)]
+pub enum PathElm {
+    Named(String),
+    Index(usize),
+}
+
+impl PathElm {
+    fn str(&self) -> Option<&str> {
+        if let PathElm::Named(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+    fn index(&self) -> Option<usize> {
+        if let PathElm::Index(i) = self {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Value {
+    F32(f32),
+    U32(u32),
+    Unit,
+}
+
+pub trait NodeHandle {
+    type NodeType: State;
+
+    fn pack(t: GenericNodeHandle) -> Self;
+    fn unpack(&self) -> &GenericNodeHandle;
+}
+
+pub struct GenericNodeHandle {
+    node: NodeRef,
+    path: Vec<PathElm>,
+}
+
+impl GenericNodeHandle {
+    fn new_at(node: NodeRef) -> Self {
+        Self {
+            node,
+            path: Vec::new(),
+        }
+    }
+    pub fn index(&self, i: usize) -> GenericNodeHandle {
+        GenericNodeHandle {
+            node: self.node,
+            path: {
+                let mut p = self.path.clone();
+                p.push(PathElm::Index(i));
+                p
+            },
+        }
+    }
+    pub fn named(&self, name: String) -> GenericNodeHandle {
+        GenericNodeHandle {
+            node: self.node,
+            path: {
+                let mut p = self.path.clone();
+                p.push(PathElm::Named(name));
+                p
+            },
+        }
+    }
+}
+
+pub struct NodeHandleSpecialized<T> {
+    inner: GenericNodeHandle,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: State> NodeHandle for NodeHandleSpecialized<T> {
+    type NodeType = T;
+    fn pack(inner: GenericNodeHandle) -> Self {
+        Self {
+            inner,
+            _marker: Default::default(),
+        }
+    }
+
+    fn unpack(&self) -> &GenericNodeHandle {
+        &self.inner
+    }
+}
