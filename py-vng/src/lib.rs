@@ -26,6 +26,7 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
     m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
+    m.add_class::<vng_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<ScalarOperatorF32>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;

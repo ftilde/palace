@@ -6,6 +6,7 @@ use vng_core::cgmath;
 use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
+use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::operators::{scalar, volume_gpu};
@@ -93,12 +94,6 @@ struct RaycastingState {
     eye: Vector<3, f32>,
     center: Vector<3, f32>,
     up: Vector<3, f32>,
-}
-
-struct SliceviewState {
-    selected: u32,
-    offset: Vector<2, f32>,
-    zoom_level: f32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -282,17 +277,12 @@ fn slice_viewer_z(
     events.act(|c| {
         c.chain(state.offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-                state.selected = (state.selected as i32 + delta.y()).max(0) as u32;
+                state.scroll(delta.y());
             }))
-            //.chain(OnWheelMove(|delta| *slice_num += delta as i32))
             .chain(OnWheelMove(|delta, e_state| {
                 if let Some(m_state) = &e_state.mouse_state {
-                    let zoom_change = (-delta * 0.05).exp();
-                    state.zoom_level *= zoom_change;
-
                     let pos = m_state.pos.map(|v| v as f32);
-
-                    state.offset = (state.offset - pos) / Vector::fill(zoom_change) + pos;
+                    state.zoom(delta, pos);
                 }
             }))
     });
@@ -302,12 +292,9 @@ fn slice_viewer_z(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
+    let slice_proj_z = state.projection_mat_z(
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
-        crate::operators::scalar::constant_hash(state.selected.into()),
-        crate::operators::scalar::constant_pod(state.offset),
-        crate::operators::scalar::constant_pod(state.zoom_level),
     );
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,

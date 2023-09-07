@@ -19,6 +19,65 @@ use crate::{
     },
 };
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+#[derive(state_link::State)]
+#[cfg_attr(feature = "python", pyclass)]
+pub struct SliceviewState {
+    #[pyo3(get, set)]
+    pub selected: u32,
+    #[pyo3(get, set)]
+    pub offset: Vector<2, f32>,
+    #[pyo3(get, set)]
+    pub zoom_level: f32,
+}
+
+impl SliceviewState {
+    pub fn projection_mat_z(
+        &self,
+        input_data: ScalarOperator<VolumeMetaData>,
+        output_data: ScalarOperator<ImageMetaData>,
+    ) -> ScalarOperator<cgmath::Matrix4<f32>> {
+        use crate::operators::scalar::{constant_hash, constant_pod};
+        slice_projection_mat_z(
+            input_data,
+            output_data,
+            constant_hash(self.selected.into()),
+            constant_pod(self.offset),
+            constant_pod(self.zoom_level),
+        )
+    }
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl SliceviewState {
+    #[new]
+    pub fn new(selected: u32, offset: Vector<2, f32>, zoom_level: f32) -> Self {
+        Self {
+            selected,
+            offset,
+            zoom_level,
+        }
+    }
+
+    pub fn drag(&mut self, delta: Vector<2, f32>) {
+        self.offset = self.offset + delta;
+    }
+
+    pub fn scroll(&mut self, delta: i32) {
+        self.selected = (self.selected as i32 + delta).max(0) as u32;
+    }
+
+    pub fn zoom(&mut self, delta: f32, on: Vector<2, f32>) {
+        let zoom_change = (-delta * 0.05).exp(); //TODO: not entirely happy about the magic
+                                                 //constant here...
+        self.zoom_level *= zoom_change;
+
+        self.offset = (self.offset - on) / Vector::fill(zoom_change) + on;
+    }
+}
+
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
 
 pub fn slice_projection_mat_z_scaled_fit(

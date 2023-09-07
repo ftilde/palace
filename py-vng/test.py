@@ -19,9 +19,7 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 #v2 = vng.linear_rescale(v1, 2, m1)
 v = vng.separable_convolution(v, [k]*3)
 
-selected_slice = 0
-offset = np.array([0.0, 0.0])
-zoom_level = 1.0
+slice_state = vng.SliceviewState(0, [0.0, 0.0], 1.0)
 
 fov = np.array(30.0)
 eye = np.array([5.5, 0.5, 0.5])
@@ -110,33 +108,17 @@ def render_raycast(size, events):
     return frame
 
 def render_slice(size, events):
-    def drag_l(pos, delta):
-        global offset
-        offset += delta
-
-    def drag_r(pos, delta):
-        global selected_slice
-        selected_slice += delta[0]
-        selected_slice = max(selected_slice, 0)
-
-    def wheel(delta, pos):
-        global zoom_level, offset
-
-        zoom_change = math.exp(-delta * 0.05)
-        zoom_level *= zoom_change;
-
-        pos = np.array(pos)
-        offset = (offset - pos) / zoom_change + pos;
+    global slice_state
 
     events.act([
-        vng.OnMouseDrag(vng.MouseButton.Left, drag_l),
-        vng.OnMouseDrag(vng.MouseButton.Right, drag_r),
-        vng.OnWheelMove(wheel),
+        vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.drag(delta)),
+        vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.scroll(delta[0])),
+        vng.OnWheelMove(lambda delta, pos: slice_state.zoom(delta, pos)),
     ]);
 
     md = vng.tensor_metadata(size, [512]*2)
 
-    proj = vng.slice_projection_mat_z(v.metadata, md, selected_slice, offset, zoom_level)
+    proj = vng.slice_projection_mat_z(v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
 
     frame = vng.render_slice(v, md, proj)
     frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
