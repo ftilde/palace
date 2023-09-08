@@ -19,7 +19,9 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 #v2 = vng.linear_rescale(v1, 2, m1)
 v = vng.separable_convolution(v, [k]*3)
 
-slice_state = vng.SliceviewState(0, [0.0, 0.0], 1.0)
+slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
+slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
+slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
 
 fov = np.array(30.0)
 eye = np.array([5.5, 0.5, 0.5])
@@ -34,16 +36,20 @@ def normalize(v):
     l = np.linalg.norm(v)
     return v/l
 
-def split(dim, size, fraction, events, render_first, render_last):
-    splitter = vng.Splitter(size, 0.5, dim)
+#General pattern for renderable components:
+# component: size, events -> frame operator
+def split(dim, fraction, render_first, render_last):
+    def inner(size, events):
+        splitter = vng.Splitter(size, 0.5, dim)
 
-    events_l, events_r = splitter.split_events(events)
+        events_l, events_r = splitter.split_events(events)
 
-    #TODO: Hmm, is this a more general "module" pattern in terms of renderable components?
-    frame_l = render_first(splitter.metadata_l().dimensions, events_l)
-    frame_r = render_last(splitter.metadata_r().dimensions, events_r)
+        frame_l = render_first(splitter.metadata_l().dimensions, events_l)
+        frame_r = render_last(splitter.metadata_r().dimensions, events_r)
 
-    return splitter.render(frame_l, frame_r)
+        return splitter.render(frame_l, frame_r)
+
+    return inner
 
 def render(size, events):
     global i
@@ -58,7 +64,10 @@ def render(size, events):
         ]),
     ]))
 
-    frame = split(vng.SplitDirection.Vertical, size, 0.5, events, render_raycast, render_slice)
+    lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(0, slice_state0), render_slice(1, slice_state1))
+    upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast, render_slice(2, slice_state2))
+
+    frame = split(vng.SplitDirection.Vertical, 0.5, upper, lower)(size, events)
 
     frame = gui.render(frame)
 
@@ -107,22 +116,22 @@ def render_raycast(size, events):
 
     return frame
 
-def render_slice(size, events):
-    global slice_state
+def render_slice(dim, slice_state):
+    def inner(size, events):
+        events.act([
+            vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.drag(delta)),
+            vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.scroll(delta[0])),
+            vng.OnWheelMove(lambda delta, pos: slice_state.zoom(delta, pos)),
+        ]);
 
-    events.act([
-        vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.drag(delta)),
-        vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.scroll(delta[0])),
-        vng.OnWheelMove(lambda delta, pos: slice_state.zoom(delta, pos)),
-    ]);
+        md = vng.tensor_metadata(size, [512]*2)
 
-    md = vng.tensor_metadata(size, [512]*2)
+        proj = vng.slice_projection_mat(dim, v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
 
-    proj = vng.slice_projection_mat(0, v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
+        frame = vng.render_slice(v, md, proj)
+        frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
 
-    frame = vng.render_slice(v, md, proj)
-    frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
-
-    return frame
+        return frame
+    return inner
 
 window.run(render, timeout_ms=10)
