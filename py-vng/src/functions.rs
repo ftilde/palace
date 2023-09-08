@@ -69,7 +69,12 @@ fn cgmat4_to_numpy(py: Python, mat: vng_core::cgmath::Matrix4<f32>) -> &numpy::P
 }
 
 #[pyfunction]
-pub fn look_at(py: Python, eye: [f32; 3], center: [f32; 3], up: [f32; 3]) -> &numpy::PyArray2<f32> {
+pub fn look_at(
+    py: Python,
+    eye: Vector<3, f32>,
+    center: Vector<3, f32>,
+    up: Vector<3, f32>,
+) -> &numpy::PyArray2<f32> {
     let mat = vng_core::cgmath::Matrix4::look_at_rh(eye.into(), center.into(), up.into());
     cgmat4_to_numpy(py, mat)
 }
