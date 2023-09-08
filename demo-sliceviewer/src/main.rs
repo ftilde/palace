@@ -314,7 +314,11 @@ fn eval_network(
             .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
     });
 
-    let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
+    let mut splitter = operators::splitter::Splitter::new(
+        window.size(),
+        0.5,
+        operators::splitter::SplitDirection::Horizontal,
+    );
 
     let (mut events_l, events_r) = splitter.split_events(&mut events);
 
@@ -356,7 +360,7 @@ fn eval_network(
 
     let left = slice_viewer_z(
         scaled.clone(),
-        splitter.metadata_l(),
+        splitter.metadata_first(),
         slice_num,
         slice_offset,
         slice_zoom_level,
@@ -364,7 +368,7 @@ fn eval_network(
     );
 
     let left = gui.render(left);
-    let right = slice_viewer_rot(scaled, splitter.metadata_r(), angle, events_r);
+    let right = slice_viewer_rot(scaled, splitter.metadata_last(), angle, events_r);
     let frame = splitter.render(left, right);
 
     let slice_ref = &frame;

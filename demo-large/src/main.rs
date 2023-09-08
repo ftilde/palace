@@ -609,13 +609,17 @@ fn eval_network(
 
     let frame = match app_state.rendering {
         RenderingState::Slice => {
-            let mut splitter = operators::splitter::Splitter::new(window.size(), 0.5);
+            let mut splitter = operators::splitter::Splitter::new(
+                window.size(),
+                0.5,
+                operators::splitter::SplitDirection::Horizontal,
+            );
 
             let (mut events_l, events_r) = splitter.split_events(&mut events);
 
             let left = slice_viewer_z(
                 processed.clone(),
-                splitter.metadata_l(),
+                splitter.metadata_first(),
                 &mut app_state.sliceview,
                 &mut events_l,
             );
@@ -623,7 +627,7 @@ fn eval_network(
             let right = slice_viewer_rot(
                 runtime,
                 processed,
-                splitter.metadata_r(),
+                splitter.metadata_last(),
                 &mut app_state.rotslice,
                 events_r,
             );

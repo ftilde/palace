@@ -9,8 +9,12 @@ pub struct Splitter(c::Splitter);
 #[pymethods]
 impl Splitter {
     #[new]
-    fn new(size: [u32; 2], split_pos: f32) -> Self {
-        Splitter(c::Splitter::new(Vector::from(size).into(), split_pos))
+    fn new(size: [u32; 2], split_pos: f32, split_dir: c::SplitDirection) -> Self {
+        Splitter(c::Splitter::new(
+            Vector::from(size).into(),
+            split_pos,
+            split_dir,
+        ))
     }
 
     fn split_events(&mut self, e: &mut Events) -> (Events, Events) {
@@ -24,10 +28,10 @@ impl Splitter {
     }
 
     fn metadata_l(&self) -> ImageMetaData {
-        self.0.metadata_l().into()
+        self.0.metadata_first().into()
     }
 
     fn metadata_r(&self) -> ImageMetaData {
-        self.0.metadata_r().into()
+        self.0.metadata_last().into()
     }
 }
