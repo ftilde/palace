@@ -118,7 +118,7 @@ def render_slice(size, events):
 
     md = vng.tensor_metadata(size, [512]*2)
 
-    proj = vng.slice_projection_mat_z(v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
+    proj = vng.slice_projection_mat(0, v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
 
     frame = vng.render_slice(v, md, proj)
     frame = vng.rechunk(frame, [vng.chunk_size_full]*3)

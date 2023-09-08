@@ -238,7 +238,8 @@ fn slice_viewer_z(
     };
 
     let slice_num_g = ((*slice_num).max(0) as u32).into();
-    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat_z(
+    let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat(
+        0,
         slice_input.metadata.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_hash(slice_num_g),

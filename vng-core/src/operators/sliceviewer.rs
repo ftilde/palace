@@ -7,6 +7,7 @@ use crate::{
     array::{ImageMetaData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Vector},
+    id::Id,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -34,13 +35,15 @@ pub struct SliceviewState {
 }
 
 impl SliceviewState {
-    pub fn projection_mat_z(
+    pub fn projection_mat(
         &self,
+        dim: usize,
         input_data: ScalarOperator<VolumeMetaData>,
         output_data: ScalarOperator<ImageMetaData>,
     ) -> ScalarOperator<cgmath::Matrix4<f32>> {
         use crate::operators::scalar::{constant_hash, constant_pod};
-        slice_projection_mat_z(
+        slice_projection_mat(
+            dim,
             input_data,
             output_data,
             constant_hash(self.selected.into()),
@@ -117,15 +120,18 @@ pub fn slice_projection_mat_z_scaled_fit(
     )
 }
 
-pub fn slice_projection_mat_z(
+pub fn slice_projection_mat(
+    dim: usize,
     input_data: ScalarOperator<VolumeMetaData>,
     output_data: ScalarOperator<ImageMetaData>,
     selected_slice: ScalarOperator<GlobalCoordinate>,
     offset: ScalarOperator<Vector<2, f32>>,
     zoom_level: ScalarOperator<f32>,
 ) -> ScalarOperator<cgmath::Matrix4<f32>> {
+    assert!(dim < 3);
     crate::operators::scalar::scalar(
-        OperatorId::new("slice_projection_mat_z")
+        OperatorId::new("slice_projection_mat")
+            .dependent_on(Id::hash(&dim))
             .dependent_on(&input_data)
             .dependent_on(&output_data)
             .dependent_on(&selected_slice)
@@ -145,34 +151,55 @@ pub fn slice_projection_mat_z(
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
                 let img_dim = output_data.dimensions.map(|v| v.raw as f32);
 
-                let aspect_ratio_img = img_dim.x() / img_dim.y();
-                let aspect_ratio_vol = vol_dim.x() / vol_dim.y();
-                let scaling_factor = if aspect_ratio_img > aspect_ratio_vol {
-                    vol_dim.y() / img_dim.y()
-                } else {
-                    vol_dim.x() / img_dim.x()
+                let (h_dim, v_dim) = match dim {
+                    0 => (2, 1),
+                    1 => (2, 0),
+                    2 => (1, 0),
+                    _ => unreachable!(),
                 };
 
-                let offset_x = (img_dim.x() - (vol_dim.x() / scaling_factor)).max(0.0) * 0.5;
-                let offset_y = (img_dim.y() - (vol_dim.y() / scaling_factor)).max(0.0) * 0.5;
+                let h_size = vol_dim[h_dim];
+                let v_size = vol_dim[v_dim];
 
-                let pixel_transform = cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                    x: -offset_x,
-                    y: -offset_y,
-                    z: 0.0,
-                }) * cgmath::Matrix4::from_scale(zoom_level)
+                let aspect_ratio_img = img_dim.x() / img_dim.y();
+                let aspect_ratio_vol = h_size / v_size;
+                let scaling_factor = if aspect_ratio_img > aspect_ratio_vol {
+                    v_size / img_dim.y()
+                } else {
+                    h_size / img_dim.x()
+                };
+
+                let offset_x = (img_dim.x() - (h_size / scaling_factor)).max(0.0) * 0.5;
+                let offset_y = (img_dim.y() - (v_size / scaling_factor)).max(0.0) * 0.5;
+
+                let mut pixel_to_voxel = Vector::<3, f32>::fill(0.0);
+                pixel_to_voxel[h_dim] = -offset_x;
+                pixel_to_voxel[v_dim] = -offset_y;
+
+                let zero = Vector::<4, f32>::fill(0.0);
+                let col0 = zero.map_element(h_dim + 1 /* for w dimension */, |_| 1.0);
+                let col1 = zero.map_element(v_dim + 1 /* for w dimension */, |_| 1.0);
+                let col3 = zero.map_element(0, |_| 1.0);
+                let permute =
+                    cgmath::Matrix4::from_cols(col0.into(), col1.into(), zero.into(), col3.into());
+
+                let pixel_transform = permute
+                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                        x: -offset_x,
+                        y: -offset_y,
+                        z: 0.0,
+                    })
+                    * cgmath::Matrix4::from_scale(zoom_level)
                     * cgmath::Matrix4::from_translation(cgmath::Vector3 {
                         x: -offset.x(),
                         y: -offset.y(),
                         z: 0.0,
                     });
 
+                let mut translation = Vector::<3, f32>::fill(0.0);
+                translation[dim] = selected_slice.raw as f32 + 0.5; //For +0.5 see below
                 let scale = cgmath::Matrix4::from_scale(scaling_factor);
-                let slice_select = cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: selected_slice.raw as f32 + 0.5, //For +0.5 see below
-                });
+                let slice_select = cgmath::Matrix4::from_translation(translation.into());
                 let mat = slice_select * scale * pixel_transform;
 
                 let out = mat.into();

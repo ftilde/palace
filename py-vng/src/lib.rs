@@ -22,7 +22,7 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
     m.add_function(wrap_pyfunction!(look_at, m)?)?;
     m.add_function(wrap_pyfunction!(perspective, m)?)?;
-    m.add_function(wrap_pyfunction!(slice_projection_mat_z, m)?)?;
+    m.add_function(wrap_pyfunction!(slice_projection_mat, m)?)?;
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
     m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;

@@ -93,14 +93,16 @@ pub fn perspective(
 }
 
 #[pyfunction]
-pub fn slice_projection_mat_z(
+pub fn slice_projection_mat(
+    dim: usize,
     input_data: VolumeMetadataOperator,
     output_data: ToOperator<ImageMetadataOperator>,
     selected_slice: ToOperator<ScalarOperatorU32>,
     offset: ToOperator<ScalarOperatorVec2F>,
     zoom_level: ToOperator<ScalarOperatorF32>,
 ) -> Mat4Operator {
-    vng_core::operators::sliceviewer::slice_projection_mat_z(
+    vng_core::operators::sliceviewer::slice_projection_mat(
+        dim,
         input_data.into(),
         output_data.0.into(),
         selected_slice.0 .0.map((), |v, _| v.into()),
