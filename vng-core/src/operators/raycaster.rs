@@ -6,7 +6,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, hmul},
+    data::{from_linear, hmul, GlobalCoordinate, Vector},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -19,7 +19,86 @@ use crate::{
     },
 };
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
 use super::{scalar::ScalarOperator, volume::VolumeOperator};
+
+#[cfg_attr(feature = "python", pyclass)]
+#[derive(state_link::State, Clone)]
+pub struct TrackballState {
+    #[pyo3(get, set)]
+    pub eye: Vector<3, f32>,
+    #[pyo3(get, set)]
+    pub center: Vector<3, f32>,
+    #[pyo3(get, set)]
+    pub up: Vector<3, f32>,
+}
+
+impl TrackballState {
+    pub fn projection_mat(&self) -> cgmath::Matrix4<f32> {
+        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into())
+    }
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl TrackballState {
+    #[new]
+    pub fn new(eye: Vector<3, f32>, center: Vector<3, f32>, up: Vector<3, f32>) -> Self {
+        Self { eye, center, up }
+    }
+
+    pub fn pan_around(&mut self, delta: Vector<2, i32>) {
+        let look = self.center - self.eye;
+        let look_len = look.length();
+        let left = self.up.cross(look).normalized();
+        let move_factor = 0.005;
+        let delta = delta.map(|v| v as f32 * move_factor);
+
+        let new_look = (look.normalized() + self.up.scale(delta.y()) + left.scale(-delta.x()))
+            .normalized()
+            .scale(look_len);
+
+        self.eye = self.center - new_look;
+        let left = self.up.cross(new_look);
+        self.up = new_look.cross(left).normalized();
+    }
+    pub fn move_inout(&mut self, delta: f32) {
+        let look = self.center - self.eye;
+        let new_look = look.scale(1.0 - delta * 0.1);
+        self.eye = self.center - new_look;
+    }
+}
+
+#[derive(state_link::State)]
+#[cfg_attr(feature = "python", pyclass)]
+pub struct CameraState {
+    #[pyo3(get, set)]
+    pub fov: f32,
+    #[pyo3(get, set)]
+    pub trackball: TrackballState,
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl CameraState {
+    #[new]
+    pub fn new(trackball: TrackballState, fov: f32) -> Self {
+        Self { trackball, fov }
+    }
+}
+
+impl CameraState {
+    pub fn projection_mat(&self, size: Vector<2, GlobalCoordinate>) -> cgmath::Matrix4<f32> {
+        let perspective = cgmath::perspective(
+            cgmath::Deg(self.fov),
+            size.x().raw as f32 / size.y().raw as f32,
+            0.001,
+            100.0,
+        );
+        let matrix = perspective * self.trackball.projection_mat();
+        matrix
+    }
+}
 
 pub fn entry_exit_points(
     input_metadata: ScalarOperator<VolumeMetaData>,

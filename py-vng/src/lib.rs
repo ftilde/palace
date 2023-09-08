@@ -28,6 +28,8 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<vng_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<vng_core::operators::splitter::SplitDirection>()?;
+    m.add_class::<vng_core::operators::raycaster::CameraState>()?;
+    m.add_class::<vng_core::operators::raycaster::TrackballState>()?;
     m.add_class::<ScalarOperatorF32>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;

@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use vng_core::cgmath;
 use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
+use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::volume::{ChunkSize, VolumeOperator};
 use vng_core::operators::{self, volume::VolumeOperatorState};
@@ -89,13 +89,6 @@ struct VesselnessState {
     steps: usize,
 }
 
-struct RaycastingState {
-    fov: f32,
-    eye: Vector<3, f32>,
-    center: Vector<3, f32>,
-    up: Vector<3, f32>,
-}
-
 #[derive(Debug, PartialEq)]
 enum ProcessState {
     PassThrough,
@@ -114,7 +107,7 @@ struct State {
     process: ProcessState,
     rendering: RenderingState,
     vesselness: VesselnessState,
-    raycasting: RaycastingState,
+    raycasting: CameraState,
     sliceview: SliceviewState,
     rotslice: RotSliceState,
     smoothing_std: f32,
@@ -174,11 +167,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_rad: 5.0,
             steps: 2,
         },
-        raycasting: RaycastingState {
+        raycasting: CameraState {
             fov: 30.0,
-            eye: [5.5, 0.5, 0.5].into(),
-            center: [0.5, 0.5, 0.5].into(),
-            up: [1.0, 1.0, 0.0].into(),
+            trackball: operators::raycaster::TrackballState {
+                eye: [5.5, 0.5, 0.5].into(),
+                center: [0.5, 0.5, 0.5].into(),
+                up: [1.0, 1.0, 0.0].into(),
+            },
         },
         sliceview: SliceviewState {
             selected: 0,
@@ -411,29 +406,15 @@ fn slice_viewer_rot(
 fn raycaster(
     input: VolumeOperator,
     size: Vector<2, GlobalCoordinate>,
-    state: &mut RaycastingState,
+    state: &mut CameraState,
     mut events: EventStream,
 ) -> VolumeOperator {
     events.act(|c| {
         c.chain(OnWheelMove(|delta, _| {
-            let look = state.center - state.eye;
-            let new_look = look.scale(1.0 - delta * 0.1);
-            state.eye = state.center - new_look;
+            state.trackball.move_inout(delta);
         }))
         .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
-            let look = state.center - state.eye;
-            let look_len = look.length();
-            let left = state.up.cross(look).normalized();
-            let move_factor = 0.005;
-            let delta = delta.map(|v| v as f32 * move_factor);
-
-            let new_look = (look.normalized() + state.up.scale(delta.y()) + left.scale(-delta.x()))
-                .normalized()
-                .scale(look_len);
-
-            state.eye = state.center - new_look;
-            let left = state.up.cross(new_look);
-            state.up = new_look.cross(left).normalized();
+            state.trackball.pan_around(delta);
         }))
     });
 
@@ -443,14 +424,7 @@ fn raycaster(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let perspective = cgmath::perspective(
-        cgmath::Deg(state.fov),
-        md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
-        0.001,
-        100.0,
-    );
-    let matrix = perspective
-        * cgmath::Matrix4::look_at_rh(state.eye.into(), state.center.into(), state.up.into());
+    let matrix = state.projection_mat(md.dimensions);
     let eep = vng_core::operators::raycaster::entry_exit_points(
         input.metadata.clone(),
         scalar::constant_hash(md),
