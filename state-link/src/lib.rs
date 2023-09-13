@@ -7,7 +7,7 @@ pub mod py;
 
 pub type Map = HashMap<String, NodeRef>;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct NodeRef {
     index: usize,
 }
@@ -36,6 +36,7 @@ pub enum Error {
     IncorrectType,
     SeqTooShort,
     MissingField(String),
+    LinkSelfReference,
 }
 
 pub type Result<S> = std::result::Result<S, Error>;
@@ -250,17 +251,27 @@ impl Store {
         self.load_unchecked(&node)
     }
 
-    fn link_unchecked(&mut self, src: &GenericNodeHandle, target: &GenericNodeHandle) {
+    fn link_unchecked(
+        &mut self,
+        src: &GenericNodeHandle,
+        target: &GenericNodeHandle,
+    ) -> Result<()> {
         let src_node = self.walk(src.node, &src.path).unwrap();
         let target_node = self.walk(target.node, &target.path).unwrap();
+
+        if src_node == target_node {
+            return Err(Error::LinkSelfReference);
+        }
+
         self.elms[src_node.index] = Node::Link(target_node);
+        Ok(())
     }
 
-    pub fn link<H: NodeHandle>(&mut self, src: &H, target: &H) {
+    pub fn link<H: NodeHandle>(&mut self, src: &H, target: &H) -> Result<()> {
         let src = src.unpack();
         let target = target.unpack();
 
-        self.link_unchecked(src, target);
+        self.link_unchecked(src, target)
     }
 
     pub fn resolve(&self, loc: &GenericNodeHandle) -> Option<NodeRef> {

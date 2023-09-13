@@ -52,6 +52,7 @@ impl NodeHandleScalar {
         }
     }
 }
+
 #[pymethods]
 impl NodeHandleScalar {
     fn link_to(&self, dst: &NodeHandleScalar, store: &mut Store) -> PyResult<()> {
@@ -62,7 +63,15 @@ impl NodeHandleScalar {
             )));
         }
 
-        store.inner.link_unchecked(&self.inner, &dst.inner);
+        store
+            .inner
+            .link_unchecked(&self.inner, &dst.inner)
+            .map_err(|e| match e {
+                crate::Error::LinkSelfReference => {
+                    pyo3::exceptions::PyValueError::new_err("Src and dst must differ to be linked")
+                }
+                e => panic!("Unexpected error: {:?}", e),
+            })?;
         Ok(())
     }
 
@@ -200,7 +209,15 @@ impl NodeHandleArray {
             )));
         }
 
-        store.inner.link_unchecked(&self.inner, &dst.inner);
+        store
+            .inner
+            .link_unchecked(&self.inner, &dst.inner)
+            .map_err(|e| match e {
+                crate::Error::LinkSelfReference => {
+                    pyo3::exceptions::PyValueError::new_err("Src and dst must differ to be linked")
+                }
+                e => panic!("Unexpected error: {:?}", e),
+            })?;
         Ok(())
     }
 
