@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 pub use state_link_derive::*;
 
+#[cfg(feature = "python")]
+pub mod py;
+
 pub type Map = HashMap<String, NodeRef>;
 
 #[derive(Copy, Clone, Debug)]
@@ -186,7 +189,6 @@ impl<const I: usize, V: State> State for [V; I] {
             v.write(store, *slot)?;
         }
 
-        store.write_at(Node::Seq(seq), at);
         Ok(())
     }
 }
@@ -240,28 +242,39 @@ impl Store {
         T::NodeHandle::pack(GenericNodeHandle::new_at(v.store(self)))
     }
 
+    fn load_unchecked<T: State>(&self, node: &GenericNodeHandle) -> T {
+        T::load(self, self.resolve(node).unwrap()).unwrap()
+    }
     pub fn load<H: NodeHandle>(&self, node: &H) -> H::NodeType {
         let node = node.unpack();
-        H::NodeType::load(self, self.resolve(node).unwrap()).unwrap()
+        self.load_unchecked(&node)
+    }
+
+    fn link_unchecked(&mut self, src: &GenericNodeHandle, target: &GenericNodeHandle) {
+        let src_node = self.walk(src.node, &src.path).unwrap();
+        let target_node = self.walk(target.node, &target.path).unwrap();
+        self.elms[src_node.index] = Node::Link(target_node);
     }
 
     pub fn link<H: NodeHandle>(&mut self, src: &H, target: &H) {
         let src = src.unpack();
         let target = target.unpack();
 
-        let src_node = self.walk(src.node, &src.path).unwrap();
-        let target_node = self.walk(target.node, &target.path).unwrap();
-        self.elms[src_node.index] = Node::Link(target_node);
+        self.link_unchecked(src, target);
     }
 
     pub fn resolve(&self, loc: &GenericNodeHandle) -> Option<NodeRef> {
         self.walk(loc.node, &loc.path)
     }
 
-    pub fn write<H: NodeHandle>(&mut self, target: &H, value: &H::NodeType) {
-        let loc = self.resolve(target.unpack()).unwrap();
+    fn write_unchecked<T: State>(&mut self, target: &GenericNodeHandle, value: &T) {
+        let loc = self.resolve(target).unwrap();
 
         value.write(self, loc).unwrap();
+    }
+
+    pub fn write<H: NodeHandle>(&mut self, target: &H, value: &H::NodeType) {
+        self.write_unchecked(target.unpack(), value);
     }
 
     pub fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
@@ -329,6 +342,7 @@ pub trait NodeHandle {
     fn unpack(&self) -> &GenericNodeHandle;
 }
 
+#[derive(Clone)]
 pub struct GenericNodeHandle {
     node: NodeRef,
     path: Vec<PathElm>,

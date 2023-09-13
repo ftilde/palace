@@ -68,7 +68,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
                 });
 
                 let write_code = quote! {
-                    let mut map = if let ::state_link::ResolveResult::Struct(map) = store.to_val(at) {
+                    let map = if let ::state_link::ResolveResult::Struct(map) = store.to_val(at) {
                         map.clone()
                     } else {
                         return Err(::state_link::Error::IncorrectType);
@@ -76,7 +76,6 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
 
                     #(#field_write)*;
 
-                    store.write_at(::state_link::Node::Dir(map), at);
                     Ok(())
                 };
 

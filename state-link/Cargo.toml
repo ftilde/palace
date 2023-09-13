@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 derive_more = "0.99.17"
 state-link-derive = { path = "../state-link-derive" }
+pyo3 = { version = "0.19.1", features = [], optional = true }
+
+[features]
+default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
+python = ["dep:pyo3"]
