@@ -67,7 +67,7 @@ impl NodeHandleScalar {
             .inner
             .link_unchecked(&self.inner, &dst.inner)
             .map_err(|e| match e {
-                crate::Error::LinkSelfReference => {
+                crate::Error::LinkReferenceCycle => {
                     pyo3::exceptions::PyValueError::new_err("Src and dst must differ to be linked")
                 }
                 e => panic!("Unexpected error: {:?}", e),
@@ -89,10 +89,13 @@ impl NodeHandleF32 {
     fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
         PyClassInitializer::from(inner).add_subclass(NodeHandleF32)
     }
-    fn write(self_: PyRef<'_, Self>, val: f32, store: &mut Store) {
+    fn write(self_: PyRef<'_, Self>, val: f32, store: &mut Store) -> PyResult<()> {
         let super_ = self_.into_super();
 
-        store.inner.write_unchecked(&super_.inner, &val);
+        store
+            .inner
+            .write_unchecked(&super_.inner, &val)
+            .map_err(map_link_err)
     }
 }
 
@@ -105,10 +108,13 @@ impl NodeHandleU32 {
     fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
         PyClassInitializer::from(inner).add_subclass(NodeHandleU32)
     }
-    fn write(self_: PyRef<'_, Self>, val: u32, store: &mut Store) {
+    fn write(self_: PyRef<'_, Self>, val: u32, store: &mut Store) -> PyResult<()> {
         let super_ = self_.into_super();
 
-        store.inner.write_unchecked(&super_.inner, &val);
+        store
+            .inner
+            .write_unchecked(&super_.inner, &val)
+            .map_err(map_link_err)
     }
 }
 
@@ -130,8 +136,7 @@ fn write_item<T: super::State + Clone + for<'f> FromPyObject<'f>>(
     store: &mut super::Store,
 ) -> PyResult<()> {
     let val = obj.extract::<T>(py)?;
-    store.write_unchecked(node, &val);
-    Ok(())
+    store.write_unchecked(node, &val).map_err(map_link_err)
 }
 
 trait PyState: super::State + Clone + IntoPy<PyObject> + for<'f> FromPyObject<'f> + 'static {
@@ -183,6 +188,15 @@ impl NodeHandleArray {
     }
 }
 
+fn map_link_err(err: super::Error) -> PyErr {
+    match err {
+        crate::Error::LinkReferenceCycle => {
+            pyo3::exceptions::PyValueError::new_err("Detected a link reference cycle.")
+        }
+        e => panic!("Unexpected error: {:?}", e),
+    }
+}
+
 #[pymethods]
 impl NodeHandleArray {
     fn load(&self, py: Python, store: &Store) -> PyObject {
@@ -212,22 +226,18 @@ impl NodeHandleArray {
         store
             .inner
             .link_unchecked(&self.inner, &dst.inner)
-            .map_err(|e| match e {
-                crate::Error::LinkSelfReference => {
-                    pyo3::exceptions::PyValueError::new_err("Src and dst must differ to be linked")
-                }
-                e => panic!("Unexpected error: {:?}", e),
-            })?;
+            .map_err(map_link_err)?;
         Ok(())
     }
 
     fn write(&self, py: Python, vals: Vec<PyObject>, store: &mut Store) -> PyResult<()> {
         let at = self.inner.node;
-        let seq = if let super::ResolveResult::Seq(seq) = store.inner.to_val(at) {
-            seq.clone() //TODO: instead of cloning we can probably also just take the old value out
-        } else {
-            panic!("Not a sequence");
-        };
+        let seq =
+            if let super::ResolveResult::Seq(seq) = store.inner.to_val(at).map_err(map_link_err)? {
+                seq.clone() //TODO: instead of cloning we can probably also just take the old value out
+            } else {
+                panic!("Not a sequence");
+            };
 
         if seq.len() != self.len {
             return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -262,6 +272,7 @@ impl NodeHandleArray {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct SomeStruct {
     #[pyo3(get, set)]
     v1: u32,
@@ -275,7 +286,7 @@ impl super::State for SomeStruct {
     type NodeHandle = super::NodeHandleSpecialized<SomeStruct>;
 
     fn write(&self, store: &mut crate::Store, at: crate::NodeRef) -> crate::Result<()> {
-        let map = if let super::ResolveResult::Struct(map) = store.to_val(at) {
+        let map = if let super::ResolveResult::Struct(map) = store.to_val(at)? {
             map.clone()
         } else {
             return Err(super::Error::IncorrectType);
@@ -318,7 +329,7 @@ impl super::State for SomeStruct {
     }
 
     fn load(store: &crate::Store, location: crate::NodeRef) -> crate::Result<Self> {
-        if let super::ResolveResult::Struct(map) = store.to_val(location) {
+        if let super::ResolveResult::Struct(map) = store.to_val(location)? {
             Ok(Self {
                 v1: {
                     let field_name = stringify!(v1);
@@ -345,6 +356,13 @@ impl super::State for SomeStruct {
         } else {
             Err(super::Error::IncorrectType)
         }
+    }
+}
+
+impl PyState for SomeStruct {
+    fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject {
+        let init = NodeHandleSomeStruct::build(NodeHandleScalar::new::<Self>(inner));
+        PyCell::new(py, init).unwrap().to_object(py)
     }
 }
 
@@ -376,10 +394,13 @@ impl NodeHandleSomeStruct {
     fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
         PyClassInitializer::from(inner).add_subclass(NodeHandleSomeStruct)
     }
-    fn write(self_: PyRef<'_, Self>, val: &SomeStruct, store: &mut Store) {
+    fn write(self_: PyRef<'_, Self>, val: &SomeStruct, store: &mut Store) -> PyResult<()> {
         let super_ = self_.into_super();
 
-        store.inner.write_unchecked(&super_.inner, val);
+        store
+            .inner
+            .write_unchecked(&super_.inner, val)
+            .map_err(map_link_err)
     }
 
     fn v1(self_: PyRef<'_, Self>, py: Python) -> PyObject {

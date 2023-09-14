@@ -36,7 +36,7 @@ pub enum Error {
     IncorrectType,
     SeqTooShort,
     MissingField(String),
-    LinkSelfReference,
+    LinkReferenceCycle,
 }
 
 pub type Result<S> = std::result::Result<S, Error>;
@@ -55,7 +55,7 @@ impl State for f32 {
     }
 
     fn load(store: &Store, location: NodeRef) -> Result<Self> {
-        if let ResolveResult::Atom(Value::F32(v)) = store.to_val(location) {
+        if let ResolveResult::Atom(Value::F32(v)) = store.to_val(location)? {
             Ok(v)
         } else {
             Err(Error::IncorrectType)
@@ -63,8 +63,7 @@ impl State for f32 {
     }
 
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
-        store.write_at(Node::Val(Value::F32(*self)), at);
-        Ok(())
+        store.write_at(Node::Val(Value::F32(*self)), at)
     }
 }
 
@@ -76,15 +75,14 @@ impl State for u32 {
     }
 
     fn load(store: &Store, location: NodeRef) -> Result<Self> {
-        if let ResolveResult::Atom(Value::U32(v)) = store.to_val(location) {
+        if let ResolveResult::Atom(Value::U32(v)) = store.to_val(location)? {
             Ok(v)
         } else {
             Err(Error::IncorrectType)
         }
     }
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
-        store.write_at(Node::Val(Value::U32(*self)), at);
-        Ok(())
+        store.write_at(Node::Val(Value::U32(*self)), at)
     }
 }
 
@@ -96,7 +94,7 @@ impl<V: State> State for Vec<V> {
     }
 
     fn load(store: &Store, location: NodeRef) -> Result<Self> {
-        if let ResolveResult::Seq(seq) = store.to_val(location) {
+        if let ResolveResult::Seq(seq) = store.to_val(location)? {
             seq.into_iter()
                 .map(|loc| V::load(store, *loc))
                 .collect::<std::result::Result<Vec<V>, _>>()
@@ -106,7 +104,7 @@ impl<V: State> State for Vec<V> {
     }
 
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
-        let mut seq = if let ResolveResult::Seq(seq) = store.to_val(at) {
+        let mut seq = if let ResolveResult::Seq(seq) = store.to_val(at)? {
             seq.clone() //TODO: instead of cloning we can probably also just take the old value out
         } else {
             return Err(Error::IncorrectType);
@@ -131,8 +129,7 @@ impl<V: State> State for Vec<V> {
             }
         }
 
-        store.write_at(Node::Seq(seq), at);
-        Ok(())
+        store.write_at(Node::Seq(seq), at)
     }
 }
 
@@ -152,7 +149,7 @@ impl<const I: usize, V: State> State for [V; I] {
     fn load(store: &Store, location: NodeRef) -> Result<Self> {
         // If only std::array::try_from_fn were stable...
         // TODO: replace once it is https://github.com/rust-lang/rust/issues/89379
-        if let ResolveResult::Seq(seq) = store.to_val(location) {
+        if let ResolveResult::Seq(seq) = store.to_val(location)? {
             let results: [Result<V>; I] = std::array::from_fn(|i| {
                 seq.get(i)
                     .ok_or(Error::SeqTooShort)
@@ -176,7 +173,7 @@ impl<const I: usize, V: State> State for [V; I] {
     }
 
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
-        let seq = if let ResolveResult::Seq(seq) = store.to_val(at) {
+        let seq = if let ResolveResult::Seq(seq) = store.to_val(at)? {
             seq.clone() //TODO: instead of cloning we can probably also just take the old value out
         } else {
             return Err(Error::IncorrectType);
@@ -208,17 +205,18 @@ impl<T> State for std::marker::PhantomData<T> {
     }
 
     fn load(store: &Store, location: NodeRef) -> Result<Self> {
-        if let ResolveResult::Atom(Value::Unit) = store.to_val(location) {
+        if let ResolveResult::Atom(Value::Unit) = store.to_val(location)? {
             Ok(Default::default())
         } else {
             Err(Error::IncorrectType)
         }
     }
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
-        store.write_at(Node::Val(Value::Unit), at);
-        Ok(())
+        store.write_at(Node::Val(Value::Unit), at)
     }
 }
+
+const MAX_LINK_FOLLOWS: usize = 32;
 
 impl Store {
     pub fn push(&mut self, val: Node) -> NodeRef {
@@ -227,16 +225,21 @@ impl Store {
         NodeRef { index }
     }
 
-    fn resolve_links(&self, mut node: NodeRef) -> NodeRef {
-        while let Node::Link(l) = &self.elms[node.index] {
-            node = *l;
+    fn resolve_links(&self, mut node: NodeRef) -> Result<NodeRef> {
+        for _ in 0..MAX_LINK_FOLLOWS {
+            if let Node::Link(l) = &self.elms[node.index] {
+                node = *l
+            } else {
+                return Ok(node);
+            }
         }
-        node
+        Err(Error::LinkReferenceCycle)
     }
 
-    pub fn write_at(&mut self, val: Node, at: NodeRef) {
-        let at = self.resolve_links(at);
+    pub fn write_at(&mut self, val: Node, at: NodeRef) -> Result<()> {
+        let at = self.resolve_links(at)?;
         self.elms[at.index] = val;
+        Ok(())
     }
 
     pub fn store<T: State>(&mut self, v: &T) -> T::NodeHandle {
@@ -260,7 +263,7 @@ impl Store {
         let target_node = self.walk(target.node, &target.path).unwrap();
 
         if src_node == target_node {
-            return Err(Error::LinkSelfReference);
+            return Err(Error::LinkReferenceCycle);
         }
 
         self.elms[src_node.index] = Node::Link(target_node);
@@ -278,17 +281,17 @@ impl Store {
         self.walk(loc.node, &loc.path)
     }
 
-    fn write_unchecked<T: State>(&mut self, target: &GenericNodeHandle, value: &T) {
+    fn write_unchecked<T: State>(&mut self, target: &GenericNodeHandle, value: &T) -> Result<()> {
         let loc = self.resolve(target).unwrap();
 
-        value.write(self, loc).unwrap();
+        value.write(self, loc)
     }
 
-    pub fn write<H: NodeHandle>(&mut self, target: &H, value: &H::NodeType) {
-        self.write_unchecked(target.unpack(), value);
+    pub fn write<H: NodeHandle>(&mut self, target: &H, value: &H::NodeType) -> Result<()> {
+        self.write_unchecked(target.unpack(), value)
     }
 
-    pub fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
+    fn walk_inner(&self, root: NodeRef, p: &[PathElm], link_budget: usize) -> Option<NodeRef> {
         match p {
             [] => Some(root),
             [current, rest @ ..] => match &self.elms[root.index] {
@@ -301,18 +304,27 @@ impl Store {
                     self.walk(*e, rest)
                 }
                 Node::Val(_) => None,
-                Node::Link(l) => self.walk(*l, p),
+                Node::Link(l) if link_budget > 0 => self.walk_inner(*l, p, link_budget - 1),
+                Node::Link(_l) => None, //TODO: error instead?
             },
         }
     }
 
-    pub fn to_val(&self, root: NodeRef) -> ResolveResult {
+    pub fn walk(&self, root: NodeRef, p: &[PathElm]) -> Option<NodeRef> {
+        self.walk_inner(root, p, MAX_LINK_FOLLOWS)
+    }
+
+    fn to_val_inner(&self, root: NodeRef, link_budget: usize) -> Result<ResolveResult> {
         match &self.elms[root.index] {
-            Node::Dir(s) => ResolveResult::Struct(&s),
-            Node::Seq(s) => ResolveResult::Seq(&s),
-            Node::Val(v) => ResolveResult::Atom(*v),
-            Node::Link(l) => self.to_val(*l),
+            Node::Dir(s) => Ok(ResolveResult::Struct(&s)),
+            Node::Seq(s) => Ok(ResolveResult::Seq(&s)),
+            Node::Val(v) => Ok(ResolveResult::Atom(*v)),
+            Node::Link(l) if link_budget > 0 => self.to_val_inner(*l, link_budget - 1),
+            Node::Link(_l) => Err(Error::LinkReferenceCycle),
         }
+    }
+    pub fn to_val(&self, root: NodeRef) -> Result<ResolveResult> {
+        self.to_val_inner(root, MAX_LINK_FOLLOWS)
     }
 }
 
