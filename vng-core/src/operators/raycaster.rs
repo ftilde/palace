@@ -48,6 +48,11 @@ impl TrackballState {
         Self { eye, center, up }
     }
 
+    #[pyo3(name = "store")]
+    fn store_wrap(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+        self.store_py(py, store)
+    }
+
     pub fn pan_around(&mut self, delta: Vector<2, i32>) {
         let look = self.center - self.eye;
         let look_len = look.length();
@@ -70,7 +75,7 @@ impl TrackballState {
     }
 }
 
-#[derive(state_link::State)]
+#[derive(Clone, state_link::State)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct CameraState {
     #[pyo3(get, set)]
@@ -84,6 +89,11 @@ impl CameraState {
     #[new]
     pub fn new(trackball: TrackballState, fov: f32) -> Self {
         Self { trackball, fov }
+    }
+
+    #[pyo3(name = "store")]
+    fn store_wrap(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+        self.store_py(py, store)
     }
 }
 

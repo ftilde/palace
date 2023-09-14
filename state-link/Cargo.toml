@@ -11,5 +11,5 @@ state-link-derive = { path = "../state-link-derive" }
 pyo3 = { version = "0.19.1", features = [], optional = true }
 
 [features]
-default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
-python = ["dep:pyo3"]
+default = []
+python = ["dep:pyo3", "state-link-derive/python"]

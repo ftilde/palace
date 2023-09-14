@@ -3,7 +3,17 @@ use quote::quote;
 use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Generics};
 
 #[proc_macro_derive(State)]
-pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
+pub fn derive_state(input: TokenStream) -> TokenStream {
+    let gen_python = cfg!(feature = "python");
+    derive_wrapper(input, gen_python)
+}
+
+#[proc_macro_derive(StateNoPy)]
+pub fn derive_state_no_py(input: TokenStream) -> TokenStream {
+    derive_wrapper(input, false)
+}
+
+fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     // Used in the quasi-quotation below as `#name`.
@@ -12,7 +22,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
     let visibility = input.vis;
 
     // Add a bound `T: HeapSize` to every type parameter T.
-    let generics = add_trait_bounds(input.generics);
+    let generics = add_trait_bounds(input.generics.clone());
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let data = input.data;
@@ -200,7 +210,7 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
 
     let node_handle_name = quote::format_ident!("__NodeHandle_{}", name);
 
-    let output = quote! {
+    let core_output = quote! {
         #[allow(non_camel_case_types)]
         #visibility struct #node_handle_name #impl_generics {
             inner: ::state_link::GenericNodeHandle,
@@ -240,6 +250,61 @@ pub fn my_macro_here_derive(input: TokenStream) -> TokenStream {
         }
     };
 
+    let has_generics = !input.generics.params.is_empty();
+    let generics = add_trait_bounds_py(input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let python_code = if gen_python {
+        let node_handle_name = quote::format_ident!("__PyNodeHandle_{}", name);
+
+        let store_impl = if !has_generics {
+            // Decorating with #[pyo3::pymethods] does not work because there can only be one
+            // pymethods block, at least without adding the multiple-pymethods feature, which has
+            // its own issues: https://github.com/PyO3/pyo3/issues/341
+            quote! {
+                impl #impl_generics #name #ty_generics #where_clause {
+                    fn store_py(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+                        <Self as ::state_link::py::PyState>::build_handle(py, store.inner.store(self).inner)
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        quote! {
+            #store_impl
+
+            impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
+                fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle) -> pyo3::PyObject {
+                    use pyo3::ToPyObject;
+
+                    let inner = ::state_link::py::NodeHandleScalar::new::<#name #ty_generics>(inner);
+                    let init = pyo3::PyClassInitializer::from(inner).add_subclass(#node_handle_name);
+                    pyo3::PyCell::new(py, init).unwrap().to_object(py)
+                }
+            }
+
+            #[pyo3::pyclass(extends = ::state_link::py::NodeHandleScalar)]
+            #[allow(non_camel_case_types)]
+            pub struct #node_handle_name;
+
+
+            //#[pyo3::pymethods]
+            //impl NodeHandleSomeStruct {
+            //    #[new]
+            //}
+        }
+    } else {
+        quote! {}
+    };
+
+    let output = quote! {
+        #core_output
+
+        #python_code
+    };
+
     output.into()
 }
 
@@ -247,6 +312,17 @@ fn add_trait_bounds(mut generics: Generics) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
             type_param.bounds.push(parse_quote!(::state_link::State));
+        }
+    }
+    generics
+}
+
+fn add_trait_bounds_py(mut generics: Generics) -> Generics {
+    for param in &mut generics.params {
+        if let GenericParam::Type(ref mut type_param) = *param {
+            type_param
+                .bounds
+                .push(parse_quote!(::state_link::py::PyState));
         }
     }
     generics

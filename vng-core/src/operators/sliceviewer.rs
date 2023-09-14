@@ -23,7 +23,7 @@ use crate::{
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-#[derive(state_link::State)]
+#[derive(Clone, state_link::State)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct SliceviewState {
     #[pyo3(get, set)]
@@ -62,6 +62,11 @@ impl SliceviewState {
             offset,
             zoom_level,
         }
+    }
+
+    #[pyo3(name = "store")]
+    fn store_wrap(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+        self.store_py(py, store)
     }
 
     pub fn drag(&mut self, delta: Vector<2, f32>) {

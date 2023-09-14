@@ -39,4 +39,4 @@ state-link = { path = "../state-link" }
 
 [features]
 default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
-python = ["dep:pyo3"]
+python = ["dep:pyo3", "state-link/python"]

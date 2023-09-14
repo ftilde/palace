@@ -33,9 +33,6 @@ arr_handle = store.store_f32_arr([4, 5, 6])
 
 h1.link_to(h2, store)
 
-#TODO: Welp, this needs fixing, too
-h2.link_to(h1, store)
-
 h3.v1().link_to(h4, store)
 
 h2.write(123.0, store)
@@ -72,6 +69,10 @@ camera_state = vng.CameraState(
             ),
         30.0
         )
+
+c_handle = camera_state.store(store)
+
+print(c_handle)
 
 gui_state = vng.GuiState(rt)
 

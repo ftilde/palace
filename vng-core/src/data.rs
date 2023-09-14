@@ -35,18 +35,18 @@ pub fn from_linear<const N: usize, T: CoordinateType>(
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::State)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
 pub struct LocalCoordinateType;
 impl CoordinateType for LocalCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::State)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
 pub struct GlobalCoordinateType;
 impl CoordinateType for GlobalCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::State)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
 pub struct ChunkCoordinateType;
 impl CoordinateType for ChunkCoordinateType {}
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::State)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
 pub struct Coordinate<T> {
     pub raw: u32,
     type_: std::marker::PhantomData<T>,

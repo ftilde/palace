@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 #[derive(Default)]
 #[pyclass]
 pub struct Store {
-    inner: super::Store,
+    pub inner: super::Store,
 }
 
 #[pymethods]
@@ -41,7 +41,7 @@ pub struct NodeHandleScalar {
 }
 
 impl NodeHandleScalar {
-    fn new<T: std::any::Any + IntoPy<PyObject> + super::State>(
+    pub fn new<T: std::any::Any + IntoPy<PyObject> + super::State>(
         inner: super::GenericNodeHandle,
     ) -> Self {
         Self {
@@ -139,7 +139,9 @@ fn write_item<T: super::State + Clone + for<'f> FromPyObject<'f>>(
     store.write_unchecked(node, &val).map_err(map_link_err)
 }
 
-trait PyState: super::State + Clone + IntoPy<PyObject> + for<'f> FromPyObject<'f> + 'static {
+pub trait PyState:
+    std::any::Any + super::State + Clone + IntoPy<PyObject> + for<'f> FromPyObject<'f> + 'static
+{
     fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject;
 }
 
@@ -361,7 +363,8 @@ impl super::State for SomeStruct {
 
 impl PyState for SomeStruct {
     fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject {
-        let init = NodeHandleSomeStruct::build(NodeHandleScalar::new::<Self>(inner));
+        let inner = NodeHandleScalar::new::<SomeStruct>(inner);
+        let init = PyClassInitializer::from(inner).add_subclass(NodeHandleSomeStruct);
         PyCell::new(py, init).unwrap().to_object(py)
     }
 }
@@ -378,10 +381,7 @@ impl SomeStruct {
     }
 
     fn store(&self, py: Python, store: &mut Store) -> PyObject {
-        let init = NodeHandleSomeStruct::build(NodeHandleScalar::new::<Self>(
-            store.inner.store(self).inner,
-        ));
-        PyCell::new(py, init).unwrap().to_object(py)
+        Self::build_handle(py, store.inner.store(self).inner)
     }
 }
 
@@ -390,10 +390,6 @@ pub struct NodeHandleSomeStruct;
 
 #[pymethods]
 impl NodeHandleSomeStruct {
-    #[new]
-    fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(inner).add_subclass(NodeHandleSomeStruct)
-    }
     fn write(self_: PyRef<'_, Self>, val: &SomeStruct, store: &mut Store) -> PyResult<()> {
         let super_ = self_.into_super();
 
