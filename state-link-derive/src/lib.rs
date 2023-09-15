@@ -27,8 +27,8 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
 
     let data = input.data;
 
-    let (store, load, write, handle_access) = match data {
-        Data::Struct(s) => match s.fields {
+    let (store, load, write, handle_access) = match &data {
+        Data::Struct(s) => match &s.fields {
             Fields::Named(fields) => {
                 let field_load = fields.named.iter().map(|f| {
                     let name = &f.ident;
@@ -265,6 +265,47 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let python_code = if gen_python && !has_generics {
+        let handle_access = match data {
+            Data::Struct(s) => match s.fields {
+                Fields::Named(fields) => {
+                    let handle_accesses = fields.named.iter().map(|f| {
+                        let name = &f.ident;
+                        let name = name.as_ref().unwrap();
+                        let ty = &f.ty;
+                        let func_name = quote::format_ident!("{}_py", name);
+                        let inside_py_name_str = format!("{}", name);
+                        quote! {
+                            #[pyo3(name = #inside_py_name_str)]
+                            fn #func_name(&self, py: pyo3::Python) -> pyo3::PyObject {
+                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.named(stringify!(#name).to_owned()))
+                            }
+                        }
+                    });
+                    quote! { #(#handle_accesses)* }
+                }
+                Fields::Unnamed(fields) => {
+                    let handle_accesses = fields.unnamed.iter().enumerate().map(|(num, f)| {
+                        let ty = &f.ty;
+
+                        let fn_name = quote::format_ident!("elm{}_py", num);
+                        let inside_py_name_str = format!("elm{}", num);
+
+                        quote! {
+                            #[pyo3(name = #inside_py_name_str)]
+                            pub fn #fn_name(&self, py: pyo3::Python) -> pyo3::PyObject {
+                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.index(#num))
+                            }
+                        }
+                    });
+
+                    quote! { #(#handle_accesses)* }
+                }
+                Fields::Unit => todo!(),
+            },
+            Data::Enum(_) => todo!(),
+            Data::Union(_) => todo!(),
+        };
+
         quote! {
             // Decorating with #[pyo3::pymethods] does not work because there can only be one
             // pymethods block, at least without adding the multiple-pymethods feature, which has
@@ -291,6 +332,8 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 fn link_to_py(&self, dst: &Self, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
                     store.inner.link(self, dst).map_err(state_link::py::map_link_err)
                 }
+
+                #handle_access
             }
 
             impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
