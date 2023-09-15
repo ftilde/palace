@@ -234,4 +234,11 @@ impl NodeHandleArray {
         }
         Ok((self.build_item_handle)(py, self.inner.index(i)))
     }
+
+    fn update(&self, py: Python, f: &pyo3::types::PyFunction, store: &mut Store) -> PyResult<()> {
+        let initial = self.load(py, store);
+        let new_py = f.call1((initial,))?;
+        let new = new_py.extract::<Vec<PyObject>>()?;
+        self.write(py, new, store)
+    }
 }

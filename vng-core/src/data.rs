@@ -197,6 +197,12 @@ mod py {
             PyList::new(py, self.0.into_iter().map(|v| v.into_py(py))).into()
         }
     }
+
+    impl<const N: usize, T: state_link::py::PyState> state_link::py::PyState for Vector<N, T> {
+        fn build_handle(py: Python, inner: state_link::GenericNodeHandle) -> PyObject {
+            <[T; N]>::build_handle(py, inner.index(0))
+        }
+    }
 }
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {

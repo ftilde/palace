@@ -25,9 +25,9 @@ h1 = store.store_f32(2.0)
 h2 = store.store_f32(5.0)
 h4 = store.store_u32(5)
 
-slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
-slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
-slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
+slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
+slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
+slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 
 camera_state = vng.CameraState(
         vng.TrackballState(
@@ -36,25 +36,11 @@ camera_state = vng.CameraState(
             [1.0, 1.0, 0.0],
             ),
         30.0
-        )
+        ).store(store)
 
-c_handle = camera_state.store(store)
-c_handle2 = camera_state.store(store)
-
-c_handle.link_to(c_handle2, store)
-
-c_handle2.write(
-        vng.CameraState(
-            vng.TrackballState(
-                [5.5, 0.5, 0.5],
-                [0.5, 0.5, 0.5],
-                [1.0, 1.0, 0.0],
-                ),
-            50.0
-            ), store
-        )
-
-print(c_handle.load(store).fov)
+print(camera_state.load(store).fov)
+#c_handle.trackball().eye().update(bla, store) #TODO: something is not working here...
+print(camera_state.trackball().eye().load(store))
 
 gui_state = vng.GuiState(rt)
 
@@ -80,7 +66,7 @@ def split(dim, fraction, render_first, render_last):
     return inner
 
 def render(size, events):
-    fov = np.array(camera_state.fov)
+    fov = np.array(camera_state.fov().load(store))
     gui = gui_state.setup(events, vng.Vertical([
         vng.Label("Look at all these buttons"),
         vng.Horizontal([
@@ -90,7 +76,7 @@ def render(size, events):
         ]),
     ]))
 
-    camera_state.fov = fov
+    camera_state.fov().write(fov, store)
 
     lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(0, slice_state0), render_slice(1, slice_state1))
     upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast, render_slice(2, slice_state2))
@@ -104,18 +90,14 @@ def render(size, events):
 def render_raycast(size, events):
 
     def drag(pos, delta):
-        #TODO: This is very annoying: Member access creates clones. We need to find a better way
-        tb = camera_state.trackball
-        tb.pan_around(delta)
-        camera_state.trackball = tb
+        camera_state.trackball().update(lambda tb: tb.pan_around(delta), store)
 
     def wheel(delta, pos):
-        tb = camera_state.trackball
-        tb.move_inout(delta)
-        camera_state.trackball = tb;
+        camera_state.trackball().update(lambda tb: tb.move_inout(delta), store)
 
     events.act([
         #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball.pan_around(delta)),
+        #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().update(lambda tb: tb.pan_around(delta)),
         vng.OnMouseDrag(vng.MouseButton.Left, drag),
         vng.OnWheelMove(wheel),
     ]);
@@ -123,8 +105,10 @@ def render_raycast(size, events):
     md = vng.tensor_metadata(size, [512]*2)
 
     # TODO get rid of these and allow calling a method on the state object instead
-    look_at = vng.look_at(camera_state.trackball.eye, camera_state.trackball.center, camera_state.trackball.up);
-    perspective = vng.perspective(md, camera_state.fov, 0.01, 100)
+    look_at = vng.look_at(camera_state.trackball().eye().load(store),
+                          camera_state.trackball().center().load(store),
+                          camera_state.trackball().up().load(store));
+    perspective = vng.perspective(md, camera_state.fov().load(store), 0.01, 100)
     proj = perspective.dot(look_at)
 
     eep = vng.entry_exit_points(v.metadata, md, proj)
@@ -136,15 +120,15 @@ def render_raycast(size, events):
 def render_slice(dim, slice_state):
     def inner(size, events):
         events.act([
-            vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.drag(delta)),
-            vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.scroll(delta[0])),
-            vng.OnWheelMove(lambda delta, pos: slice_state.zoom(delta, pos)),
+            vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.update(lambda s: s.drag(delta), store)),
+            vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.update(lambda s: s.scroll(delta[0]), store)),
+            vng.OnWheelMove(lambda delta, pos: slice_state.update(lambda s: s.zoom(delta, pos), store)),
         ]);
 
         md = vng.tensor_metadata(size, [512]*2)
 
         # TODO abstract this away, too
-        proj = vng.slice_projection_mat(dim, v.metadata, md, slice_state.selected, slice_state.offset, slice_state.zoom_level)
+        proj = vng.slice_projection_mat(dim, v.metadata, md, slice_state.selected().load(store), slice_state.offset().load(store), slice_state.zoom_level().load(store))
 
         frame = vng.render_slice(v, md, proj)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*3)

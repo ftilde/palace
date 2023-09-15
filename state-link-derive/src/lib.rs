@@ -333,6 +333,14 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     store.inner.link(self, dst).map_err(state_link::py::map_link_err)
                 }
 
+                #[pyo3(name = "update")]
+                fn update_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
+                    let val_py = self.load_py(py, store);
+                    f.call1((&val_py,))?;
+                    let val = val_py.extract::<#name>(py)?;
+                    self.write_py(&val, store)
+                }
+
                 #handle_access
             }
 
