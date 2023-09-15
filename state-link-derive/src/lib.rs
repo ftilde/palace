@@ -55,7 +55,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 let field_store = fields.named.iter().map(|f| {
                     let name = &f.ident;
                     quote! {
-                        map.insert(stringify!(#name).to_owned(), self.#name.store(store));
+                        map.insert(stringify!(#name).to_owned(), ::state_link::State::store(&self.#name, store));
                     }
                 });
 
@@ -72,7 +72,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         {
                             let field_name = stringify!(#name);
                             let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name.to_owned()))?;
-                            self.#name.write(store, *loc)?;
+                            ::state_link::State::write(&self.#name, store, *loc)?;
                         }
                     }
                 });
@@ -127,7 +127,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 let field_store = fields.unnamed.iter().enumerate().map(|(num, _f)| {
                     let num = syn::Index::from(num);
                     quote! {
-                        seq.push(self.#num.store(store));
+                        seq.push(::state_link::State::store(&self.#num, store));
                     }
                 });
 
@@ -143,7 +143,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     quote! {
                         {
                             let loc = seq.get(#num).ok_or(state_link::Error::SeqTooShort)?;
-                            self.#num.write(store, *loc)?;
+                            ::state_link::State::write(&self.#num, store, *loc)?;
                         }
                     }
                 });

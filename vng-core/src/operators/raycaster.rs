@@ -48,8 +48,7 @@ impl TrackballState {
         Self { eye, center, up }
     }
 
-    #[pyo3(name = "store")]
-    fn store_wrap(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+    fn store(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
         self.store_py(py, store)
     }
 
@@ -91,8 +90,7 @@ impl CameraState {
         Self { trackball, fov }
     }
 
-    #[pyo3(name = "store")]
-    fn store_wrap(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
+    fn store(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
         self.store_py(py, store)
     }
 }
