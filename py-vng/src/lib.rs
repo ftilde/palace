@@ -47,6 +47,5 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Splitter>()?;
 
     m.add_class::<state_link::py::Store>()?;
-    m.add_class::<state_link::py::SomeStruct>()?;
     Ok(())
 }

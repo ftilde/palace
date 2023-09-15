@@ -246,7 +246,7 @@ impl Store {
         T::NodeHandle::pack(GenericNodeHandle::new_at(v.store(self)))
     }
 
-    fn load_unchecked<T: State>(&self, node: &GenericNodeHandle) -> T {
+    pub fn load_unchecked<T: State>(&self, node: &GenericNodeHandle) -> T {
         T::load(self, self.resolve(node).unwrap()).unwrap()
     }
     pub fn load<H: NodeHandle>(&self, node: &H) -> H::NodeType {
@@ -254,7 +254,7 @@ impl Store {
         self.load_unchecked(&node)
     }
 
-    fn link_unchecked(
+    pub fn link_unchecked(
         &mut self,
         src: &GenericNodeHandle,
         target: &GenericNodeHandle,
@@ -281,7 +281,11 @@ impl Store {
         self.walk(loc.node, &loc.path)
     }
 
-    fn write_unchecked<T: State>(&mut self, target: &GenericNodeHandle, value: &T) -> Result<()> {
+    pub fn write_unchecked<T: State>(
+        &mut self,
+        target: &GenericNodeHandle,
+        value: &T,
+    ) -> Result<()> {
         let loc = self.resolve(target).unwrap();
 
         value.write(self, loc)

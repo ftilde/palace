@@ -16,12 +16,16 @@ impl Store {
     }
 
     fn store_u32(&mut self, py: Python, val: u32) -> PyObject {
-        let init = NodeHandleU32::build(NodeHandleScalar::new::<u32>(self.inner.store(&val).inner));
+        let init = NodeHandleU32 {
+            inner: self.inner.store(&val),
+        };
         PyCell::new(py, init).unwrap().to_object(py)
     }
 
     fn store_f32(&mut self, py: Python, val: f32) -> PyObject {
-        let init = NodeHandleF32::build(NodeHandleScalar::new::<f32>(self.inner.store(&val).inner));
+        let init = NodeHandleF32 {
+            inner: self.inner.store(&val),
+        };
         PyCell::new(py, init).unwrap().to_object(py)
     }
 
@@ -31,90 +35,45 @@ impl Store {
     }
 }
 
-#[pyclass(subclass)]
-#[derive(Clone)]
-pub struct NodeHandleScalar {
-    type_: TypeId,
-    type_name: &'static str,
-    inner: super::GenericNodeHandle,
-    load: fn(Python, &super::GenericNodeHandle, &super::Store) -> PyObject,
+#[pyclass]
+pub struct NodeHandleF32 {
+    inner: <f32 as super::State>::NodeHandle,
 }
-
-impl NodeHandleScalar {
-    pub fn new<T: std::any::Any + IntoPy<PyObject> + super::State>(
-        inner: super::GenericNodeHandle,
-    ) -> Self {
-        Self {
-            type_: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            inner,
-            load: |py, node, store| store.load_unchecked::<T>(node).into_py(py),
-        }
-    }
-}
-
-#[pymethods]
-impl NodeHandleScalar {
-    fn link_to(&self, dst: &NodeHandleScalar, store: &mut Store) -> PyResult<()> {
-        if self.type_ != dst.type_ {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Argument type mismatch: {} vs {}",
-                self.type_name, dst.type_name,
-            )));
-        }
-
-        store
-            .inner
-            .link_unchecked(&self.inner, &dst.inner)
-            .map_err(|e| match e {
-                crate::Error::LinkReferenceCycle => {
-                    pyo3::exceptions::PyValueError::new_err("Src and dst must differ to be linked")
-                }
-                e => panic!("Unexpected error: {:?}", e),
-            })?;
-        Ok(())
-    }
-
-    fn load(&self, py: Python, store: &Store) -> PyObject {
-        (self.load)(py, &self.inner, &store.inner)
-    }
-}
-
-#[pyclass(extends = NodeHandleScalar)]
-pub struct NodeHandleF32;
 
 #[pymethods]
 impl NodeHandleF32 {
-    #[new]
-    fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(inner).add_subclass(NodeHandleF32)
+    fn write(&self, val: f32, store: &mut Store) -> PyResult<()> {
+        store.inner.write(&self.inner, &val).map_err(map_link_err)
     }
-    fn write(self_: PyRef<'_, Self>, val: f32, store: &mut Store) -> PyResult<()> {
-        let super_ = self_.into_super();
-
+    fn link_to(&self, dst: &NodeHandleF32, store: &mut Store) -> PyResult<()> {
         store
             .inner
-            .write_unchecked(&super_.inner, &val)
+            .link(&self.inner, &dst.inner)
             .map_err(map_link_err)
+    }
+    fn load(&self, py: Python, store: &Store) -> PyObject {
+        store.inner.load(&self.inner).into_py(py)
     }
 }
 
-#[pyclass(extends = NodeHandleScalar)]
-pub struct NodeHandleU32;
+#[pyclass]
+pub struct NodeHandleU32 {
+    inner: <u32 as super::State>::NodeHandle,
+}
 
 #[pymethods]
 impl NodeHandleU32 {
-    #[new]
-    fn build(inner: NodeHandleScalar) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(inner).add_subclass(NodeHandleU32)
+    fn write(&self, val: u32, store: &mut Store) -> PyResult<()> {
+        store.inner.write(&self.inner, &val).map_err(map_link_err)
     }
-    fn write(self_: PyRef<'_, Self>, val: u32, store: &mut Store) -> PyResult<()> {
-        let super_ = self_.into_super();
-
+    fn link_to(&self, dst: &NodeHandleU32, store: &mut Store) -> PyResult<()> {
         store
             .inner
-            .write_unchecked(&super_.inner, &val)
+            .link(&self.inner, &dst.inner)
             .map_err(map_link_err)
+    }
+    fn load(&self, py: Python, store: &Store) -> PyObject {
+        store.inner.load(&self.inner).into_py(py)
     }
 }
 
@@ -147,14 +106,18 @@ pub trait PyState:
 
 impl PyState for f32 {
     fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject {
-        let init = NodeHandleF32::build(NodeHandleScalar::new::<Self>(inner));
+        let init = NodeHandleF32 {
+            inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
+        };
         PyCell::new(py, init).unwrap().to_object(py)
     }
 }
 
 impl PyState for u32 {
     fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject {
-        let init = NodeHandleU32::build(NodeHandleScalar::new::<Self>(inner));
+        let init = NodeHandleU32 {
+            inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
+        };
         PyCell::new(py, init).unwrap().to_object(py)
     }
 }
@@ -190,7 +153,7 @@ impl NodeHandleArray {
     }
 }
 
-fn map_link_err(err: super::Error) -> PyErr {
+pub fn map_link_err(err: super::Error) -> PyErr {
     match err {
         crate::Error::LinkReferenceCycle => {
             pyo3::exceptions::PyValueError::new_err("Detected a link reference cycle.")
@@ -270,147 +233,5 @@ impl NodeHandleArray {
             return Err(pyo3::exceptions::PyIndexError::new_err(message));
         }
         Ok((self.build_item_handle)(py, self.inner.index(i)))
-    }
-}
-
-#[pyclass]
-#[derive(Clone)]
-pub struct SomeStruct {
-    #[pyo3(get, set)]
-    v1: u32,
-    #[pyo3(get, set)]
-    v2: f32,
-    #[pyo3(get, set)]
-    v3: [f32; 3],
-}
-
-impl super::State for SomeStruct {
-    type NodeHandle = super::NodeHandleSpecialized<SomeStruct>;
-
-    fn write(&self, store: &mut crate::Store, at: crate::NodeRef) -> crate::Result<()> {
-        let map = if let super::ResolveResult::Struct(map) = store.to_val(at)? {
-            map.clone()
-        } else {
-            return Err(super::Error::IncorrectType);
-        };
-
-        {
-            let field_name = "v1";
-            let loc = map
-                .get(field_name)
-                .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-            self.v1.write(store, *loc)?;
-        }
-
-        {
-            let field_name = "v2";
-            let loc = map
-                .get(field_name)
-                .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-            self.v2.write(store, *loc)?;
-        }
-
-        {
-            let field_name = "v3";
-            let loc = map
-                .get(field_name)
-                .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-            self.v3.write(store, *loc)?;
-        }
-
-        Ok(())
-    }
-
-    fn store(&self, store: &mut crate::Store) -> crate::NodeRef {
-        let mut map = super::Map::default();
-        map.insert("v1".to_owned(), self.v1.store(store));
-        map.insert("v2".to_owned(), self.v2.store(store));
-        map.insert("v3".to_owned(), self.v3.store(store));
-
-        store.push(super::Node::Dir(map))
-    }
-
-    fn load(store: &crate::Store, location: crate::NodeRef) -> crate::Result<Self> {
-        if let super::ResolveResult::Struct(map) = store.to_val(location)? {
-            Ok(Self {
-                v1: {
-                    let field_name = stringify!(v1);
-                    let loc = map
-                        .get(field_name)
-                        .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-                    <u32>::load(store, *loc)?
-                },
-                v2: {
-                    let field_name = stringify!(v2);
-                    let loc = map
-                        .get(field_name)
-                        .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-                    <f32>::load(store, *loc)?
-                },
-                v3: {
-                    let field_name = stringify!(v3);
-                    let loc = map
-                        .get(field_name)
-                        .ok_or(super::Error::MissingField(field_name.to_owned()))?;
-                    <[f32; 3]>::load(store, *loc)?
-                },
-            })
-        } else {
-            Err(super::Error::IncorrectType)
-        }
-    }
-}
-
-impl PyState for SomeStruct {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle) -> PyObject {
-        let inner = NodeHandleScalar::new::<SomeStruct>(inner);
-        let init = PyClassInitializer::from(inner).add_subclass(NodeHandleSomeStruct);
-        PyCell::new(py, init).unwrap().to_object(py)
-    }
-}
-
-#[pymethods]
-impl SomeStruct {
-    #[new]
-    fn new() -> Self {
-        SomeStruct {
-            v1: 0,
-            v2: 0.0,
-            v3: [0.0; 3],
-        }
-    }
-
-    fn store(&self, py: Python, store: &mut Store) -> PyObject {
-        Self::build_handle(py, store.inner.store(self).inner)
-    }
-}
-
-#[pyclass(extends = NodeHandleScalar)]
-pub struct NodeHandleSomeStruct;
-
-#[pymethods]
-impl NodeHandleSomeStruct {
-    fn write(self_: PyRef<'_, Self>, val: &SomeStruct, store: &mut Store) -> PyResult<()> {
-        let super_ = self_.into_super();
-
-        store
-            .inner
-            .write_unchecked(&super_.inner, val)
-            .map_err(map_link_err)
-    }
-
-    fn v1(self_: PyRef<'_, Self>, py: Python) -> PyObject {
-        let super_ = self_.into_super();
-        u32::build_handle(py, super_.inner.named("v1".to_owned()))
-    }
-
-    fn v2(self_: PyRef<'_, Self>, py: Python) -> PyObject {
-        let super_ = self_.into_super();
-        f32::build_handle(py, super_.inner.named("v2".to_owned()))
-    }
-
-    fn v3(self_: PyRef<'_, Self>, py: Python) -> PyObject {
-        let super_ = self_.into_super();
-        <[f32; 3]>::build_handle(py, super_.inner.named("v3".to_owned()))
     }
 }

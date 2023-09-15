@@ -25,38 +25,6 @@ h1 = store.store_f32(2.0)
 h2 = store.store_f32(5.0)
 h4 = store.store_u32(5)
 
-v3 = vng.SomeStruct();
-h3 = v3.store(store);
-h5 = v3.store(store);
-
-arr_handle = store.store_f32_arr([4, 5, 6])
-
-h1.link_to(h2, store)
-
-h3.v1().link_to(h4, store)
-
-h2.write(123.0, store)
-h4.write(123, store)
-
-print(h1.load(store))
-print(h3.load(store).v1)
-
-foo = h3.load(store)
-foo.v2 = -3.1
-
-h3.v2().link_to(h1, store)
-h3.write(foo, store)
-h5.link_to(h3, store)
-print(h5.v2().load(store))
-
-arr_handle.link_to(h5.v3(), store)
-
-print(h5.v3().load(store))
-h5.v3().at(1).link_to(h1, store)
-print(h5.v3().load(store))
-print(arr_handle.load(store))
-
-
 slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
 slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
 slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0)
@@ -71,8 +39,22 @@ camera_state = vng.CameraState(
         )
 
 c_handle = camera_state.store(store)
+c_handle2 = camera_state.store(store)
 
-print(c_handle)
+c_handle.link_to(c_handle2, store)
+
+c_handle2.write(
+        vng.CameraState(
+            vng.TrackballState(
+                [5.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [1.0, 1.0, 0.0],
+                ),
+            50.0
+            ), store
+        )
+
+print(c_handle.load(store).fov)
 
 gui_state = vng.GuiState(rt)
 
