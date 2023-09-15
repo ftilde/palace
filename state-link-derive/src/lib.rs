@@ -277,15 +277,18 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
 
             #[pyo3::pymethods]
             impl #node_handle_name {
-                fn write(&self, val: &#name, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
+                #[pyo3(name = "write")]
+                fn write_py(&self, val: &#name, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
                     store.inner.write(self, &val).map_err(state_link::py::map_link_err)
                 }
 
-                fn load(&self, py: pyo3::Python, store: &state_link::py::Store) -> pyo3::PyObject {
+                #[pyo3(name = "load")]
+                fn load_py(&self, py: pyo3::Python, store: &state_link::py::Store) -> pyo3::PyObject {
                     store.inner.load(self).into_py(py)
                 }
 
-                fn link_to(&self, dst: &Self, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
+                #[pyo3(name = "link_to")]
+                fn link_to_py(&self, dst: &Self, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
                     store.inner.link(self, dst).map_err(state_link::py::map_link_err)
                 }
             }
