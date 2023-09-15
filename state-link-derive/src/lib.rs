@@ -212,17 +212,8 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
 
     let has_generics = !input.generics.params.is_empty();
 
-    let handle_decoration = if gen_python && !has_generics {
-        quote! {
-            #[pyo3::pyclass]
-        }
-    } else {
-        quote! {}
-    };
-
     let core_output = quote! {
         #[allow(non_camel_case_types)]
-        #handle_decoration
         #visibility struct #node_handle_name #impl_generics {
             inner: ::state_link::GenericNodeHandle,
             _marker: ::std::marker::PhantomData<#name #ty_generics>
@@ -264,6 +255,9 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
     let generics = add_trait_bounds_py(input.generics);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
+    let inner_node_handle_name = node_handle_name;
+    let node_handle_name = quote::format_ident!("__PyNodeHandle_{}", name);
+
     let python_code = if gen_python && !has_generics {
         let handle_access = match data {
             Data::Struct(s) => match s.fields {
@@ -277,7 +271,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         quote! {
                             #[pyo3(name = #inside_py_name_str)]
                             fn #func_name(&self, py: pyo3::Python) -> pyo3::PyObject {
-                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.named(stringify!(#name).to_owned()))
+                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.inner.named(stringify!(#name).to_owned()), self.store.clone_ref(py))
                             }
                         }
                     });
@@ -293,7 +287,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         quote! {
                             #[pyo3(name = #inside_py_name_str)]
                             pub fn #fn_name(&self, py: pyo3::Python) -> pyo3::PyObject {
-                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.index(#num))
+                                <#ty as state_link::py::PyState>::build_handle(py, self.inner.inner.index(#num), self.store.clone_ref(py))
                             }
                         }
                     });
@@ -311,44 +305,56 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
             // pymethods block, at least without adding the multiple-pymethods feature, which has
             // its own issues: https://github.com/PyO3/pyo3/issues/341
             impl #impl_generics #name #ty_generics #where_clause {
-                fn store_py(&self, py: pyo3::Python, store: &mut ::state_link::py::Store) -> pyo3::PyObject {
-                    <Self as ::state_link::py::PyState>::build_handle(py, store.inner.store(self).inner)
+                fn store_py(&self, py: pyo3::Python, store: pyo3::Py<::state_link::py::Store>) -> pyo3::PyObject {
+                    let node = store.borrow_mut(py).inner.store(self).inner;
+                    <Self as ::state_link::py::PyState>::build_handle(py, node, store)
                 }
+            }
+
+            #[allow(non_camel_case_types)]
+            #[pyo3::pyclass]
+            struct #node_handle_name {
+                inner: #inner_node_handle_name,
+                store: pyo3::Py<state_link::py::Store>,
             }
 
             #[pyo3::pymethods]
             impl #node_handle_name {
                 #[pyo3(name = "write")]
-                fn write_py(&self, val: &#name, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
-                    store.inner.write(self, &val).map_err(state_link::py::map_link_err)
+                fn write_py(&self, py: pyo3::Python, val: &#name) -> pyo3::PyResult<()> {
+                    self.store.borrow_mut(py).inner.write(&self.inner, &val).map_err(state_link::py::map_link_err)
                 }
 
                 #[pyo3(name = "load")]
-                fn load_py(&self, py: pyo3::Python, store: &state_link::py::Store) -> pyo3::PyObject {
-                    store.inner.load(self).into_py(py)
+                fn load_py(&self, py: pyo3::Python) -> pyo3::PyObject {
+                    self.store.borrow_mut(py).inner.load(&self.inner).into_py(py)
                 }
 
                 #[pyo3(name = "link_to")]
-                fn link_to_py(&self, dst: &Self, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
-                    store.inner.link(self, dst).map_err(state_link::py::map_link_err)
+                fn link_to_py(&self, py: pyo3::Python, dst: &Self) -> pyo3::PyResult<()> {
+                    self.store.borrow_mut(py).inner.link(&self.inner, &dst.inner).map_err(state_link::py::map_link_err)
                 }
 
                 #[pyo3(name = "update")]
-                fn update_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction, store: &mut state_link::py::Store) -> pyo3::PyResult<()> {
-                    let val_py = self.load_py(py, store);
+                fn update_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+                    let val_py = self.load_py(py);
                     f.call1((&val_py,))?;
                     let val = val_py.extract::<#name>(py)?;
-                    self.write_py(&val, store)
+                    self.write_py(py, &val)
                 }
 
                 #handle_access
             }
 
             impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
-                fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle) -> pyo3::PyObject {
+                fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::Store>) -> pyo3::PyObject {
                     use pyo3::ToPyObject;
 
-                    let init = <<Self as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner);
+                    let inner = <<Self as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner);
+                    let init = #node_handle_name {
+                        inner,
+                        store,
+                    };
                     pyo3::PyCell::new(py, init).unwrap().to_object(py)
                 }
             }

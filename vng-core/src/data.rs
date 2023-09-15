@@ -199,8 +199,12 @@ mod py {
     }
 
     impl<const N: usize, T: state_link::py::PyState> state_link::py::PyState for Vector<N, T> {
-        fn build_handle(py: Python, inner: state_link::GenericNodeHandle) -> PyObject {
-            <[T; N]>::build_handle(py, inner.index(0))
+        fn build_handle(
+            py: Python,
+            inner: state_link::GenericNodeHandle,
+            store: Py<state_link::py::Store>,
+        ) -> PyObject {
+            <[T; N]>::build_handle(py, inner.index(0), store)
         }
     }
 }
