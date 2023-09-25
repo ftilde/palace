@@ -25,6 +25,9 @@ slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 
+#slice_state1.zoom_level().link_to(slice_state0.zoom_level())
+#slice_state2.zoom_level().link_to(slice_state0.zoom_level())
+
 camera_state = vng.CameraState(
         vng.TrackballState(
             [5.5, 0.5, 0.5],
@@ -34,9 +37,7 @@ camera_state = vng.CameraState(
         30.0
         ).store(store)
 
-print(camera_state.load().fov)
-#c_handle.trackball().eye().update(bla, store) #TODO: something is not working here...
-print(camera_state.trackball().eye().load())
+camera_state.trackball().eye().map(lambda v: np.array(v) + np.array([1.1, 1.0, 1.0]))
 
 gui_state = vng.GuiState(rt)
 
@@ -86,14 +87,14 @@ def render(size, events):
 def render_raycast(size, events):
 
     def drag(pos, delta):
-        camera_state.trackball().update(lambda tb: tb.pan_around(delta))
+        camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))
 
     def wheel(delta, pos):
-        camera_state.trackball().update(lambda tb: tb.move_inout(delta))
+        camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))
 
     events.act([
         #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball.pan_around(delta)),
-        #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().update(lambda tb: tb.pan_around(delta)),
+        #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta)),
         vng.OnMouseDrag(vng.MouseButton.Left, drag),
         vng.OnWheelMove(wheel),
     ]);

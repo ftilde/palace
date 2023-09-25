@@ -65,6 +65,13 @@ impl NodeHandleF32 {
             .load(&self.inner)
             .into_py(py)
     }
+
+    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+        let val_py = self.load(py);
+        let res_py = f.call1((&val_py,))?;
+        let val = res_py.extract::<f32>()?;
+        self.write(py, val)
+    }
 }
 
 #[pyclass]
@@ -95,6 +102,12 @@ impl NodeHandleU32 {
             .inner
             .load(&self.inner)
             .into_py(py)
+    }
+    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+        let val_py = self.load(py);
+        let res_py = f.call1((&val_py,))?;
+        let val = res_py.extract::<u32>()?;
+        self.write(py, val)
     }
 }
 
@@ -226,10 +239,10 @@ impl NodeHandleArray {
     fn write(&self, py: Python, vals: Vec<PyObject>) -> PyResult<()> {
         let mut store = self.store.borrow_mut(py);
 
-        let at = self.inner.node;
+        let at = store.inner.resolve(&self.inner).unwrap();
         let seq =
             if let super::ResolveResult::Seq(seq) = store.inner.to_val(at).map_err(map_link_err)? {
-                seq.clone() //TODO: instead of cloning we can probably also just take the old value out
+                seq.clone()
             } else {
                 panic!("Not a sequence");
             };
@@ -269,10 +282,17 @@ impl NodeHandleArray {
         ))
     }
 
-    fn update(&self, py: Python, f: &pyo3::types::PyFunction) -> PyResult<()> {
+    fn mutate(&self, py: Python, f: &pyo3::types::PyFunction) -> PyResult<()> {
         let initial = self.load(py);
         let new_py = f.call1((initial,))?;
         let new = new_py.extract::<Vec<PyObject>>()?;
         self.write(py, new)
+    }
+
+    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+        let val_py = self.load(py);
+        let res_py = f.call1((&val_py,))?;
+        let val = res_py.extract::<Vec<PyObject>>()?;
+        self.write(py, val)
     }
 }

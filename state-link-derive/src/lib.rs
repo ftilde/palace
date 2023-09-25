@@ -335,11 +335,19 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     self.store.borrow_mut(py).inner.link(&self.inner, &dst.inner).map_err(state_link::py::map_link_err)
                 }
 
-                #[pyo3(name = "update")]
-                fn update_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+                #[pyo3(name = "mutate")]
+                fn mutate_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
                     let val_py = self.load_py(py);
                     f.call1((&val_py,))?;
                     let val = val_py.extract::<#name>(py)?;
+                    self.write_py(py, &val)
+                }
+
+                #[pyo3(name = "map")]
+                fn map_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+                    let val_py = self.load_py(py);
+                    let res_py = f.call1((&val_py,))?;
+                    let val = res_py.extract::<#name>()?;
                     self.write_py(py, &val)
                 }
 
