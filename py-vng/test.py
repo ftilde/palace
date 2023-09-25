@@ -86,17 +86,9 @@ def render(size, events):
 
 def render_raycast(size, events):
 
-    def drag(pos, delta):
-        camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))
-
-    def wheel(delta, pos):
-        camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))
-
     events.act([
-        #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball.pan_around(delta)),
-        #vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta)),
-        vng.OnMouseDrag(vng.MouseButton.Left, drag),
-        vng.OnWheelMove(wheel),
+        vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))),
+        vng.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
     ]);
 
     md = vng.tensor_metadata(size, [512]*2)
@@ -117,9 +109,9 @@ def render_raycast(size, events):
 def render_slice(dim, slice_state):
     def inner(size, events):
         events.act([
-            vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.update(lambda s: s.drag(delta))),
-            vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.update(lambda s: s.scroll(delta[0]))),
-            vng.OnWheelMove(lambda delta, pos: slice_state.update(lambda s: s.zoom(delta, pos))),
+            vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
+            vng.OnMouseDrag(vng.MouseButton.Right, lambda pos, delta: slice_state.mutate(lambda s: s.scroll(delta[0]))),
+            vng.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
         ]);
 
         md = vng.tensor_metadata(size, [512]*2)
