@@ -37,7 +37,7 @@ camera_state = vng.CameraState(
         30.0
         ).store(store)
 
-camera_state.trackball().eye().map(lambda v: np.array(v) + np.array([1.1, 1.0, 1.0]))
+camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
 gui_state = vng.GuiState(rt)
 

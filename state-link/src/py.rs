@@ -247,11 +247,13 @@ impl NodeHandleArray {
                 panic!("Not a sequence");
             };
 
-        if seq.len() != self.len {
+        assert_eq!(self.len, seq.len());
+
+        if seq.len() != vals.len() {
             return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "Sequence len mismatch: {} vs {}",
-                self.len,
                 seq.len(),
+                vals.len(),
             )));
         }
 
