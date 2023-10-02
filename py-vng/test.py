@@ -70,6 +70,7 @@ def render(size, events):
             vng.Button("yes?", lambda: print("yes!")),
             vng.Button("no?", lambda: print("no!")),
             vng.Slider(fov, 10, 50),
+            vng.Slider(fov, 20, 60),
         ]),
     ]))
 

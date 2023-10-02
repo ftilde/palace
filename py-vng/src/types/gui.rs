@@ -24,12 +24,13 @@ impl GuiState {
         &self,
         py: Python,
         events: &mut Events,
-        window_content: GuiNode,
+        mut window_content: GuiNode,
     ) -> PyResult<GuiRenderState> {
         let mut err = None;
         let grs = self.inner.setup(&mut events.0, |ctx| {
             let res =
                 c::egui::Window::new("Settings").show(ctx, |ui| window_content.render(py, ui));
+
             if let Some(res) = res {
                 if let Some(res) = res.inner {
                     if let Err(e) = res {
@@ -38,6 +39,12 @@ impl GuiState {
                 }
             }
         });
+
+        // Due to... philosophical differences in API design between python and rust (imgui) we
+        // need to progagate state changed via gui in a separate step _after_ all the egui
+        // machinery.
+        window_content.propagate_values(py);
+
         if let Some(err) = err {
             Err(err)
         } else {
@@ -102,18 +109,46 @@ impl Label {
     }
 }
 
+#[derive(Clone, FromPyObject)]
+enum SliderVal {
+    Array0(Py<PyArray0<f64>>),
+}
+
+impl SliderVal {
+    fn get(&self, py: Python) -> f64 {
+        match self {
+            SliderVal::Array0(ref v) => unsafe { *v.as_ref(py).get(()).unwrap() },
+        }
+    }
+    fn set(&self, py: Python, v: f64) {
+        *match self {
+            SliderVal::Array0(ref v) => unsafe { v.as_ref(py).get_mut(()).unwrap() },
+        } = v;
+    }
+}
+
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Slider {
-    val: Py<PyArray0<f64>>,
+    val: SliderVal,
+    proxy: f64,
+    proxy_orig: f64,
     min: f64,
     max: f64,
 }
+
 #[pymethods]
 impl Slider {
     #[new]
-    fn new(val: Py<PyArray0<f64>>, min: f64, max: f64) -> Self {
-        Self { val, min, max }
+    fn new(py: Python, val: SliderVal, min: f64, max: f64) -> Self {
+        let proxy = val.get(py);
+        Self {
+            val,
+            proxy,
+            proxy_orig: proxy,
+            min,
+            max,
+        }
     }
 }
 
@@ -145,36 +180,31 @@ impl Vertical {
 
 #[derive(FromPyObject, Clone)]
 enum GuiNode {
-    Button(Py<Button>),
-    Slider(Py<Slider>),
-    Label(Py<Label>),
-    Horizontal(Py<Horizontal>),
-    Vertical(Py<Vertical>),
+    Button(Button),
+    Slider(Slider),
+    Label(Label),
+    Horizontal(Horizontal),
+    Vertical(Vertical),
 }
 
 impl GuiNode {
-    fn render(&self, py: Python, ui: &mut c::egui::Ui) -> PyResult<()> {
+    fn render(&mut self, py: Python, ui: &mut c::egui::Ui) -> PyResult<()> {
         match self {
             GuiNode::Button(b) => {
-                let b = b.borrow(py);
                 if ui.button(&b.text).clicked() {
                     b.action.call0(py)?;
                 }
             }
             GuiNode::Slider(b) => {
-                let b = b.borrow(py);
                 let range = b.min..=b.max;
-                let v = unsafe { b.val.as_ref(py).get_mut(()).unwrap() };
-                ui.add(c::egui::Slider::new(v, range));
+                ui.add(c::egui::Slider::new(&mut b.proxy, range));
             }
             GuiNode::Label(b) => {
-                let b = b.borrow(py);
                 ui.label(&b.text);
             }
             GuiNode::Horizontal(h) => {
-                let h = h.borrow(py);
                 ui.horizontal(|ui| {
-                    for n in &h.nodes {
+                    for n in &mut h.nodes {
                         n.render(py, ui)?;
                     }
                     PyResult::Ok(())
@@ -182,9 +212,8 @@ impl GuiNode {
                 .inner?
             }
             GuiNode::Vertical(h) => {
-                let h = h.borrow(py);
                 ui.vertical(|ui| {
-                    for n in &h.nodes {
+                    for n in &mut h.nodes {
                         n.render(py, ui)?;
                     }
                     PyResult::Ok(())
@@ -193,5 +222,27 @@ impl GuiNode {
             }
         }
         Ok(())
+    }
+
+    fn propagate_values(&self, py: Python) {
+        match self {
+            GuiNode::Button(_) => {}
+            GuiNode::Slider(v) => {
+                if v.proxy != v.proxy_orig {
+                    v.val.set(py, v.proxy);
+                }
+            }
+            GuiNode::Label(_) => {}
+            GuiNode::Horizontal(h) => {
+                for n in &h.nodes {
+                    n.propagate_values(py)
+                }
+            }
+            GuiNode::Vertical(h) => {
+                for n in &h.nodes {
+                    n.propagate_values(py)
+                }
+            }
+        }
     }
 }
