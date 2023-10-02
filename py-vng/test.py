@@ -63,18 +63,15 @@ def split(dim, fraction, render_first, render_last):
     return inner
 
 def render(size, events):
-    fov = np.array(camera_state.fov().load())
     gui = gui_state.setup(events, vng.Vertical([
         vng.Label("Look at all these buttons"),
         vng.Horizontal([
             vng.Button("yes?", lambda: print("yes!")),
             vng.Button("no?", lambda: print("no!")),
-            vng.Slider(fov, 10, 50),
-            vng.Slider(fov, 20, 60),
+            vng.Slider(camera_state.fov(), 10, 50),
+            vng.Slider(camera_state.fov(), 20, 60),
         ]),
     ]))
-
-    camera_state.fov().write(fov)
 
     lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(0, slice_state0), render_slice(1, slice_state1))
     upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast, render_slice(2, slice_state2))

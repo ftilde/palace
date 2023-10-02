@@ -1,5 +1,6 @@
 use super::{core::RunTime, Events, VolumeOperator};
 use numpy::PyArray0;
+use state_link::py::NodeHandleF32;
 use vng_core::{operators::gui as c, vulkan::state::VulkanState};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -112,18 +113,21 @@ impl Label {
 #[derive(Clone, FromPyObject)]
 enum SliderVal {
     Array0(Py<PyArray0<f64>>),
+    StoreRef(NodeHandleF32),
 }
 
 impl SliderVal {
     fn get(&self, py: Python) -> f64 {
         match self {
-            SliderVal::Array0(ref v) => unsafe { *v.as_ref(py).get(()).unwrap() },
+            SliderVal::Array0(h) => unsafe { *h.as_ref(py).get(()).unwrap() },
+            SliderVal::StoreRef(h) => h.load(py) as f64,
         }
     }
     fn set(&self, py: Python, v: f64) {
-        *match self {
-            SliderVal::Array0(ref v) => unsafe { v.as_ref(py).get_mut(()).unwrap() },
-        } = v;
+        match self {
+            SliderVal::Array0(h) => *unsafe { h.as_ref(py).get_mut(()).unwrap() } = v,
+            SliderVal::StoreRef(h) => h.write(py, v as f32).unwrap(),
+        };
     }
 }
 

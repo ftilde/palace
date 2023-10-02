@@ -37,6 +37,7 @@ impl Store {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct NodeHandleF32 {
     inner: <f32 as super::State>::NodeHandle,
     store: Py<Store>,
@@ -44,7 +45,7 @@ pub struct NodeHandleF32 {
 
 #[pymethods]
 impl NodeHandleF32 {
-    fn write(&self, py: Python, val: f32) -> PyResult<()> {
+    pub fn write(&self, py: Python, val: f32) -> PyResult<()> {
         self.store
             .borrow_mut(py)
             .inner
@@ -58,16 +59,12 @@ impl NodeHandleF32 {
             .link(&self.inner, &dst.inner)
             .map_err(map_link_err)
     }
-    fn load(&self, py: Python) -> PyObject {
-        self.store
-            .borrow_mut(py)
-            .inner
-            .load(&self.inner)
-            .into_py(py)
+    pub fn load(&self, py: Python) -> f32 {
+        self.store.borrow_mut(py).inner.load(&self.inner)
     }
 
     fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
-        let val_py = self.load(py);
+        let val_py = self.load(py).into_py(py);
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<f32>()?;
         self.write(py, val)

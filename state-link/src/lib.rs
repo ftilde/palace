@@ -408,6 +408,14 @@ pub struct NodeHandleSpecialized<T> {
     inner: GenericNodeHandle,
     _marker: std::marker::PhantomData<T>,
 }
+impl<T> Clone for NodeHandleSpecialized<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _marker: Default::default(),
+        }
+    }
+}
 
 impl<T: State> NodeHandle for NodeHandleSpecialized<T> {
     type NodeType = T;
