@@ -538,6 +538,12 @@ impl<T: Copy> Vector<4, T> {
     }
 }
 
+#[repr(transparent)]
+#[derive(
+    Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, state_link::State,
+)]
+pub struct Matrix<const N: usize, T>([Vector<N, T>; N]);
+
 pub struct AABB<const N: usize, T> {
     min: Vector<N, T>,
     max: Vector<N, T>,

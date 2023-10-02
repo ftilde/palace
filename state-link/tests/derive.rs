@@ -1,4 +1,4 @@
-#[derive(state_link::State, Default, Debug, PartialEq)]
+#[derive(state_link::StateNoPy, Default, Debug, PartialEq)]
 struct NewtypeArray([f32; 3], u32);
 
 #[test]
@@ -18,7 +18,7 @@ fn newtype_array() {
     assert_eq!(f.0, n0);
 }
 
-#[derive(state_link::State, Default, Debug, PartialEq)]
+#[derive(state_link::StateNoPy, Default, Debug, PartialEq)]
 struct SimpleStruct {
     a: f32,
     b: f32,
@@ -42,7 +42,7 @@ fn simple_struct() {
     assert_eq!(f.b, nb);
 }
 
-#[derive(state_link::State, Default, Debug, PartialEq)]
+#[derive(state_link::StateNoPy, Default, Debug, PartialEq)]
 struct Unit;
 
 #[test]
@@ -58,7 +58,7 @@ fn unit() {
     assert_eq!(f, n);
 }
 
-#[derive(state_link::State, Default, Debug, PartialEq)]
+#[derive(state_link::StateNoPy, Default, Debug, PartialEq)]
 struct Generics<T>(T, u32);
 #[test]
 fn generics() {
@@ -82,9 +82,9 @@ fn link_simple() {
 
     let r = store.store(&f);
 
-    store.link(&r.elm0(), &r.elm1());
+    store.link(&r.elm0(), &r.elm1()).unwrap();
 
-    store.write(&r.elm0(), &123);
+    store.write(&r.elm0(), &123).unwrap();
 
     assert_eq!(store.load(&r.elm0()), 123);
     assert_eq!(store.load(&r.elm1()), 123);
@@ -100,9 +100,9 @@ fn link_complex() {
     let a = store.store(&a);
     let b = store.store(&b);
 
-    store.link(&a.elm0().a(), &b.elm0().at(2));
+    store.link(&a.elm0().a(), &b.elm0().at(2)).unwrap();
 
-    store.write(&b.elm0(), &[1.0, 2.0, 3.0]);
+    store.write(&b.elm0(), &[1.0, 2.0, 3.0]).unwrap();
 
     assert_eq!(
         store.load(&a.elm0()),
