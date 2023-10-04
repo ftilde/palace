@@ -221,13 +221,19 @@ impl<const N: usize, T> Into<[T; N]> for Vector<N, T> {
     }
 }
 
-impl<const N: usize, T: Copy> Vector<N, T> {
+impl<const N: usize, T> Vector<N, T> {
+    pub fn from_fn(f: impl FnMut(usize) -> T) -> Self {
+        Vector(std::array::from_fn(f))
+    }
     pub fn new(inner: [T; N]) -> Self {
         Vector(inner)
     }
     pub fn dim() -> usize {
         N
     }
+}
+
+impl<const N: usize, T: Copy> Vector<N, T> {
     pub fn fill(val: T) -> Self {
         Vector([val; N])
     }
@@ -359,6 +365,20 @@ impl<const N: usize, T> IntoIterator for Vector<N, T> {
         self.0.into_iter()
     }
 }
+impl<const N: usize, T: Copy> Vector<N, T> {
+    fn dot<O: Copy + Add<O, Output = O>, U: Copy + Mul<T, Output = O>>(
+        self,
+        other: &Vector<N, U>,
+    ) -> O {
+        let v: Vector<N, O> = other.zip(self, Mul::mul);
+        let mut v = v.into_iter();
+        let mut o = v.next().unwrap();
+        for v in v {
+            o = v + o;
+        }
+        o
+    }
+}
 impl<const N: usize, T: Neg + Copy> Neg for Vector<N, T> {
     type Output = Vector<N, T::Output>;
     fn neg(self) -> Self::Output {
@@ -460,7 +480,7 @@ impl<T: Copy> From<cgmath::Vector4<T>> for Vector<4, T> {
     }
 }
 
-impl std::ops::Mul<Vector<3, f32>> for cgmath::Matrix3<f32> {
+impl Mul<Vector<3, f32>> for cgmath::Matrix3<f32> {
     type Output = Vector<3, f32>;
 
     fn mul(self, rhs: Vector<3, f32>) -> Self::Output {
@@ -469,7 +489,7 @@ impl std::ops::Mul<Vector<3, f32>> for cgmath::Matrix3<f32> {
     }
 }
 
-impl std::ops::Mul<Vector<4, f32>> for cgmath::Matrix4<f32> {
+impl Mul<Vector<4, f32>> for cgmath::Matrix4<f32> {
     type Output = Vector<4, f32>;
 
     fn mul(self, rhs: Vector<4, f32>) -> Self::Output {
@@ -538,11 +558,143 @@ impl<T: Copy> Vector<4, T> {
     }
 }
 
+// A column major matrix
 #[repr(transparent)]
 #[derive(
     Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, state_link::State,
 )]
 pub struct Matrix<const N: usize, T>([Vector<N, T>; N]);
+
+impl<const N: usize, T> Matrix<N, T> {
+    pub fn new(v: [Vector<N, T>; N]) -> Self {
+        Self(v)
+    }
+    pub fn from_col_fn(f: impl FnMut(usize) -> Vector<N, T>) -> Self {
+        Self(std::array::from_fn(f))
+    }
+    pub fn from_fn(mut f: impl FnMut(usize, usize) -> T) -> Self {
+        Self(std::array::from_fn(|col| {
+            Vector::from_fn(|row| f(row, col))
+        }))
+    }
+
+    pub fn at(&self, row: usize, col: usize) -> &T {
+        &self.0[col].0[row]
+    }
+    pub fn col(&self, col: usize) -> &Vector<N, T> {
+        &self.0[col]
+    }
+    pub fn zip<U, O>(&self, other: &Matrix<N, U>, mut f: impl FnMut(&T, &U) -> O) -> Matrix<N, O> {
+        Matrix::from_fn(|row, col| f(self.at(row, col), other.at(row, col)))
+    }
+    pub fn map<O>(&self, mut f: impl FnMut(&T) -> O) -> Matrix<N, O> {
+        Matrix::from_fn(|row, col| f(self.at(row, col)))
+    }
+}
+impl<const N: usize, T: Copy + Mul<Output = T>> Matrix<N, T> {
+    pub fn scaled_by(&self, by: T) -> Self {
+        self.map(|v| *v * by)
+    }
+}
+impl<const N: usize, T: Copy> Matrix<N, T> {
+    pub fn transposed(&self) -> Self {
+        Self::from_fn(|row, col| *self.at(col, row))
+    }
+}
+impl<const N: usize, T: num::Zero + Copy> Matrix<N, T> {
+    pub fn scale(scale: Vector<N, T>) -> Self {
+        Self::from_col_fn(|i| {
+            let m = scale[i];
+            let mut v = Vector::fill(num::zero::<T>());
+            v[i] = m;
+            v
+        })
+    }
+}
+
+impl<const N: usize, T: num::Zero + num::One + Copy> Matrix<N, T> {
+    pub fn identity() -> Self {
+        Self::from_col_fn(|i| {
+            let mut v = Vector::fill(num::zero::<T>());
+            v[i] = T::one();
+            v
+        })
+    }
+}
+
+impl<T: num::Zero + num::One + Copy> Matrix<4, T> {
+    pub fn translate(offset: Vector<3, T>) -> Self {
+        Self::from_col_fn(|i| {
+            if i == 0 {
+                Vector::new([T::one(), offset.z(), offset.y(), offset.x()])
+            } else {
+                let mut v = Vector::fill(num::zero::<T>());
+                v[i] = T::one();
+                v
+            }
+        })
+    }
+}
+
+impl<const N: usize, T: Copy + Add<Output = T> + Mul<Output = T>> Mul<Vector<N, T>>
+    for Matrix<N, T>
+{
+    type Output = Vector<N, T>;
+
+    fn mul(self, rhs: Vector<N, T>) -> Self::Output {
+        let m = self.transposed();
+        Self::Output::from_fn(|i| m.col(i).dot(&rhs))
+    }
+}
+
+impl<const N: usize, T: Copy + Add<Output = T> + Mul<Output = T>> Mul<Matrix<N, T>>
+    for Matrix<N, T>
+{
+    type Output = Matrix<N, T>;
+
+    fn mul(self, rhs: Matrix<N, T>) -> Self::Output {
+        let rhs = rhs.transposed();
+        Self::Output::from_fn(|row, col| self.col(col).dot(rhs.col(row)))
+    }
+}
+
+impl<const N: usize, T: Copy + Add<Output = T>> Add<Matrix<N, T>> for Matrix<N, T> {
+    type Output = Matrix<N, T>;
+
+    fn add(self, rhs: Matrix<N, T>) -> Self::Output {
+        self.zip(&rhs, |l, r| *l + *r)
+    }
+}
+
+impl<const N: usize, T: Copy + Sub<Output = T>> Sub<Matrix<N, T>> for Matrix<N, T> {
+    type Output = Matrix<N, T>;
+
+    fn sub(self, rhs: Matrix<N, T>) -> Self::Output {
+        self.zip(&rhs, |l, r| *l - *r)
+    }
+}
+
+impl<T: Copy> From<Matrix<4, T>> for cgmath::Matrix4<T> {
+    fn from(value: Matrix<4, T>) -> Self {
+        cgmath::Matrix4 {
+            x: (*value.col(3)).into(),
+            y: (*value.col(2)).into(),
+            z: (*value.col(1)).into(),
+            w: (*value.col(0)).into(),
+        }
+    }
+}
+
+impl<T: Copy> From<cgmath::Matrix4<T>> for Matrix<4, T> {
+    fn from(value: cgmath::Matrix4<T>) -> Self {
+        Self::new([
+            value.w.into(),
+            value.z.into(),
+            value.y.into(),
+            value.x.into(),
+        ])
+    }
+}
 
 pub struct AABB<const N: usize, T> {
     min: Vector<N, T>,
@@ -774,3 +926,50 @@ pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
 //            .map(|i| self.data[i])
 //    }
 //}
+//
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn dot() {
+        let v1 = Vector::<5, usize>::from_fn(|i| (i + 1) * 5);
+        let v2 = Vector::<5, usize>::new([1, 0, 1, 0, 2]);
+        assert_eq!(v1.dot(&v2), 5 + 15 + 50);
+    }
+
+    #[test]
+    fn mul_mat_vec() {
+        let v = Vector::<2, usize>::new([5, 2]);
+        let m = Matrix::<2, usize>::new([[1usize, 2].into(), [3usize, 4].into()]);
+        let r = Vector::<2, usize>::new([5 + 6, 10 + 8]);
+        assert_eq!(m * v, r);
+    }
+
+    #[test]
+    fn mul_mat_mat() {
+        let m1 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let r = Matrix::<2, i32>::new([[1 + 6, 2 + 8].into(), [3 + 12, 6 + 16].into()]);
+        assert_eq!(m1 * m2, r);
+
+        let m1 = Matrix::<2, i32>::identity();
+        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        assert_eq!(m1 * m2, m2);
+        assert_eq!(m2 * m1, m2);
+        assert_eq!(m1 * m1, m1);
+
+        let m1 = Matrix::<2, i32>::new([[1, 0].into(), [0, 0].into()]);
+        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let r = Matrix::<2, i32>::new([[1, 2].into(), [0, 0].into()]);
+        assert_eq!(m1 * m2, r);
+    }
+
+    #[test]
+    fn add_mat_mat() {
+        let m1 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let m2 = Matrix::<2, i32>::new([[9, 8].into(), [0, -1].into()]);
+        let r = Matrix::<2, i32>::new([[1 + 9, 2 + 8].into(), [3, 3].into()]);
+        assert_eq!(m1 + m2, r);
+    }
+}

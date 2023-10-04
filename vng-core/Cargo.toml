@@ -36,6 +36,7 @@ egui = "0.22"
 pyo3 = { version = "0.19.1", features = [], optional = true }
 array-init = "2.1.0"
 state-link = { path = "../state-link" }
+num = "0.4.1"
 
 [features]
 default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
