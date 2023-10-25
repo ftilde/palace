@@ -14,6 +14,8 @@ members = [
     "py-vng",
 ]
 
+resolver = "2"
+
 [profile.release]
 debug = true
 #lto = true
