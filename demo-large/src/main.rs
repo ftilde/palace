@@ -428,7 +428,7 @@ fn raycaster(
     let eep = vng_core::operators::raycaster::entry_exit_points(
         input.metadata.clone(),
         scalar::constant_hash(md),
-        scalar::constant_as_array(matrix),
+        scalar::constant_pod(matrix),
     );
     vng_core::operators::raycaster::raycast(input, eep)
 }

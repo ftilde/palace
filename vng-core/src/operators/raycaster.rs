@@ -6,7 +6,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, hmul, GlobalCoordinate, Vector},
+    data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -36,8 +36,8 @@ pub struct TrackballState {
 }
 
 impl TrackballState {
-    pub fn projection_mat(&self) -> cgmath::Matrix4<f32> {
-        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into())
+    pub fn projection_mat(&self) -> Matrix<4, f32> {
+        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into()).into()
     }
 }
 
@@ -96,13 +96,14 @@ impl CameraState {
 }
 
 impl CameraState {
-    pub fn projection_mat(&self, size: Vector<2, GlobalCoordinate>) -> cgmath::Matrix4<f32> {
-        let perspective = cgmath::perspective(
+    pub fn projection_mat(&self, size: Vector<2, GlobalCoordinate>) -> Matrix<4, f32> {
+        let perspective: Matrix<4, f32> = cgmath::perspective(
             cgmath::Deg(self.fov),
             size.x().raw as f32 / size.y().raw as f32,
             0.001,
             100.0,
-        );
+        )
+        .into();
         let matrix = perspective * self.trackball.projection_mat();
         matrix
     }
@@ -111,7 +112,7 @@ impl CameraState {
 pub fn entry_exit_points(
     input_metadata: ScalarOperator<VolumeMetaData>,
     result_metadata: ScalarOperator<ImageMetaData>,
-    projection_mat: ScalarOperator<cgmath::Matrix4<f32>>,
+    projection_mat: ScalarOperator<Matrix<4, f32>>,
 ) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {

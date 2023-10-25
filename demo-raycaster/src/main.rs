@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use vng_core::data::{LocalVoxelPosition, Matrix, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
@@ -273,18 +273,20 @@ fn eval_network(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let perspective = cgmath::perspective(
+    let perspective: Matrix<4, f32> = cgmath::perspective(
         cgmath::Deg(*fov),
         md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
         0.001, //TODO:
         100.0,
-    );
-    let matrix =
-        perspective * cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into());
+    )
+    .into();
+    let look_at: Matrix<4, f32> =
+        cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into()).into();
+    let matrix = perspective * look_at;
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.metadata.clone(),
         scalar::constant_hash(md),
-        scalar::constant_as_array(matrix),
+        scalar::constant_pod(matrix),
     );
     let frame = vng_core::operators::raycaster::raycast(vol, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));

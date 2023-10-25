@@ -6,7 +6,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, hmul, GlobalCoordinate, Vector},
+    data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
     id::Id,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
@@ -40,7 +40,7 @@ impl SliceviewState {
         dim: usize,
         input_data: ScalarOperator<VolumeMetaData>,
         output_data: ScalarOperator<ImageMetaData>,
-    ) -> ScalarOperator<cgmath::Matrix4<f32>> {
+    ) -> ScalarOperator<Matrix<4, f32>> {
         use crate::operators::scalar::{constant_hash, constant_pod};
         slice_projection_mat(
             dim,
@@ -91,7 +91,7 @@ pub fn slice_projection_mat_z_scaled_fit(
     input_data: ScalarOperator<VolumeMetaData>,
     output_data: ScalarOperator<ImageMetaData>,
     selected_slice: ScalarOperator<GlobalCoordinate>,
-) -> ScalarOperator<cgmath::Matrix4<f32>> {
+) -> ScalarOperator<Matrix<4, f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_z")
             .dependent_on(&input_data)
@@ -108,15 +108,17 @@ pub fn slice_projection_mat_z_scaled_fit(
 
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
                 let img_dim = output_data.dimensions.map(|v| v.raw as f32);
-                let out = cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: selected_slice.raw as f32 + 0.5,
-                }) * cgmath::Matrix4::from_nonuniform_scale(
-                    vol_dim.x() / img_dim.x(),
-                    vol_dim.y() / img_dim.y(),
-                    1.0,
-                );
+                let out = Matrix::from_translation(Vector::from([
+                    selected_slice.raw as f32 + 0.5,
+                    0.0,
+                    0.0,
+                ])) * Matrix::from_scale(
+                    vol_dim
+                        .drop_dim(2)
+                        .zip(img_dim, |v, i| v / i)
+                        .push_dim_large(1.0),
+                )
+                .to_homogeneuous();
                 ctx.write(out)
             }
             .into()
@@ -131,7 +133,7 @@ pub fn slice_projection_mat(
     selected_slice: ScalarOperator<GlobalCoordinate>,
     offset: ScalarOperator<Vector<2, f32>>,
     zoom_level: ScalarOperator<f32>,
-) -> ScalarOperator<cgmath::Matrix4<f32>> {
+) -> ScalarOperator<Matrix<4, f32>> {
     assert!(dim < 3);
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat")
@@ -184,26 +186,17 @@ pub fn slice_projection_mat(
                 let col0 = zero.map_element(h_dim + 1 /* for w dimension */, |_| 1.0);
                 let col1 = zero.map_element(v_dim + 1 /* for w dimension */, |_| 1.0);
                 let col3 = zero.map_element(0, |_| 1.0);
-                let permute =
-                    cgmath::Matrix4::from_cols(col0.into(), col1.into(), zero.into(), col3.into());
+                let permute = Matrix::new([col3, zero, col1, col0]);
 
                 let pixel_transform = permute
-                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                        x: -offset_x,
-                        y: -offset_y,
-                        z: 0.0,
-                    })
-                    * cgmath::Matrix4::from_scale(zoom_level)
-                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                        x: -offset.x(),
-                        y: -offset.y(),
-                        z: 0.0,
-                    });
+                    * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
+                    * Matrix::from_scale(Vector::fill(zoom_level))
+                    * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0));
 
                 let mut translation = Vector::<3, f32>::fill(0.0);
                 translation[dim] = selected_slice.raw as f32 + 0.5; //For +0.5 see below
-                let scale = cgmath::Matrix4::from_scale(scaling_factor);
-                let slice_select = cgmath::Matrix4::from_translation(translation.into());
+                let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
+                let slice_select = Matrix::from_translation(translation);
                 let mat = slice_select * scale * pixel_transform;
 
                 let out = mat.into();
@@ -218,7 +211,7 @@ pub fn slice_projection_mat_centered_rotate(
     input_data: ScalarOperator<VolumeMetaData>,
     output_data: ScalarOperator<ImageMetaData>,
     rotation: ScalarOperator<f32>,
-) -> ScalarOperator<cgmath::Matrix4<f32>> {
+) -> ScalarOperator<Matrix<4, f32>> {
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat_centered_rotate")
             .dependent_on(&input_data)
@@ -239,17 +232,20 @@ pub fn slice_projection_mat_centered_rotate(
                 let min_dim_img = img_dim.x().min(img_dim.y());
                 let min_dim_vol = vol_dim.fold(f32::INFINITY, |a, b| a.min(b));
 
-                let central_normalized = cgmath::Matrix4::from_scale(2.0 / min_dim_img)
-                    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                        x: -img_dim.x() * 0.5,
-                        y: -img_dim.y() * 0.5,
-                        z: 0.0,
-                    });
+                let central_normalized = Matrix::from_scale(Vector::fill(2.0 / min_dim_img))
+                    .to_homogeneuous()
+                    * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0));
 
-                let rotation = cgmath::Matrix4::from_angle_y(cgmath::Rad(rotation));
-                let norm_to_vol =
-                    cgmath::Matrix4::from_translation((vol_dim * Vector::fill(0.5)).into())
-                        * cgmath::Matrix4::from_scale(min_dim_vol * 0.5);
+                //let central_normalized = cgmath::Matrix4::from_scale(2.0 / min_dim_img)
+                //    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
+                //        x: -img_dim.x() * 0.5,
+                //        y: -img_dim.y() * 0.5,
+                //        z: 0.0,
+                //    });
+
+                let rotation = Matrix::from_angle_y(rotation);
+                let norm_to_vol = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
+                    * Matrix::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneuous();
                 let out = norm_to_vol * rotation * central_normalized;
                 ctx.write(out)
             }
@@ -261,7 +257,7 @@ pub fn slice_projection_mat_centered_rotate(
 pub fn render_slice(
     input: VolumeOperator,
     result_metadata: ScalarOperator<ImageMetaData>,
-    projection_mat: ScalarOperator<cgmath::Matrix4<f32>>,
+    projection_mat: ScalarOperator<Matrix<4, f32>>,
 ) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -381,8 +377,8 @@ void main()
     const N_CHANNELS: u32 = 4;
     fn full_info(r: ImageMetaData) -> VolumeMetaData {
         VolumeMetaData {
-            dimensions: [r.dimensions.y(), r.dimensions.x(), N_CHANNELS.into()].into(),
-            chunk_size: [r.chunk_size.y(), r.chunk_size.x(), N_CHANNELS.into()].into(),
+            dimensions: r.dimensions.push_dim_small(N_CHANNELS.into()),
+            chunk_size: r.chunk_size.push_dim_small(N_CHANNELS.into()),
         }
     }
 
@@ -416,6 +412,7 @@ void main()
                     ctx.submit(result_metadata.request_scalar()),
                     ctx.submit(projection_mat.request_scalar_gpu(device.id, dst_info)),
                 };
+
                 let m_out = full_info(m2d);
                 let out_info = m_out.chunk_info(pos);
 

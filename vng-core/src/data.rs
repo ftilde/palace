@@ -344,6 +344,12 @@ impl<T: Copy> Vector<3, T> {
     pub fn z(&self) -> T {
         self.0[0]
     }
+    pub fn push_dim_small(self, extra: T) -> Vector<4, T> {
+        [self.0[0], self.0[1], self.0[2], extra].into()
+    }
+    pub fn push_dim_large(self, extra: T) -> Vector<4, T> {
+        [extra, self.0[0], self.0[1], self.0[2]].into()
+    }
 }
 impl<T: Copy> Vector<2, T> {
     pub fn x(&self) -> T {
@@ -352,8 +358,11 @@ impl<T: Copy> Vector<2, T> {
     pub fn y(&self) -> T {
         self.0[0]
     }
-    pub fn push_dim(self, extra: T) -> Vector<3, T> {
+    pub fn push_dim_small(self, extra: T) -> Vector<3, T> {
         [self.0[0], self.0[1], extra].into()
+    }
+    pub fn push_dim_large(self, extra: T) -> Vector<3, T> {
+        [extra, self.0[0], self.0[1]].into()
     }
 }
 impl<const N: usize, T> IntoIterator for Vector<N, T> {
@@ -480,35 +489,19 @@ impl<T: Copy> From<cgmath::Vector4<T>> for Vector<4, T> {
     }
 }
 
-impl Mul<Vector<3, f32>> for cgmath::Matrix3<f32> {
-    type Output = Vector<3, f32>;
-
-    fn mul(self, rhs: Vector<3, f32>) -> Self::Output {
-        let v = cgmath::Vector3::from(rhs);
-        (self * v).into()
+impl<T: num::One + Copy> Vector<2, T> {
+    pub fn to_homogeneous_coord(self) -> Vector<3, T> {
+        Vector::from([num::one(), self.y(), self.x()])
     }
 }
 
-impl Mul<Vector<4, f32>> for cgmath::Matrix4<f32> {
-    type Output = Vector<4, f32>;
-
-    fn mul(self, rhs: Vector<4, f32>) -> Self::Output {
-        let v = cgmath::Vector4::from(rhs);
-        (self * v).into()
-    }
-}
-
-impl Vector<2, f32> {
-    pub fn to_homogeneous_coord(self) -> Vector<3, f32> {
-        Vector::from([1.0, self.y(), self.x()])
+impl<T: num::One + Copy> Vector<3, T> {
+    pub fn to_homogeneous_coord(self) -> Vector<4, T> {
+        Vector::from([num::one(), self.z(), self.y(), self.x()])
     }
 }
 
 impl Vector<3, f32> {
-    pub fn to_homogeneous_coord(self) -> Vector<4, f32> {
-        Vector::from([1.0, self.z(), self.y(), self.x()])
-    }
-
     pub fn length(self) -> f32 {
         self.map(|v| v * v).fold(0.0, f32::add).sqrt()
     }
@@ -602,7 +595,18 @@ impl<const N: usize, T: Copy> Matrix<N, T> {
     }
 }
 impl<const N: usize, T: num::Zero + Copy> Matrix<N, T> {
-    pub fn scale(scale: Vector<N, T>) -> Self {
+    pub fn from_scale(scale: Vector<N, T>) -> Self {
+        Self::from_col_fn(|i| {
+            let m = scale[i];
+            let mut v = Vector::fill(num::zero::<T>());
+            v[i] = m;
+            v
+        })
+    }
+}
+
+impl<T: num::Zero + Copy> Matrix<4, T> {
+    pub fn from_hom_scale(scale: Vector<3, T>) -> Self {
         Self::from_col_fn(|i| {
             let m = scale[i];
             let mut v = Vector::fill(num::zero::<T>());
@@ -623,16 +627,43 @@ impl<const N: usize, T: num::Zero + num::One + Copy> Matrix<N, T> {
 }
 
 impl<T: num::Zero + num::One + Copy> Matrix<4, T> {
-    pub fn translate(offset: Vector<3, T>) -> Self {
+    pub fn from_translation(translation_vec: Vector<3, T>) -> Self {
         Self::from_col_fn(|i| {
             if i == 0 {
-                Vector::new([T::one(), offset.z(), offset.y(), offset.x()])
+                translation_vec.push_dim_large(T::one())
             } else {
-                let mut v = Vector::fill(num::zero::<T>());
-                v[i] = T::one();
+                Vector::fill(num::zero::<T>()).map_element(i, |_| T::one())
+            }
+        })
+    }
+}
+
+impl<T: num::Zero + num::One + Copy> Matrix<3, T> {
+    pub fn to_homogeneuous(self) -> Matrix<4, T> {
+        Matrix::<4, T>::from_col_fn(|i| {
+            if i == 0 {
+                let v = Vector::<3, T>::fill(T::zero());
+                v.to_homogeneous_coord()
+            } else {
+                let v = self
+                    .col(i - 1)
+                    .to_homogeneous_coord()
+                    .map_element(0, |_| num::zero());
                 v
             }
         })
+    }
+}
+
+impl Matrix<4, f32> {
+    pub fn invert(self) -> Option<Self> {
+        use cgmath::SquareMatrix;
+        let m: cgmath::Matrix4<f32> = self.into();
+        m.invert().map(|m| m.into())
+    }
+
+    pub fn from_angle_y(angle_rad: f32) -> Self {
+        cgmath::Matrix4::from_angle_y(cgmath::Rad(angle_rad)).into()
     }
 }
 
@@ -760,7 +791,7 @@ impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
     }
 }
 impl AABB<3, f32> {
-    pub fn transform(&self, t: &cgmath::Matrix4<f32>) -> Self {
+    pub fn transform(&self, t: &Matrix<4, f32>) -> Self {
         let points = (0..8).into_iter().map(|b| {
             let p = Vector::<3, f32>(std::array::from_fn(|i| {
                 if (b & (1 << i)) != 0 {

@@ -16,7 +16,8 @@ use derive_more::Into;
 use numpy::PyReadonlyArray2;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use vng_core::cgmath::Matrix;
+use vng_core::data::Matrix;
+use vng_core::data::Vector;
 use vng_core::operator::Operator;
 use vng_core::operators::volume::ChunkSize as CChunkSize;
 
@@ -39,7 +40,7 @@ impl<'source> FromPyObject<'source> for ChunkSize {
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
-pub struct Mat4Operator(pub Operator<(), vng_core::cgmath::Matrix4<f32>>);
+pub struct Mat4Operator(pub Operator<(), vng_core::data::Matrix<4, f32>>);
 
 impl<'a> conversion::FromPyValue<PyReadonlyArray2<'a, f32>> for Mat4Operator {
     fn from_py(v: PyReadonlyArray2<'a, f32>) -> PyResult<Self> {
@@ -51,15 +52,18 @@ impl<'a> conversion::FromPyValue<PyReadonlyArray2<'a, f32>> for Mat4Operator {
         }
 
         let vals: [f32; 16] = v.as_slice()?.try_into().unwrap();
-        let mat: &vng_core::cgmath::Matrix4<f32> = (&vals).into();
+        let mat = Matrix::<4, f32>::new([
+            Vector::from(<[f32; 4]>::try_from(&vals[0..4]).unwrap()),
+            Vector::from(<[f32; 4]>::try_from(&vals[4..8]).unwrap()),
+            Vector::from(<[f32; 4]>::try_from(&vals[8..12]).unwrap()),
+            Vector::from(<[f32; 4]>::try_from(&vals[12..16]).unwrap()),
+        ]);
 
         assert!(v.is_c_contiguous());
         // Array is in row major order, but cgmath matrices are column major, so we need to
         // transpose
-        let mat = mat.transpose();
-        Ok(Mat4Operator(
-            vng_core::operators::scalar::constant_as_array(mat),
-        ))
+        let mat = mat.transposed();
+        Ok(Mat4Operator(vng_core::operators::scalar::constant_pod(mat)))
     }
 }
 impl<'source> conversion::FromPyValues<'source> for Mat4Operator {
