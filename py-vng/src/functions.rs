@@ -2,7 +2,7 @@ use crate::{conversion::*, map_err, types::*};
 use pyo3::prelude::*;
 use vng_core::{
     array::ImageMetaData,
-    data::{LocalVoxelPosition, Vector},
+    data::{LocalVoxelPosition, Matrix, Vector},
 };
 use vng_vvd::VvdVolumeSourceState;
 
@@ -60,11 +60,11 @@ pub fn raycast(vol: VolumeOperator, entry_exit_points: VolumeOperator) -> Volume
     vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
 }
 
-fn cgmat4_to_numpy(py: Python, mat: vng_core::cgmath::Matrix4<f32>) -> &numpy::PyArray2<f32> {
+fn mat4_to_numpy(py: Python, mat: Matrix<4, f32>) -> &numpy::PyArray2<f32> {
     // cgmath matrices are row major, but we want column major, so we flip the indices (i, j) below:
     numpy::PyArray2::from_owned_array(
         py,
-        numpy::ndarray::Array::from_shape_fn((4, 4), |(j, i)| mat[i][j]),
+        numpy::ndarray::Array::from_shape_fn((4, 4), |(i, j)| *mat.at(i, j)),
     )
 }
 
@@ -77,7 +77,7 @@ pub fn look_at(
     up: Vector<3, f32>,
 ) -> &numpy::PyArray2<f32> {
     let mat = vng_core::cgmath::Matrix4::look_at_rh(eye.into(), center.into(), up.into());
-    cgmat4_to_numpy(py, mat)
+    mat4_to_numpy(py, mat.into())
 }
 
 #[pyfunction]
@@ -95,7 +95,7 @@ pub fn perspective(
         near,
         far,
     );
-    cgmat4_to_numpy(py, mat)
+    mat4_to_numpy(py, mat.into())
 }
 
 #[pyfunction]
