@@ -33,11 +33,12 @@ winit = "0.28"
 winapi = "0.3.9"
 im-rc = "15.1"
 egui = "0.22"
-pyo3 = { version = "0.19.1", features = [], optional = true }
 array-init = "2.1.0"
 state-link = { path = "../state-link" }
 num = "0.4.1"
+pyo3 = { version = "0.19.1", features = [], optional = true }
+numpy = { version = "0.19.0", features = [], optional = true }
 
 [features]
 default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets
-python = ["dep:pyo3", "state-link/python"]
+python = ["dep:pyo3", "dep:numpy", "state-link/python"]

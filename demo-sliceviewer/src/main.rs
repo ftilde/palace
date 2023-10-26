@@ -241,7 +241,7 @@ fn slice_viewer_z(
     let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat(
         0,
         slice_input.metadata.clone(),
-        crate::operators::scalar::constant_hash(md),
+        md.dimensions,
         crate::operators::scalar::constant_hash(slice_num_g),
         crate::operators::scalar::constant_pod(*offset),
         crate::operators::scalar::constant_pod(*zoom_level),

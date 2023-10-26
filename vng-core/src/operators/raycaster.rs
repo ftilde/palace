@@ -35,12 +35,6 @@ pub struct TrackballState {
     pub up: Vector<3, f32>,
 }
 
-impl TrackballState {
-    pub fn projection_mat(&self) -> Matrix<4, f32> {
-        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into()).into()
-    }
-}
-
 #[cfg_attr(feature = "python", pymethods)]
 impl TrackballState {
     #[new]
@@ -72,6 +66,9 @@ impl TrackballState {
         let new_look = look.scale(1.0 - delta * 0.1);
         self.eye = self.center - new_look;
     }
+    pub fn view_mat(&self) -> Matrix<4, f32> {
+        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into()).into()
+    }
 }
 
 #[derive(Clone, state_link::State)]
@@ -93,9 +90,7 @@ impl CameraState {
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
         self.store_py(py, store)
     }
-}
 
-impl CameraState {
     pub fn projection_mat(&self, size: Vector<2, GlobalCoordinate>) -> Matrix<4, f32> {
         let perspective: Matrix<4, f32> = cgmath::perspective(
             cgmath::Deg(self.fov),
@@ -104,7 +99,7 @@ impl CameraState {
             100.0,
         )
         .into();
-        let matrix = perspective * self.trackball.projection_mat();
+        let matrix = perspective * self.trackball.view_mat();
         matrix
     }
 }

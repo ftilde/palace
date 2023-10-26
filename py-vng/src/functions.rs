@@ -1,8 +1,8 @@
 use crate::{conversion::*, map_err, types::*};
 use pyo3::prelude::*;
 use vng_core::{
-    array::ImageMetaData,
-    data::{LocalVoxelPosition, Matrix, Vector},
+    data::{GlobalCoordinate, LocalVoxelPosition, Vector},
+    operators::sliceviewer::SliceviewState,
 };
 use vng_vvd::VvdVolumeSourceState;
 
@@ -60,62 +60,16 @@ pub fn raycast(vol: VolumeOperator, entry_exit_points: VolumeOperator) -> Volume
     vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
 }
 
-fn mat4_to_numpy(py: Python, mat: Matrix<4, f32>) -> &numpy::PyArray2<f32> {
-    // cgmath matrices are row major, but we want column major, so we flip the indices (i, j) below:
-    numpy::PyArray2::from_owned_array(
-        py,
-        numpy::ndarray::Array::from_shape_fn((4, 4), |(i, j)| *mat.at(i, j)),
-    )
-}
-
-//NO_PUSH_main: remove these
-#[pyfunction]
-pub fn look_at(
-    py: Python,
-    eye: Vector<3, f32>,
-    center: Vector<3, f32>,
-    up: Vector<3, f32>,
-) -> &numpy::PyArray2<f32> {
-    let mat = vng_core::cgmath::Matrix4::look_at_rh(eye.into(), center.into(), up.into());
-    mat4_to_numpy(py, mat.into())
-}
-
-#[pyfunction]
-pub fn perspective(
-    py: Python,
-    md: ImageMetaData,
-    fov_degree: f32,
-    near: f32,
-    far: f32,
-) -> &numpy::PyArray2<f32> {
-    let size = md.dimensions;
-    let mat = vng_core::cgmath::perspective(
-        vng_core::cgmath::Deg(fov_degree),
-        size.x().raw as f32 / size.y().raw as f32,
-        near,
-        far,
-    );
-    mat4_to_numpy(py, mat.into())
-}
-
 #[pyfunction]
 pub fn slice_projection_mat(
+    state: SliceviewState,
     dim: usize,
     input_data: VolumeMetadataOperator,
-    output_data: ToOperator<ImageMetadataOperator>,
-    selected_slice: ToOperator<ScalarOperatorU32>,
-    offset: ToOperator<ScalarOperatorVec2F>,
-    zoom_level: ToOperator<ScalarOperatorF32>,
+    output_data: Vector<2, GlobalCoordinate>,
 ) -> Mat4Operator {
-    vng_core::operators::sliceviewer::slice_projection_mat(
-        dim,
-        input_data.into(),
-        output_data.0.into(),
-        selected_slice.0 .0.map((), |v, _| v.into()),
-        offset.0.into(),
-        zoom_level.0.into(),
-    )
-    .into()
+    state
+        .projection_mat(dim, input_data.into(), output_data)
+        .into()
 }
 
 #[pyfunction]

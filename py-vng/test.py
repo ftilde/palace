@@ -41,10 +41,6 @@ camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
 gui_state = vng.GuiState(rt)
 
-def normalize(v):
-    l = np.linalg.norm(v)
-    return v/l
-
 # General pattern for renderable components:
 # component: size, events -> frame operator
 #
@@ -90,13 +86,7 @@ def render_raycast(size, events):
     ]);
 
     md = vng.tensor_metadata(size, [512]*2)
-
-    # TODO get rid of these and allow calling a method on the state object instead
-    look_at = vng.look_at(camera_state.trackball().eye().load(),
-                          camera_state.trackball().center().load(),
-                          camera_state.trackball().up().load());
-    perspective = vng.perspective(md, camera_state.fov().load(), 0.01, 100)
-    proj = perspective.dot(look_at)
+    proj = camera_state.load().projection_mat(size)
 
     eep = vng.entry_exit_points(v.metadata, md, proj)
     frame = vng.raycast(v, eep)
@@ -114,8 +104,7 @@ def render_slice(dim, slice_state):
 
         md = vng.tensor_metadata(size, [512]*2)
 
-        # TODO abstract this away, too
-        proj = vng.slice_projection_mat(dim, v.metadata, md, slice_state.selected().load(), slice_state.offset().load(), slice_state.zoom_level().load())
+        proj = vng.slice_projection_mat(slice_state.load(), dim, v.metadata, size)
 
         frame = vng.render_slice(v, md, proj)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*3)

@@ -160,55 +160,6 @@ pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 )]
 pub struct Vector<const N: usize, T>([T; N]);
 
-#[cfg(feature = "python")]
-mod py {
-    use super::*;
-    use pyo3::{prelude::*, types::PyList};
-
-    impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            Ok(Coordinate {
-                raw: ob.extract()?,
-                type_: std::marker::PhantomData,
-            })
-        }
-    }
-
-    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            self.raw.into_py(py)
-        }
-    }
-
-    impl<'source, const N: usize, T: FromPyObject<'source>> FromPyObject<'source> for Vector<N, T> {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            ob.extract::<[T; N]>().map(Self)
-        }
-    }
-
-    //impl<const N: usize, T: ToPyObject> ToPyObject for Vector<N, T> {
-    //    fn to_object(&self, py: Python<'_>) -> PyObject {
-    //        PyList::new(py, self.0.iter().map(|v| v.to_object(py))).into()
-    //    }
-    //}
-
-    impl<const N: usize, T: IntoPy<PyObject>> IntoPy<PyObject> for Vector<N, T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            PyList::new(py, self.0.into_iter().map(|v| v.into_py(py))).into()
-        }
-    }
-
-    impl<const N: usize, T: state_link::py::PyState> state_link::py::PyState for Vector<N, T> {
-        fn build_handle(
-            py: Python,
-            inner: state_link::GenericNodeHandle,
-            store: Py<state_link::py::Store>,
-        ) -> PyObject {
-            <[T; N]>::build_handle(py, inner.index(0), store)
-        }
-    }
-}
-
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
     fn from(value: [I; N]) -> Self {
         Vector(std::array::from_fn(|i| value[i].into()))
@@ -958,6 +909,83 @@ pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
 //    }
 //}
 //
+
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::{prelude::*, types::PyList};
+
+    // Coordinate
+    impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            Ok(Coordinate {
+                raw: ob.extract()?,
+                type_: std::marker::PhantomData,
+            })
+        }
+    }
+    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            self.raw.into_py(py)
+        }
+    }
+
+    // Vector
+    impl<'source, const N: usize, T: FromPyObject<'source>> FromPyObject<'source> for Vector<N, T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            ob.extract::<[T; N]>().map(Self)
+        }
+    }
+
+    impl<const N: usize, T: IntoPy<PyObject>> IntoPy<PyObject> for Vector<N, T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            PyList::new(py, self.0.into_iter().map(|v| v.into_py(py))).into()
+        }
+    }
+
+    //impl<const N: usize, T: ToPyObject> ToPyObject for Vector<N, T> {
+    //    fn to_object(&self, py: Python<'_>) -> PyObject {
+    //        PyList::new(py, self.0.iter().map(|v| v.to_object(py))).into()
+    //    }
+    //}
+
+    impl<const N: usize, T: state_link::py::PyState> state_link::py::PyState for Vector<N, T> {
+        fn build_handle(
+            py: Python,
+            inner: state_link::GenericNodeHandle,
+            store: Py<state_link::py::Store>,
+        ) -> PyObject {
+            <[T; N]>::build_handle(py, inner.index(0), store)
+        }
+    }
+
+    // Matrix
+    impl<'source, const N: usize, T: numpy::Element> FromPyObject<'source> for Matrix<N, T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            let np = ob.extract::<numpy::borrow::PyReadonlyArray2<T>>()?;
+            let shape = np.shape();
+            if shape != [N, N] {
+                let s0 = shape[0];
+                let s1 = shape[1];
+                return Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                    "Expected a matrix of shape ({N},{N}), but got one of shape ({s0},{s1})"
+                )));
+            }
+            Ok(Matrix::from_fn(|i, j| np.get((i, j)).unwrap().clone()))
+        }
+    }
+
+    impl<const N: usize, T: numpy::Element> IntoPy<PyObject> for Matrix<N, T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            numpy::PyArray2::from_owned_array(
+                py,
+                numpy::ndarray::Array::from_shape_fn((4, 4), |(i, j)| self.at(i, j).clone()),
+            )
+            .into_py(py)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
