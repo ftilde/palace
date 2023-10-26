@@ -684,8 +684,8 @@ impl<const N: usize, T: Copy + Add<Output = T> + Mul<Output = T>> Mul<Matrix<N, 
     type Output = Matrix<N, T>;
 
     fn mul(self, rhs: Matrix<N, T>) -> Self::Output {
-        let rhs = rhs.transposed();
-        Self::Output::from_fn(|row, col| self.col(col).dot(rhs.col(row)))
+        let lhs = self.transposed();
+        Self::Output::from_fn(|row, col| lhs.col(row).dot(rhs.col(col)))
     }
 }
 
@@ -980,8 +980,8 @@ mod test {
     #[test]
     fn mul_mat_mat() {
         let m1 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
-        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
-        let r = Matrix::<2, i32>::new([[1 + 6, 2 + 8].into(), [3 + 12, 6 + 16].into()]);
+        let m2 = Matrix::<2, i32>::new([[9, 8].into(), [0, -1].into()]);
+        let r = Matrix::<2, i32>::new([[9 + 24, 18 + 32].into(), [-3, -4].into()]);
         assert_eq!(m1 * m2, r);
 
         let m1 = Matrix::<2, i32>::identity();
@@ -992,7 +992,7 @@ mod test {
 
         let m1 = Matrix::<2, i32>::new([[1, 0].into(), [0, 0].into()]);
         let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
-        let r = Matrix::<2, i32>::new([[1, 2].into(), [0, 0].into()]);
+        let r = Matrix::<2, i32>::new([[1, 0].into(), [3, 0].into()]);
         assert_eq!(m1 * m2, r);
     }
 
