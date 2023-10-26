@@ -121,9 +121,12 @@ pub fn entry_exit_points(
 
     const VERTEX_SHADER: &str = "
 #version 450
+#extension GL_EXT_scalar_block_layout : require
+
+#include <mat.glsl>
 
 layout(std430, binding = 0) buffer Transform {
-    mat4 value;
+    Mat4 value;
 } projection;
 
 vec3 positions[14] = vec3[](
@@ -146,7 +149,7 @@ vec3 positions[14] = vec3[](
 layout(location = 0) out vec3 norm_pos;
 
 void main() {
-    gl_Position = projection.value * vec4(positions[gl_VertexIndex], 1.0);
+    gl_Position = mul_mat4(projection.value, vec4(positions[gl_VertexIndex], 1.0));
     norm_pos = positions[gl_VertexIndex];
 }
 ";

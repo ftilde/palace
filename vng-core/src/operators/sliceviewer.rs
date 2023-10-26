@@ -114,7 +114,7 @@ pub fn slice_projection_mat_z_scaled_fit(
                     0.0,
                 ])) * Matrix::from_scale(
                     vol_dim
-                        .drop_dim(2)
+                        .drop_dim(0)
                         .zip(img_dim, |v, i| v / i)
                         .push_dim_large(1.0),
                 )
@@ -178,29 +178,24 @@ pub fn slice_projection_mat(
                 let offset_x = (img_dim.x() - (h_size / scaling_factor)).max(0.0) * 0.5;
                 let offset_y = (img_dim.y() - (v_size / scaling_factor)).max(0.0) * 0.5;
 
-                let mut pixel_to_voxel = Vector::<3, f32>::fill(0.0);
-                pixel_to_voxel[h_dim] = -offset_x;
-                pixel_to_voxel[v_dim] = -offset_y;
-
-                let zero = Vector::<4, f32>::fill(0.0);
-                let col0 = zero.map_element(h_dim + 1 /* for w dimension */, |_| 1.0);
-                let col1 = zero.map_element(v_dim + 1 /* for w dimension */, |_| 1.0);
-                let col3 = zero.map_element(0, |_| 1.0);
-                let permute = Matrix::new([col3, zero, col1, col0]);
+                let zero = Vector::<3, f32>::fill(0.0);
+                let col0 = zero.map_element(h_dim, |_| 1.0);
+                let col1 = zero.map_element(v_dim, |_| 1.0);
+                let permute = Matrix::new([zero, col1, col0]).to_homogeneuous();
 
                 let pixel_transform = permute
                     * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
-                    * Matrix::from_scale(Vector::fill(zoom_level))
+                    * Matrix::from_scale(Vector::fill(zoom_level)).to_homogeneuous()
                     * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0));
 
                 let mut translation = Vector::<3, f32>::fill(0.0);
                 translation[dim] = selected_slice.raw as f32 + 0.5; //For +0.5 see below
                 let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
                 let slice_select = Matrix::from_translation(translation);
-                let mat = slice_select * scale * pixel_transform;
+                let foo = slice_select * scale;
+                let mat = foo * pixel_transform;
 
-                let out = mat.into();
-                ctx.write(out)
+                ctx.write(mat)
             }
             .into()
         },
@@ -274,9 +269,11 @@ pub fn render_slice(
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_atomic_int64 : require
+#extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
 #include <hash.glsl>
+#include <mat.glsl>
 
 layout (local_size_x = 32, local_size_y = 32) in;
 
@@ -290,7 +287,7 @@ layout(std430, binding = 0) buffer OutputBuffer{
 } output_data;
 
 layout(std430, binding = 1) buffer Transform {
-    mat4 value;
+    Mat4 value;
 } transform;
 
 layout(std430, binding = 2) buffer RefBuffer {
@@ -335,8 +332,8 @@ void main()
             val = vec4(0.0, 0.0, 1.0, 0.0);
         } else {
             //TODO: Maybe revisit this +0.5 -0.5 business.
-            vec4 pos = vec4(vec2(out_pos + consts.out_begin) + vec2(0.5), 0, 1);
-            vec3 sample_pos_f = (transform.value * pos).xyz - vec3(0.5);
+            vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 0);
+            vec3 sample_pos_f = mulh_mat4(transform.value, pos) - vec3(0.5);
             ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
