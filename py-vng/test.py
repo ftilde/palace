@@ -10,7 +10,7 @@ rt = vng.RunTime(ram_size, vram_size)
 
 window = vng.Window(rt)
 
-v = vng.open_volume("/nosnapshot/test-volumes/walnut_float.vvd")
+v = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
@@ -28,8 +28,8 @@ slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 
 camera_state = vng.CameraState(
         vng.TrackballState(
-            [5.5, 0.5, 0.5],
-            [0.5, 0.5, 0.5],
+            [5.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
             [1.0, 1.0, 0.0],
             ),
         30.0
@@ -67,7 +67,7 @@ def render_raycast(camera_state):
         md = vng.tensor_metadata(size, [512]*2)
         proj = camera_state.load().projection_mat(size)
 
-        eep = vng.entry_exit_points(v.inner.metadata, md, proj)
+        eep = vng.entry_exit_points(v.inner.metadata, v.embedding_data, md, proj)
         frame = vng.raycast(v.inner, eep)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
 

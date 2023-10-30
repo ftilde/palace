@@ -42,11 +42,13 @@ pub fn separable_convolution<'py>(
 #[pyfunction]
 pub fn entry_exit_points(
     input_md: VolumeMetadataOperator,
+    embedding_data: VolumeEmbeddingDataOperator,
     output_md: ToOperator<ImageMetadataOperator>,
     projection: ToOperator<Mat4Operator>,
 ) -> VolumeOperator {
     vng_core::operators::raycaster::entry_exit_points(
         input_md.into(),
+        embedding_data.into(),
         output_md.0.into(),
         projection.0.into(),
     )

@@ -131,8 +131,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         raycasting: CameraState {
             fov: 30.0,
             trackball: operators::raycaster::TrackballState {
-                eye: [5.5, 0.5, 0.5].into(),
-                center: [0.5, 0.5, 0.5].into(),
+                eye: [5.0, 0.0, 0.0].into(),
+                center: [0.0, 0.0, 0.0].into(),
                 up: [1.0, 1.0, 0.0].into(),
             },
         },
@@ -367,7 +367,7 @@ fn slice_viewer_rot(
 }
 
 fn raycaster(
-    input: VolumeOperator,
+    input: EmbeddedVolumeOperator,
     size: Vector<2, GlobalCoordinate>,
     state: &mut CameraState,
     mut events: EventStream,
@@ -390,10 +390,11 @@ fn raycaster(
     let matrix = state.projection_mat(md.dimensions);
     let eep = vng_core::operators::raycaster::entry_exit_points(
         input.metadata.clone(),
+        input.embedding_data.clone(),
         scalar::constant_hash(md),
         scalar::constant_pod(matrix),
     );
-    vng_core::operators::raycaster::raycast(input, eep)
+    vng_core::operators::raycaster::raycast(input.into(), eep)
 }
 
 fn eval_network(

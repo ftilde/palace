@@ -4,7 +4,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{ImageMetaData, VolumeMetaData},
+    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
     operator::{OpaqueOperator, OperatorId},
@@ -106,11 +106,13 @@ impl CameraState {
 
 pub fn entry_exit_points(
     input_metadata: ScalarOperator<VolumeMetaData>,
+    embedding_data: ScalarOperator<VolumeEmbeddingData>,
     result_metadata: ScalarOperator<ImageMetaData>,
     projection_mat: ScalarOperator<Matrix<4, f32>>,
 ) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
+        transform: cgmath::Matrix4<f32>,
         out_mem_dim: cgmath::Vector2<u32>,
     }
 
@@ -120,9 +122,7 @@ pub fn entry_exit_points(
 
 #include <mat.glsl>
 
-layout(std430, binding = 0) buffer Transform {
-    Mat4 value;
-} projection;
+declare_push_consts(consts);
 
 vec3 positions[14] = vec3[](
     vec3(1.0, 0.0, 0.0),
@@ -144,7 +144,7 @@ vec3 positions[14] = vec3[](
 layout(location = 0) out vec3 norm_pos;
 
 void main() {
-    gl_Position = mul_mat4(projection.value, vec4(positions[gl_VertexIndex], 1.0));
+    gl_Position = consts.transform * vec4(positions[gl_VertexIndex], 1.0);
     norm_pos = positions[gl_VertexIndex];
 }
 ";
@@ -154,7 +154,7 @@ void main() {
 
 #include <util.glsl>
 
-layout(std430, binding = 1) buffer OutputBuffer{
+layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
 
@@ -193,7 +193,12 @@ void main() {
             .dependent_on(&result_metadata)
             .dependent_on(&projection_mat),
         result_metadata.clone(),
-        (input_metadata, result_metadata, projection_mat),
+        (
+            input_metadata,
+            embedding_data,
+            result_metadata,
+            projection_mat,
+        ),
         move |ctx, result_metadata| {
             async move {
                 let r = ctx.submit(result_metadata.request_scalar()).await;
@@ -202,22 +207,26 @@ void main() {
             }
             .into()
         },
-        move |ctx, pos, (_m_in, result_metadata, projection_mat)| {
+        move |ctx, pos, (m_in, embedding_data, result_metadata, projection_mat)| {
             async move {
                 //TODO: Use spacing information of _m_in (or similar) here
                 let device = ctx.vulkan_device();
 
-                let dst_info = DstBarrierInfo {
-                    stage: vk::PipelineStageFlags2::VERTEX_SHADER,
-                    access: vk::AccessFlags2::SHADER_READ,
-                };
-
-                let (m2d, transform_gpu) = futures::join! {
+                let (m_in, embedding_data, m2d, transform) = futures::join! {
+                    ctx.submit(m_in.request_scalar()),
+                    ctx.submit(embedding_data.request_scalar()),
                     ctx.submit(result_metadata.request_scalar()),
-                    ctx.submit(projection_mat.request_scalar_gpu(device.id, dst_info)),
+                    ctx.submit(projection_mat.request_scalar()),
                 };
                 let m_out = full_info(m2d);
                 let out_info = m_out.chunk_info(pos);
+
+                let norm_to_world = Matrix::from_scale(
+                    m_in.dimensions.map(|v| v.raw as f32) * embedding_data.spacing,
+                )
+                .to_homogeneuous()
+                    * Matrix::from_translation(Vector::fill(-0.5));
+                let transform = transform * norm_to_world;
 
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),
@@ -253,7 +262,10 @@ void main() {
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                         GraphicsPipeline::new(
                             device,
-                            VERTEX_SHADER,
+                            (
+                                VERTEX_SHADER,
+                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                            ),
                             (
                                 FRAG_SHADER,
                                 ShaderDefines::new()
@@ -424,8 +436,9 @@ void main() {
                         .try_into_elem()
                         .unwrap()
                         .into(),
+                    transform: transform.into(),
                 };
-                let descriptor_config = DescriptorConfig::new([&transform_gpu, &gpu_brick_out]);
+                let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
                 device.with_cmd_buffer(|cmd| unsafe {
                     let mut pipeline = pipeline.bind(cmd);
@@ -444,7 +457,10 @@ void main() {
 
                     pipeline.push_descriptor_set(0, descriptor_config);
 
-                    pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::FRAGMENT);
+                    pipeline.push_constant_at(
+                        push_constants,
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    );
 
                     device.functions().cmd_draw(cmd.raw(), 14, 1, 0, 0);
 

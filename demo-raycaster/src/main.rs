@@ -6,8 +6,8 @@ use vng_core::data::{LocalVoxelPosition, Matrix, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::volume::ChunkSize;
-use vng_core::operators::{self, volume::VolumeOperatorState};
+use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
+use vng_core::operators::{self};
 use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
@@ -18,7 +18,7 @@ use vng_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::{self, ImageMetaData};
+use vng_core::array::{self, ImageMetaData, VolumeEmbeddingData};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -60,7 +60,7 @@ struct CliArgs {
 fn open_volume(
     path: PathBuf,
     brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn VolumeOperatorState>, Box<dyn std::error::Error>> {
+) -> Result<Box<dyn EmbeddedVolumeOperatorState>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
@@ -93,23 +93,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol_state = match args.input {
         Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::SyntheticCpu(args) => Box::new(operators::rasterize_function::normalized(
-            VoxelPosition::fill(args.size.into()),
-            brick_size,
-            |v| {
-                let r2 = v
-                    .map(|v| v - 0.5)
-                    .map(|v| v * v)
-                    .fold(0.0f32, std::ops::Add::add);
-                r2.sqrt()
+        Input::SyntheticCpu(args) => Box::new((
+            operators::rasterize_function::normalized(
+                VoxelPosition::fill(args.size.into()),
+                brick_size,
+                |v| {
+                    let r2 = v
+                        .map(|v| v - 0.5)
+                        .map(|v| v * v)
+                        .fold(0.0f32, std::ops::Add::add);
+                    r2.sqrt()
+                },
+            ),
+            VolumeEmbeddingData {
+                spacing: Vector::fill(1.0),
             },
         )),
-        Input::Synthetic(args) => Box::new(operators::volume_gpu::VoxelRasterizerGLSL {
-            metadata: array::VolumeMetaData {
-                dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
-            },
-            body: r#"{
+        Input::Synthetic(args) => Box::new((
+            operators::volume_gpu::VoxelRasterizerGLSL {
+                metadata: array::VolumeMetaData {
+                    dimensions: VoxelPosition::fill(args.size.into()),
+                    chunk_size: brick_size,
+                },
+                body: r#"{
 
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
@@ -117,13 +123,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
 
             }"#
-            .to_owned(),
-        }),
+                .to_owned(),
+            },
+            VolumeEmbeddingData {
+                spacing: Vector::fill(1.0),
+            },
+        )),
     };
 
     let mut fov: f32 = 30.0;
-    let mut eye = [5.5, 0.5, 0.5].into();
-    let mut center = [0.5, 0.5, 0.5].into();
+    let mut eye = [5.0, 0.0, 0.0].into();
+    let mut center = [0.0, 0.0, 0.0].into();
     let mut up = [1.0, 1.0, 0.0].into();
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
@@ -200,7 +210,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: &dyn VolumeOperatorState,
+    vol: &dyn EmbeddedVolumeOperatorState,
     fov: &mut f32,
     eye: &mut Vector<3, f32>,
     center: &mut Vector<3, f32>,
@@ -243,16 +253,17 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let vol = vol.map_inner(|vol| {
+        volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-    //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
-    //let after_kernel =
-    //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
-    let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+        //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
+        //let after_kernel =
+        //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
+        let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
 
-    let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
-
-    let vol = scaled;
+        let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+        scaled
+    });
 
     //let gen = volume_gpu::rasterize_gpu(
     //    vol.metadata.clone(),
@@ -285,10 +296,11 @@ fn eval_network(
     let matrix = perspective * look_at;
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.metadata.clone(),
+        vol.embedding_data.clone(),
         scalar::constant_hash(md),
         scalar::constant_pod(matrix),
     );
-    let frame = vng_core::operators::raycaster::raycast(vol, eep);
+    let frame = vng_core::operators::raycaster::raycast(vol.into(), eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;
