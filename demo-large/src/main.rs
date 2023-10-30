@@ -287,7 +287,7 @@ fn slice_viewer_z(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let slice_proj_z = state.projection_mat(1, slice_input.metadata.clone(), md.dimensions);
+    let slice_proj_z = state.projection_mat(0, slice_input.metadata.clone(), md.dimensions);
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input,
         crate::operators::scalar::constant_hash(md),
