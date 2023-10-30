@@ -57,7 +57,7 @@ def split(dim, fraction, render_first, render_last):
     return inner
 
 # Raycasting render component
-def render_raycast(size, events, camera_state):
+def render_raycast(camera_state):
     def inner(size, events):
         events.act([
             vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))),
