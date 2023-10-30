@@ -3,13 +3,14 @@ use derive_more::{From, Into};
 use crate::conversion;
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::{
-    array::{ArrayMetaData, VolumeMetaData},
+    array::{ArrayMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{ChunkCoordinate, Vector},
     operator::Operator,
 };
 
 use vng_core::array::ImageMetaData;
 use vng_core::operators::array::ArrayOperator as CArrayOperator;
+use vng_core::operators::volume::EmbeddedVolumeOperator as CEmbeddedVolumeOperator;
 use vng_core::operators::volume::VolumeOperator as CVolumeOperator;
 
 #[pyfunction]
@@ -104,6 +105,10 @@ pub struct VolumeMetadataOperator(pub Operator<(), VolumeMetaData>);
 
 #[pyclass(unsendable)]
 #[derive(Clone, From, Into)]
+pub struct VolumeEmbeddingDataOperator(pub Operator<(), VolumeEmbeddingData>);
+
+#[pyclass(unsendable)]
+#[derive(Clone, From, Into)]
 pub struct ImageMetadataOperator(pub Operator<(), ImageMetaData>);
 
 impl<'a> conversion::FromPyValue<ImageMetaData> for ImageMetadataOperator {
@@ -146,6 +151,55 @@ impl From<CVolumeOperator> for VolumeOperator {
         Self {
             metadata: value.metadata.into(),
             chunks: value.chunks.into(),
+        }
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct EmbeddedVolumeOperator {
+    #[pyo3(get, set)]
+    pub inner: VolumeOperator,
+    #[pyo3(get, set)]
+    pub embedding_data: VolumeEmbeddingDataOperator,
+}
+
+impl Into<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
+    fn into(self) -> CEmbeddedVolumeOperator {
+        CEmbeddedVolumeOperator {
+            inner: self.inner.into(),
+            embedding_data: self.embedding_data.into(),
+        }
+    }
+}
+
+impl From<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
+    fn from(value: CEmbeddedVolumeOperator) -> Self {
+        Self {
+            inner: value.inner.into(),
+            embedding_data: value.embedding_data.into(),
+        }
+    }
+}
+
+#[derive(FromPyObject)]
+pub enum MaybeEmbeddedVolumeOperator {
+    Not(VolumeOperator),
+    Embedded(EmbeddedVolumeOperator),
+}
+
+impl MaybeEmbeddedVolumeOperator {
+    pub fn map_inner(
+        self,
+        py: Python,
+        f: impl FnOnce(CVolumeOperator) -> CVolumeOperator,
+    ) -> PyObject {
+        match self {
+            MaybeEmbeddedVolumeOperator::Not(v) => VolumeOperator::from(f(v.into())).into_py(py),
+            MaybeEmbeddedVolumeOperator::Embedded(v) => {
+                EmbeddedVolumeOperator::from(Into::<CEmbeddedVolumeOperator>::into(v).map_inner(f))
+                    .into_py(py)
+            }
         }
     }
 }

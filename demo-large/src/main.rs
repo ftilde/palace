@@ -1,14 +1,16 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use clap::{Parser, Subcommand};
-use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition};
+use clap::Parser;
+use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::sliceviewer::SliceviewState;
-use vng_core::operators::volume::{ChunkSize, VolumeOperator};
-use vng_core::operators::{self, volume::VolumeOperatorState};
+use vng_core::operators::volume::{
+    ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
+};
+use vng_core::operators::{self};
 use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
@@ -20,7 +22,7 @@ use vng_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::{self, ImageMetaData};
+use vng_core::array::ImageMetaData;
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -28,23 +30,10 @@ struct SyntheticArgs {
     size: u32,
 }
 
-#[derive(Parser, Clone)]
-struct FileArgs {
-    #[arg()]
-    vol: PathBuf,
-}
-
-#[derive(Subcommand, Clone)]
-enum Input {
-    File(FileArgs),
-    Synthetic(SyntheticArgs),
-    SyntheticCpu(SyntheticArgs),
-}
-
 #[derive(Parser)]
 struct CliArgs {
-    #[command(subcommand)]
-    input: Input,
+    #[arg()]
+    vol: PathBuf,
 
     /// Size of the memory pool that will be allocated in gigabytes.
     #[arg(short, long, default_value = "8")]
@@ -62,7 +51,7 @@ struct CliArgs {
 fn open_volume(
     path: PathBuf,
     brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn VolumeOperatorState>, Box<dyn std::error::Error>> {
+) -> Result<Box<dyn EmbeddedVolumeOperatorState>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
@@ -128,35 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = LocalVoxelPosition::fill(32.into());
 
-    let vol_state = match args.input {
-        Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::SyntheticCpu(args) => Box::new(operators::rasterize_function::normalized(
-            VoxelPosition::fill(args.size.into()),
-            brick_size,
-            |v| {
-                let r2 = v
-                    .map(|v| v - 0.5)
-                    .map(|v| v * v)
-                    .fold(0.0f32, std::ops::Add::add);
-                r2.sqrt()
-            },
-        )),
-        Input::Synthetic(args) => Box::new(operators::volume_gpu::VoxelRasterizerGLSL {
-            metadata: array::VolumeMetaData {
-                dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
-            },
-            body: r#"{
-
-                vec3 centered = pos_normalized-vec3(0.5);
-                vec3 sq = centered*centered;
-                float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
-
-            }"#
-            .to_owned(),
-        }),
-    };
+    let vol_state = open_volume(args.vol, brick_size)?;
 
     let mut state = State {
         gui: GuiState::default(),
@@ -264,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: VolumeOperator,
+    slice_input: EmbeddedVolumeOperator,
     md: ImageMetaData,
     state: &mut SliceviewState,
     events: &mut EventStream,
@@ -287,9 +248,14 @@ fn slice_viewer_z(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let slice_proj_z = state.projection_mat(0, slice_input.metadata.clone(), md.dimensions);
+    let slice_proj_z = state.projection_mat(
+        0,
+        slice_input.metadata.clone(),
+        slice_input.embedding_data.clone(),
+        md.dimensions,
+    );
     let slice = crate::operators::sliceviewer::render_slice(
-        slice_input,
+        slice_input.into(),
         crate::operators::scalar::constant_hash(md),
         slice_proj_z,
     );
@@ -300,7 +266,7 @@ fn slice_viewer_z(
 
 fn slice_viewer_rot(
     runtime: &mut RunTime,
-    slice_input: VolumeOperator,
+    slice_input: EmbeddedVolumeOperator,
     md: ImageMetaData,
     state: &mut RotSliceState,
     mut events: EventStream,
@@ -319,6 +285,7 @@ fn slice_viewer_rot(
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
+        slice_input.embedding_data.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_pod(state.angle),
     );
@@ -390,7 +357,7 @@ fn slice_viewer_rot(
         });
     });
     let slice = crate::operators::sliceviewer::render_slice(
-        slice_input,
+        slice_input.into(),
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
     );
@@ -432,7 +399,7 @@ fn raycaster(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: &dyn VolumeOperatorState,
+    vol: &dyn EmbeddedVolumeOperatorState,
     app_state: &mut State,
     mut events: EventStream,
     deadline: Instant,
@@ -452,7 +419,7 @@ fn eval_network(
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let processed = match app_state.process {
+    let processed = vol.map_inner(|vol| match app_state.process {
         ProcessState::PassThrough => vol,
         ProcessState::Smooth => {
             let kernel = operators::kernels::gauss(scalar::constant_pod(app_state.smoothing_std));
@@ -462,12 +429,13 @@ fn eval_network(
             )
         }
         ProcessState::Vesselness => operators::vesselness::multiscale_vesselness(
+            //TODO: this should actually be embedding-aware
             vol,
             scalar::constant_pod(app_state.vesselness.min_rad),
             scalar::constant_pod(app_state.vesselness.max_rad),
             app_state.vesselness.steps,
         ),
-    };
+    });
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -604,9 +572,12 @@ fn eval_network(
 
             splitter.render(left, right)
         }
-        RenderingState::Raycasting => {
-            raycaster(processed, window.size(), &mut app_state.raycasting, events)
-        }
+        RenderingState::Raycasting => raycaster(
+            processed.into(),
+            window.size(),
+            &mut app_state.raycasting,
+            events,
+        ),
     };
 
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));

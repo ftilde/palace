@@ -4,7 +4,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{ImageMetaData, VolumeMetaData},
+    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
     id::Id,
@@ -39,12 +39,14 @@ impl SliceviewState {
         &self,
         dim: usize,
         input_data: ScalarOperator<VolumeMetaData>,
+        embedding_data: ScalarOperator<VolumeEmbeddingData>,
         output_size: Vector<2, GlobalCoordinate>,
     ) -> ScalarOperator<Matrix<4, f32>> {
         use crate::operators::scalar::{constant_hash, constant_pod};
         slice_projection_mat(
             dim,
             input_data,
+            embedding_data,
             output_size,
             constant_hash(self.selected.into()),
             constant_pod(self.offset),
@@ -129,6 +131,7 @@ pub fn slice_projection_mat_z_scaled_fit(
 pub fn slice_projection_mat(
     dim: usize,
     input_data: ScalarOperator<VolumeMetaData>,
+    embedding_data: ScalarOperator<VolumeEmbeddingData>,
     output_size: Vector<2, GlobalCoordinate>,
     selected_slice: ScalarOperator<GlobalCoordinate>,
     offset: ScalarOperator<Vector<2, f32>>,
@@ -143,17 +146,19 @@ pub fn slice_projection_mat(
             .dependent_on(&selected_slice)
             .dependent_on(&offset)
             .dependent_on(&zoom_level),
-        (input_data, output_size, selected_slice, offset, zoom_level),
-        move |ctx, (input_data, output_size, selected_slice, offset, zoom_level)| {
+        (input_data, embedding_data, output_size, selected_slice, offset, zoom_level),
+        move |ctx, (input_data, embedding_data, output_size, selected_slice, offset, zoom_level)| {
             async move {
-                let (input_data, selected_slice, offset, zoom_level) = futures::join! {
+                let (input_data, embedding_data, selected_slice, offset, zoom_level) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
+                    ctx.submit(embedding_data.request_scalar()),
                     ctx.submit(selected_slice.request_scalar()),
                     ctx.submit(offset.request_scalar()),
                     ctx.submit(zoom_level.request_scalar()),
                 };
 
-                let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
+                let vol_dim_voxel = input_data.dimensions.map(|v| v.raw as f32);
+                let vol_dim = vol_dim_voxel * embedding_data.spacing;
                 let img_dim = output_size.map(|v| v.raw as f32);
 
                 let (h_dim, v_dim) = match dim {
@@ -191,8 +196,8 @@ pub fn slice_projection_mat(
                 translation[dim] = selected_slice.raw as f32 + 0.5; //For +0.5 see below
                 let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
                 let slice_select = Matrix::from_translation(translation);
-                let foo = slice_select * scale;
-                let mat = foo * pixel_transform;
+                let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0/v)).to_homogeneuous();
+                let mat = slice_select * rw_to_voxel * scale * pixel_transform;
 
                 ctx.write(mat)
             }
@@ -203,6 +208,7 @@ pub fn slice_projection_mat(
 
 pub fn slice_projection_mat_centered_rotate(
     input_data: ScalarOperator<VolumeMetaData>,
+    embedding_data: ScalarOperator<VolumeEmbeddingData>,
     output_data: ScalarOperator<ImageMetaData>,
     rotation: ScalarOperator<f32>,
 ) -> ScalarOperator<Matrix<4, f32>> {
@@ -211,16 +217,17 @@ pub fn slice_projection_mat_centered_rotate(
             .dependent_on(&input_data)
             .dependent_on(&output_data)
             .dependent_on(&rotation),
-        (input_data, output_data, rotation),
-        move |ctx, (input_data, output_data, rotation)| {
+        (input_data, embedding_data, output_data, rotation),
+        move |ctx, (input_data, embedding_data, output_data, rotation)| {
             async move {
-                let (input_data, output_data, rotation) = futures::join! {
+                let (input_data, embedding_data, output_data, rotation) = futures::join! {
                     ctx.submit(input_data.request_scalar()),
+                    ctx.submit(embedding_data.request_scalar()),
                     ctx.submit(output_data.request_scalar()),
                     ctx.submit(rotation.request_scalar()),
                 };
 
-                let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
+                let vol_dim = input_data.dimensions.map(|v| v.raw as f32) * embedding_data.spacing;
                 let img_dim = output_data.dimensions.map(|v| v.raw as f32);
 
                 let min_dim_img = img_dim.x().min(img_dim.y());
@@ -238,9 +245,11 @@ pub fn slice_projection_mat_centered_rotate(
                 //    });
 
                 let rotation = Matrix::from_angle_y(rotation);
-                let norm_to_vol = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
+                let norm_to_rw = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
                     * Matrix::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneuous();
-                let out = norm_to_vol * rotation * central_normalized;
+                let rw_to_voxel =
+                    Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneuous();
+                let out = rw_to_voxel * norm_to_rw * rotation * central_normalized;
                 ctx.write(out)
             }
             .into()

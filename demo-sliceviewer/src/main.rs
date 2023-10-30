@@ -253,6 +253,7 @@ fn slice_viewer_z(
     let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat(
         0,
         slice_input.metadata.clone(),
+        slice_input.embedding_data.clone(),
         md.dimensions,
         crate::operators::scalar::constant_hash(slice_num_g),
         crate::operators::scalar::constant_pod(*offset),
@@ -288,6 +289,7 @@ fn slice_viewer_rot(
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
+        slice_input.embedding_data.clone(),
         crate::operators::scalar::constant_hash(md),
         crate::operators::scalar::constant_pod(*angle),
     );

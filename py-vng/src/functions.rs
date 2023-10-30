@@ -14,31 +14,29 @@ pub fn rechunk(vol: VolumeOperator, size: [ChunkSize; 3]) -> VolumeOperator {
 
 #[pyfunction]
 pub fn linear_rescale(
-    vol: VolumeOperator,
+    py: Python,
+    vol: MaybeEmbeddedVolumeOperator,
     scale: ToOperator<ScalarOperatorF32>,
     offset: ToOperator<ScalarOperatorF32>,
-) -> PyResult<VolumeOperator> {
-    Ok(
-        vng_core::operators::volume_gpu::linear_rescale(
-            vol.into(),
-            scale.0.into(),
-            offset.0.into(),
-        )
-        .into(),
-    )
+) -> PyObject {
+    vol.map_inner(py, |vol| {
+        vng_core::operators::volume_gpu::linear_rescale(vol.into(), scale.0.into(), offset.0.into())
+    })
 }
 
 #[pyfunction]
 pub fn separable_convolution<'py>(
-    vol: VolumeOperator,
+    py: Python,
+    vol: MaybeEmbeddedVolumeOperator,
     zyx: [ToOperator<ArrayOperator>; 3],
-) -> PyResult<VolumeOperator> {
+) -> PyObject {
     let [z, y, x] = zyx;
-    Ok(vng_core::operators::volume_gpu::separable_convolution(
-        vol.into(),
-        [z.0.into(), y.0.into(), x.0.into()],
-    )
-    .into())
+    vol.map_inner(py, |vol| {
+        vng_core::operators::volume_gpu::separable_convolution(
+            vol,
+            [z.0.into(), y.0.into(), x.0.into()],
+        )
+    })
 }
 
 #[pyfunction]
@@ -65,10 +63,11 @@ pub fn slice_projection_mat(
     state: SliceviewState,
     dim: usize,
     input_data: VolumeMetadataOperator,
+    embedding_data: VolumeEmbeddingDataOperator,
     output_data: Vector<2, GlobalCoordinate>,
 ) -> Mat4Operator {
     state
-        .projection_mat(dim, input_data.into(), output_data)
+        .projection_mat(dim, input_data.into(), embedding_data.into(), output_data)
         .into()
 }
 
@@ -92,7 +91,7 @@ pub fn mean(vol: VolumeOperator) -> ScalarOperatorF32 {
 }
 
 #[pyfunction]
-pub fn open_volume(path: std::path::PathBuf) -> PyResult<VolumeOperator> {
+pub fn open_volume(path: std::path::PathBuf) -> PyResult<EmbeddedVolumeOperator> {
     let brick_size_hint = LocalVoxelPosition::fill(32.into());
 
     let Some(file) = path.file_name() else {
@@ -120,11 +119,8 @@ pub fn open_volume(path: std::path::PathBuf) -> PyResult<VolumeOperator> {
         }
     };
 
-    use vng_core::operators::volume::VolumeOperatorState;
+    use vng_core::operators::volume::EmbeddedVolumeOperatorState;
     let vol = vol_source.operate();
 
-    Ok(VolumeOperator {
-        chunks: VolumeValueOperator(vol.chunks),
-        metadata: VolumeMetadataOperator(vol.metadata),
-    })
+    Ok(vol.into())
 }
