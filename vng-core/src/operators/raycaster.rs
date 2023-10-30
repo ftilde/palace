@@ -501,7 +501,7 @@ layout(std430, binding = 2) buffer RefBuffer {
 } bricks;
 
 layout(std430, binding = 3) buffer QueryTable {
-    uint64_t values[REQUEST_TABLE_SIZE];
+    uint values[REQUEST_TABLE_SIZE];
 } request_table;
 
 struct State {
@@ -564,7 +564,6 @@ void main()
                 if(found) {
                     state.intensity = max(state.intensity, sampled_intensity);
                 } else {
-                    uint64_t sbp = uint64_t(sample_brick_pos_linear);
                     try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                     break;
                 }
@@ -763,7 +762,7 @@ void main()
                         for (brick, brick_linear_pos) in
                             requested_bricks.into_iter().zip(batch.into_iter())
                         {
-                            brick_index.insert(*brick_linear_pos, brick);
+                            brick_index.insert(*brick_linear_pos as u64, brick);
                         }
 
                         if ctx.past_deadline() {

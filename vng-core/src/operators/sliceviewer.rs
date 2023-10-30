@@ -294,7 +294,7 @@ layout(std430, binding = 2) buffer RefBuffer {
 } bricks;
 
 layout(std430, binding = 3) buffer QueryTable {
-    uint64_t values[REQUEST_TABLE_SIZE];
+    uint values[REQUEST_TABLE_SIZE];
 } request_table;
 
 layout(std430, binding = 4) buffer StateBuffer {
@@ -343,7 +343,6 @@ void main()
 
                 BrickType brick = bricks.values[sample_brick_pos_linear];
                 if(uint64_t(brick) == 0) {
-                    uint64_t sbp = uint64_t(sample_brick_pos_linear);
                     try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                     val = vec4(1.0, 0.0, 0.0, 1.0);
                 } else {
@@ -561,7 +560,7 @@ void main()
                         for (brick, brick_linear_pos) in
                             requested_bricks.into_iter().zip(batch.into_iter())
                         {
-                            brick_index.insert(*brick_linear_pos, brick);
+                            brick_index.insert(*brick_linear_pos as u64, brick);
                         }
 
                         if ctx.past_deadline() {

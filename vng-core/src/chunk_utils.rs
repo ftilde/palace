@@ -14,10 +14,12 @@ pub struct ChunkRequestTable {
     layout: Layout,
 }
 
+type RTElement = u32;
+
 impl ChunkRequestTable {
     // Note: a barrier is needed after initialization to make values visible
     pub fn new(num_elements: usize, device: &DeviceContext) -> Self {
-        let request_table_buffer_layout = Layout::array::<u64>(num_elements).unwrap();
+        let request_table_buffer_layout = Layout::array::<RTElement>(num_elements).unwrap();
         let flags = vk::BufferUsageFlags::TRANSFER_SRC
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER;
@@ -60,8 +62,8 @@ impl ChunkRequestTable {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-    ) -> Vec<u64> {
-        let mut request_table_cpu = vec![0u64; self.num_elements];
+    ) -> Vec<RTElement> {
+        let mut request_table_cpu = vec![0u32; self.num_elements];
         let request_table_cpu_bytes = bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
         unsafe {
             crate::vulkan::memory::copy_to_cpu(
@@ -76,8 +78,8 @@ impl ChunkRequestTable {
 
         let to_request_linear = request_table_cpu
             .into_iter()
-            .filter(|v| *v != u64::max_value())
-            .collect::<Vec<u64>>();
+            .filter(|v| *v != RTElement::max_value())
+            .collect::<Vec<RTElement>>();
 
         to_request_linear
     }
