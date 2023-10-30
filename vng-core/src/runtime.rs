@@ -1,6 +1,7 @@
+use ahash::{HashMapExt, HashSetExt};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::VecDeque,
     num::NonZeroU64,
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -14,6 +15,7 @@ use crate::{
     task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
+    util::{Map, Set},
     vulkan::{BarrierInfo, DeviceContext, VulkanContext},
     Error,
 };
@@ -48,10 +50,15 @@ impl Ord for DataRequestItem {
         self.id.cmp(&other.id)
     }
 }
+impl std::hash::Hash for DataRequestItem {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state)
+    }
+}
 
 #[derive(Default)]
 struct TaskIdManager {
-    counts: BTreeMap<OperatorId, usize>,
+    counts: Map<OperatorId, usize>,
 }
 
 impl TaskIdManager {
@@ -64,14 +71,14 @@ impl TaskIdManager {
 }
 
 struct RequestBatch<'inv> {
-    items: BTreeSet<DataRequestItem>,
+    items: Set<DataRequestItem>,
     op: &'inv dyn OpaqueOperator,
     batch_id: TaskId,
 }
 
 #[derive(Default)]
 struct RequestBatcher<'inv> {
-    pending_batches: BTreeMap<OperatorId, RequestBatch<'inv>>,
+    pending_batches: Map<OperatorId, RequestBatch<'inv>>,
     task_id_manager: TaskIdManager,
 }
 
@@ -89,8 +96,8 @@ impl<'inv> RequestBatcher<'inv> {
             item: request.item,
         };
         match self.pending_batches.entry(op_id) {
-            std::collections::btree_map::Entry::Vacant(o) => {
-                let mut items = BTreeSet::new();
+            crate::util::MapEntry::Vacant(o) => {
+                let mut items = Set::new();
                 items.insert(req_item);
                 let batch_id = self.task_id_manager.gen_id(op_id);
                 o.insert(RequestBatch {
@@ -100,7 +107,7 @@ impl<'inv> RequestBatcher<'inv> {
                 });
                 BatchAddResult::New(batch_id)
             }
-            std::collections::btree_map::Entry::Occupied(mut o) => {
+            crate::util::MapEntry::Occupied(mut o) => {
                 let entry = o.get_mut();
                 entry.items.insert(req_item);
                 BatchAddResult::Existing(entry.batch_id)
@@ -119,7 +126,7 @@ impl<'inv> RequestBatcher<'inv> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum BarrierItem {
     Data(VisibleDataId),
     Barrier(BarrierInfo),
@@ -135,8 +142,8 @@ impl Into<RequestId> for BarrierItem {
 }
 
 struct BarrierBatcher {
-    pending: BTreeMap<BarrierInfo, (TaskId, BTreeSet<BarrierItem>)>,
-    pending_inv: BTreeMap<TaskId, BarrierInfo>,
+    pending: Map<BarrierInfo, (TaskId, Set<BarrierItem>)>,
+    pending_inv: Map<TaskId, BarrierInfo>,
     transfer_count: usize,
     op_id: OperatorId,
 }
@@ -144,27 +151,27 @@ struct BarrierBatcher {
 impl BarrierBatcher {
     fn new() -> Self {
         Self {
-            pending: BTreeMap::new(),
-            pending_inv: BTreeMap::new(),
+            pending: Map::new(),
+            pending_inv: Map::new(),
             transfer_count: 0,
             op_id: OperatorId::new("BarrierBatcher"),
         }
     }
     fn add(&mut self, info: BarrierInfo, item: BarrierItem) -> BatchAddResult {
         match self.pending.entry(info) {
-            std::collections::btree_map::Entry::Vacant(o) => {
+            crate::util::MapEntry::Vacant(o) => {
                 let c = self.transfer_count;
                 self.transfer_count += 1;
                 let task_id = TaskId::new(self.op_id, c);
                 o.insert((task_id, {
-                    let mut s = BTreeSet::new();
+                    let mut s = Set::new();
                     s.insert(item);
                     s
                 }));
                 self.pending_inv.insert(task_id, info);
                 BatchAddResult::New(task_id)
             }
-            std::collections::btree_map::Entry::Occupied(mut o) => {
+            crate::util::MapEntry::Occupied(mut o) => {
                 o.get_mut().1.insert(item);
                 BatchAddResult::Existing(o.get().0)
             }
@@ -314,7 +321,7 @@ struct ContextData<'cref, 'inv> {
     pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
     frame: FrameNumber,
-    predicted_preview_tasks: RefCell<BTreeSet<TaskId>>,
+    predicted_preview_tasks: RefCell<Set<TaskId>>,
 }
 
 struct Executor<'cref, 'inv> {
@@ -378,11 +385,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
                 let resolved_deps =
                     if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
-                        let mut tmp = BTreeSet::new();
+                        let mut tmp = Set::new();
                         std::mem::swap(&mut tmp, resolved_deps);
                         tmp
                     } else {
-                        BTreeSet::new()
+                        Set::new()
                     };
                 let old_hints = self.data.hints.completed.replace(resolved_deps);
                 // Hints should only contain during the loop body and returned back to the task
@@ -407,7 +414,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     Poll::Ready(Ok(_)) => {
                         assert!(self.data.request_queue.is_empty());
                         // Drain hints
-                        self.data.hints.completed.replace(BTreeSet::new());
+                        self.data.hints.completed.replace(Set::new());
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
@@ -417,7 +424,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     Poll::Pending => {
                         // Return hints back to the task graph
-                        let old_hints = self.data.hints.completed.replace(BTreeSet::new());
+                        let old_hints = self.data.hints.completed.replace(Set::new());
                         if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
                             *resolved_deps = old_hints;
                         }
@@ -748,17 +755,17 @@ impl Statistics {
 
 #[derive(Default)]
 pub(crate) struct CompletedBarrierItems {
-    completed: Cell<BTreeSet<BarrierItem>>,
+    completed: Cell<Set<BarrierItem>>,
 }
 impl CompletedBarrierItems {
-    fn set(&self, completed: BTreeSet<BarrierItem>) {
+    fn set(&self, completed: Set<BarrierItem>) {
         self.completed.set(completed);
     }
 }
 
 #[derive(Default)]
 pub struct TaskHints {
-    pub completed: RefCell<BTreeSet<RequestId>>,
+    pub completed: RefCell<Set<RequestId>>,
 }
 
 impl TaskHints {

@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
     ffi::c_void,
     rc::Rc,
 };
@@ -19,6 +18,7 @@ use crate::{
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::gpu::ImageAllocation,
+    util::Map,
     vulkan::{
         memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipeline},
@@ -40,7 +40,7 @@ pub struct GuiStateInner {
     version: u64,
     latest_size: Cell<Vector<2, u32>>,
     textures_delta: TexturesDelta,
-    textures: BTreeMap<TextureId, (ImageAllocation, vk::ImageView)>,
+    textures: Map<TextureId, (ImageAllocation, vk::ImageView)>,
     scale_factor: f32,
 }
 

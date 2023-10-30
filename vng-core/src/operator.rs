@@ -9,7 +9,7 @@ use crate::{
     Error,
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct OperatorId(Id, pub &'static str);
 impl OperatorId {
     pub fn new(name: &'static str) -> Self {

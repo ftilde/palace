@@ -1,7 +1,8 @@
+use ahash::HashMapExt;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     mem::MaybeUninit,
 };
 
@@ -14,6 +15,7 @@ use crate::{
     operator::{DataId, OperatorId},
     runtime::FrameNumber,
     task::OpaqueTaskContext,
+    util::Map,
     vulkan::{
         state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
         SrcBarrierInfo,
@@ -26,14 +28,14 @@ pub struct BarrierEpoch(usize);
 
 pub(crate) struct BarrierManager {
     current_epoch: Cell<usize>,
-    last_issued_ending: RefCell<BTreeMap<(SrcBarrierInfo, DstBarrierInfo), BarrierEpoch>>,
+    last_issued_ending: RefCell<Map<(SrcBarrierInfo, DstBarrierInfo), BarrierEpoch>>,
 }
 
 impl BarrierManager {
     fn new() -> Self {
         Self {
             current_epoch: Cell::new(0),
-            last_issued_ending: RefCell::new(BTreeMap::new()),
+            last_issued_ending: RefCell::new(Map::new()),
         }
     }
 
@@ -362,7 +364,7 @@ struct IndexBrickRef {
 pub struct IndexEntry {
     storage: StorageInfo,
     visibility: Visibility,
-    present: BTreeMap<u64, IndexBrickRef>,
+    present: Map<u64, IndexBrickRef>,
     access: AccessState,
 }
 
@@ -381,7 +383,7 @@ impl IndexEntry {
     unsafe fn unref(
         &mut self,
         device: &DeviceContext,
-        brick_index: &mut BTreeMap<DataId, Entry>,
+        brick_index: &mut Map<DataId, Entry>,
         index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
         brick_ref: IndexBrickRef,
@@ -402,7 +404,7 @@ impl IndexEntry {
     unsafe fn unref_all(
         &mut self,
         device: &DeviceContext,
-        brick_index: &mut BTreeMap<DataId, Entry>,
+        brick_index: &mut Map<DataId, Entry>,
         index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
     ) {
@@ -414,7 +416,7 @@ impl IndexEntry {
     fn release(
         &mut self,
         device: &DeviceContext,
-        brick_index: &mut BTreeMap<DataId, Entry>,
+        brick_index: &mut Map<DataId, Entry>,
         index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
         pos: u64,
@@ -515,9 +517,9 @@ enum LRUItem {
 }
 
 pub struct Storage {
-    data_index: RefCell<BTreeMap<DataId, Entry>>,
-    state_cache_index: RefCell<BTreeMap<DataId, StateCacheEntry>>,
-    index_index: RefCell<BTreeMap<OperatorId, IndexEntry>>,
+    data_index: RefCell<Map<DataId, Entry>>,
+    state_cache_index: RefCell<Map<DataId, StateCacheEntry>>,
+    index_index: RefCell<Map<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     index_lru: RefCell<super::LRUManager<(OperatorId, u64, DataId)>>, //TODO: Simplify after DataId
@@ -683,8 +685,8 @@ impl Storage {
 
                 unindexed += size;
                 let Some(rest) = goal_in_bytes.checked_sub(size) else {
-                break;
-            };
+                    break;
+                };
                 goal_in_bytes = rest;
             }
         }
@@ -715,10 +717,10 @@ impl Storage {
     fn ensure_presence<'a>(
         &self,
         current_frame: FrameNumber,
-        entry: std::collections::btree_map::Entry<'a, DataId, Entry>,
+        entry: crate::util::MapEntry<'a, DataId, Entry>,
     ) -> &'a mut Entry {
         match entry {
-            std::collections::btree_map::Entry::Occupied(mut e) => {
+            crate::util::MapEntry::Occupied(mut e) => {
                 if let StorageEntryState::Initialized(_, _, version) = e.get().state {
                     if version < DataVersion::Preview(current_frame) {
                         let old = e.insert(Entry {
@@ -744,7 +746,7 @@ impl Storage {
                 }
                 e.into_mut()
             }
-            std::collections::btree_map::Entry::Vacant(v) => {
+            crate::util::MapEntry::Vacant(v) => {
                 v.insert(Entry {
                     state: StorageEntryState::Registered,
                     access: AccessState::Some(0), // Will be overwritten immediately when generating token
@@ -998,7 +1000,7 @@ impl Storage {
             return Err(old_access);
         };
         let StorageEntryState::Initialized(info, visibility, version) = &entry.state else {
-            return Err(old_access)
+            return Err(old_access);
         };
         let old_version = version.type_();
         if !self

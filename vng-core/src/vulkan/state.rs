@@ -2,14 +2,13 @@ use ash::vk;
 use std::{
     any::Any,
     cell::{RefCell, UnsafeCell},
-    collections::BTreeMap,
 };
 
-use crate::{id::Id, operator::OperatorId};
+use crate::{id::Id, operator::OperatorId, util::Map};
 
 use super::DeviceContext;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct RessourceId(Id);
 impl RessourceId {
     pub fn new(name: &'static str) -> Self {
@@ -29,7 +28,7 @@ impl RessourceId {
 
 #[derive(Default)]
 pub struct Cache {
-    values: RefCell<BTreeMap<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
+    values: RefCell<Map<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
 }
 
 impl Cache {

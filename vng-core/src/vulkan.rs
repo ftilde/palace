@@ -788,7 +788,7 @@ impl DeviceContext {
         }
 
         let waiting = std::mem::take(&mut *waiting_ref);
-        // TODO: replace with BTreeMap::drain_filter once stable
+        // TODO: replace with Map::drain_filter once stable
         let new_waiting = waiting
             .into_iter()
             .filter_map(|(epoch, command_buffer)| {

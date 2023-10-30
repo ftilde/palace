@@ -1,9 +1,11 @@
-use std::{cell::Cell, collections::BTreeMap, time::Duration};
+use ahash::HashMapExt;
+use std::{cell::Cell, time::Duration};
 
 use crate::{
     task::{Request, Task, ThreadPoolJob},
     task_graph::TaskId,
     threadpool::{ComputeThreadPool, IoThreadPool, JobId, JobInfo, JobType},
+    util::Map,
 };
 
 struct TaskData<'a> {
@@ -18,7 +20,7 @@ impl TaskData<'_> {
 }
 
 pub struct TaskManager<'a> {
-    managed_tasks: BTreeMap<TaskId, TaskData<'a>>,
+    managed_tasks: Map<TaskId, TaskData<'a>>,
     compute_thread_pool: &'a mut ComputeThreadPool,
     io_thread_pool: &'a mut IoThreadPool,
     async_result_receiver: &'a mut std::sync::mpsc::Receiver<JobInfo>,
@@ -50,7 +52,7 @@ impl<'a> TaskManager<'a> {
         async_result_receiver: &'a mut std::sync::mpsc::Receiver<JobInfo>,
     ) -> Self {
         Self {
-            managed_tasks: BTreeMap::new(),
+            managed_tasks: Map::new(),
             compute_thread_pool,
             io_thread_pool,
             async_result_receiver,

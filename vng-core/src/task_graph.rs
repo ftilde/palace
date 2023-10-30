@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::{
     id::Id,
     operator::{DataId, OperatorId},
     storage::{DataLocation, VisibleDataLocation},
     threadpool::JobId,
+    util::{Map, Set},
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
+use ahash::HashMapExt;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct LocatedDataId {
@@ -20,7 +20,7 @@ pub struct VisibleDataId {
     pub location: VisibleDataLocation,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
     CmdBufferSubmission(CmdBufferSubmissionId),
@@ -46,7 +46,7 @@ impl From<GroupId> for RequestId {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct GroupId(pub Id);
 
 impl RequestId {
@@ -73,7 +73,7 @@ pub enum ProgressIndicator {
     WaitForComplete,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct TaskId {
     op: OperatorId,
     num: usize,
@@ -108,7 +108,7 @@ impl Ord for ReadyQueueItem {
 
 #[derive(Default)]
 struct ReadyQueue {
-    actually_ready: BTreeSet<TaskId>,
+    actually_ready: Set<TaskId>,
     queue: std::collections::BinaryHeap<ReadyQueueItem>,
 }
 
@@ -141,15 +141,15 @@ struct TaskMetadata {
 
 #[derive(Default)]
 pub struct TaskGraph {
-    implied_tasks: BTreeMap<TaskId, TaskMetadata>,
-    waits_on: BTreeMap<TaskId, BTreeMap<RequestId, ProgressIndicator>>,
-    required_by: BTreeMap<RequestId, BTreeSet<TaskId>>,
-    will_provide: BTreeMap<TaskId, BTreeSet<DataId>>,
+    implied_tasks: Map<TaskId, TaskMetadata>,
+    waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
+    required_by: Map<RequestId, Set<TaskId>>,
+    will_provide: Map<TaskId, Set<DataId>>,
     implied_ready: ReadyQueue,
-    resolved_deps: BTreeMap<TaskId, BTreeSet<RequestId>>,
-    in_groups: BTreeMap<RequestId, BTreeSet<GroupId>>,
-    groups: BTreeMap<GroupId, BTreeSet<RequestId>>,
-    requested_locations: BTreeMap<DataId, BTreeSet<VisibleDataLocation>>,
+    resolved_deps: Map<TaskId, Set<RequestId>>,
+    in_groups: Map<RequestId, Set<GroupId>>,
+    groups: Map<GroupId, Set<RequestId>>,
+    requested_locations: Map<DataId, Set<VisibleDataLocation>>,
 }
 
 impl TaskGraph {
@@ -177,7 +177,7 @@ impl TaskGraph {
         }
     }
 
-    pub fn requested_locations(&self, id: DataId) -> BTreeSet<VisibleDataLocation> {
+    pub fn requested_locations(&self, id: DataId) -> Set<VisibleDataLocation> {
         self.requested_locations.get(&id).unwrap().clone()
     }
 
@@ -195,7 +195,7 @@ impl TaskGraph {
 
     pub fn add_implied(&mut self, id: TaskId, priority: u32) {
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
-        self.waits_on.insert(id, BTreeMap::new());
+        self.waits_on.insert(id, Map::new());
         assert!(inserted.is_none(), "Tried to insert task twice");
         self.implied_ready.add(id, priority);
     }
@@ -204,7 +204,7 @@ impl TaskGraph {
         self.required_by.contains_key(&rid)
     }
 
-    pub fn dependents(&self, id: RequestId) -> &BTreeSet<TaskId> {
+    pub fn dependents(&self, id: RequestId) -> &Set<TaskId> {
         self.required_by.get(&id).unwrap()
     }
 
@@ -266,7 +266,7 @@ impl TaskGraph {
         !self.implied_tasks.is_empty()
     }
 
-    pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut BTreeSet<RequestId>> {
+    pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut Set<RequestId>> {
         self.resolved_deps.get_mut(&task)
     }
 }
@@ -303,7 +303,7 @@ pub fn export(graph: &TaskGraph) {
             stmts.push(Stmt::Node(node));
             (*k, node_id)
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Map<_, _>>();
 
     let request_nodes = graph
         .required_by
@@ -324,7 +324,7 @@ pub fn export(graph: &TaskGraph) {
             stmts.push(Stmt::Node(node));
             (*k, node_id)
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Map<_, _>>();
 
     let data_nodes = graph
         .requested_locations
@@ -345,7 +345,7 @@ pub fn export(graph: &TaskGraph) {
             stmts.push(Stmt::Node(node));
             (*k, node_id)
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Map<_, _>>();
 
     for (t, r) in &graph.waits_on {
         for (r, _dep_type) in r {

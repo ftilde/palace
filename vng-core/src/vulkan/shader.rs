@@ -1,14 +1,15 @@
+use ahash::HashMapExt;
 use ash::vk;
 use spirq::{EntryPoint, ReflectConfig};
 use spirv_compiler::ShaderKind;
 use std::{cell::RefCell, collections::BTreeMap};
 
-use crate::data::Vector;
+use crate::{data::Vector, util::Map};
 
 use super::{pipeline::DynamicDescriptorSetPool, state::VulkanState, DeviceFunctions};
 
 pub struct ShaderDefines {
-    defines: BTreeMap<String, String>,
+    defines: Map<String, String>,
 }
 
 impl ShaderDefines {
@@ -108,7 +109,7 @@ impl DescriptorSetLayoutBindings {
 
 #[derive(Default)]
 pub struct DescriptorBindings {
-    inner: BTreeMap<u32, DescriptorSetLayoutBindings>,
+    inner: Map<u32, DescriptorSetLayoutBindings>,
 }
 
 impl DescriptorBindings {
@@ -133,7 +134,7 @@ impl DescriptorBindings {
             .inner
             .iter()
             .map(|(_, bindings)| {
-                let mut type_counts: BTreeMap<vk::DescriptorType, u32> = BTreeMap::new();
+                let mut type_counts: Map<vk::DescriptorType, u32> = Map::new();
                 for (_, b) in &bindings.inner {
                     *type_counts.entry(b.descriptor_type).or_default() += b.descriptor_count;
                 }

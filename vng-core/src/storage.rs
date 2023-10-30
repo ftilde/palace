@@ -6,6 +6,7 @@ use std::{cell::RefCell, collections::BTreeMap};
 use crate::{
     operator::DataId,
     runtime::FrameNumber,
+    util::Map,
     vulkan::{DeviceId, DstBarrierInfo},
 };
 
@@ -121,7 +122,7 @@ impl<T: Clone> LRUManager<T> {
 
 #[derive(Default)]
 pub struct NewDataManager {
-    inner: RefCell<BTreeMap<DataId, DataVersionType>>,
+    inner: RefCell<Map<DataId, DataVersionType>>,
 }
 
 impl NewDataManager {

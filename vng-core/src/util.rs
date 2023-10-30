@@ -27,3 +27,9 @@ pub fn num_elms_in_array<T>(size_in_bytes: usize) -> usize {
     let num_elements = size_in_bytes / size_with_padding;
     num_elements
 }
+
+//pub type Map<K, V> = std::collections::BTreeMap<K, V>;
+pub type Map<K, V> = ahash::HashMap<K, V>;
+pub type MapEntry<'a, K, V> = std::collections::hash_map::Entry<'a, K, V>;
+//pub type Set<K> = std::collections::BTreeSet<K>;
+pub type Set<K> = ahash::HashSet<K>;

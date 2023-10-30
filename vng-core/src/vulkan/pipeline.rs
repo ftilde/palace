@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, VecDeque},
-};
+use std::{cell::RefCell, collections::VecDeque};
 
 use ash::vk;
 use crevice::std140::{AsStd140, Std140};
@@ -9,6 +6,7 @@ use crevice::std140::{AsStd140, Std140};
 use crate::{
     data::Vector,
     storage::gpu::{Allocation, IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
+    util::Map,
     vulkan::shader::Shader,
 };
 
@@ -241,17 +239,14 @@ impl GraphicsPipeline {
 
 pub struct DynamicDescriptorSetPool {
     layout: vk::DescriptorSetLayout,
-    type_counts: BTreeMap<vk::DescriptorType, u32>,
+    type_counts: Map<vk::DescriptorType, u32>,
     used_pools: Vec<vk::DescriptorPool>,
     available: Vec<vk::DescriptorSet>,
     in_use: VecDeque<(CmdBufferEpoch, Vec<vk::DescriptorSet>)>,
 }
 
 impl DynamicDescriptorSetPool {
-    pub fn new(
-        layout: vk::DescriptorSetLayout,
-        type_counts: BTreeMap<vk::DescriptorType, u32>,
-    ) -> Self {
+    pub fn new(layout: vk::DescriptorSetLayout, type_counts: Map<vk::DescriptorType, u32>) -> Self {
         Self {
             layout,
             type_counts,

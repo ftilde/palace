@@ -1,14 +1,12 @@
-use std::{
-    alloc::Layout,
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
-    mem::MaybeUninit,
-    pin::Pin,
-};
+use std::{alloc::Layout, cell::RefCell, mem::MaybeUninit, pin::Pin};
 
 use crate::{
-    operator::DataId, runtime::FrameNumber, task::OpaqueTaskContext, task_graph::TaskId,
-    util::num_elms_in_array, Error,
+    operator::DataId,
+    runtime::FrameNumber,
+    task::OpaqueTaskContext,
+    task_graph::TaskId,
+    util::{num_elms_in_array, Map, Set},
+    Error,
 };
 
 use super::{DataLocation, DataVersion, DataVersionType, LRUIndex};
@@ -185,7 +183,7 @@ impl Drop for DropError<'_> {
 pub struct DropMarkInitialized<'a> {
     access: AccessToken<'a>,
     version: Option<DataVersionType>,
-    predicted_preview_tasks: &'a RefCell<BTreeSet<TaskId>>,
+    predicted_preview_tasks: &'a RefCell<Set<TaskId>>,
     current_frame: FrameNumber,
     current_task: TaskId,
 }
@@ -446,7 +444,7 @@ impl<'a, T: Send> ThreadInplaceResult<'a, T> {
 }
 
 pub struct Storage {
-    index: RefCell<BTreeMap<DataId, Entry>>,
+    index: RefCell<Map<DataId, Entry>>,
     lru_manager: RefCell<super::LRUManager<DataId>>,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -678,11 +676,11 @@ impl Storage {
 
         let mut index = self.index.borrow_mut();
         let Some(entry) = index.get(&old_access.id) else {
-                return Err(old_access);
-            };
+            return Err(old_access);
+        };
 
         let StorageEntryState::Initialized(info, _) = entry.state else {
-            return Err(old_access)
+            return Err(old_access);
         };
 
         let num_elements = num_elms_in_array::<T>(info.layout.size());

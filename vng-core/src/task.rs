@@ -1,6 +1,7 @@
+use ahash::HashMapExt;
 use std::alloc::Layout;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -16,6 +17,7 @@ use crate::storage::VisibleDataLocation;
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
+use crate::util::{Map, Set};
 use crate::vulkan::{BarrierInfo, DeviceContext};
 use crate::Error;
 use crevice::std430::Std430;
@@ -121,7 +123,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
     pub(crate) device_contexts: &'cref [DeviceContext],
-    pub(crate) predicted_preview_tasks: &'cref RefCell<BTreeSet<TaskId>>,
+    pub(crate) predicted_preview_tasks: &'cref RefCell<Set<TaskId>>,
     pub(crate) current_task: TaskId,
     pub(crate) current_frame: FrameNumber,
     pub(crate) deadline: Instant,
@@ -405,7 +407,7 @@ impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::
 
 #[pin_project]
 struct RequestStreamSource<'req, 'inv, V, D> {
-    task_map: BTreeMap<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
+    task_map: Map<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
     ready: VecDeque<(V, D)>,
     task_context: OpaqueTaskContext<'req, 'inv>,
 }
@@ -413,7 +415,7 @@ struct RequestStreamSource<'req, 'inv, V, D> {
 impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
     fn empty(task_context: OpaqueTaskContext<'req, 'inv>) -> Self {
         Self {
-            task_map: BTreeMap::new(),
+            task_map: Map::new(),
             ready: VecDeque::new(),
             task_context,
         }
