@@ -3,12 +3,12 @@ use std::{path::PathBuf, rc::Rc};
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 
 use vng_core::{
-    array::VolumeMetaData,
-    data::{self, LocalCoordinate, VoxelPosition},
+    array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
+    data::{self, LocalCoordinate, Vector, VoxelPosition},
     operator::OperatorId,
     operators::{
         tensor::TensorOperator,
-        volume::{VolumeOperator, VolumeOperatorState},
+        volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
     },
     Error,
 };
@@ -23,6 +23,7 @@ pub struct NiftiVolumeSourceState(Rc<NiftiVolumeSourceStateInner>);
 
 pub struct NiftiVolumeSourceStateInner {
     metadata: VolumeMetaData,
+    embedding_data: TensorEmbeddingData<3>,
     type_: Type,
     header: NiftiHeader,
 }
@@ -35,11 +36,21 @@ fn check_type(header: &NiftiHeader) -> Result<(), Error> {
     Ok(())
 }
 
-fn read_metadata(header: &NiftiHeader) -> Result<VolumeMetaData, Error> {
+fn read_metadata(header: &NiftiHeader) -> Result<(VolumeMetaData, VolumeEmbeddingData), Error> {
     let dimensions = match *header.dim()? {
         [x, y, z] => VoxelPosition::from([(z as u32), (y as u32), (x as u32)]),
         _ => return Err("Invalid number of dimensions".into()),
     };
+    let sx = header.pixdim[1];
+    let sy = header.pixdim[2];
+    let sz = header.pixdim[3];
+    let factor = match header.xyzt_units()?.0 {
+        nifti::Unit::Meter => 1000.0,
+        nifti::Unit::Mm => 1.0,
+        nifti::Unit::Micron => 0.001,
+        _ => return Err("Invalid length unit".into()),
+    };
+    let spacing = Vector::new([sz, sy, sx]).scale(factor);
 
     let chunk_size = [
         1.into(),
@@ -52,7 +63,8 @@ fn read_metadata(header: &NiftiHeader) -> Result<VolumeMetaData, Error> {
         dimensions,
         chunk_size,
     };
-    Ok(metadata)
+    let embedding_data = VolumeEmbeddingData { spacing };
+    Ok((metadata, embedding_data))
 }
 
 impl NiftiVolumeSourceState {
@@ -60,10 +72,11 @@ impl NiftiVolumeSourceState {
         let obj = nifti::ReaderStreamedOptions::new().read_file(&path)?;
         let header = obj.header();
         check_type(header)?;
-        let metadata = read_metadata(header)?;
+        let (metadata, embedding_data) = read_metadata(header)?;
 
         Ok(Self(Rc::new(NiftiVolumeSourceStateInner {
             metadata,
+            embedding_data,
             type_: Type::Single(path),
             header: header.clone(),
         })))
@@ -72,10 +85,11 @@ impl NiftiVolumeSourceState {
         let obj = nifti::ReaderStreamedOptions::new().read_file_pair(&header_path, &data)?;
         let header = obj.header();
         check_type(header)?;
-        let metadata = read_metadata(header)?;
+        let (metadata, embedding_data) = read_metadata(header)?;
 
         Ok(Self(Rc::new(NiftiVolumeSourceStateInner {
             metadata,
+            embedding_data,
             type_: Type::Separate {
                 header: header_path,
                 data,
@@ -85,8 +99,8 @@ impl NiftiVolumeSourceState {
     }
 }
 
-impl VolumeOperatorState for NiftiVolumeSourceState {
-    fn operate(&self) -> VolumeOperator {
+impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
+    fn operate(&self) -> EmbeddedVolumeOperator {
         TensorOperator::with_state(
             match &self.0.type_ {
                 Type::Single(path) => OperatorId::new("NiftiVolumeSourceState::operate")
@@ -150,5 +164,6 @@ impl VolumeOperatorState for NiftiVolumeSourceState {
                 .into()
             },
         )
+        .embedded(self.0.embedding_data.clone())
     }
 }

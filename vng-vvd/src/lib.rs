@@ -4,13 +4,13 @@ use sxd_xpath::evaluate_xpath;
 use std::path::{Path, PathBuf};
 
 use vng_core::{
-    array::VolumeMetaData,
-    data::{LocalVoxelPosition, VoxelPosition},
+    array::{TensorEmbeddingData, VolumeMetaData},
+    data::{LocalVoxelPosition, Vector, VoxelPosition},
     operator::OperatorId,
     operators::{
         raw::RawVolumeSourceState,
         tensor::TensorOperator,
-        volume::{VolumeOperator, VolumeOperatorState},
+        volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
     },
     Error,
 };
@@ -19,6 +19,7 @@ use vng_core::{
 pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
     metadata: VolumeMetaData,
+    embedding_data: TensorEmbeddingData<3>,
 }
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {
@@ -42,8 +43,8 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
     None
 }
 
-impl VolumeOperatorState for VvdVolumeSourceState {
-    fn operate(&self) -> VolumeOperator {
+impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
+    fn operate(&self) -> EmbeddedVolumeOperator {
         TensorOperator::with_state(
             OperatorId::new("VvdVolumeSourceState::operate")
                 .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
@@ -59,6 +60,7 @@ impl VolumeOperatorState for VvdVolumeSourceState {
                 .into()
             },
         )
+        .embedded(self.embedding_data)
     }
 }
 
@@ -73,8 +75,29 @@ impl VvdVolumeSourceState {
         let z = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@z")?.number() as u32;
         let format =
             evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@format")?.string();
-
         let size = VoxelPosition::from([z, y, x]);
+
+        let spacing_x = evaluate_xpath(
+            &document,
+            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@x",
+        )?
+        .number() as f32;
+        let spacing_y = evaluate_xpath(
+            &document,
+            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@y",
+        )?
+        .number() as f32;
+        let spacing_z = evaluate_xpath(
+            &document,
+            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@z",
+        )?
+        .number() as f32;
+
+        assert!(!spacing_x.is_nan() && !spacing_y.is_nan() && !spacing_z.is_nan());
+
+        let spacing = Vector::new([spacing_z, spacing_y, spacing_x]);
+
+        let embedding_data = TensorEmbeddingData { spacing };
 
         if format != "float" {
             return Err(format!(
@@ -92,7 +115,9 @@ impl VvdVolumeSourceState {
         )?;
 
         let base = path.parent();
-        let Some(raw_path) = find_valid_path(base, &simple_path).or_else(|| find_valid_path(base, &alternative_paths)) else {
+        let Some(raw_path) = find_valid_path(base, &simple_path)
+            .or_else(|| find_valid_path(base, &alternative_paths))
+        else {
             return Err("No valid .raw file path in file".into());
         };
 
@@ -102,6 +127,10 @@ impl VvdVolumeSourceState {
         };
 
         let raw = RawVolumeSourceState::open(raw_path, size)?;
-        Ok(VvdVolumeSourceState { raw, metadata })
+        Ok(VvdVolumeSourceState {
+            raw,
+            metadata,
+            embedding_data,
+        })
     }
 }

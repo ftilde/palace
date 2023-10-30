@@ -2,6 +2,7 @@ use derive_more::From;
 use futures::stream::StreamExt;
 
 use crate::{
+    array::VolumeEmbeddingData,
     data::{
         chunk, chunk_mut, slice_range, BrickPosition, GlobalCoordinate, LocalCoordinate, Vector,
     },
@@ -10,13 +11,32 @@ use crate::{
     task::RequestStream,
 };
 
-use super::{array::ArrayOperator, scalar::ScalarOperator, tensor::TensorOperator};
+use super::{
+    array::ArrayOperator,
+    scalar::ScalarOperator,
+    tensor::{EmbeddedTensorOperator, TensorOperator},
+};
 
 pub trait VolumeOperatorState {
     fn operate(&self) -> VolumeOperator;
 }
+pub trait EmbeddedVolumeOperatorState {
+    fn operate(&self) -> EmbeddedVolumeOperator;
+}
+
+impl<O: EmbeddedVolumeOperatorState> VolumeOperatorState for O {
+    fn operate(&self) -> VolumeOperator {
+        self.operate().into()
+    }
+}
+impl<O: VolumeOperatorState> EmbeddedVolumeOperatorState for (O, VolumeEmbeddingData) {
+    fn operate(&self) -> EmbeddedVolumeOperator {
+        self.0.operate().embedded(self.1.clone())
+    }
+}
 
 pub type VolumeOperator = TensorOperator<3>;
+pub type EmbeddedVolumeOperator = EmbeddedTensorOperator<3>;
 
 #[allow(unused)]
 pub fn mean(input: VolumeOperator) -> ScalarOperator<f32> {

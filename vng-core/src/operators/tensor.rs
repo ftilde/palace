@@ -3,7 +3,7 @@ use std::rc::Rc;
 use futures::StreamExt;
 
 use crate::{
-    array::TensorMetaData,
+    array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     id::Id,
     operator::{Operator, OperatorId},
@@ -93,11 +93,53 @@ impl<const N: usize> TensorOperator<N> {
             chunks: Operator::unbatched(base_id.slot(1), state_chunks, chunks),
         }
     }
+
+    pub fn embedded(self, data: TensorEmbeddingData<N>) -> EmbeddedTensorOperator<N> {
+        EmbeddedTensorOperator {
+            inner: self,
+            embedding_data: data.into(),
+        }
+    }
 }
 
 impl<const N: usize> Into<Id> for &TensorOperator<N> {
     fn into(self) -> Id {
         Id::combine(&[(&self.metadata).into(), (&self.chunks).into()])
+    }
+}
+
+#[derive(Clone)]
+pub struct EmbeddedTensorOperator<const N: usize> {
+    pub inner: TensorOperator<N>,
+    pub embedding_data: ScalarOperator<TensorEmbeddingData<N>>,
+}
+
+impl<const N: usize> std::ops::Deref for EmbeddedTensorOperator<N> {
+    type Target = TensorOperator<N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<const N: usize> std::ops::DerefMut for EmbeddedTensorOperator<N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<const N: usize> Into<TensorOperator<N>> for EmbeddedTensorOperator<N> {
+    fn into(self) -> TensorOperator<N> {
+        self.inner
+    }
+}
+
+impl<const N: usize> EmbeddedTensorOperator<N> {
+    pub fn map_inner(self, f: impl FnOnce(TensorOperator<N>) -> TensorOperator<N>) -> Self {
+        EmbeddedTensorOperator {
+            inner: f(self.inner),
+            embedding_data: self.embedding_data,
+        }
     }
 }
 

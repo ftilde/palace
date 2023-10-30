@@ -7,8 +7,10 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::volume::{ChunkSize, VolumeOperator};
-use vng_core::operators::{self, volume::VolumeOperatorState};
+use vng_core::operators::volume::{
+    ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
+};
+use vng_core::operators::{self};
 use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
@@ -20,7 +22,7 @@ use vng_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::{self, ImageMetaData};
+use vng_core::array::{self, ImageMetaData, VolumeEmbeddingData};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -62,7 +64,7 @@ struct CliArgs {
 fn open_volume(
     path: PathBuf,
     brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn VolumeOperatorState>, Box<dyn std::error::Error>> {
+) -> Result<Box<dyn EmbeddedVolumeOperatorState>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
@@ -95,23 +97,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol_state = match args.input {
         Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::SyntheticCpu(args) => Box::new(operators::rasterize_function::normalized(
-            VoxelPosition::fill(args.size.into()),
-            brick_size,
-            |v| {
-                let r2 = v
-                    .map(|v| v - 0.5)
-                    .map(|v| v * v)
-                    .fold(0.0f32, std::ops::Add::add);
-                r2.sqrt()
+        Input::SyntheticCpu(args) => Box::new((
+            operators::rasterize_function::normalized(
+                VoxelPosition::fill(args.size.into()),
+                brick_size,
+                |v| {
+                    let r2 = v
+                        .map(|v| v - 0.5)
+                        .map(|v| v * v)
+                        .fold(0.0f32, std::ops::Add::add);
+                    r2.sqrt()
+                },
+            ),
+            VolumeEmbeddingData {
+                spacing: Vector::fill(1.0),
             },
         )),
-        Input::Synthetic(args) => Box::new(operators::volume_gpu::VoxelRasterizerGLSL {
-            metadata: array::VolumeMetaData {
-                dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
-            },
-            body: r#"{
+        Input::Synthetic(args) => Box::new((
+            operators::volume_gpu::VoxelRasterizerGLSL {
+                metadata: array::VolumeMetaData {
+                    dimensions: VoxelPosition::fill(args.size.into()),
+                    chunk_size: brick_size,
+                },
+                body: r#"{
 
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
@@ -119,8 +127,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
 
             }"#
-            .to_owned(),
-        }),
+                .to_owned(),
+            },
+            VolumeEmbeddingData {
+                spacing: Vector::fill(1.0),
+            },
+        )),
     };
 
     let mut angle: f32 = 0.0;
@@ -207,7 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: VolumeOperator,
+    slice_input: EmbeddedVolumeOperator,
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<2, f32>,
@@ -247,7 +259,7 @@ fn slice_viewer_z(
         crate::operators::scalar::constant_pod(*zoom_level),
     );
     let slice = crate::operators::sliceviewer::render_slice(
-        slice_input,
+        slice_input.into(),
         crate::operators::scalar::constant_hash(md),
         slice_proj_z,
     );
@@ -257,7 +269,7 @@ fn slice_viewer_z(
 }
 
 fn slice_viewer_rot(
-    slice_input: VolumeOperator,
+    slice_input: EmbeddedVolumeOperator,
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
@@ -280,7 +292,7 @@ fn slice_viewer_rot(
         crate::operators::scalar::constant_pod(*angle),
     );
     let slice = crate::operators::sliceviewer::render_slice(
-        slice_input,
+        slice_input.into(),
         crate::operators::scalar::constant_hash(md),
         slice_proj_rot,
     );
@@ -291,7 +303,7 @@ fn slice_viewer_rot(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: &dyn VolumeOperatorState,
+    vol: &dyn EmbeddedVolumeOperatorState,
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<2, f32>,
@@ -347,19 +359,22 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    let vol = vol.map_inner(|vol| {
+        let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let after_kernel = operators::vesselness::multiscale_vesselness(
-        vol,
-        scalar::constant_pod(3.0),
-        scalar::constant_pod(*stddev),
-        3,
-    );
-    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
-    let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+        let after_kernel = operators::vesselness::multiscale_vesselness(
+            vol,
+            scalar::constant_pod(3.0),
+            scalar::constant_pod(*stddev),
+            3,
+        );
+        //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+        let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+        scaled
+    });
 
     let left = slice_viewer_z(
-        scaled.clone(),
+        vol.clone(),
         splitter.metadata_first(),
         slice_num,
         slice_offset,
@@ -368,7 +383,7 @@ fn eval_network(
     );
 
     let left = gui.render(left);
-    let right = slice_viewer_rot(scaled, splitter.metadata_last(), angle, events_r);
+    let right = slice_viewer_rot(vol, splitter.metadata_last(), angle, events_r);
     let frame = splitter.render(left, right);
 
     let slice_ref = &frame;

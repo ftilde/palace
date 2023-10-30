@@ -40,6 +40,15 @@ pub struct TensorMetaData<const N: usize> {
     pub chunk_size: Vector<N, LocalCoordinate>,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable)]
+pub struct TensorEmbeddingData<const N: usize> {
+    pub spacing: Vector<N, f32>,
+}
+
+//TODO: Revisit this. This is definitely fine as long as we don't add other members
+unsafe impl<const N: usize> bytemuck::Pod for TensorEmbeddingData<N> {}
+
 #[cfg(feature = "python")]
 mod py {
     use super::*;
@@ -106,6 +115,7 @@ impl<const N: usize> TensorMetaData<N> {
 }
 
 pub type VolumeMetaData = TensorMetaData<3>;
+pub type VolumeEmbeddingData = TensorEmbeddingData<3>;
 impl VolumeMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
         let bp = self.dimension_in_chunks();
