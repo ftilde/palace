@@ -571,7 +571,7 @@ void main()
             for(float t = 0.0; t <= t_end; t += step_size) {
                 vec3 p = start + t*dir;
 
-                uvec3 pos_voxel = uvec3(round(p * vec3(m_in.dimensions - uvec3(1))));
+                uvec3 pos_voxel = uvec3(round(p * vec3(m_in.dimensions) - vec3(0.5)));
 
                 bool found;
                 uint sample_brick_pos_linear;
