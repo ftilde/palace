@@ -187,13 +187,15 @@ pub fn slice_projection_mat(
                 let col1 = zero.map_element(v_dim, |_| 1.0);
                 let permute = Matrix::new([zero, col1, col0]).to_homogeneuous();
 
+                let to_pixel_center = Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
                 let pixel_transform = permute
                     * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
                     * Matrix::from_scale(Vector::fill(zoom_level)).to_homogeneuous()
-                    * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0));
+                    * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0))
+                    * to_pixel_center;
 
-                let mut translation = Vector::<3, f32>::fill(0.0);
-                translation[dim] = selected_slice.raw as f32 + 0.5; //For +0.5 see below
+                let mut translation = Vector::<3, f32>::fill(-0.5); //For "centered" voxel positions
+                translation[dim] += selected_slice.raw as f32 + 0.5; //For +0.5 see below
                 let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
                 let slice_select = Matrix::from_translation(translation);
                 let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0/v)).to_homogeneuous();
@@ -233,23 +235,21 @@ pub fn slice_projection_mat_centered_rotate(
                 let min_dim_img = img_dim.x().min(img_dim.y());
                 let min_dim_vol = vol_dim.fold(f32::INFINITY, |a, b| a.min(b));
 
+                let to_pixel_center =
+                    Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
                 let central_normalized = Matrix::from_scale(Vector::fill(2.0 / min_dim_img))
                     .to_homogeneuous()
-                    * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0));
-
-                //let central_normalized = cgmath::Matrix4::from_scale(2.0 / min_dim_img)
-                //    * cgmath::Matrix4::from_translation(cgmath::Vector3 {
-                //        x: -img_dim.x() * 0.5,
-                //        y: -img_dim.y() * 0.5,
-                //        z: 0.0,
-                //    });
+                    * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0))
+                    * to_pixel_center;
 
                 let rotation = Matrix::from_angle_y(rotation);
                 let norm_to_rw = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
                     * Matrix::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneuous();
                 let rw_to_voxel =
                     Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneuous();
-                let out = rw_to_voxel * norm_to_rw * rotation * central_normalized;
+                let to_voxel_center = Matrix::from_translation(Vector::<3, f32>::fill(-0.5));
+                let out =
+                    to_voxel_center * rw_to_voxel * norm_to_rw * rotation * central_normalized;
                 ctx.write(out)
             }
             .into()
@@ -339,10 +339,9 @@ void main()
         } else if(s == INIT_EMPTY) {
             val = vec4(0.0, 0.0, 1.0, 0.0);
         } else {
-            //TODO: Maybe revisit this +0.5 -0.5 business.
-            vec3 pos = vec3(vec2(out_pos + consts.out_begin) + vec2(0.5), 0);
-            vec3 sample_pos_f = mulh_mat4(transform.value, pos) - vec3(0.5);
-            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
+            vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
+            vec3 sample_pos_f = mulh_mat4(transform.value, pos);
+            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5))); //Round to nearest neighbor
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
             if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
