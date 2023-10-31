@@ -341,7 +341,7 @@ void main()
         } else {
             vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
             vec3 sample_pos_f = mulh_mat4(transform.value, pos);
-            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5))); //Round to nearest neighbor
+            ivec3 sample_pos = ivec3(round(sample_pos_f)); //Round to nearest neighbor
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
             if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
