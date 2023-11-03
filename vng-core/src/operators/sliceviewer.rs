@@ -108,19 +108,21 @@ pub fn slice_projection_mat_z_scaled_fit(
                     ctx.submit(selected_slice.request_scalar()),
                 };
 
+                let to_pixel_center =
+                    Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
                 let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
                 let img_dim = output_data.dimensions.map(|v| v.raw as f32);
-                let out = Matrix::from_translation(Vector::from([
-                    selected_slice.raw as f32 + 0.5,
-                    0.0,
-                    0.0,
-                ])) * Matrix::from_scale(
+                let scale = Matrix::from_scale(
                     vol_dim
                         .drop_dim(0)
                         .zip(img_dim, |v, i| v / i)
                         .push_dim_large(1.0),
                 )
                 .to_homogeneuous();
+                let slice_select =
+                    Matrix::from_translation(Vector::from([selected_slice.raw as f32, 0.0, 0.0]));
+                let to_voxel_center = Matrix::from_translation(Vector::<3, f32>::fill(-0.5));
+                let out = to_voxel_center * slice_select * scale * to_pixel_center;
                 ctx.write(out)
             }
             .into()
@@ -195,7 +197,7 @@ pub fn slice_projection_mat(
                     * to_pixel_center;
 
                 let mut translation = Vector::<3, f32>::fill(-0.5); //For "centered" voxel positions
-                translation[dim] += selected_slice.raw as f32 + 0.5; //For +0.5 see below
+                translation[dim] += selected_slice.raw as f32;
                 let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
                 let slice_select = Matrix::from_translation(translation);
                 let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0/v)).to_homogeneuous();
@@ -341,7 +343,12 @@ void main()
         } else {
             vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
             vec3 sample_pos_f = mulh_mat4(transform.value, pos);
-            ivec3 sample_pos = ivec3(round(sample_pos_f)); //Round to nearest neighbor
+
+            // Round to nearest neighbor
+            // Floor+0.5 is chosen instead of round to ensure compatibility with f32::round() (see
+            // test_sliceviewer below)
+            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
+
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
             if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
