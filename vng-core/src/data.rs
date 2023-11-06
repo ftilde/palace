@@ -277,6 +277,11 @@ impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
         self.map(|v| v.raw)
     }
 }
+impl<const N: usize> Vector<N, u32> {
+    pub fn f32(self) -> Vector<N, f32> {
+        self.map(|v| v as f32)
+    }
+}
 impl<T> std::ops::Deref for Vector<1, T> {
     type Target = T;
 
@@ -742,6 +747,7 @@ impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
     }
 }
 impl AABB<3, f32> {
+    #[must_use]
     pub fn transform(&self, t: &Matrix<4, f32>) -> Self {
         let points = (0..8).into_iter().map(|b| {
             let p = Vector::<3, f32>(std::array::from_fn(|i| {

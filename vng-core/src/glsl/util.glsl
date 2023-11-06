@@ -1,3 +1,6 @@
+#ifndef UTIL_GLSL
+#define UTIL_GLSL
+
 uint to_linear2(uvec2 vec_pos, uvec2 size) {
     return vec_pos.x + size.x*vec_pos.y;
 }
@@ -34,3 +37,5 @@ void swap(inout float v1, inout float v2) {
 
 
 #define NaN (intBitsToFloat(int(0xFFC00000u)));
+
+#endif

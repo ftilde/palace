@@ -6,6 +6,7 @@ pub mod png_writer;
 pub mod rasterize_function;
 pub mod raw;
 pub mod raycaster;
+pub mod resample;
 pub mod scalar;
 pub mod sliceviewer;
 pub mod splitter;
