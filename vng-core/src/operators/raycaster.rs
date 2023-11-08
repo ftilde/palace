@@ -571,17 +571,19 @@ void main()
             for(float t = 0.0; t <= t_end; t += step_size) {
                 vec3 p = start + t*dir;
 
-                uvec3 pos_voxel = uvec3(round(p * vec3(m_in.dimensions) - vec3(0.5)));
+                vec3 pos_voxel = round(p * vec3(m_in.dimensions) - vec3(0.5));
 
-                bool found;
+                int res;
                 uint sample_brick_pos_linear;
                 float sampled_intensity;
-                try_sample(pos_voxel, m_in, bricks.values, found, sample_brick_pos_linear, sampled_intensity);
-                if(found) {
+                try_sample(pos_voxel, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+                if(res == SAMPLE_RES_FOUND) {
                     state.intensity = max(state.intensity, sampled_intensity);
-                } else {
+                } else if(res == SAMPLE_RES_NOT_PRESENT) {
                     try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                     break;
+                } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                    // Should only happen at the border of the volume due to rounding errors
                 }
             }
             state_cache.values[gID] = state;

@@ -268,7 +268,6 @@ pub fn render_slice(
     struct PushConstants {
         vol_dim: cgmath::Vector3<u32>,
         chunk_dim: cgmath::Vector3<u32>,
-        dim_in_bricks: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector2<u32>,
         out_mem_dim: cgmath::Vector2<u32>,
     }
@@ -284,13 +283,9 @@ pub fn render_slice(
 #include <util.glsl>
 #include <hash.glsl>
 #include <mat.glsl>
+#include <sample.glsl>
 
 layout (local_size_x = 32, local_size_y = 32) in;
-
-layout(buffer_reference, std430) buffer BrickType {
-    float values[BRICK_MEM_SIZE];
-};
-
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
@@ -344,33 +339,31 @@ void main()
             vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
             vec3 sample_pos_f = mulh_mat4(transform.value, pos);
 
+            VolumeMetaData m_in;
+            m_in.dimensions = consts.vol_dim;
+            m_in.chunk_size = consts.chunk_dim;
+
             // Round to nearest neighbor
             // Floor+0.5 is chosen instead of round to ensure compatibility with f32::round() (see
             // test_sliceviewer below)
-            ivec3 sample_pos = ivec3(floor(sample_pos_f + vec3(0.5)));
+            vec3 sample_pos = floor(sample_pos_f + vec3(0.5));
 
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
-            if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
-                uvec3 sample_brick = sample_pos / consts.chunk_dim;
+            int res;
+            uint sample_brick_pos_linear;
+            float sampled_intensity;
+            try_sample(sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
-                uint sample_brick_pos_linear = to_linear3(sample_brick, consts.dim_in_bricks);
+            if(res == SAMPLE_RES_FOUND) {
+                val = map_to_color(sampled_intensity);
 
-                BrickType brick = bricks.values[sample_brick_pos_linear];
-                if(uint64_t(brick) == 0) {
-                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                    val = vec4(1.0, 0.0, 0.0, 1.0);
-                } else {
-                    uvec3 brick_begin = sample_brick * consts.chunk_dim;
-                    uvec3 local = sample_pos - brick_begin;
-                    uint local_index = to_linear3(local, consts.chunk_dim);
-                    float v = brick.values[local_index];
-                    val = map_to_color(v);
-
-                    state.values[gID] = INIT_VAL;
-                    brick_values.values[gID] = v;
-                }
-            } else {
+                state.values[gID] = INIT_VAL;
+                brick_values.values[gID] = sampled_intensity;
+            } else if(res == SAMPLE_RES_NOT_PRESENT) {
+                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                val = vec4(1.0, 0.0, 0.0, 1.0);
+            } else /* SAMPLE_RES_OUTSIDE */ {
                 val = vec4(0.0, 0.0, 1.0, 0.0);
 
                 state.values[gID] = INIT_EMPTY;
@@ -488,7 +481,6 @@ void main()
                 let consts = PushConstants {
                     vol_dim: m_in.dimensions.raw().into(),
                     chunk_dim: m_in.chunk_size.raw().into(),
-                    dim_in_bricks: dim_in_bricks.raw().into(),
                     out_begin: out_info.begin.drop_dim(2).raw().into(),
                     out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
                 };

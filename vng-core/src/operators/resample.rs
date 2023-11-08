@@ -66,7 +66,6 @@ pub fn resample_transform<'op>(
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         chunk_dim_in: cgmath::Vector3<u32>,
-        dim_in_bricks_in: cgmath::Vector3<u32>,
         vol_dim_in: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector3<u32>,
         mem_size_out: cgmath::Vector3<u32>,
@@ -81,11 +80,11 @@ pub fn resample_transform<'op>(
 #include <mat.glsl>
 #include <util.glsl>
 
-layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+#define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
+#include <sample.glsl>
+#undef BRICK_MEM_SIZE
 
-layout(buffer_reference, std430) buffer BrickType {
-    float values[BRICK_MEM_SIZE_IN];
-};
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 layout(std430, binding = 0) buffer RefBuffer {
     BrickType values[NUM_CHUNKS];
@@ -116,27 +115,26 @@ void main() {
 
         float default_val = 0.5;
 
-        float val;
-        if(all(lessThanEqual(ivec3(0), sample_pos)) && all(lessThan(sample_pos, vol_dim))) {
-            uvec3 sample_brick = sample_pos / consts.chunk_dim_in;
+        VolumeMetaData m_in;
+        m_in.dimensions = consts.vol_dim_in;
+        m_in.chunk_size = consts.chunk_dim_in;
 
-            uint sample_brick_pos_linear = to_linear3(sample_brick, consts.dim_in_bricks_in);
+        int res;
+        uint sample_brick_pos_linear;
+        float sampled_intensity;
+        try_sample(sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
-            BrickType brick = bricks.values[sample_brick_pos_linear];
-            if(uint64_t(brick) == 0) {
-                val = default_val;
-            } else {
-                uvec3 brick_begin = sample_brick * consts.chunk_dim_in;
-                uvec3 local = sample_pos - brick_begin;
-                uint local_index = to_linear3(local, consts.chunk_dim_in);
-                val = brick.values[local_index];
-            }
-        } else {
-            val = default_val;
+        if(res == SAMPLE_RES_FOUND) {
+            // Nothing to do!
+        } else if(res == SAMPLE_RES_NOT_PRESENT) {
+            // This SHOULD not happen...
+            sampled_intensity = default_val;
+        } else /* SAMPLE_RES_OUTSIDE */ {
+            sampled_intensity = default_val;
         }
 
         uint gID = to_linear3(out_brick_pos, consts.mem_size_out);
-        outputData.values[gID] = val;
+        outputData.values[gID] = sampled_intensity;
     }
 }
 "#;
@@ -272,7 +270,6 @@ void main() {
 
                         pipeline.push_constant(PushConstants {
                             chunk_dim_in: m_in.chunk_size.raw().into(),
-                            dim_in_bricks_in: m_in.dimension_in_chunks().raw().into(),
                             vol_dim_in: m_in.dimensions.raw().into(),
 
                             mem_size_out: m_out.chunk_size.raw().into(),
