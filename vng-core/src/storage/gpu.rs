@@ -94,17 +94,20 @@ enum AccessState {
     None(LRUIndex, CmdBufferEpoch),
 }
 
+#[derive(Debug)]
 struct Visibility {
     src: SrcBarrierInfo,
     created: BarrierEpoch,
 }
 
+#[derive(Debug)]
 enum StorageEntryState {
     Registered,
     Initializing(StorageInfo),
     Initialized(StorageInfo, Visibility, DataVersion),
 }
 
+#[derive(Debug)]
 struct StorageInfo {
     pub allocation: Allocation,
     pub layout: Layout,
@@ -846,7 +849,11 @@ impl Storage {
 
             let info = StorageInfo { allocation, layout };
 
-            assert!(matches!(entry.state, StorageEntryState::Registered));
+            assert!(
+                matches!(entry.state, StorageEntryState::Registered),
+                "State should be registered, but is {:?}",
+                entry.state
+            );
 
             entry.state = StorageEntryState::Initializing(info);
         }
@@ -1119,6 +1126,7 @@ impl Storage {
     }
 }
 
+#[derive(Debug)]
 pub struct Allocation {
     // Always init except after VulkanState::deinitialize is called
     allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
