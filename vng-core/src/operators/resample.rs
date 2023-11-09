@@ -75,6 +75,31 @@ pub fn resample<'op>(
     }
 }
 
+pub fn smooth_downsample<'op>(
+    input: EmbeddedTensorOperator<N>,
+    output_size: ScalarOperator<TensorMetaData<N>>,
+) -> EmbeddedTensorOperator<N> {
+    let scale =
+        input
+            .clone()
+            .inner
+            .metadata
+            .zip(output_size.clone())
+            .map((), |(m_in, m_out), _| {
+                let s_in = m_in.dimensions.raw().f32();
+                let s_out = m_out.dimensions.raw().f32();
+
+                let downsample_factor = s_in / s_out;
+                let stddev = downsample_factor.scale(0.5);
+                stddev
+            });
+    let kernels =
+        Vector::from_fn(|i| crate::operators::kernels::gauss(scale.clone().map(i, |v, i| v[*i])));
+    let smoothed =
+        input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernels.into()));
+    resample(smoothed, output_size)
+}
+
 pub fn resample_transform<'op>(
     input: TensorOperator<N>,
     output_size: ScalarOperator<TensorMetaData<N>>,

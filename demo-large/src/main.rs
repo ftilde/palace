@@ -78,11 +78,17 @@ struct VesselnessState {
     steps: usize,
 }
 
+struct DownSampleState {
+    target: Vector<3, u32>,
+    vol_size: Vector<3, u32>,
+}
+
 #[derive(Debug, PartialEq)]
 enum ProcessState {
     PassThrough,
     Smooth,
     Vesselness,
+    DownSample,
 }
 
 #[derive(Debug, PartialEq)]
@@ -100,6 +106,7 @@ struct State {
     sliceview: SliceviewState,
     rotslice: RotSliceState,
     smoothing_std: f32,
+    downsample_state: DownSampleState,
 }
 
 struct RotSliceState {
@@ -118,6 +125,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let brick_size = LocalVoxelPosition::fill(32.into());
 
     let vol_state = open_volume(args.vol, brick_size)?;
+
+    let vol = vol_state.operate();
+    let vol = &vol;
+    let vol_size = runtime
+        .resolve(None, move |ctx, _| {
+            async move {
+                let md = ctx.submit(vol.metadata.request_scalar()).await;
+                Ok(md.dimensions.raw())
+            }
+            .into()
+        })
+        .unwrap();
 
     let mut state = State {
         gui: GuiState::default(),
@@ -146,6 +165,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             angle: 0.0,
         },
         smoothing_std: 1.0,
+        downsample_state: DownSampleState {
+            target: vol_size,
+            vol_size,
+        },
     };
 
     let mut event_loop = EventLoop::new();
@@ -420,23 +443,32 @@ fn eval_network(
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
-    let processed = vol.map_inner(|vol| match app_state.process {
+    let processed = match app_state.process {
         ProcessState::PassThrough => vol,
-        ProcessState::Smooth => {
+        ProcessState::Smooth => vol.map_inner(|vol| {
             let kernel = operators::kernels::gauss(scalar::constant_pod(app_state.smoothing_std));
             operators::volume_gpu::separable_convolution(
                 vol,
                 [kernel.clone(), kernel.clone(), kernel],
             )
+        }),
+        ProcessState::Vesselness => vol.map_inner(|vol| {
+            operators::vesselness::multiscale_vesselness(
+                //TODO: this should actually be embedding-aware
+                vol,
+                scalar::constant_pod(app_state.vesselness.min_rad),
+                scalar::constant_pod(app_state.vesselness.max_rad),
+                app_state.vesselness.steps,
+            )
+        }),
+        ProcessState::DownSample => {
+            let md = vng_core::array::VolumeMetaData {
+                dimensions: app_state.downsample_state.target.global(),
+                chunk_size: [32; 3].into(),
+            };
+            operators::resample::smooth_downsample(vol, scalar::constant_hash(md))
         }
-        ProcessState::Vesselness => operators::vesselness::multiscale_vesselness(
-            //TODO: this should actually be embedding-aware
-            vol,
-            scalar::constant_pod(app_state.vesselness.min_rad),
-            scalar::constant_pod(app_state.vesselness.max_rad),
-            app_state.vesselness.steps,
-        ),
-    });
+    };
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -450,6 +482,11 @@ fn eval_network(
                             "Passthrough",
                         );
                         ui.selectable_value(&mut app_state.process, ProcessState::Smooth, "Smooth");
+                        ui.selectable_value(
+                            &mut app_state.process,
+                            ProcessState::DownSample,
+                            "DownSample",
+                        );
                         ui.selectable_value(
                             &mut app_state.process,
                             ProcessState::Vesselness,
@@ -480,6 +517,18 @@ fn eval_network(
                             egui::Slider::new(&mut app_state.vesselness.steps, 2..=10)
                                 .text("Scale space steps"),
                         );
+                    }
+                    ProcessState::DownSample => {
+                        for i in 0..3 {
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut app_state.downsample_state.target[i],
+                                    1..=app_state.downsample_state.vol_size[i],
+                                )
+                                .text(format!("Size dim {}", i))
+                                .logarithmic(true),
+                            );
+                        }
                     }
                 }
 
