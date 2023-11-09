@@ -236,15 +236,17 @@ void main() {
 
                     let aabb = AABB::new(
                         out_begin.map(|v| v.raw as f32),
-                        out_end.map(|v| v.raw as f32),
+                        out_end.map(|v| (v.raw - 1) as f32),
                     );
                     let aabb = aabb.transform(&element_out_to_in);
 
-                    let out_begin = aabb.lower().map(|v| v.floor() as u32).global();
+                    let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
                     let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
 
                     let in_begin_brick = m_in.chunk_pos(out_begin);
-                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
+                    let in_end_brick = m_in
+                        .chunk_pos(out_end)
+                        .zip(m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
 
                     let in_brick_positions = itertools::iproduct! {
                         in_begin_brick.z().raw..=in_end_brick.z().raw,
