@@ -611,6 +611,12 @@ impl<T: num::Zero + num::One + Copy> Matrix<3, T> {
     }
 }
 
+impl<T: num::Zero + num::One + Copy> Matrix<4, T> {
+    pub fn to_scaling_part(self) -> Matrix<3, T> {
+        Matrix::<3, T>::from_col_fn(|i| self.col(i + 1).drop_dim(0))
+    }
+}
+
 impl Matrix<4, f32> {
     pub fn invert(self) -> Option<Self> {
         use cgmath::SquareMatrix;

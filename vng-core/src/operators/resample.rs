@@ -14,7 +14,10 @@ use crate::{
     },
 };
 
-use super::{scalar::ScalarOperator, tensor::TensorOperator};
+use super::{
+    scalar::ScalarOperator,
+    tensor::{EmbeddedTensorOperator, TensorOperator},
+};
 
 //TODO: generalize to arbitrary N.
 //This is difficult atm because (at least) we cannot specify the matrix size as N+1
@@ -51,11 +54,25 @@ pub fn resample_rescale_mat<'op>(
 }
 
 pub fn resample<'op>(
-    input: TensorOperator<N>,
+    input: EmbeddedTensorOperator<N>,
     output_size: ScalarOperator<TensorMetaData<N>>,
-) -> TensorOperator<N> {
+) -> EmbeddedTensorOperator<N> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
-    resample_transform(input, output_size, mat)
+    let inner = resample_transform(input.inner, output_size, mat.clone());
+    let emd = mat
+        .zip(input.embedding_data)
+        .map((), |(mat, mut embedding_data), _| {
+            // We know that mat is only an affine transformation, so we can extract the scaling
+            // parts directly.
+            let scale_mat = mat.to_scaling_part();
+            let scale = Vector::<N, f32>::from_fn(|i| *scale_mat.at(i, i));
+            embedding_data.spacing = embedding_data.spacing * scale;
+            embedding_data
+        });
+    EmbeddedTensorOperator {
+        inner,
+        embedding_data: emd,
+    }
 }
 
 pub fn resample_transform<'op>(
