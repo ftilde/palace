@@ -114,6 +114,12 @@ pub struct EmbeddedTensorOperator<const N: usize> {
     pub embedding_data: ScalarOperator<TensorEmbeddingData<N>>,
 }
 
+impl<const N: usize> Into<Id> for &EmbeddedTensorOperator<N> {
+    fn into(self) -> Id {
+        Id::combine(&[(&self.inner).into(), (&self.embedding_data).into()])
+    }
+}
+
 impl<const N: usize> std::ops::Deref for EmbeddedTensorOperator<N> {
     type Target = TensorOperator<N>;
 

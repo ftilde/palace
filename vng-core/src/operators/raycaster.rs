@@ -22,7 +22,10 @@ use crate::{
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use super::{scalar::ScalarOperator, volume::VolumeOperator};
+use super::{
+    scalar::ScalarOperator,
+    volume::{EmbeddedVolumeOperator, VolumeOperator},
+};
 
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone)]
@@ -484,12 +487,13 @@ void main() {
     )
 }
 
-pub fn raycast(input: VolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
+pub fn raycast(input: EmbeddedVolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
         dimensions: cgmath::Vector3<u32>,
         chunk_size: cgmath::Vector3<u32>,
+        spacing: cgmath::Vector3<f32>,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -521,7 +525,7 @@ layout(std430, binding = 3) buffer QueryTable {
 } request_table;
 
 struct State {
-    uint iteration;
+    float t;
     float intensity;
 };
 
@@ -536,42 +540,90 @@ vec4 map_to_color(float v) {
     return vec4(v, v, v, 1.0);
 }
 
+struct EEPoint {
+    vec3 entry;
+    vec3 exit;
+};
+
+bool sample_ee(uvec2 pos, out EEPoint eep) {
+
+    if(pos.x >= consts.out_mem_dim.x || pos.y >= consts.out_mem_dim.y) {
+        return false;
+    }
+
+    uint gID = pos.x + pos.y * consts.out_mem_dim.x;
+
+    vec4 entry;
+    vec4 exit;
+    for(int c=0; c<4; ++c) {
+        entry[c] = entry_exit_points.values[8*gID+c];
+        exit[c] = entry_exit_points.values[8*gID+c+4];
+    }
+    eep.entry = entry.xyz * consts.spacing;
+    eep.exit = exit.xyz * consts.spacing;
+
+    return entry.a > 0.0 && exit.a > 0.0;
+}
+
 void main()
 {
-    float step_size = 0.01; //In voxel coordinates, i.e. normalized to [0, 1]
-
     uvec2 out_pos = gl_GlobalInvocationID.xy;
     uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
-    if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
-        vec4 entry_point;
-        vec4 exit_point;
 
-        for(int c=0; c<4; ++c) {
-            entry_point[c] = entry_exit_points.values[8*gID+c];
-            exit_point[c] = entry_exit_points.values[8*gID+c+4];
-        }
+    EEPoint eep;
+    bool valid = sample_ee(out_pos, eep);
 
-        VolumeMetaData m_in;
-        m_in.dimensions = consts.dimensions;
-        m_in.chunk_size = consts.chunk_size;
-
+    if(!(out_pos.x >= consts.out_mem_dim.x || out_pos.y >= consts.out_mem_dim.y)) {
 
         vec4 color;
-        if(entry_point.a > 0.0 && exit_point.a > 0.0) {
+        if(valid) {
+            VolumeMetaData m_in;
+            m_in.dimensions = consts.dimensions;
+            m_in.chunk_size = consts.chunk_size;
+
+            EEPoint eep_x;
+            if(!sample_ee(out_pos + uvec2(1, 0), eep_x)) {
+                if(!sample_ee(out_pos - uvec2(1, 0), eep_x)) {
+                    eep_x.entry = vec3(0.0);
+                    eep_x.exit = vec3(1.0);
+                }
+            }
+            EEPoint eep_y;
+            if(!sample_ee(out_pos + uvec2(0, 1), eep_y)) {
+                if(!sample_ee(out_pos - uvec2(0, 1), eep_y)) {
+                    eep_y.entry = vec3(0.0);
+                    eep_y.exit = vec3(1.0);
+                }
+            }
+            vec3 neigh_x = eep_x.entry;
+            vec3 neigh_y = eep_y.entry;
+            vec3 center = eep.entry;
+            vec3 front = eep.exit - eep.entry;
+
+            vec3 rough_dir_x = neigh_x - center;
+            vec3 rough_dir_y = neigh_y - center;
+            vec3 dir_x = normalize(cross(rough_dir_y, front));
+            vec3 dir_y = normalize(cross(rough_dir_x, front));
 
             State state = state_cache.values[gID];
 
             uint sample_points = 100;
 
-            vec3 start = entry_point.xyz;
-            vec3 end = exit_point.xyz;
+            vec3 start = eep.entry;
+            vec3 end = eep.exit;
             float t_end = distance(start, end);
             vec3 dir = normalize(end - start);
 
-            for(float t = 0.0; t <= t_end; t += step_size) {
-                vec3 p = start + t*dir;
+            float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
+            float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
-                vec3 pos_voxel = round(p * vec3(m_in.dimensions) - vec3(0.5));
+            while(state.t <= t_end) {
+                vec3 p = start + state.t*dir;
+
+                float alpha = state.t/t_end;
+                float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist;
+
+                vec3 pos_voxel = round(p/consts.spacing * vec3(m_in.dimensions) - vec3(0.5));
 
                 int res;
                 uint sample_brick_pos_linear;
@@ -585,6 +637,8 @@ void main()
                 } else /*res == SAMPLE_RES_OUTSIDE*/ {
                     // Should only happen at the border of the volume due to rounding errors
                 }
+
+                state.t += pixel_dist;
             }
             state_cache.values[gID] = state;
 
@@ -633,8 +687,9 @@ void main()
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (m_in, im, eep) = futures::join! {
+                let (m_in, emd, im, eep) = futures::join! {
                     ctx.submit(input.metadata.request_scalar()),
+                    ctx.submit(input.embedding_data.request_scalar()),
                     ctx.submit(entry_exit_points.metadata.request_scalar()),
                     ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
                 };
@@ -697,6 +752,7 @@ void main()
                     out_mem_dim: chunk_size.into(),
                     dimensions: m_in.dimensions.raw().into(),
                     chunk_size: m_in.chunk_size.raw().into(),
+                    spacing: emd.spacing.into(),
                 };
 
                 // Actual rendering
