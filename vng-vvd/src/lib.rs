@@ -93,9 +93,13 @@ impl VvdVolumeSourceState {
         )?
         .number() as f32;
 
-        assert!(!spacing_x.is_nan() && !spacing_y.is_nan() && !spacing_z.is_nan());
-
         let spacing = Vector::new([spacing_z, spacing_y, spacing_x]);
+        fn is_valid(f: f32) -> bool {
+            !f.is_nan() && f.is_finite() && f > 0.0
+        }
+        if !is_valid(spacing_x) || !is_valid(spacing_y) || !is_valid(spacing_z) {
+            return Err(format!("Spacing is not valid: {:?}", spacing).into());
+        }
 
         let embedding_data = TensorEmbeddingData { spacing };
 
