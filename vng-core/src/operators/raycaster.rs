@@ -617,6 +617,8 @@ void main()
             float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
             float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
+            float min_step = t_end * 0.001;
+
             while(state.t <= t_end) {
                 vec3 p = start + state.t*dir;
 
@@ -638,7 +640,7 @@ void main()
                     // Should only happen at the border of the volume due to rounding errors
                 }
 
-                state.t += pixel_dist;
+                state.t += max(pixel_dist, min_step);
             }
             state_cache.values[gID] = state;
 
