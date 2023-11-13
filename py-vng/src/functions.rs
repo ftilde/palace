@@ -56,7 +56,7 @@ pub fn entry_exit_points(
 }
 
 #[pyfunction]
-pub fn raycast(vol: VolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
+pub fn raycast(vol: EmbeddedVolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
     vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
 }
 
