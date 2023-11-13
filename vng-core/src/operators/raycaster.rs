@@ -545,6 +545,22 @@ struct EEPoint {
     vec3 exit;
 };
 
+vec3 norm_to_voxel(vec3 pos) {
+    return pos * vec3(consts.dimensions) - vec3(0.5);
+}
+
+vec3 voxel_to_world(vec3 pos) {
+    return pos * consts.spacing;
+}
+
+vec3 world_to_voxel(vec3 pos) {
+    return pos / consts.spacing;
+}
+
+vec3 norm_to_world(vec3 pos) {
+    return voxel_to_world(norm_to_voxel(pos));
+}
+
 bool sample_ee(uvec2 pos, out EEPoint eep) {
 
     if(pos.x >= consts.out_mem_dim.x || pos.y >= consts.out_mem_dim.y) {
@@ -559,8 +575,8 @@ bool sample_ee(uvec2 pos, out EEPoint eep) {
         entry[c] = entry_exit_points.values[8*gID+c];
         exit[c] = entry_exit_points.values[8*gID+c+4];
     }
-    eep.entry = entry.xyz * consts.spacing;
-    eep.exit = exit.xyz * consts.spacing;
+    eep.entry = norm_to_world(entry.xyz);
+    eep.exit = norm_to_world(exit.xyz);
 
     return entry.a > 0.0 && exit.a > 0.0;
 }
@@ -625,7 +641,7 @@ void main()
                 float alpha = state.t/t_end;
                 float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist;
 
-                vec3 pos_voxel = round(p/consts.spacing * vec3(m_in.dimensions) - vec3(0.5));
+                vec3 pos_voxel = round(world_to_voxel(p));
 
                 int res;
                 uint sample_brick_pos_linear;
