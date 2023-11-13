@@ -581,84 +581,93 @@ bool sample_ee(uvec2 pos, out EEPoint eep) {
     return entry.a > 0.0 && exit.a > 0.0;
 }
 
+#define T_DONE -1.0
+
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
     uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
 
     EEPoint eep;
-    bool valid = sample_ee(out_pos, eep);
 
     if(!(out_pos.x >= consts.out_mem_dim.x || out_pos.y >= consts.out_mem_dim.y)) {
 
+        bool valid = sample_ee(out_pos, eep);
+
         vec4 color;
         if(valid) {
-            VolumeMetaData m_in;
-            m_in.dimensions = consts.dimensions;
-            m_in.chunk_size = consts.chunk_size;
-
-            EEPoint eep_x;
-            if(!sample_ee(out_pos + uvec2(1, 0), eep_x)) {
-                if(!sample_ee(out_pos - uvec2(1, 0), eep_x)) {
-                    eep_x.entry = vec3(0.0);
-                    eep_x.exit = vec3(1.0);
-                }
-            }
-            EEPoint eep_y;
-            if(!sample_ee(out_pos + uvec2(0, 1), eep_y)) {
-                if(!sample_ee(out_pos - uvec2(0, 1), eep_y)) {
-                    eep_y.entry = vec3(0.0);
-                    eep_y.exit = vec3(1.0);
-                }
-            }
-            vec3 neigh_x = eep_x.entry;
-            vec3 neigh_y = eep_y.entry;
-            vec3 center = eep.entry;
-            vec3 front = eep.exit - eep.entry;
-
-            vec3 rough_dir_x = neigh_x - center;
-            vec3 rough_dir_y = neigh_y - center;
-            vec3 dir_x = normalize(cross(rough_dir_y, front));
-            vec3 dir_y = normalize(cross(rough_dir_x, front));
-
             State state = state_cache.values[gID];
 
-            uint sample_points = 100;
+            if(state.t != T_DONE) {
+                VolumeMetaData m_in;
+                m_in.dimensions = consts.dimensions;
+                m_in.chunk_size = consts.chunk_size;
 
-            vec3 start = eep.entry;
-            vec3 end = eep.exit;
-            float t_end = distance(start, end);
-            vec3 dir = normalize(end - start);
+                EEPoint eep_x;
+                if(!sample_ee(out_pos + uvec2(1, 0), eep_x)) {
+                    if(!sample_ee(out_pos - uvec2(1, 0), eep_x)) {
+                        eep_x.entry = vec3(0.0);
+                        eep_x.exit = vec3(1.0);
+                    }
+                }
+                EEPoint eep_y;
+                if(!sample_ee(out_pos + uvec2(0, 1), eep_y)) {
+                    if(!sample_ee(out_pos - uvec2(0, 1), eep_y)) {
+                        eep_y.entry = vec3(0.0);
+                        eep_y.exit = vec3(1.0);
+                    }
+                }
+                vec3 neigh_x = eep_x.entry;
+                vec3 neigh_y = eep_y.entry;
+                vec3 center = eep.entry;
+                vec3 front = eep.exit - eep.entry;
 
-            float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
-            float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
+                vec3 rough_dir_x = neigh_x - center;
+                vec3 rough_dir_y = neigh_y - center;
+                vec3 dir_x = normalize(cross(rough_dir_y, front));
+                vec3 dir_y = normalize(cross(rough_dir_x, front));
 
-            float min_step = t_end * 0.001;
+                uint sample_points = 100;
 
-            while(state.t <= t_end) {
-                vec3 p = start + state.t*dir;
+                vec3 start = eep.entry;
+                vec3 end = eep.exit;
+                float t_end = distance(start, end);
+                vec3 dir = normalize(end - start);
 
-                float alpha = state.t/t_end;
-                float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist;
+                float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
+                float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
-                vec3 pos_voxel = round(world_to_voxel(p));
+                float min_step = t_end * 0.001;
 
-                int res;
-                uint sample_brick_pos_linear;
-                float sampled_intensity;
-                try_sample(pos_voxel, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
-                if(res == SAMPLE_RES_FOUND) {
-                    state.intensity = max(state.intensity, sampled_intensity);
-                } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                    break;
-                } else /*res == SAMPLE_RES_OUTSIDE*/ {
-                    // Should only happen at the border of the volume due to rounding errors
+                while(state.t <= t_end) {
+                    vec3 p = start + state.t*dir;
+
+                    float alpha = state.t/t_end;
+                    float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
+
+                    vec3 pos_voxel = round(world_to_voxel(p));
+
+                    int res;
+                    uint sample_brick_pos_linear;
+                    float sampled_intensity;
+                    try_sample(pos_voxel, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+                    if(res == SAMPLE_RES_FOUND) {
+                        state.intensity = max(state.intensity, sampled_intensity);
+                    } else if(res == SAMPLE_RES_NOT_PRESENT) {
+                        try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                        break;
+                    } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                        // Should only happen at the border of the volume due to rounding errors
+                    }
+
+                    state.t += max(pixel_dist, min_step);
+                }
+                if(state.t > t_end) {
+                    state.t = T_DONE;
                 }
 
-                state.t += max(pixel_dist, min_step);
+                state_cache.values[gID] = state;
             }
-            state_cache.values[gID] = state;
 
             color = map_to_color(state.intensity);
         } else {
