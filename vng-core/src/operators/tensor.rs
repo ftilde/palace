@@ -141,12 +141,23 @@ impl<const N: usize> Into<TensorOperator<N>> for EmbeddedTensorOperator<N> {
 }
 
 impl<const N: usize> EmbeddedTensorOperator<N> {
+    pub fn single_level_lod(self) -> LODTensorOperator<N> {
+        LODTensorOperator { levels: vec![self] }
+    }
+}
+
+impl<const N: usize> EmbeddedTensorOperator<N> {
     pub fn map_inner(self, f: impl FnOnce(TensorOperator<N>) -> TensorOperator<N>) -> Self {
         EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct LODTensorOperator<const N: usize> {
+    pub levels: Vec<EmbeddedTensorOperator<N>>,
 }
 
 #[allow(unused)]

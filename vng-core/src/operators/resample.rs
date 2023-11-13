@@ -16,7 +16,7 @@ use crate::{
 
 use super::{
     scalar::ScalarOperator,
-    tensor::{EmbeddedTensorOperator, TensorOperator},
+    tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
 };
 
 //TODO: generalize to arbitrary N.
@@ -98,6 +98,45 @@ pub fn smooth_downsample<'op>(
     let smoothed =
         input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernels.into()));
     resample(smoothed, output_size)
+}
+
+pub fn create_lod<'op>(
+    input: EmbeddedTensorOperator<N>,
+    step_factor: f32,
+    num_levels: usize,
+) -> LODTensorOperator<N> {
+    assert!(step_factor > 1.0);
+    assert!(num_levels >= 1);
+
+    let mut levels = Vec::new();
+    let mut current = input;
+
+    levels.push(current.clone());
+
+    for _ in 0..num_levels {
+        let new_md = current
+            .metadata
+            .clone()
+            .zip(current.embedding_data.clone())
+            .map(step_factor, |(m, e), step_factor| {
+                let new_spacing_raw = e.spacing * Vector::fill(step_factor);
+                let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
+                let new_spacing = e.spacing.zip(Vector::fill(smallest_new), |a, b| a.max(b));
+                let element_ratio = e.spacing / new_spacing;
+                let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
+                    .map(|v| v.ceil() as u32)
+                    .global();
+                TensorMetaData {
+                    dimensions: new_dimensions,
+                    chunk_size: m.chunk_size,
+                }
+            });
+
+        current = smooth_downsample(current, new_md);
+        levels.push(current.clone());
+    }
+
+    LODTensorOperator { levels }
 }
 
 pub fn resample_transform<'op>(
