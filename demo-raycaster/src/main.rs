@@ -300,7 +300,8 @@ fn eval_network(
         scalar::constant_hash(md),
         scalar::constant_pod(matrix),
     );
-    let frame = vng_core::operators::raycaster::raycast(vol.into(), eep);
+    let ml = vng_core::operators::resample::create_lod(vol, 2.0, 3);
+    let frame = vng_core::operators::raycaster::raycast(ml, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

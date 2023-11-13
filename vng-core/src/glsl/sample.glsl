@@ -1,5 +1,5 @@
 layout(buffer_reference, std430) buffer BrickType {
-    float values[BRICK_MEM_SIZE];
+    float values[];
 };
 
 struct VolumeMetaData {

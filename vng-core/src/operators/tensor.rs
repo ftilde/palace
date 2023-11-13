@@ -160,6 +160,13 @@ pub struct LODTensorOperator<const N: usize> {
     pub levels: Vec<EmbeddedTensorOperator<N>>,
 }
 
+impl<const N: usize> Into<Id> for &LODTensorOperator<N> {
+    fn into(self) -> Id {
+        let ids = self.levels.iter().map(|v| v.into()).collect::<Vec<Id>>();
+        Id::combine(&ids)
+    }
+}
+
 #[allow(unused)]
 pub async fn map_values<
     'op,

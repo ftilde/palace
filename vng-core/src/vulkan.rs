@@ -389,6 +389,7 @@ impl DeviceContext {
                 .shader_buffer_int64_atomics(true)
                 .buffer_device_address(true)
                 .scalar_block_layout(true)
+                .runtime_descriptor_array(true)
                 .build();
             let enabled_features = vk::PhysicalDeviceFeatures::builder().shader_int64(true);
             let create_info = vk::DeviceCreateInfo::builder()

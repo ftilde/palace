@@ -57,7 +57,9 @@ pub fn entry_exit_points(
 
 #[pyfunction]
 pub fn raycast(vol: EmbeddedVolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
-    vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
+    //NO_PUSH_main fix with maybemultilevel or something like that
+    let vol: vng_core::operators::volume::EmbeddedVolumeOperator = vol.into();
+    vng_core::operators::raycaster::raycast(vol.single_level_lod(), entry_exit_points.into()).into()
 }
 
 #[pyfunction]

@@ -22,10 +22,7 @@ use crate::{
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use super::{
-    scalar::ScalarOperator,
-    volume::{EmbeddedVolumeOperator, VolumeOperator},
-};
+use super::{scalar::ScalarOperator, tensor::LODTensorOperator, volume::VolumeOperator};
 
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone)]
@@ -487,13 +484,10 @@ void main() {
     )
 }
 
-pub fn raycast(input: EmbeddedVolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
+pub fn raycast(input: LODTensorOperator<3>, entry_exit_points: VolumeOperator) -> VolumeOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
-        dimensions: cgmath::Vector3<u32>,
-        chunk_size: cgmath::Vector3<u32>,
-        spacing: cgmath::Vector3<f32>,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -501,10 +495,29 @@ pub fn raycast(input: EmbeddedVolumeOperator, entry_exit_points: VolumeOperator)
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_atomic_int64 : require
+#extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
+#include <vec.glsl>
+
+layout(buffer_reference, std430) buffer IndexType {
+    BrickType values[];
+};
+
+layout(buffer_reference, std430) buffer QueryTableType {
+    uint values[REQUEST_TABLE_SIZE];
+};
+
+struct LOD {
+    IndexType index;
+    QueryTableType queryTable;
+    UVec3 dimensions;
+    UVec3 chunk_size;
+    Vec3 spacing;
+    uint _padding;
+};
 
 layout (local_size_x = 32, local_size_y = 32) in;
 
@@ -516,20 +529,16 @@ layout(std430, binding = 1) buffer EntryExitPoints{
     float values[];
 } entry_exit_points;
 
-layout(std430, binding = 2) buffer RefBuffer {
-    BrickType values[NUM_BRICKS];
-} bricks;
-
-layout(std430, binding = 3) buffer QueryTable {
-    uint values[REQUEST_TABLE_SIZE];
-} request_table;
+layout(scalar, binding = 2) buffer LodBuffer {
+    LOD levels[NUM_LEVELS];
+} vol;
 
 struct State {
     float t;
     float intensity;
 };
 
-layout(std430, binding = 4) buffer StateBuffer {
+layout(std430, binding = 3) buffer StateBuffer {
     State values[];
 } state_cache;
 
@@ -545,23 +554,23 @@ struct EEPoint {
     vec3 exit;
 };
 
-vec3 norm_to_voxel(vec3 pos) {
-    return pos * vec3(consts.dimensions) - vec3(0.5);
+vec3 norm_to_voxel(vec3 pos, LOD l) {
+    return pos * vec3(to_glsl_uvec3(l.dimensions)) - vec3(0.5);
 }
 
-vec3 voxel_to_world(vec3 pos) {
-    return pos * consts.spacing;
+vec3 voxel_to_world(vec3 pos, LOD l) {
+    return pos * to_glsl_vec3(l.spacing);
 }
 
-vec3 world_to_voxel(vec3 pos) {
-    return pos / consts.spacing;
+vec3 world_to_voxel(vec3 pos, LOD l) {
+    return pos / to_glsl_vec3(l.spacing);
 }
 
-vec3 norm_to_world(vec3 pos) {
-    return voxel_to_world(norm_to_voxel(pos));
+vec3 norm_to_world(vec3 pos, LOD l) {
+    return voxel_to_world(norm_to_voxel(pos, l), l);
 }
 
-bool sample_ee(uvec2 pos, out EEPoint eep) {
+bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
 
     if(pos.x >= consts.out_mem_dim.x || pos.y >= consts.out_mem_dim.y) {
         return false;
@@ -575,8 +584,8 @@ bool sample_ee(uvec2 pos, out EEPoint eep) {
         entry[c] = entry_exit_points.values[8*gID+c];
         exit[c] = entry_exit_points.values[8*gID+c+4];
     }
-    eep.entry = norm_to_world(entry.xyz);
-    eep.exit = norm_to_world(exit.xyz);
+    eep.entry = norm_to_world(entry.xyz, l);
+    eep.exit = norm_to_world(exit.xyz, l);
 
     return entry.a > 0.0 && exit.a > 0.0;
 }
@@ -592,27 +601,25 @@ void main()
 
     if(!(out_pos.x >= consts.out_mem_dim.x || out_pos.y >= consts.out_mem_dim.y)) {
 
-        bool valid = sample_ee(out_pos, eep);
+        LOD root_level = vol.levels[0];
+        bool valid = sample_ee(out_pos, eep, root_level);
 
         vec4 color;
         if(valid) {
             State state = state_cache.values[gID];
 
             if(state.t != T_DONE) {
-                VolumeMetaData m_in;
-                m_in.dimensions = consts.dimensions;
-                m_in.chunk_size = consts.chunk_size;
 
                 EEPoint eep_x;
-                if(!sample_ee(out_pos + uvec2(1, 0), eep_x)) {
-                    if(!sample_ee(out_pos - uvec2(1, 0), eep_x)) {
+                if(!sample_ee(out_pos + uvec2(1, 0), eep_x, root_level)) {
+                    if(!sample_ee(out_pos - uvec2(1, 0), eep_x, root_level)) {
                         eep_x.entry = vec3(0.0);
                         eep_x.exit = vec3(1.0);
                     }
                 }
                 EEPoint eep_y;
-                if(!sample_ee(out_pos + uvec2(0, 1), eep_y)) {
-                    if(!sample_ee(out_pos - uvec2(0, 1), eep_y)) {
+                if(!sample_ee(out_pos + uvec2(0, 1), eep_y, root_level)) {
+                    if(!sample_ee(out_pos - uvec2(0, 1), eep_y, root_level)) {
                         eep_y.entry = vec3(0.0);
                         eep_y.exit = vec3(1.0);
                     }
@@ -627,8 +634,6 @@ void main()
                 vec3 dir_x = normalize(cross(rough_dir_y, front));
                 vec3 dir_y = normalize(cross(rough_dir_x, front));
 
-                uint sample_points = 100;
-
                 vec3 start = eep.entry;
                 vec3 end = eep.exit;
                 float t_end = distance(start, end);
@@ -637,33 +642,54 @@ void main()
                 float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
                 float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
-                float min_step = length(abs(dir) * consts.spacing) * 0.1;
 
+                uint level_num = 0;
+                float coarse_factor = 1.0;
                 while(state.t <= t_end) {
-                    vec3 p = start + state.t*dir;
-
                     float alpha = state.t/t_end;
                     float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
 
-                    vec3 pos_voxel = round(world_to_voxel(p));
+                    while(level_num < NUM_LEVELS - 1) {
+                        uint next = level_num+1;
+                        vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
+                        float left_spacing_dist = length(abs(dir_x) * next_spacing);
+                        if(left_spacing_dist >= pixel_dist * coarse_factor) {
+                            break;
+                        }
+                        level_num = next;
+                    }
+                    LOD level = vol.levels[level_num];
+
+                    VolumeMetaData m_in;
+                    m_in.dimensions = to_glsl_uvec3(level.dimensions);
+                    m_in.chunk_size = to_glsl_uvec3(level.chunk_size);
+
+                    vec3 p = start + state.t*dir;
+
+                    vec3 pos_voxel = round(world_to_voxel(p, level));
 
                     int res;
                     uint sample_brick_pos_linear;
                     float sampled_intensity;
-                    try_sample(pos_voxel, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+                    try_sample(pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
                     if(res == SAMPLE_RES_FOUND) {
                         state.intensity = max(state.intensity, sampled_intensity);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                        try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                        try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
                     } else /*res == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors
                     }
 
+                    float min_step = length(abs(dir) * to_glsl_vec3(level.spacing));
+
                     state.t += max(pixel_dist, min_step);
                 }
                 if(state.t > t_end) {
                     state.t = T_DONE;
+                    //if(level_num > 0) {
+                    //    state.intensity = 0.0;
+                    //}
                 }
 
                 state_cache.values[gID] = state;
@@ -680,6 +706,16 @@ void main()
     }
 }
 "#;
+    #[repr(C)]
+    #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
+    struct LOD {
+        index: u64,
+        query_table: u64,
+        dim: Vector<3, u32>,
+        chunk_dim: Vector<3, u32>,
+        spacing: Vector<3, f32>,
+        _padding: u32,
+    }
     const N_CHANNELS: u32 = 4;
     fn full_info(r: VolumeMetaData) -> VolumeMetaData {
         assert_eq!(r.dimensions.x().raw, 2 * N_CHANNELS);
@@ -709,29 +745,8 @@ void main()
             async move {
                 let device = ctx.vulkan_device();
 
-                let dst_info = DstBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    access: vk::AccessFlags2::SHADER_READ,
-                };
-
-                let (m_in, emd, im, eep) = futures::join! {
-                    ctx.submit(input.metadata.request_scalar()),
-                    ctx.submit(input.embedding_data.request_scalar()),
-                    ctx.submit(entry_exit_points.metadata.request_scalar()),
-                    ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
-                };
-                let m_out = full_info(im);
-                let out_info = m_out.chunk_info(pos);
-
                 let request_table_size = 256;
                 let request_batch_size = 32;
-
-                let num_bricks = hmul(m_in.dimension_in_chunks());
-
-                let brick_index = device
-                    .storage
-                    .get_index(*ctx, device, input.chunks.id(), num_bricks, dst_info)
-                    .await;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -741,13 +756,86 @@ void main()
                                 SHADER,
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", hmul(m_out.chunk_size))
-                                    .add("NUM_BRICKS", num_bricks)
+                                    .add("NUM_LEVELS", input.levels.len())
                                     .add("REQUEST_TABLE_SIZE", request_table_size),
                             ),
                             false,
                         )
                     });
+
+                let dst_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+
+                let (im, eep) = futures::join! {
+                    ctx.submit(entry_exit_points.metadata.request_scalar()),
+                    ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
+                };
+                let m_out = full_info(im);
+                let out_info = m_out.chunk_info(pos);
+
+                let chunk_size = out_info.mem_dimensions.drop_dim(2).raw();
+                let consts = PushConstants {
+                    out_mem_dim: chunk_size.into(),
+                };
+
+                let mut lods = Vec::new();
+                let mut lod_data = Vec::new();
+                for level in &input.levels {
+                    let (m_in, emd) = futures::join! {
+                        ctx.submit(level.metadata.request_scalar()),
+                        ctx.submit(level.embedding_data.request_scalar()),
+                    };
+                    let num_bricks = hmul(m_in.dimension_in_chunks());
+                    //let dim_in_bricks = m_in.dimension_in_chunks();
+
+                    let brick_index = device
+                        .storage
+                        .get_index(*ctx, device, level.chunks.id(), num_bricks, dst_info)
+                        .await;
+
+                    let info =
+                        ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_index.buffer);
+                    let index_addr = unsafe { device.functions().get_buffer_device_address(&info) };
+
+                    let request_table = TempRessource::new(
+                        device,
+                        ChunkRequestTable::new(request_table_size, device),
+                    );
+
+                    let info = ash::vk::BufferDeviceAddressInfo::builder()
+                        .buffer(request_table.buffer().buffer);
+                    let req_table_addr =
+                        unsafe { device.functions().get_buffer_device_address(&info) };
+
+                    lod_data.push((brick_index, request_table, m_in));
+
+                    lods.push(LOD {
+                        index: index_addr,
+                        query_table: req_table_addr,
+                        dim: m_in.dimensions.raw().into(),
+                        chunk_dim: m_in.chunk_size.raw().into(),
+                        spacing: emd.spacing.into(),
+                        _padding: 0,
+                    });
+                }
+                let layout = Layout::array::<LOD>(lods.len()).unwrap();
+                let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
+                    | ash::vk::BufferUsageFlags::TRANSFER_DST;
+                //TODO NO_PUSH_main: maybe we want GPU only for perf reasons here. Use staging
+                //buffer infrastructure
+                let location = crate::storage::gpu::MemoryLocation::CpuToGpu;
+                let lod_data_gpu = TempRessource::new(
+                    device,
+                    device.storage.allocate(device, layout, flags, location),
+                );
+
+                let out_ptr = lod_data_gpu.mapped_ptr().unwrap().as_ptr().cast::<u8>();
+                let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
+                let in_ptr = in_bytes.as_ptr().cast();
+
+                unsafe { std::ptr::copy_nonoverlapping(in_ptr, out_ptr, layout.size()) };
 
                 let state_initialized = ctx
                     .access_state_cache(
@@ -769,25 +857,12 @@ void main()
                     });
                 });
 
-                let request_table =
-                    TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
-
-                let dim_in_bricks = m_in.dimension_in_chunks();
-
-                let chunk_size = out_info.mem_dimensions.drop_dim(2).raw();
-                let consts = PushConstants {
-                    out_mem_dim: chunk_size.into(),
-                    dimensions: m_in.dimensions.raw().into(),
-                    chunk_size: m_in.chunk_size.raw().into(),
-                    spacing: emd.spacing.into(),
-                };
-
-                // Actual rendering
                 let gpu_brick_out = ctx
                     .alloc_slot_gpu(device, pos, out_info.mem_elements())
                     .unwrap();
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
+                // Actual rendering
                 let mut it = 1;
                 let timed_out = 'outer: loop {
                     // Make writes to the request table visible (including initialization)
@@ -809,8 +884,7 @@ void main()
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
                             &eep,
-                            &brick_index,
-                            request_table.buffer(),
+                            &*lod_data_gpu,
                             &state_initialized,
                         ]);
 
@@ -836,43 +910,53 @@ void main()
                     ))
                     .await;
 
-                    let mut to_request_linear =
-                        request_table.download_requested(*ctx, device).await;
+                    let mut requested_anything = false;
+                    for (level, data) in input.levels.iter().zip(lod_data.iter()) {
+                        let mut to_request_linear = data.1.download_requested(*ctx, device).await;
 
-                    if to_request_linear.is_empty() {
-                        break false;
-                    }
+                        if to_request_linear.is_empty() {
+                            continue;
+                        }
+                        requested_anything = true;
 
-                    // Fulfill requests
-                    to_request_linear.sort_unstable();
+                        let num_bricks = hmul(data.2.dimension_in_chunks());
+                        let dim_in_bricks = data.2.dimension_in_chunks();
 
-                    for batch in to_request_linear.chunks(request_batch_size) {
-                        let to_request = batch.iter().map(|v| {
-                            assert!(*v < num_bricks as _);
-                            input.chunks.request_gpu(
-                                device.id,
-                                from_linear(*v as usize, dim_in_bricks),
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            )
-                        });
-                        let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+                        // Fulfill requests
+                        to_request_linear.sort_unstable();
 
-                        for (brick, brick_linear_pos) in
-                            requested_bricks.into_iter().zip(batch.into_iter())
-                        {
-                            brick_index.insert(*brick_linear_pos as u64, brick);
+                        for batch in to_request_linear.chunks(request_batch_size) {
+                            let to_request = batch.iter().map(|v| {
+                                assert!(*v < num_bricks as _);
+                                level.chunks.request_gpu(
+                                    device.id,
+                                    from_linear(*v as usize, dim_in_bricks),
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                )
+                            });
+                            let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+
+                            for (brick, brick_linear_pos) in
+                                requested_bricks.into_iter().zip(batch.into_iter())
+                            {
+                                data.0.insert(*brick_linear_pos as u64, brick);
+                            }
+
+                            if ctx.past_deadline() {
+                                break 'outer true;
+                            }
                         }
 
-                        if ctx.past_deadline() {
-                            break 'outer true;
-                        }
+                        // Clear request table for the next iteration
+                        device.with_cmd_buffer(|cmd| data.1.clear(cmd));
                     }
 
-                    // Clear request table for the next iteration
-                    device.with_cmd_buffer(|cmd| request_table.clear(cmd));
+                    if !requested_anything {
+                        break 'outer false;
+                    }
 
                     it += 1;
                 };

@@ -417,7 +417,8 @@ fn raycaster(
         scalar::constant_hash(md),
         scalar::constant_pod(matrix),
     );
-    vng_core::operators::raycaster::raycast(input.into(), eep)
+    let ml = vng_core::operators::resample::create_lod(input, 2.0, 3);
+    vng_core::operators::raycaster::raycast(ml, eep)
 }
 
 fn eval_network(
