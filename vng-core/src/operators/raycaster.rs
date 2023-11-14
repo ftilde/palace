@@ -922,8 +922,8 @@ void main()
                         }
                         requested_anything = true;
 
-                        let num_bricks = hmul(data.2.dimension_in_chunks());
                         let dim_in_bricks = data.2.dimension_in_chunks();
+                        let num_bricks = hmul(dim_in_bricks);
 
                         // Fulfill requests
                         to_request_linear.sort_unstable();
