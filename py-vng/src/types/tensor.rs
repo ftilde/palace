@@ -11,6 +11,7 @@ use vng_core::{
 use vng_core::array::ImageMetaData;
 use vng_core::operators::array::ArrayOperator as CArrayOperator;
 use vng_core::operators::volume::EmbeddedVolumeOperator as CEmbeddedVolumeOperator;
+use vng_core::operators::volume::LODVolumeOperator as CLODVolumeOperator;
 use vng_core::operators::volume::VolumeOperator as CVolumeOperator;
 
 #[pyfunction]
@@ -182,6 +183,14 @@ impl From<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
     }
 }
 
+#[pymethods]
+impl EmbeddedVolumeOperator {
+    fn create_lod(&self, step_factor: f32, num_levels: usize) -> LODVolumeOperator {
+        vng_core::operators::resample::create_lod(self.clone().into(), step_factor, num_levels)
+            .into()
+    }
+}
+
 #[derive(FromPyObject)]
 pub enum MaybeEmbeddedVolumeOperator {
     Not(VolumeOperator),
@@ -200,6 +209,36 @@ impl MaybeEmbeddedVolumeOperator {
                 EmbeddedVolumeOperator::from(Into::<CEmbeddedVolumeOperator>::into(v).map_inner(f))
                     .into_py(py)
             }
+        }
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct LODVolumeOperator {
+    levels: Vec<EmbeddedVolumeOperator>,
+}
+
+impl Into<CLODVolumeOperator> for LODVolumeOperator {
+    fn into(self) -> CLODVolumeOperator {
+        CLODVolumeOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|v| v.into())
+                .collect::<Vec<_>>(),
+        }
+    }
+}
+
+impl From<CLODVolumeOperator> for LODVolumeOperator {
+    fn from(value: CLODVolumeOperator) -> Self {
+        Self {
+            levels: value
+                .levels
+                .into_iter()
+                .map(|v| v.into())
+                .collect::<Vec<_>>(),
         }
     }
 }

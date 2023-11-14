@@ -14,7 +14,7 @@ use crate::{
 use super::{
     array::ArrayOperator,
     scalar::ScalarOperator,
-    tensor::{EmbeddedTensorOperator, TensorOperator},
+    tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
 };
 
 pub trait VolumeOperatorState {
@@ -37,6 +37,7 @@ impl<O: VolumeOperatorState> EmbeddedVolumeOperatorState for (O, VolumeEmbedding
 
 pub type VolumeOperator = TensorOperator<3>;
 pub type EmbeddedVolumeOperator = EmbeddedTensorOperator<3>;
+pub type LODVolumeOperator = LODTensorOperator<3>;
 
 #[allow(unused)]
 pub fn mean(input: VolumeOperator) -> ScalarOperator<f32> {
