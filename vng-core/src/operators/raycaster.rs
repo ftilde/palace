@@ -643,8 +643,11 @@ void main()
                 float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
 
+                // TODO: We could make these configurable...
+                float coarse_lod_factor = 1.0;
+                float oversampling_factor = 1.0;
+
                 uint level_num = 0;
-                float coarse_factor = 1.0;
                 while(state.t <= t_end) {
                     float alpha = state.t/t_end;
                     float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
@@ -653,7 +656,7 @@ void main()
                         uint next = level_num+1;
                         vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
                         float left_spacing_dist = length(abs(dir_x) * next_spacing);
-                        if(left_spacing_dist >= pixel_dist * coarse_factor) {
+                        if(left_spacing_dist >= pixel_dist * coarse_lod_factor) {
                             break;
                         }
                         level_num = next;
@@ -681,9 +684,9 @@ void main()
                         // Should only happen at the border of the volume due to rounding errors
                     }
 
-                    float min_step = length(abs(dir) * to_glsl_vec3(level.spacing));
+                    float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
 
-                    state.t += max(pixel_dist, min_step);
+                    state.t += step;
                 }
                 if(state.t > t_end) {
                     state.t = T_DONE;
