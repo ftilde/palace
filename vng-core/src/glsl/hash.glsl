@@ -28,7 +28,8 @@ uint hash(uint h) {
     uint pos = hash(value)%size;\
     /* Perform linear probing with a maximum of MAX_TRIES tries*/\
     for(uint i = 0; i<MAX_TRIES; ++i) {\
-        uint replaced = atomicCompSwap(table[pos+i], EMPTY, value);\
+        uint cell_index = (pos+i) % size;\
+        uint replaced = atomicCompSwap(table[cell_index], EMPTY, value);\
         if(replaced == EMPTY || replaced == value) {\
             /* The insert was either successful or already present at the location, so we are done.*/\
             break;\
