@@ -826,19 +826,25 @@ void main()
                 let layout = Layout::array::<LOD>(lods.len()).unwrap();
                 let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
                     | ash::vk::BufferUsageFlags::TRANSFER_DST;
-                //TODO NO_PUSH_main: maybe we want GPU only for perf reasons here. Use staging
-                //buffer infrastructure
-                let location = crate::storage::gpu::MemoryLocation::CpuToGpu;
+
+                let location = crate::storage::gpu::MemoryLocation::GpuOnly;
                 let lod_data_gpu = TempRessource::new(
                     device,
                     device.storage.allocate(device, layout, flags, location),
                 );
 
-                let out_ptr = lod_data_gpu.mapped_ptr().unwrap().as_ptr().cast::<u8>();
                 let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
                 let in_ptr = in_bytes.as_ptr().cast();
-
-                unsafe { std::ptr::copy_nonoverlapping(in_ptr, out_ptr, layout.size()) };
+                unsafe {
+                    crate::vulkan::memory::copy_to_gpu(
+                        *ctx,
+                        device,
+                        in_ptr,
+                        layout,
+                        lod_data_gpu.buffer,
+                    )
+                    .await
+                };
 
                 let state_initialized = ctx
                     .access_state_cache(
