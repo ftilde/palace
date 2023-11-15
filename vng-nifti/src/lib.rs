@@ -100,7 +100,7 @@ impl NiftiVolumeSourceState {
 }
 
 impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
-    fn operate(&self) -> EmbeddedVolumeOperator {
+    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
         TensorOperator::with_state(
             match &self.0.type_ {
                 Type::Single(path) => OperatorId::new("NiftiVolumeSourceState::operate")

@@ -3,7 +3,10 @@ use std::{
     ops::{Add, Div, Mul, Neg, Sub},
 };
 
-use crate::array::ChunkInfo;
+use crate::{
+    array::ChunkInfo,
+    id::{Id, Identify},
+};
 
 pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> usize {
     s.into_iter().map(|v| v.raw as usize).product()
@@ -35,18 +38,69 @@ pub fn from_linear<const N: usize, T: CoordinateType>(
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    state_link::StateNoPy,
+    bytemuck::Zeroable,
+    bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct LocalCoordinateType;
 impl CoordinateType for LocalCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    state_link::StateNoPy,
+    bytemuck::Zeroable,
+    bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct GlobalCoordinateType;
 impl CoordinateType for GlobalCoordinateType {}
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    state_link::StateNoPy,
+    bytemuck::Zeroable,
+    bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct ChunkCoordinateType;
 impl CoordinateType for ChunkCoordinateType {}
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, state_link::StateNoPy)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    state_link::StateNoPy,
+    bytemuck::Zeroable,
+    bytemuck::Pod,
+)]
 pub struct Coordinate<T> {
     pub raw: u32,
     type_: std::marker::PhantomData<T>,
@@ -154,11 +208,23 @@ pub type LocalCoordinate = Coordinate<LocalCoordinateType>;
 pub type GlobalCoordinate = Coordinate<GlobalCoordinateType>;
 pub type ChunkCoordinate = Coordinate<ChunkCoordinateType>;
 
+impl<T> Identify for Coordinate<T> {
+    fn id(&self) -> Id {
+        self.raw.id()
+    }
+}
+
 #[repr(transparent)]
 #[derive(
     Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, state_link::State,
 )]
 pub struct Vector<const N: usize, T>([T; N]);
+
+impl<const N: usize, T: Identify> Identify for Vector<N, T> {
+    fn id(&self) -> Id {
+        (&self.0[..]).id()
+    }
+}
 
 impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
     fn from(value: [I; N]) -> Self {
@@ -513,6 +579,12 @@ impl<T: Copy> Vector<4, T> {
     Copy, Clone, Hash, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable, state_link::State,
 )]
 pub struct Matrix<const N: usize, T>([Vector<N, T>; N]);
+
+impl<const N: usize, T: Identify> Identify for Matrix<N, T> {
+    fn id(&self) -> Id {
+        (&self.0[..]).id()
+    }
+}
 
 impl<const N: usize, T> Matrix<N, T> {
     pub fn new(v: [Vector<N, T>; N]) -> Self {

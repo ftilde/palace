@@ -63,7 +63,7 @@ impl<'a> conversion::FromPyValue<PyReadonlyArray2<'a, f32>> for Mat4Operator {
         // Array is in row major order, but cgmath matrices are column major, so we need to
         // transpose
         let mat = mat.transposed();
-        Ok(Mat4Operator(vng_core::operators::scalar::constant_pod(mat)))
+        Ok(Mat4Operator(mat.into()))
     }
 }
 impl<'source> conversion::FromPyValues<'source> for Mat4Operator {

@@ -4,14 +4,14 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
+use vng_core::operators;
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::volume::{
     ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
 };
-use vng_core::operators::{self};
-use vng_core::operators::{scalar, volume_gpu};
+use vng_core::operators::volume_gpu;
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::state::VulkanState;
@@ -248,11 +248,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: EmbeddedVolumeOperator,
+    slice_input: EmbeddedVolumeOperator<f32>,
     md: ImageMetaData,
     state: &mut SliceviewState,
     events: &mut EventStream,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     events.act(|c| {
         c.chain(state.offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -277,11 +277,8 @@ fn slice_viewer_z(
         slice_input.embedding_data.clone(),
         md.dimensions,
     );
-    let slice = crate::operators::sliceviewer::render_slice(
-        slice_input.into(),
-        crate::operators::scalar::constant_hash(md),
-        slice_proj_z,
-    );
+    let slice =
+        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_z);
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice
@@ -289,11 +286,11 @@ fn slice_viewer_z(
 
 fn slice_viewer_rot(
     runtime: &mut RunTime,
-    slice_input: EmbeddedVolumeOperator,
+    slice_input: EmbeddedVolumeOperator<f32>,
     md: ImageMetaData,
     state: &mut RotSliceState,
     mut events: EventStream,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             state.angle += delta.x() as f32 * 0.01;
@@ -309,8 +306,8 @@ fn slice_viewer_rot(
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
         slice_input.embedding_data.clone(),
-        crate::operators::scalar::constant_hash(md),
-        crate::operators::scalar::constant_pod(state.angle),
+        md.into(),
+        state.angle.into(),
     );
 
     let mat_ref = &slice_proj_rot;
@@ -379,22 +376,19 @@ fn slice_viewer_rot(
             ui.label(s);
         });
     });
-    let slice = crate::operators::sliceviewer::render_slice(
-        slice_input.into(),
-        crate::operators::scalar::constant_hash(md),
-        slice_proj_rot,
-    );
+    let slice =
+        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_rot);
     let frame = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(frame);
     frame
 }
 
 fn raycaster(
-    input: EmbeddedVolumeOperator,
+    input: EmbeddedVolumeOperator<f32>,
     size: Vector<2, GlobalCoordinate>,
     state: &mut CameraState,
     mut events: EventStream,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     events.act(|c| {
         c.chain(OnWheelMove(|delta, _| {
             state.trackball.move_inout(delta);
@@ -414,8 +408,8 @@ fn raycaster(
     let eep = vng_core::operators::raycaster::entry_exit_points(
         input.metadata.clone(),
         input.embedding_data.clone(),
-        scalar::constant_hash(md),
-        scalar::constant_pod(matrix),
+        md.into(),
+        matrix.into(),
     );
     let ml = vng_core::operators::resample::create_lod(input, 2.0, 3);
     vng_core::operators::raycaster::raycast(ml, eep)
@@ -447,7 +441,7 @@ fn eval_network(
     let processed = match app_state.process {
         ProcessState::PassThrough => vol,
         ProcessState::Smooth => vol.map_inner(|vol| {
-            let kernel = operators::kernels::gauss(scalar::constant_pod(app_state.smoothing_std));
+            let kernel = operators::kernels::gauss(app_state.smoothing_std.into());
             operators::volume_gpu::separable_convolution(
                 vol,
                 [kernel.clone(), kernel.clone(), kernel],
@@ -457,8 +451,8 @@ fn eval_network(
             operators::vesselness::multiscale_vesselness(
                 //TODO: this should actually be embedding-aware
                 vol,
-                scalar::constant_pod(app_state.vesselness.min_rad),
-                scalar::constant_pod(app_state.vesselness.max_rad),
+                app_state.vesselness.min_rad.into(),
+                app_state.vesselness.max_rad.into(),
                 app_state.vesselness.steps,
             )
         }),
@@ -467,7 +461,7 @@ fn eval_network(
                 dimensions: app_state.downsample_state.target.global(),
                 chunk_size: [32; 3].into(),
             };
-            operators::resample::smooth_downsample(vol, scalar::constant_hash(md))
+            operators::resample::smooth_downsample(vol, md.into())
         }
     };
 

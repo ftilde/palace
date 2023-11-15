@@ -1,4 +1,5 @@
 use sha1_smol::Sha1;
+use std::hash::Hash;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Id(u128);
@@ -24,6 +25,9 @@ impl Id {
         crate::id::Id::from_data(hash)
     }
     pub fn combine(ids: &[Id]) -> Self {
+        Self::combine_it(ids.into_iter().cloned())
+    }
+    pub fn combine_it(ids: impl Iterator<Item = Id>) -> Self {
         let mut sha = Sha1::new();
         for id in ids {
             sha.update(bytemuck::bytes_of(&id.0));
@@ -37,6 +41,61 @@ impl From<&[u8]> for Id {
         Self::from_data(value)
     }
 }
+
+pub trait Identify {
+    fn id(&self) -> Id;
+}
+
+impl Identify for Id {
+    fn id(&self) -> Id {
+        *self
+    }
+}
+
+impl<E: Identify> Identify for [E] {
+    fn id(&self) -> Id {
+        Id::combine_it(self.iter().map(|v| v.id()))
+    }
+}
+
+macro_rules! impl_pod {
+    ($ty:ty) => {
+        impl crate::id::Identify for $ty {
+            fn id(&self) -> crate::id::Id {
+                crate::id::Id::from_data(bytemuck::bytes_of(self))
+            }
+        }
+    };
+}
+
+pub(crate) use impl_pod;
+
+macro_rules! impl_hash {
+    ($ty:ty) => {
+        impl crate::id::Identify for $ty {
+            fn id(&self) -> crate::id::Id {
+                crate::id::Id::hash(self)
+            }
+        }
+    };
+}
+pub(crate) use impl_hash;
+
+//TODO: I think we actually want a derive macro...
+impl_pod!(u8);
+impl_pod!(u16);
+impl_pod!(u32);
+impl_pod!(u64);
+impl_pod!(i8);
+impl_pod!(i16);
+impl_pod!(i32);
+impl_pod!(i64);
+impl_pod!(usize);
+impl_pod!(f32);
+impl_pod!(f64);
+impl_pod!(());
+
+impl_hash!(str);
 
 pub fn func_id<F: 'static>() -> Id {
     // TODO: One problem with this during development: The id of a closure may not change between

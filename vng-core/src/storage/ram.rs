@@ -9,7 +9,7 @@ use crate::{
     Error,
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex};
+use super::{DataLocation, DataVersion, DataVersionType, Element, LRUIndex};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -597,7 +597,7 @@ impl Storage {
         })
     }
 
-    pub fn alloc_slot<T: Copy>(
+    pub fn alloc_slot<T: Element>(
         &self,
         key: DataId,
         size: usize,
@@ -635,7 +635,7 @@ impl Storage {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read<'b, 't: 'b, T: Copy>(
+    pub unsafe fn read<'b, 't: 'b, T: Element>(
         &'b self,
         access: AccessToken<'t>,
     ) -> Result<ReadHandle<'b, [T]>, AccessToken<'t>> {
@@ -666,7 +666,7 @@ impl Storage {
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type and the
     /// size must match the initial allocation
-    pub unsafe fn try_update_inplace<'b, 't: 'b, 'inv, T: Copy>(
+    pub unsafe fn try_update_inplace<'b, 't: 'b, 'inv, T: Element>(
         &'b self,
         ctx: OpaqueTaskContext<'t, 'inv>,
         old_access: AccessToken<'t>,

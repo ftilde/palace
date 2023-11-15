@@ -3,7 +3,6 @@ use futures::StreamExt;
 
 use crate::{
     data::hmul,
-    id::Id,
     operator::OperatorId,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -16,10 +15,10 @@ use crate::{
 use super::tensor::TensorOperator;
 
 fn bin_op<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
     body: &'static str,
-) -> TensorOperator<N> {
+) -> TensorOperator<N, f32> {
     let shader = format!(
         "{}{}{}",
         r#"
@@ -64,7 +63,7 @@ void main()
         OperatorId::new("bin_op")
             .dependent_on(&input1)
             .dependent_on(&input2)
-            .dependent_on(Id::hash(body)),
+            .dependent_on(body),
         (input1.clone(), input2.clone()),
         (input1.clone(), input2.clone(), shader),
         move |ctx, (input1, input2)| {
@@ -153,37 +152,37 @@ void main()
 }
 
 pub fn add<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
-) -> TensorOperator<N> {
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
+) -> TensorOperator<N, f32> {
     bin_op(input1, input2, "res = v1 + v2;")
 }
 
 pub fn sub<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
-) -> TensorOperator<N> {
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
+) -> TensorOperator<N, f32> {
     bin_op(input1, input2, "res = v1 - v2;")
 }
 
 pub fn mul<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
-) -> TensorOperator<N> {
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
+) -> TensorOperator<N, f32> {
     bin_op(input1, input2, "res = v1 * v2;")
 }
 
 pub fn min<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
-) -> TensorOperator<N> {
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
+) -> TensorOperator<N, f32> {
     bin_op(input1, input2, "res = min(v1, v2);")
 }
 
 pub fn max<const N: usize>(
-    input1: TensorOperator<N>,
-    input2: TensorOperator<N>,
-) -> TensorOperator<N> {
+    input1: TensorOperator<N, f32>,
+    input2: TensorOperator<N, f32>,
+) -> TensorOperator<N, f32> {
     bin_op(input1, input2, "res = max(v1, v2);")
 }
 

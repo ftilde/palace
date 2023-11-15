@@ -259,7 +259,7 @@ fn eval_network(
         //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
         //let after_kernel =
         //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
-        let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+        let after_kernel = operators::vesselness::vesselness(vol, scalar::constant(*stddev));
 
         let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
         scaled
@@ -297,8 +297,8 @@ fn eval_network(
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.metadata.clone(),
         vol.embedding_data.clone(),
-        scalar::constant_hash(md),
-        scalar::constant_pod(matrix),
+        md.into(),
+        matrix.into(),
     );
     let ml = vng_core::operators::resample::create_lod(vol, 2.0, 3);
     let frame = vng_core::operators::raycaster::raycast(ml, eep);

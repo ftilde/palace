@@ -10,8 +10,8 @@ use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::volume::{
     ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
 };
+use vng_core::operators::volume_gpu;
 use vng_core::operators::{self};
-use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::state::VulkanState;
@@ -219,13 +219,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: EmbeddedVolumeOperator,
+    slice_input: EmbeddedVolumeOperator<f32>,
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     events: &mut EventStream,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -255,13 +255,13 @@ fn slice_viewer_z(
         slice_input.metadata.clone(),
         slice_input.embedding_data.clone(),
         md.dimensions,
-        crate::operators::scalar::constant_hash(slice_num_g),
-        crate::operators::scalar::constant_pod(*offset),
-        crate::operators::scalar::constant_pod(*zoom_level),
+        crate::operators::scalar::constant(slice_num_g),
+        crate::operators::scalar::constant(*offset),
+        crate::operators::scalar::constant(*zoom_level),
     );
     let slice = crate::operators::sliceviewer::render_slice(
         slice_input.into(),
-        crate::operators::scalar::constant_hash(md),
+        crate::operators::scalar::constant(md),
         slice_proj_z,
     );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
@@ -270,11 +270,11 @@ fn slice_viewer_z(
 }
 
 fn slice_viewer_rot(
-    slice_input: EmbeddedVolumeOperator,
+    slice_input: EmbeddedVolumeOperator<f32>,
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             *angle += delta.x() as f32 * 0.01;
@@ -290,14 +290,11 @@ fn slice_viewer_rot(
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
         slice_input.metadata.clone(),
         slice_input.embedding_data.clone(),
-        crate::operators::scalar::constant_hash(md),
-        crate::operators::scalar::constant_pod(*angle),
+        md.into(),
+        (*angle).into(),
     );
-    let slice = crate::operators::sliceviewer::render_slice(
-        slice_input.into(),
-        crate::operators::scalar::constant_hash(md),
-        slice_proj_rot,
-    );
+    let slice =
+        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_rot);
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
@@ -364,12 +361,8 @@ fn eval_network(
     let vol = vol.map_inner(|vol| {
         let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-        let after_kernel = operators::vesselness::multiscale_vesselness(
-            vol,
-            scalar::constant_pod(3.0),
-            scalar::constant_pod(*stddev),
-            3,
-        );
+        let after_kernel =
+            operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
         //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
         let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
         scaled

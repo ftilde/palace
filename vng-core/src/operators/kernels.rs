@@ -1,4 +1,4 @@
-use crate::{array::ArrayMetaData, data::Vector, operator::OperatorId};
+use crate::{array::ArrayMetaData, data::Vector, operator::OperatorId, storage::Element};
 
 use super::{array::ArrayOperator, scalar::ScalarOperator, tensor::TensorOperator};
 
@@ -105,7 +105,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
     gen_kernel_sum_zero(func, norm_nom, extent)
 }
 
-pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
+pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("gauss").dependent_on(&stddev),
         stddev,
@@ -113,7 +113,7 @@ pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
         comp_kernel_gauss,
     )
 }
-pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
+pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("dgauss_dx").dependent_on(&stddev),
         stddev,
@@ -121,7 +121,7 @@ pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
         comp_kernel_dgauss_dx,
     )
 }
-pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
+pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("ddgauss_dxdx").dependent_on(&stddev),
         stddev,
@@ -130,12 +130,12 @@ pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator {
     )
 }
 
-fn gen_kernel_operator<Params: Send + Copy + 'static>(
+fn gen_kernel_operator<Params: Element>(
     id: OperatorId,
     get_params: ScalarOperator<Params>,
     get_size: impl Fn(&Params) -> usize + Clone + 'static,
     gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'static,
-) -> ArrayOperator {
+) -> ArrayOperator<f32> {
     TensorOperator::unbatched(
         id,
         (get_params.clone(), get_size.clone()),

@@ -59,9 +59,7 @@ pub fn tensor_metadata(
 pub struct ScalarOperatorF32(pub Operator<(), f32>);
 impl conversion::FromPyValue<f32> for ScalarOperatorF32 {
     fn from_py(v: f32) -> PyResult<Self> {
-        Ok(ScalarOperatorF32(
-            vng_core::operators::scalar::constant_pod(v),
-        ))
+        Ok(ScalarOperatorF32(vng_core::operators::scalar::constant(v)))
     }
 }
 impl<'source> conversion::FromPyValues<'source> for ScalarOperatorF32 {
@@ -73,9 +71,9 @@ impl<'source> conversion::FromPyValues<'source> for ScalarOperatorF32 {
 pub struct ScalarOperatorVec2F(pub Operator<(), Vector<2, f32>>);
 impl conversion::FromPyValue<[f32; 2]> for ScalarOperatorVec2F {
     fn from_py(v: [f32; 2]) -> PyResult<Self> {
-        Ok(ScalarOperatorVec2F(
-            vng_core::operators::scalar::constant_pod(v.into()),
-        ))
+        Ok(ScalarOperatorVec2F(vng_core::operators::scalar::constant(
+            v.into(),
+        )))
     }
 }
 impl<'source> conversion::FromPyValues<'source> for ScalarOperatorVec2F {
@@ -87,9 +85,7 @@ impl<'source> conversion::FromPyValues<'source> for ScalarOperatorVec2F {
 pub struct ScalarOperatorU32(pub Operator<(), u32>);
 impl conversion::FromPyValue<u32> for ScalarOperatorU32 {
     fn from_py(v: u32) -> PyResult<Self> {
-        Ok(ScalarOperatorU32(
-            vng_core::operators::scalar::constant_pod(v),
-        ))
+        Ok(ScalarOperatorU32(vng_core::operators::scalar::constant(v)))
     }
 }
 impl<'source> conversion::FromPyValues<'source> for ScalarOperatorU32 {
@@ -114,7 +110,7 @@ pub struct ImageMetadataOperator(pub Operator<(), ImageMetaData>);
 
 impl<'a> conversion::FromPyValue<ImageMetaData> for ImageMetadataOperator {
     fn from_py(v: ImageMetaData) -> PyResult<Self> {
-        Ok(vng_core::operators::scalar::constant_hash(v).into())
+        Ok(vng_core::operators::scalar::constant(v).into())
     }
 }
 impl<'source> conversion::FromPyValues<'source> for ImageMetadataOperator {
@@ -138,8 +134,8 @@ pub struct VolumeOperator {
     pub chunks: VolumeValueOperator,
 }
 
-impl Into<CVolumeOperator> for VolumeOperator {
-    fn into(self) -> CVolumeOperator {
+impl Into<CVolumeOperator<f32>> for VolumeOperator {
+    fn into(self) -> CVolumeOperator<f32> {
         CVolumeOperator {
             metadata: self.metadata.into(),
             chunks: self.chunks.into(),
@@ -147,8 +143,8 @@ impl Into<CVolumeOperator> for VolumeOperator {
     }
 }
 
-impl From<CVolumeOperator> for VolumeOperator {
-    fn from(value: CVolumeOperator) -> Self {
+impl From<CVolumeOperator<f32>> for VolumeOperator {
+    fn from(value: CVolumeOperator<f32>) -> Self {
         Self {
             metadata: value.metadata.into(),
             chunks: value.chunks.into(),
@@ -165,8 +161,8 @@ pub struct EmbeddedVolumeOperator {
     pub embedding_data: VolumeEmbeddingDataOperator,
 }
 
-impl Into<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
-    fn into(self) -> CEmbeddedVolumeOperator {
+impl Into<CEmbeddedVolumeOperator<f32>> for EmbeddedVolumeOperator {
+    fn into(self) -> CEmbeddedVolumeOperator<f32> {
         CEmbeddedVolumeOperator {
             inner: self.inner.into(),
             embedding_data: self.embedding_data.into(),
@@ -174,8 +170,8 @@ impl Into<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
     }
 }
 
-impl From<CEmbeddedVolumeOperator> for EmbeddedVolumeOperator {
-    fn from(value: CEmbeddedVolumeOperator) -> Self {
+impl From<CEmbeddedVolumeOperator<f32>> for EmbeddedVolumeOperator {
+    fn from(value: CEmbeddedVolumeOperator<f32>) -> Self {
         Self {
             inner: value.inner.into(),
             embedding_data: value.embedding_data.into(),
@@ -201,14 +197,14 @@ impl MaybeEmbeddedVolumeOperator {
     pub fn map_inner(
         self,
         py: Python,
-        f: impl FnOnce(CVolumeOperator) -> CVolumeOperator,
+        f: impl FnOnce(CVolumeOperator<f32>) -> CVolumeOperator<f32>,
     ) -> PyObject {
         match self {
             MaybeEmbeddedVolumeOperator::Not(v) => VolumeOperator::from(f(v.into())).into_py(py),
-            MaybeEmbeddedVolumeOperator::Embedded(v) => {
-                EmbeddedVolumeOperator::from(Into::<CEmbeddedVolumeOperator>::into(v).map_inner(f))
-                    .into_py(py)
-            }
+            MaybeEmbeddedVolumeOperator::Embedded(v) => EmbeddedVolumeOperator::from(
+                Into::<CEmbeddedVolumeOperator<f32>>::into(v).map_inner(f),
+            )
+            .into_py(py),
         }
     }
 }
@@ -219,8 +215,8 @@ pub struct LODVolumeOperator {
     levels: Vec<EmbeddedVolumeOperator>,
 }
 
-impl Into<CLODVolumeOperator> for LODVolumeOperator {
-    fn into(self) -> CLODVolumeOperator {
+impl Into<CLODVolumeOperator<f32>> for LODVolumeOperator {
+    fn into(self) -> CLODVolumeOperator<f32> {
         CLODVolumeOperator {
             levels: self
                 .levels
@@ -231,8 +227,8 @@ impl Into<CLODVolumeOperator> for LODVolumeOperator {
     }
 }
 
-impl From<CLODVolumeOperator> for LODVolumeOperator {
-    fn from(value: CLODVolumeOperator) -> Self {
+impl From<CLODVolumeOperator<f32>> for LODVolumeOperator {
+    fn from(value: CLODVolumeOperator<f32>) -> Self {
         Self {
             levels: value
                 .levels
@@ -250,8 +246,8 @@ pub struct ArrayOperator {
     pub chunks: ArrayValueOperator,
 }
 
-impl Into<CArrayOperator> for ArrayOperator {
-    fn into(self) -> CArrayOperator {
+impl Into<CArrayOperator<f32>> for ArrayOperator {
+    fn into(self) -> CArrayOperator<f32> {
         CArrayOperator {
             metadata: self.metadata.into(),
             chunks: self.chunks.into(),
@@ -259,8 +255,8 @@ impl Into<CArrayOperator> for ArrayOperator {
     }
 }
 
-impl From<CArrayOperator> for ArrayOperator {
-    fn from(value: CArrayOperator) -> Self {
+impl From<CArrayOperator<f32>> for ArrayOperator {
+    fn from(value: CArrayOperator<f32>) -> Self {
         Self {
             metadata: value.metadata.into(),
             chunks: value.chunks.into(),

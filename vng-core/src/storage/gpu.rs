@@ -6,7 +6,7 @@ use std::{
     mem::MaybeUninit,
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, LRUIndex, LRUManager};
+use super::{DataLocation, DataVersion, DataVersionType, Element, LRUIndex, LRUManager};
 
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
@@ -879,7 +879,7 @@ impl Storage {
         })
     }
 
-    pub fn alloc_slot<'b, T: Copy + crevice::std430::Std430>(
+    pub fn alloc_slot<'b, T: Element>(
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,

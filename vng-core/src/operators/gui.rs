@@ -14,7 +14,6 @@ pub use egui;
 use crate::{
     data::Vector,
     event::{EventChain, EventStream},
-    id::Id,
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::gpu::ImageAllocation,
@@ -492,7 +491,7 @@ fn transistion_image_layout_with_barrier(
 }
 
 impl GuiRenderState {
-    pub fn render(self, input: VolumeOperator) -> VolumeOperator {
+    pub fn render(self, input: VolumeOperator<f32>) -> VolumeOperator<f32> {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             frame_size: cgmath::Vector2<u32>,
@@ -549,7 +548,7 @@ void main() {
         TensorOperator::unbatched(
             OperatorId::new("gui")
                 .dependent_on(&input)
-                .dependent_on(Id::hash(&version)),
+                .dependent_on(&version),
             input.clone(),
             (input, self),
             move |ctx, input| {

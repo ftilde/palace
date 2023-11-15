@@ -6,6 +6,7 @@ use crate::{
     array::TensorMetaData,
     data::{hmul, Matrix, Vector, AABB},
     operator::{OpaqueOperator, OperatorId},
+    storage::P,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -54,14 +55,14 @@ pub fn resample_rescale_mat<'op>(
 }
 
 pub fn resample<'op>(
-    input: EmbeddedTensorOperator<N>,
+    input: EmbeddedTensorOperator<N, f32>,
     output_size: ScalarOperator<TensorMetaData<N>>,
-) -> EmbeddedTensorOperator<N> {
+) -> EmbeddedTensorOperator<N, f32> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size, mat.clone());
     let emd = mat
         .zip(input.embedding_data)
-        .map((), |(mat, mut embedding_data), _| {
+        .map_scalar((), |P(mat, mut embedding_data), _| {
             // We know that mat is only an affine transformation, so we can extract the scaling
             // parts directly.
             let scale_mat = mat.to_scaling_part();
@@ -76,16 +77,16 @@ pub fn resample<'op>(
 }
 
 pub fn smooth_downsample<'op>(
-    input: EmbeddedTensorOperator<N>,
+    input: EmbeddedTensorOperator<N, f32>,
     output_size: ScalarOperator<TensorMetaData<N>>,
-) -> EmbeddedTensorOperator<N> {
+) -> EmbeddedTensorOperator<N, f32> {
     let scale =
         input
             .clone()
             .inner
             .metadata
             .zip(output_size.clone())
-            .map((), |(m_in, m_out), _| {
+            .map((), |P(m_in, m_out), _| {
                 let s_in = m_in.dimensions.raw().f32();
                 let s_out = m_out.dimensions.raw().f32();
 
@@ -101,10 +102,10 @@ pub fn smooth_downsample<'op>(
 }
 
 pub fn create_lod<'op>(
-    input: EmbeddedTensorOperator<N>,
+    input: EmbeddedTensorOperator<N, f32>,
     step_factor: f32,
     num_levels: usize,
-) -> LODTensorOperator<N> {
+) -> LODTensorOperator<N, f32> {
     assert!(step_factor > 1.0);
     assert!(num_levels >= 1);
 
@@ -118,7 +119,7 @@ pub fn create_lod<'op>(
             .metadata
             .clone()
             .zip(current.embedding_data.clone())
-            .map(step_factor, |(m, e), step_factor| {
+            .map(step_factor, |P(m, e), step_factor| {
                 let new_spacing_raw = e.spacing * Vector::fill(step_factor);
                 let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
                 let new_spacing = e.spacing.zip(Vector::fill(smallest_new), |a, b| a.max(b));
@@ -140,10 +141,10 @@ pub fn create_lod<'op>(
 }
 
 pub fn resample_transform<'op>(
-    input: TensorOperator<N>,
+    input: TensorOperator<N, f32>,
     output_size: ScalarOperator<TensorMetaData<N>>,
     element_out_to_in: ScalarOperator<Matrix<{ N + 1 }, f32>>,
-) -> TensorOperator<N> {
+) -> TensorOperator<N, f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         chunk_dim_in: cgmath::Vector3<u32>,

@@ -7,7 +7,6 @@ use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
-    id::Id,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -42,15 +41,15 @@ impl SliceviewState {
         embedding_data: ScalarOperator<VolumeEmbeddingData>,
         output_size: Vector<2, GlobalCoordinate>,
     ) -> ScalarOperator<Matrix<4, f32>> {
-        use crate::operators::scalar::{constant_hash, constant_pod};
+        use crate::operators::scalar::constant;
         slice_projection_mat(
             dim,
             input_data,
             embedding_data,
             output_size,
-            constant_hash(self.selected.into()),
-            constant_pod(self.offset),
-            constant_pod(self.zoom_level),
+            constant(self.selected.into()),
+            constant(self.offset),
+            constant(self.zoom_level),
         )
     }
 }
@@ -142,9 +141,9 @@ pub fn slice_projection_mat(
     assert!(dim < 3);
     crate::operators::scalar::scalar(
         OperatorId::new("slice_projection_mat")
-            .dependent_on(Id::hash(&dim))
+            .dependent_on(&dim)
             .dependent_on(&input_data)
-            .dependent_on(Id::hash(&output_size))
+            .dependent_on(&output_size)
             .dependent_on(&selected_slice)
             .dependent_on(&offset)
             .dependent_on(&zoom_level),
@@ -260,10 +259,10 @@ pub fn slice_projection_mat_centered_rotate(
 }
 
 pub fn render_slice(
-    input: VolumeOperator,
+    input: VolumeOperator<f32>,
     result_metadata: ScalarOperator<ImageMetaData>,
     projection_mat: ScalarOperator<Matrix<4, f32>>,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         vol_dim: cgmath::Vector3<u32>,
@@ -657,14 +656,10 @@ mod test {
             let input = input.operate();
             let slice_proj = super::slice_projection_mat_z_scaled_fit(
                 input.metadata.clone(),
-                crate::operators::scalar::constant_hash(img_meta),
-                crate::operators::scalar::constant_hash(z.into()),
+                img_meta.into(),
+                crate::operators::scalar::constant(z.into()),
             );
-            let slice = super::render_slice(
-                input,
-                crate::operators::scalar::constant_hash(img_meta),
-                slice_proj,
-            );
+            let slice = super::render_slice(input, img_meta.into(), slice_proj);
             compare_volume(slice, fill_expected);
         }
     }

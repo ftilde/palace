@@ -5,21 +5,24 @@ use futures::StreamExt;
 use crate::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
-    id::Id,
+    id::{Id, Identify},
     operator::{Operator, OperatorId},
-    storage::ram::{InplaceResult, ThreadInplaceResult},
+    storage::{
+        ram::{InplaceResult, ThreadInplaceResult},
+        Element,
+    },
     task::{RequestStream, Task, TaskContext},
 };
 
 use super::scalar::ScalarOperator;
 
 #[derive(Clone)]
-pub struct TensorOperator<const N: usize> {
+pub struct TensorOperator<const N: usize, E> {
     pub metadata: Operator<(), TensorMetaData<N>>,
-    pub chunks: Operator<Vector<N, ChunkCoordinate>, f32>,
+    pub chunks: Operator<Vector<N, ChunkCoordinate>, E>,
 }
 
-impl<const N: usize> TensorOperator<N> {
+impl<const N: usize, E: Element> TensorOperator<N, E> {
     pub fn new<
         M: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, (), TensorMetaData<N>>,
@@ -27,7 +30,7 @@ impl<const N: usize> TensorOperator<N> {
             ) -> Task<'cref>
             + 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
+                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
                 Vec<Vector<N, ChunkCoordinate>>,
                 &'inv (),
             ) -> Task<'cref>
@@ -49,7 +52,7 @@ impl<const N: usize> TensorOperator<N> {
             ) -> Task<'cref>
             + 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
+                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
                 Vec<Vector<N, ChunkCoordinate>>,
                 &'inv SB,
             ) -> Task<'cref>
@@ -76,7 +79,7 @@ impl<const N: usize> TensorOperator<N> {
             ) -> Task<'cref>
             + 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
+                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
                 Vector<N, ChunkCoordinate>,
                 &'inv SB,
             ) -> Task<'cref>
@@ -94,7 +97,7 @@ impl<const N: usize> TensorOperator<N> {
         }
     }
 
-    pub fn embedded(self, data: TensorEmbeddingData<N>) -> EmbeddedTensorOperator<N> {
+    pub fn embedded(self, data: TensorEmbeddingData<N>) -> EmbeddedTensorOperator<N, E> {
         EmbeddedTensorOperator {
             inner: self,
             embedding_data: data.into(),
@@ -102,52 +105,52 @@ impl<const N: usize> TensorOperator<N> {
     }
 }
 
-impl<const N: usize> Into<Id> for &TensorOperator<N> {
-    fn into(self) -> Id {
-        Id::combine(&[(&self.metadata).into(), (&self.chunks).into()])
+impl<const N: usize, E> Identify for TensorOperator<N, E> {
+    fn id(&self) -> Id {
+        Id::combine(&[(&self.metadata).id(), (&self.chunks).id()])
     }
 }
 
 #[derive(Clone)]
-pub struct EmbeddedTensorOperator<const N: usize> {
-    pub inner: TensorOperator<N>,
+pub struct EmbeddedTensorOperator<const N: usize, E> {
+    pub inner: TensorOperator<N, E>,
     pub embedding_data: ScalarOperator<TensorEmbeddingData<N>>,
 }
 
-impl<const N: usize> Into<Id> for &EmbeddedTensorOperator<N> {
-    fn into(self) -> Id {
-        Id::combine(&[(&self.inner).into(), (&self.embedding_data).into()])
+impl<const N: usize, E> Identify for EmbeddedTensorOperator<N, E> {
+    fn id(&self) -> Id {
+        Id::combine(&[(&self.inner).id(), (&self.embedding_data).id()])
     }
 }
 
-impl<const N: usize> std::ops::Deref for EmbeddedTensorOperator<N> {
-    type Target = TensorOperator<N>;
+impl<const N: usize, E> std::ops::Deref for EmbeddedTensorOperator<N, E> {
+    type Target = TensorOperator<N, E>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<const N: usize> std::ops::DerefMut for EmbeddedTensorOperator<N> {
+impl<const N: usize, E> std::ops::DerefMut for EmbeddedTensorOperator<N, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<const N: usize> Into<TensorOperator<N>> for EmbeddedTensorOperator<N> {
-    fn into(self) -> TensorOperator<N> {
+impl<const N: usize, E> Into<TensorOperator<N, E>> for EmbeddedTensorOperator<N, E> {
+    fn into(self) -> TensorOperator<N, E> {
         self.inner
     }
 }
 
-impl<const N: usize> EmbeddedTensorOperator<N> {
-    pub fn single_level_lod(self) -> LODTensorOperator<N> {
+impl<const N: usize, E> EmbeddedTensorOperator<N, E> {
+    pub fn single_level_lod(self) -> LODTensorOperator<N, E> {
         LODTensorOperator { levels: vec![self] }
     }
 }
 
-impl<const N: usize> EmbeddedTensorOperator<N> {
-    pub fn map_inner(self, f: impl FnOnce(TensorOperator<N>) -> TensorOperator<N>) -> Self {
+impl<const N: usize, E> EmbeddedTensorOperator<N, E> {
+    pub fn map_inner(self, f: impl FnOnce(TensorOperator<N, E>) -> TensorOperator<N, E>) -> Self {
         EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,
@@ -156,27 +159,27 @@ impl<const N: usize> EmbeddedTensorOperator<N> {
 }
 
 #[derive(Clone)]
-pub struct LODTensorOperator<const N: usize> {
-    pub levels: Vec<EmbeddedTensorOperator<N>>,
+pub struct LODTensorOperator<const N: usize, E> {
+    pub levels: Vec<EmbeddedTensorOperator<N, E>>,
 }
 
-impl<const N: usize> Into<Id> for &LODTensorOperator<N> {
-    fn into(self) -> Id {
-        let ids = self.levels.iter().map(|v| v.into()).collect::<Vec<Id>>();
-        Id::combine(&ids)
+impl<const N: usize, E> Identify for LODTensorOperator<N, E> {
+    fn id(&self) -> Id {
+        self.levels.as_slice().id()
     }
 }
 
 #[allow(unused)]
-pub async fn map_values<
+pub async fn map_values_inplace<
     'op,
     'cref,
     'inv,
-    F: Fn(f32) -> f32 + Send + Copy + 'static,
+    E: Element,
+    F: Fn(E) -> E + Send + Copy + 'static,
     const N: usize,
 >(
-    ctx: TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, f32>,
-    input: &'op Operator<Vector<N, ChunkCoordinate>, f32>,
+    ctx: TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
+    input: &'op Operator<Vector<N, ChunkCoordinate>, E>,
     positions: Vec<Vector<N, ChunkCoordinate>>,
     f: F,
 ) where
@@ -220,11 +223,14 @@ pub async fn map_values<
 }
 
 #[allow(unused)]
-pub fn map<const N: usize>(input: TensorOperator<N>, f: fn(f32) -> f32) -> TensorOperator<N> {
+pub fn map<const N: usize, E: Element>(
+    input: TensorOperator<N, E>,
+    f: fn(E) -> E,
+) -> TensorOperator<N, E> {
     TensorOperator::with_state(
         OperatorId::new("tensor_map")
             .dependent_on(&input)
-            .dependent_on(Id::hash(&f)),
+            .dependent_on(&Id::hash(&f)),
         input.clone(),
         input,
         move |ctx, input| {
@@ -237,7 +243,7 @@ pub fn map<const N: usize>(input: TensorOperator<N>, f: fn(f32) -> f32) -> Tenso
         },
         move |ctx, positions, input| {
             async move {
-                map_values(ctx, &input.chunks, positions, f).await;
+                map_values_inplace(ctx, &input.chunks, positions, f).await;
 
                 Ok(())
             }
@@ -248,10 +254,10 @@ pub fn map<const N: usize>(input: TensorOperator<N>, f: fn(f32) -> f32) -> Tenso
 
 #[allow(unused)]
 pub fn linear_rescale<const N: usize>(
-    input: TensorOperator<N>,
+    input: TensorOperator<N, f32>,
     factor: ScalarOperator<f32>,
     offset: ScalarOperator<f32>,
-) -> TensorOperator<N> {
+) -> TensorOperator<N, f32> {
     TensorOperator::with_state(
         OperatorId::new("tensor_linear_scale")
             .dependent_on(&input)
@@ -274,7 +280,8 @@ pub fn linear_rescale<const N: usize>(
                     ctx.submit(offset.request_scalar()),
                 };
 
-                map_values(ctx, &input.chunks, positions, move |i| i * factor + offset).await;
+                map_values_inplace(ctx, &input.chunks, positions, move |i| i * factor + offset)
+                    .await;
 
                 Ok(())
             }
@@ -283,10 +290,10 @@ pub fn linear_rescale<const N: usize>(
     )
 }
 
-pub fn from_static<const N: usize>(
+pub fn from_static<const N: usize, E: Element + Identify>(
     size: Vector<N, GlobalCoordinate>,
-    values: &'static [f32],
-) -> Result<TensorOperator<N>, crate::Error> {
+    values: &'static [E],
+) -> Result<TensorOperator<N, E>, crate::Error> {
     let m = TensorMetaData {
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
@@ -302,8 +309,8 @@ pub fn from_static<const N: usize>(
     }
     Ok(TensorOperator::with_state(
         OperatorId::new("tensor_from_static")
-            .dependent_on(Id::hash(&size))
-            .dependent_on(bytemuck::cast_slice(&values)), //TODO: this is a performance problem for
+            .dependent_on(&size)
+            .dependent_on(values), //TODO: this is a performance problem for
         m,
         values,
         move |ctx, m| async move { ctx.write(*m) }.into(),
@@ -313,7 +320,7 @@ pub fn from_static<const N: usize>(
                     .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
                     .unwrap();
                 let mut out_data = &mut *out;
-                let values: &[f32] = &values;
+                let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {
                     crate::data::write_slice_uninit(&mut out_data, values);
                 }))
@@ -329,10 +336,10 @@ pub fn from_static<const N: usize>(
     ))
 }
 
-pub fn from_rc<const N: usize>(
+pub fn from_rc<const N: usize, E: Element + Identify>(
     size: Vector<N, GlobalCoordinate>,
-    values: Rc<[f32]>,
-) -> Result<TensorOperator<N>, crate::Error> {
+    values: Rc<[E]>,
+) -> Result<TensorOperator<N, E>, crate::Error> {
     let m = TensorMetaData {
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
@@ -348,8 +355,8 @@ pub fn from_rc<const N: usize>(
     }
     Ok(TensorOperator::with_state(
         OperatorId::new("tensor_from_static")
-            .dependent_on(Id::hash(&size))
-            .dependent_on(bytemuck::cast_slice(&values)), //TODO: this is a performance problem for
+            .dependent_on(&size)
+            .dependent_on(&values[..]), //TODO: this is a performance problem for large arrays
         m,
         values,
         move |ctx, m| async move { ctx.write(*m) }.into(),
@@ -359,7 +366,7 @@ pub fn from_rc<const N: usize>(
                     .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
                     .unwrap();
                 let mut out_data = &mut *out;
-                let values: &[f32] = &values;
+                let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {
                     crate::data::write_slice_uninit(&mut out_data, values);
                 }))

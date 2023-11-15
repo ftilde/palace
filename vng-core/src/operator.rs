@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use crate::{
-    id::Id,
-    storage::{gpu, ram, DataLocation, VisibleDataLocation},
+    id::{Id, Identify},
+    storage::{gpu, ram, DataLocation, Element, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
     vulkan::{DeviceId, DstBarrierInfo},
@@ -16,8 +16,8 @@ impl OperatorId {
         let id = Id::from_data(name.as_bytes());
         OperatorId(id, name)
     }
-    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
-        OperatorId(Id::combine(&[self.0, id.into()]), self.1)
+    pub fn dependent_on(self, v: &(impl Identify + ?Sized)) -> Self {
+        OperatorId(Id::combine(&[self.0, v.id()]), self.1)
     }
     pub fn slot(&self, slot_number: usize) -> Self {
         let id = Id::combine(&[self.0, Id::from_data(bytemuck::bytes_of(&slot_number))]);
@@ -33,8 +33,8 @@ impl Into<Id> for OperatorId {
         self.0
     }
 }
-impl<I, O> Into<Id> for &Operator<I, O> {
-    fn into(self) -> Id {
+impl<I, O> Identify for Operator<I, O> {
+    fn id(&self) -> Id {
         self.id.into()
     }
 }
@@ -94,15 +94,24 @@ pub trait OpaqueOperator {
     ) -> Task<'cref>;
 }
 
-#[derive(Clone)]
 pub struct Operator<ItemDescriptor, Output: ?Sized> {
     id: OperatorId,
     state: Rc<TypeErased>,
     granularity: ItemGranularity,
     compute: ComputeFunction<ItemDescriptor, Output>,
 }
+impl<ItemDescriptor, Output: ?Sized> Clone for Operator<ItemDescriptor, Output> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            state: self.state.clone(),
+            granularity: self.granularity.clone(),
+            compute: self.compute.clone(),
+        }
+    }
+}
 
-impl<Output: Copy> Operator<(), Output> {
+impl<Output: Element> Operator<(), Output> {
     #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
@@ -143,7 +152,7 @@ impl<Output: Copy> Operator<(), Output> {
     }
 }
 
-impl<ItemDescriptor: std::hash::Hash + 'static, Output: Copy> Operator<ItemDescriptor, Output> {
+impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDescriptor, Output> {
     pub fn new<
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
@@ -246,7 +255,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Copy> Operator<ItemDescr
         o_ctx: OpaqueTaskContext<'req, 'inv>,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, f32>, Error>> {
+    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, Output>, Error>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 

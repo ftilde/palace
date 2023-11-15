@@ -13,14 +13,13 @@ use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
 use crate::runtime::{CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{StateCacheResult, WriteHandle};
 use crate::storage::ram::{Storage, WriteHandleUninit};
-use crate::storage::VisibleDataLocation;
+use crate::storage::{Element, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::util::{Map, Set};
 use crate::vulkan::{BarrierInfo, DeviceContext};
 use crate::Error;
-use crevice::std430::Std430;
 use futures::stream::StreamExt;
 use futures::Stream;
 use pin_project::pin_project;
@@ -547,7 +546,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot(
@@ -560,7 +559,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std430>
+impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot_gpu<'a>(
@@ -589,7 +588,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Copy + ?Sized + Std43
     }
 }
 
-impl<'cref, 'inv, Output: Copy> TaskContext<'cref, 'inv, (), Output> {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
     pub fn write(&self, value: Output) -> Result<(), Error> {
         let mut slot = self.alloc_slot((), 1)?;
         slot[0].write(value);
@@ -598,7 +597,7 @@ impl<'cref, 'inv, Output: Copy> TaskContext<'cref, 'inv, (), Output> {
         Ok(())
     }
 }
-impl<'cref, 'inv, Output: Copy + Std430> TaskContext<'cref, 'inv, (), Output> {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
     pub fn alloc_scalar_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,

@@ -112,7 +112,11 @@ impl Splitter {
         }
     }
 
-    pub fn render(self, input_l: VolumeOperator, input_r: VolumeOperator) -> VolumeOperator {
+    pub fn render(
+        self,
+        input_l: VolumeOperator<f32>,
+        input_r: VolumeOperator<f32>,
+    ) -> VolumeOperator<f32> {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             size_out: cgmath::Vector2<u32>,

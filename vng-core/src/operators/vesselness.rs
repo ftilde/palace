@@ -4,6 +4,7 @@ use futures::StreamExt;
 use crate::data::hmul;
 use crate::operator::OperatorId;
 use crate::operators::array::ArrayOperator;
+use crate::storage::P;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
 use crate::vulkan::shader::ShaderDefines;
 use crate::vulkan::state::RessourceId;
@@ -13,11 +14,11 @@ use super::{kernels::*, volume_gpu};
 use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
 
 pub fn multiscale_vesselness(
-    input: VolumeOperator,
+    input: VolumeOperator<f32>,
     min_scale: ScalarOperator<f32>,
     max_scale: ScalarOperator<f32>,
     num_steps: usize,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     assert!(num_steps > 0);
     if num_steps == 1 {
         return vesselness(input.clone(), min_scale.clone());
@@ -31,7 +32,7 @@ pub fn multiscale_vesselness(
     for step in 1..num_steps {
         let alpha = step as f32 / num_reductions as f32;
 
-        let step_scale = scales.clone().map(alpha, |(min, max), alpha| {
+        let step_scale = scales.clone().map(alpha, |P(min, max), alpha| {
             let min_log = min.ln();
             let max_log = max.ln();
 
@@ -45,7 +46,7 @@ pub fn multiscale_vesselness(
         let step_vesselness = crate::operators::volume_gpu::linear_rescale(
             vesselness,
             step_scale.map((), |v, _| v * v),
-            crate::operators::scalar::constant_pod(0.0),
+            crate::operators::scalar::constant(0.0),
         );
         out = crate::operators::bin_ops::max(out, step_vesselness);
     }
@@ -53,7 +54,7 @@ pub fn multiscale_vesselness(
     out
 }
 
-pub fn vesselness(input: VolumeOperator, scale: ScalarOperator<f32>) -> VolumeOperator {
+pub fn vesselness(input: VolumeOperator<f32>, scale: ScalarOperator<f32>) -> VolumeOperator<f32> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -115,7 +116,7 @@ void main() {
 }
 "#;
 
-    type Conv = fn(ScalarOperator<f32>) -> ArrayOperator;
+    type Conv = fn(ScalarOperator<f32>) -> ArrayOperator<f32>;
 
     let g = |f1: Conv, f2: Conv, f3: Conv| {
         volume_gpu::separable_convolution(

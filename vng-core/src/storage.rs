@@ -10,6 +10,16 @@ use crate::{
     vulkan::{DeviceId, DstBarrierInfo},
 };
 
+// TODO: Since we allow padding bytes, we have to make sure to "properly" copy them from/to devices
+// using maybeuninit (i think)
+pub trait Element: Send + Sync + bytemuck::AnyBitPattern /*+ bytemuck::Pod*/ {}
+
+impl<T: bytemuck::AnyBitPattern + Send + Sync> Element for T {}
+
+#[derive(Copy, Clone, bytemuck::AnyBitPattern)]
+#[repr(C)]
+pub struct P<L, R>(pub L, pub R);
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum DataLocation {
     Ram,

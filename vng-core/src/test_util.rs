@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub fn compare_volume(
-    vol: VolumeOperator,
+    vol: VolumeOperator<f32>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
 ) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
@@ -36,7 +36,10 @@ pub fn compare_volume(
         .unwrap();
 }
 
-pub fn compare_tensor<const N: usize>(result: TensorOperator<N>, expected: TensorOperator<N>) {
+pub fn compare_tensor<const N: usize>(
+    result: TensorOperator<N, f32>,
+    expected: TensorOperator<N, f32>,
+) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
 
     runtime

@@ -3,7 +3,6 @@ use futures::StreamExt;
 use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
-    id::Id,
     operator::OperatorId,
     task::TaskContext,
     Error,
@@ -88,14 +87,14 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VolumeOperatorState
     for VoxelPosRasterizer<F>
 {
-    fn operate(&self) -> VolumeOperator {
+    fn operate(&self) -> VolumeOperator<f32> {
         TensorOperator::with_state(
             OperatorId::new("ImplicitFunctionRasterizer::operate")
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
                 //same type!
-                .dependent_on(crate::id::func_id::<F>())
-                .dependent_on(Id::hash(&self.metadata)),
+                .dependent_on(&crate::id::func_id::<F>())
+                .dependent_on(&self.metadata),
             self.metadata.clone(),
             self.clone(),
             move |ctx, m| async move { ctx.write(*m) }.into(),

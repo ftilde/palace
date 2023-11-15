@@ -1,4 +1,4 @@
-use crate::data::{hmul, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector};
+use crate::data::{hmul, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
 
 pub struct ChunkInfo<const N: usize> {
     pub mem_dimensions: Vector<N, LocalCoordinate>,
@@ -34,16 +34,62 @@ impl<const N: usize> ChunkInfo<N> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern)]
 pub struct TensorMetaData<const N: usize> {
     pub dimensions: Vector<N, GlobalCoordinate>,
     pub chunk_size: Vector<N, LocalCoordinate>,
+}
+
+impl<const N: usize> crate::id::Identify for TensorMetaData<N> {
+    fn id(&self) -> crate::id::Id {
+        crate::id::Id::hash(self)
+    }
+}
+
+// We have to do this manually since bytemuck cannot verify this in general due to the const
+// parameter N. It is fine though (as long as we don't change anything on TensorMetaData).
+//unsafe impl<const N: usize> bytemuck::Pod for TensorMetaData<N> {}
+
+//TODO: generalize
+impl TensorMetaData<3> {
+    pub fn norm_to_voxel(&self) -> Matrix<4, f32> {
+        Matrix::from_translation(Vector::fill(-0.5))
+            * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneuous()
+    }
+    pub fn voxel_to_norm(&self) -> Matrix<4, f32> {
+        Matrix::from_scale(self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneuous()
+            * Matrix::from_translation(Vector::fill(0.5))
+    }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable)]
 pub struct TensorEmbeddingData<const N: usize> {
     pub spacing: Vector<N, f32>,
+    // NOTE: need to change identify impl if we want to add members
+}
+
+impl<const N: usize> crate::id::Identify for TensorEmbeddingData<N> {
+    fn id(&self) -> crate::id::Id {
+        self.spacing.id()
+    }
+}
+
+//TODO: generalize
+impl TensorEmbeddingData<3> {
+    pub fn voxel_to_physical(&self) -> Matrix<4, f32> {
+        Matrix::from_scale(self.spacing).to_homogeneuous()
+    }
+    pub fn physical_to_voxel(&self) -> Matrix<4, f32> {
+        Matrix::from_scale(self.spacing.map(|v| 1.0 / v)).to_homogeneuous()
+    }
+}
+
+pub fn norm_to_physical(md: &TensorMetaData<3>, emd: &TensorEmbeddingData<3>) -> Matrix<4, f32> {
+    emd.voxel_to_physical() * md.norm_to_voxel()
+}
+pub fn physical_to_voxel(md: &TensorMetaData<3>, emd: &TensorEmbeddingData<3>) -> Matrix<4, f32> {
+    md.voxel_to_norm() * emd.physical_to_voxel()
 }
 
 //TODO: Revisit this. This is definitely fine as long as we don't add other members

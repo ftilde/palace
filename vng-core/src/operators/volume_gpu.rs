@@ -24,10 +24,10 @@ use super::{
 };
 
 pub fn linear_rescale<'op, const N: usize>(
-    input: TensorOperator<N>,
+    input: TensorOperator<N, f32>,
     scale: ScalarOperator<f32>,
     offset: ScalarOperator<f32>,
-) -> TensorOperator<N> {
+) -> TensorOperator<N, f32> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -163,7 +163,10 @@ void main()
     )
 }
 
-pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> VolumeOperator {
+pub fn rechunk(
+    input: VolumeOperator<f32>,
+    brick_size: Vector<3, ChunkSize>,
+) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_size_in: cgmath::Vector3<u32>,
@@ -209,7 +212,7 @@ void main() {
     TensorOperator::with_state(
         OperatorId::new("volume_rechunk_gpu")
             .dependent_on(&input)
-            .dependent_on(Id::hash(&brick_size)),
+            .dependent_on(&brick_size),
         input.clone(),
         input,
         move |ctx, input| {
@@ -351,9 +354,9 @@ void main() {
 /// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
 /// only supported (and thus always applied) border handling routine.
 pub fn convolution_1d<const DIM: usize>(
-    input: VolumeOperator,
-    kernel: ArrayOperator,
-) -> VolumeOperator {
+    input: VolumeOperator<f32>,
+    kernel: ArrayOperator<f32>,
+) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -625,16 +628,16 @@ void main() {
 }
 
 pub fn separable_convolution(
-    v: VolumeOperator,
-    [k0, k1, k2]: [ArrayOperator; 3],
-) -> VolumeOperator {
+    v: VolumeOperator<f32>,
+    [k0, k1, k2]: [ArrayOperator<f32>; 3],
+) -> VolumeOperator<f32> {
     let v = convolution_1d::<2>(v, k2);
     let v = convolution_1d::<1>(v, k1);
     let v = convolution_1d::<0>(v, k0);
     v
 }
 
-pub fn mean<'op>(input: VolumeOperator) -> ScalarOperator<f32> {
+pub fn mean<'op>(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -805,7 +808,7 @@ void main()
     )
 }
 
-pub fn rasterize_gpu(metadata: ScalarOperator<VolumeMetaData>, body: &str) -> VolumeOperator {
+pub fn rasterize_gpu(metadata: ScalarOperator<VolumeMetaData>, body: &str) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         offset: cgmath::Vector3<u32>,
@@ -855,7 +858,7 @@ void main()
 
     TensorOperator::with_state(
         OperatorId::new("rasterize_gpu")
-            .dependent_on(Id::hash(body))
+            .dependent_on(body)
             .dependent_on(&metadata),
         metadata.clone(),
         (metadata, shader),
@@ -941,9 +944,9 @@ pub struct VoxelRasterizerGLSL {
 }
 
 impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
-    fn operate(&self) -> VolumeOperator {
+    fn operate(&self) -> VolumeOperator<f32> {
         rasterize_gpu(
-            crate::operators::scalar::constant_hash(self.metadata),
+            crate::operators::scalar::constant(self.metadata),
             &self.body,
         )
     }

@@ -22,7 +22,10 @@ use crate::{
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use super::{scalar::ScalarOperator, tensor::LODTensorOperator, volume::VolumeOperator};
+use super::{
+    scalar::ScalarOperator,
+    volume::{LODVolumeOperator, VolumeOperator},
+};
 
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone)]
@@ -109,7 +112,7 @@ pub fn entry_exit_points(
     embedding_data: ScalarOperator<VolumeEmbeddingData>,
     result_metadata: ScalarOperator<ImageMetaData>,
     projection_mat: ScalarOperator<Matrix<4, f32>>,
-) -> VolumeOperator {
+) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
@@ -484,7 +487,10 @@ void main() {
     )
 }
 
-pub fn raycast(input: LODTensorOperator<3>, entry_exit_points: VolumeOperator) -> VolumeOperator {
+pub fn raycast(
+    input: LODVolumeOperator<f32>,
+    entry_exit_points: VolumeOperator<f32>,
+) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,

@@ -1,16 +1,14 @@
-use bytemuck::Pod;
-
 use crate::{
-    id::Id,
+    id::{Id, Identify},
     operator::{Operator, OperatorId},
+    storage::Element,
     task::{Task, TaskContext},
 };
-use std::hash::Hash;
 
 pub type ScalarOperator<T> = Operator<(), T>;
 
 pub fn scalar<
-    T: Copy,
+    T: Element,
     S: 'static,
     F: for<'cref, 'inv> Fn(TaskContext<'cref, 'inv, (), T>, &'inv S) -> Task<'cref> + 'static,
 >(
@@ -24,13 +22,17 @@ pub fn scalar<
     })
 }
 
-impl<T: Copy + 'static> ScalarOperator<T> {
-    pub fn map<D: Pod, O: Copy + 'static>(self, data: D, f: fn(T, &D) -> O) -> ScalarOperator<O> {
+impl<T: Element> ScalarOperator<T> {
+    pub fn map<D: Identify + 'static, O: Element>(
+        self,
+        data: D,
+        f: fn(T, &D) -> O,
+    ) -> ScalarOperator<O> {
         scalar(
             OperatorId::new("ScalarOperator::map")
                 .dependent_on(&self)
-                .dependent_on(Id::from_data(bytemuck::bytes_of(&data)))
-                .dependent_on(Id::hash(&f)),
+                .dependent_on(&data)
+                .dependent_on(&Id::hash(&f)),
             (self, data, f),
             move |ctx, (s, data, f)| {
                 async move {
@@ -41,7 +43,17 @@ impl<T: Copy + 'static> ScalarOperator<T> {
             },
         )
     }
-    pub fn zip<O: Copy + 'static>(self, other: ScalarOperator<O>) -> ScalarOperator<(T, O)> {
+    pub fn map_scalar<D: Identify + 'static, O: Element>(
+        self,
+        data: D,
+        f: fn(T, &D) -> O,
+    ) -> ScalarOperator<O> {
+        self.map(data, f)
+    }
+    pub fn zip<O: Element>(
+        self,
+        other: ScalarOperator<O>,
+    ) -> ScalarOperator<crate::storage::P<T, O>> {
         scalar(
             OperatorId::new("ScalarOperator::map")
                 .dependent_on(&self)
@@ -49,11 +61,11 @@ impl<T: Copy + 'static> ScalarOperator<T> {
             (self, other),
             move |ctx, (s, other)| {
                 async move {
-                    let t = futures::join! {
+                    let (l, r) = futures::join! {
                         ctx.submit(s.request_scalar()),
                         ctx.submit(other.request_scalar()),
                     };
-                    ctx.write(t)
+                    ctx.write(crate::storage::P(l, r))
                 }
                 .into()
             },
@@ -61,35 +73,15 @@ impl<T: Copy + 'static> ScalarOperator<T> {
     }
 }
 
-pub fn constant_pod<T: bytemuck::Pod>(val: T) -> ScalarOperator<T> {
-    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(bytemuck::bytes_of(&val));
+pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<T> {
+    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(&val);
     scalar(op_id, (), move |ctx, _| {
         async move { ctx.write(val) }.into()
     })
 }
 
-impl<T: bytemuck::Pod> From<T> for ScalarOperator<T> {
+impl<T: Element + Identify> From<T> for ScalarOperator<T> {
     fn from(value: T) -> Self {
-        constant_pod(value)
+        constant(value)
     }
-}
-
-pub fn constant_hash<T: Copy + Hash + 'static>(val: T) -> ScalarOperator<T> {
-    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(Id::hash(&val));
-    scalar(op_id, (), move |ctx, _| {
-        async move { ctx.write(val) }.into()
-    })
-}
-
-// TODO: See if we can find a better way here
-pub fn constant_as_array<E: bytemuck::Pod, T: Copy + AsRef<[E; 16]> + 'static>(
-    val: T,
-) -> ScalarOperator<T> {
-    let mut op_id = OperatorId::new(std::any::type_name::<T>());
-    for v in val.as_ref() {
-        op_id = op_id.dependent_on(bytemuck::bytes_of(v));
-    }
-    scalar(op_id, (), move |ctx, _| {
-        async move { ctx.write(val) }.into()
-    })
 }

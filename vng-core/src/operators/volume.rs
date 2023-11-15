@@ -6,8 +6,8 @@ use crate::{
     data::{
         chunk, chunk_mut, slice_range, BrickPosition, GlobalCoordinate, LocalCoordinate, Vector,
     },
-    id::Id,
     operator::OperatorId,
+    storage::Element,
     task::RequestStream,
 };
 
@@ -18,29 +18,29 @@ use super::{
 };
 
 pub trait VolumeOperatorState {
-    fn operate(&self) -> VolumeOperator;
+    fn operate(&self) -> VolumeOperator<f32>;
 }
 pub trait EmbeddedVolumeOperatorState {
-    fn operate(&self) -> EmbeddedVolumeOperator;
+    fn operate(&self) -> EmbeddedVolumeOperator<f32>;
 }
 
 impl<O: EmbeddedVolumeOperatorState> VolumeOperatorState for O {
-    fn operate(&self) -> VolumeOperator {
+    fn operate(&self) -> VolumeOperator<f32> {
         self.operate().into()
     }
 }
 impl<O: VolumeOperatorState> EmbeddedVolumeOperatorState for (O, VolumeEmbeddingData) {
-    fn operate(&self) -> EmbeddedVolumeOperator {
+    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
         self.0.operate().embedded(self.1.clone())
     }
 }
 
-pub type VolumeOperator = TensorOperator<3>;
-pub type EmbeddedVolumeOperator = EmbeddedTensorOperator<3>;
-pub type LODVolumeOperator = LODTensorOperator<3>;
+pub type VolumeOperator<E> = TensorOperator<3, E>;
+pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<3, E>;
+pub type LODVolumeOperator<E> = LODTensorOperator<3, E>;
 
 #[allow(unused)]
-pub fn mean(input: VolumeOperator) -> ScalarOperator<f32> {
+pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
     crate::operators::scalar::scalar(
         OperatorId::new("volume_mean").dependent_on(&input),
         input,
@@ -93,6 +93,8 @@ pub enum ChunkSize {
     Full,
 }
 
+crate::id::impl_hash!(ChunkSize);
+
 impl ChunkSize {
     pub fn apply(self, global_size: GlobalCoordinate) -> LocalCoordinate {
         match self {
@@ -104,11 +106,14 @@ impl ChunkSize {
 }
 
 #[allow(unused)]
-pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> VolumeOperator {
+pub fn rechunk<E: Element>(
+    input: VolumeOperator<E>,
+    brick_size: Vector<3, ChunkSize>,
+) -> VolumeOperator<E> {
     TensorOperator::with_state(
         OperatorId::new("volume_rechunk")
             .dependent_on(&input)
-            .dependent_on(Id::hash(&brick_size)),
+            .dependent_on(&brick_size),
         input.clone(),
         input,
         move |ctx, input| {
@@ -170,7 +175,7 @@ pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> Volum
                             let out_begin = out_info.begin();
                             let out_end = out_info.end();
 
-                            crate::data::init_non_full(out_data, &out_info, f32::NAN);
+                            crate::data::init_non_full(out_data, &out_info, E::zeroed());
 
                             let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
                             for (in_data_handle, in_brick_pos) in intersecting_bricks
@@ -224,9 +229,9 @@ pub fn rechunk(input: VolumeOperator, brick_size: Vector<3, ChunkSize>) -> Volum
 /// only supported (and thus always applied) border handling routine.
 #[allow(unused)]
 pub fn convolution_1d<const DIM: usize>(
-    input: VolumeOperator,
-    kernel: ArrayOperator,
-) -> VolumeOperator {
+    input: VolumeOperator<f32>,
+    kernel: ArrayOperator<f32>,
+) -> VolumeOperator<f32> {
     TensorOperator::with_state(
         OperatorId::new("convolution_1d")
             .dependent_on(&input)
@@ -412,9 +417,9 @@ pub fn convolution_1d<const DIM: usize>(
 
 #[allow(unused)]
 pub fn separable_convolution(
-    v: VolumeOperator,
-    [k0, k1, k2]: [ArrayOperator; 3],
-) -> VolumeOperator {
+    v: VolumeOperator<f32>,
+    [k0, k1, k2]: [ArrayOperator<f32>; 3],
+) -> VolumeOperator<f32> {
     let v = convolution_1d::<2>(v, k2);
     let v = convolution_1d::<1>(v, k1);
     let v = convolution_1d::<0>(v, k0);
