@@ -163,13 +163,25 @@ impl Default for TransferManager {
     }
 }
 
-struct SendPointer<T>(*mut T);
-impl<T> SendPointer<T> {
+struct SendPointerMut<T>(*mut T);
+impl<T> SendPointerMut<T> {
     // Safety: You may only do thread-safe things in other threads after unpacking
     unsafe fn pack(p: *mut T) -> Self {
         Self(p)
     }
     fn unpack(self) -> *mut T {
+        self.0
+    }
+}
+unsafe impl<T> Send for SendPointerMut<T> {}
+
+struct SendPointer<T>(*const T);
+impl<T> SendPointer<T> {
+    // Safety: You may only do thread-safe things in other threads after unpacking
+    unsafe fn pack(p: *const T) -> Self {
+        Self(p)
+    }
+    fn unpack(self) -> *const T {
         self.0
     }
 }
@@ -194,36 +206,16 @@ impl TransferManager {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
-            let staging_buf = device.staging_to_gpu.request(&device, layout);
-            let out_ptr =
-                unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
-            let in_ptr = unsafe { SendPointer::pack(input_buf.info.data) };
-
-            // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
-            ctx.submit(ctx.spawn_compute(|| {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
-                };
-            }))
-            .await;
 
             let gpu_buf_out =
                 device
                     .storage
                     .alloc_slot_raw(device, ctx.current_frame, key, layout)?;
-            device.with_cmd_buffer(|cmd| {
-                let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
-                unsafe {
-                    device.functions().cmd_copy_buffer(
-                        cmd.raw(),
-                        staging_buf.buffer,
-                        gpu_buf_out.buffer,
-                        &[*copy_info],
-                    );
-                }
 
-                Ok::<(), crate::Error>(())
-            })?;
+            unsafe {
+                copy_to_gpu(ctx, device, input_buf.info.data, layout, gpu_buf_out.buffer).await
+            };
+
             unsafe {
                 gpu_buf_out.initialized(
                     ctx,
@@ -233,15 +225,6 @@ impl TransferManager {
                     },
                 )
             };
-
-            ctx.submit(device.wait_for_current_cmd_buffer_completion())
-                .await;
-
-            // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
-            // in copying anymore and can be freed.
-            unsafe {
-                device.staging_to_gpu.return_buf(staging_buf);
-            }
             Ok(())
         }
         .into()
@@ -283,6 +266,49 @@ impl TransferManager {
     }
 }
 
+pub async unsafe fn copy_to_gpu<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    device: &'cref DeviceContext,
+    in_buf: *const u8,
+    layout: Layout,
+    buffer_out: ash::vk::Buffer,
+) {
+    let staging_buf = device.staging_to_gpu.request(&device, layout);
+    let out_ptr =
+        unsafe { SendPointerMut::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
+    let in_ptr = unsafe { SendPointer::pack(in_buf) };
+
+    // Safety: Both buffers contain plain bytes, are of the same size and do not overlap.
+    ctx.submit(ctx.spawn_compute(|| {
+        unsafe { std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size()) };
+    }))
+    .await;
+
+    device.with_cmd_buffer(|cmd| {
+        let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
+        unsafe {
+            device.functions().cmd_copy_buffer(
+                cmd.raw(),
+                staging_buf.buffer,
+                buffer_out,
+                &[*copy_info],
+            );
+        }
+    });
+
+    //TODO: We might be able to speed this up by returning the buf with an cmdbuf epoch after which
+    //it can be used again (similar to tmpressources). This may a actually provide a benefit for
+    //automatic GPU<->CPU transfers
+    ctx.submit(device.wait_for_current_cmd_buffer_completion())
+        .await;
+
+    // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
+    // in copying anymore and can be freed.
+    unsafe {
+        device.staging_to_gpu.return_buf(staging_buf);
+    }
+}
+
 pub async unsafe fn copy_to_cpu<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     device: &'cref DeviceContext,
@@ -311,8 +337,8 @@ pub async unsafe fn copy_to_cpu<'cref, 'inv>(
     // since we have waited for the command buffer to finish. This content has also reached
     // the mapped region of the staging_buf allocation since it was allocated with
     // HOST_VISIBLE and HOST_COHERENT.
-    let in_ptr = unsafe { SendPointer::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
-    let out_ptr = unsafe { SendPointer::pack(out_buf) };
+    let in_ptr = unsafe { SendPointerMut::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
+    let out_ptr = unsafe { SendPointerMut::pack(out_buf) };
     ctx.submit(ctx.spawn_compute(|| unsafe {
         std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size())
     }))
