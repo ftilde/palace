@@ -351,8 +351,8 @@ void main() {
     )
 }
 
-/// A one dimensional convolution in the specified (constant) axis. Currently zero padding is the
-/// only supported (and thus always applied) border handling routine.
+/// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
+/// supported (and thus always applied) border handling routine.
 pub fn convolution_1d<const DIM: usize>(
     input: VolumeOperator<f32>,
     kernel: ArrayOperator<f32>,
@@ -363,6 +363,7 @@ pub fn convolution_1d<const DIM: usize>(
         logical_dim_out: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector3<u32>,
         global_dim: cgmath::Vector3<u32>,
+        dim_in_chunks: cgmath::Vector3<u32>,
         num_chunks: u32,
         first_chunk_pos: u32,
         extent: i32,
@@ -396,6 +397,18 @@ void main() {
         float acc = 0.0;
 
         if(all(lessThan(out_local, consts.logical_dim_out))) {
+
+            int out_chunk_to_global = int(consts.out_begin[DIM]);
+            int out_global = int(out_local[DIM]) + out_chunk_to_global;
+
+            int begin_ext = -consts.extent;
+            int end_ext = consts.extent;
+
+            int global_begin = out_global + begin_ext;
+            int global_end = out_global + end_ext;
+
+            int last_chunk = int(consts.dim_in_chunks[DIM] - 1);
+
             for (int i = 0; i<consts.num_chunks; ++i) {
                 int chunk_pos = int(consts.first_chunk_pos) + i;
                 int global_begin_pos_in = chunk_pos * int(consts.mem_dim[DIM]);
@@ -405,16 +418,35 @@ void main() {
                     int(consts.global_dim[DIM])
                 ) - global_begin_pos_in;
 
-                int out_chunk_to_in_chunk = int(consts.out_begin[DIM]) - global_begin_pos_in;
+                int in_chunk_to_global = global_begin_pos_in;
+                int out_chunk_to_in_chunk = out_chunk_to_global - in_chunk_to_global;
                 int out_pos_rel_to_in_pos_rel = int(out_local[DIM]) + out_chunk_to_in_chunk;
 
-                int begin_ext = -consts.extent;
-                int end_ext = consts.extent;
+                int chunk_begin_local = 0;
+                int chunk_end_local = logical_dim_in - 1;
 
-                int local_end = logical_dim_in;
+                int l_begin_no_clip = begin_ext + out_pos_rel_to_in_pos_rel;
+                int l_end_no_clip = end_ext + out_pos_rel_to_in_pos_rel;
 
-                int l_begin = max(begin_ext + out_pos_rel_to_in_pos_rel, 0);
-                int l_end = min(end_ext + out_pos_rel_to_in_pos_rel, local_end - 1);
+                int l_begin = max(l_begin_no_clip, chunk_begin_local);
+                int l_end = min(l_end_no_clip, chunk_end_local);
+
+                // Border handling for first chunk in dim
+                if(chunk_pos == 0) {
+                    for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
+                        int kernel_offset = local - out_pos_rel_to_in_pos_rel;
+                        int kernel_buf_index = consts.extent - kernel_offset;
+                        float kernel_val = kernel.values[kernel_buf_index];
+
+                        uvec3 pos = out_local;
+                        pos[DIM] = chunk_begin_local; //Clip to volume/chunk
+
+                        uint local_index = to_linear3(pos, consts.mem_dim);
+                        float local_val = sourceData[i].values[local_index];
+
+                        acc += kernel_val * local_val;
+                    }
+                }
 
                 for (int local=l_begin; local<=l_end; ++local) {
                     int kernel_offset = local - out_pos_rel_to_in_pos_rel;
@@ -428,6 +460,23 @@ void main() {
                     float local_val = sourceData[i].values[local_index];
 
                     acc += kernel_val * local_val;
+                }
+
+                // Border handling for last chunk in dim
+                if(chunk_pos == last_chunk) {
+                    for (int local=chunk_end_local+1; local<l_end_no_clip; ++local) {
+                        int kernel_offset = local - out_pos_rel_to_in_pos_rel;
+                        int kernel_buf_index = consts.extent - kernel_offset;
+                        float kernel_val = kernel.values[kernel_buf_index];
+
+                        uvec3 pos = out_local;
+                        pos[DIM] = chunk_end_local; //Clip to volume/chunk
+
+                        uint local_index = to_linear3(pos, consts.mem_dim);
+                        float local_val = sourceData[i].values[local_index];
+
+                        acc += kernel_val * local_val;
+                    }
                 }
             }
         } else {
@@ -578,6 +627,7 @@ void main() {
                         logical_dim_out: out_info.logical_dimensions.into_elem::<u32>().into(),
                         out_begin: out_begin.into_elem::<u32>().into(),
                         global_dim: m_out.dimensions.into_elem::<u32>().into(),
+                        dim_in_chunks: m_out.dimension_in_chunks().into_elem::<u32>().into(),
                         num_chunks: num_chunks as _,
                         first_chunk_pos,
                         extent: extent as i32,
@@ -1099,6 +1149,26 @@ mod test {
     #[test]
     fn test_convolution_1d_z() {
         test_convolution_1d_generic::<0>();
+    }
+
+    #[test]
+    fn test_convolution_1d_clamp() {
+        let size = VoxelPosition::fill(5.into());
+        let start = VoxelPosition::fill(0.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v == start {
+                1.0
+            } else {
+                0.0
+            }
+        });
+
+        compare_convolution_1d::<2>(&vol, &[7.0, 1.0, 3.0], |comp| {
+            comp[[0, 0, 0]] = 4.0;
+            comp[[0, 0, 1]] = 3.0;
+        });
     }
 
     #[test]
