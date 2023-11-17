@@ -695,7 +695,15 @@ mod test {
                 img_meta.into(),
                 crate::operators::scalar::constant(z.into()),
             );
-            let slice = super::render_slice(input, img_meta.into(), slice_proj);
+            let slice = super::render_slice(
+                input
+                    .embedded(crate::array::TensorEmbeddingData {
+                        spacing: Vector::fill(1.0),
+                    })
+                    .single_level_lod(),
+                img_meta.into(),
+                slice_proj,
+            );
             compare_volume(slice, fill_expected);
         }
     }
