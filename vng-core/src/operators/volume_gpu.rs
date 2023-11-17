@@ -353,6 +353,7 @@ void main() {
 
 /// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
 /// supported (and thus always applied) border handling routine.
+//TODO It should be relatively easy to support other strategies now
 pub fn convolution_1d<const DIM: usize>(
     input: VolumeOperator<f32>,
     kernel: ArrayOperator<f32>,
@@ -389,6 +390,16 @@ layout(std430, binding = 2) buffer OutputBuffer{
 
 declare_push_consts(consts);
 
+float kernel_val(int p) {
+    int kernel_buf_index = consts.extent - p;
+    return kernel.values[kernel_buf_index];
+}
+
+float sample_brick(uvec3 pos, int brick) {
+    uint local_index = to_linear3(pos, consts.mem_dim);
+    return sourceData[brick].values[local_index];
+}
+
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
@@ -403,9 +414,6 @@ void main() {
 
             int begin_ext = -consts.extent;
             int end_ext = consts.extent;
-
-            int global_begin = out_global + begin_ext;
-            int global_end = out_global + end_ext;
 
             int last_chunk = int(consts.dim_in_chunks[DIM] - 1);
 
@@ -431,51 +439,33 @@ void main() {
                 int l_begin = max(l_begin_no_clip, chunk_begin_local);
                 int l_end = min(l_end_no_clip, chunk_end_local);
 
+                uvec3 pos = out_local;
+
                 // Border handling for first chunk in dim
                 if(chunk_pos == 0) {
+                    pos[DIM] = chunk_begin_local; //Clip to volume/chunk
+                    float local_val = sample_brick(pos, i);
+
                     for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        int kernel_buf_index = consts.extent - kernel_offset;
-                        float kernel_val = kernel.values[kernel_buf_index];
-
-                        uvec3 pos = out_local;
-                        pos[DIM] = chunk_begin_local; //Clip to volume/chunk
-
-                        uint local_index = to_linear3(pos, consts.mem_dim);
-                        float local_val = sourceData[i].values[local_index];
-
-                        acc += kernel_val * local_val;
+                        acc += kernel_val(kernel_offset) * local_val;
                     }
                 }
 
                 for (int local=l_begin; local<=l_end; ++local) {
                     int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                    int kernel_buf_index = consts.extent - kernel_offset;
-                    float kernel_val = kernel.values[kernel_buf_index];
-
-                    uvec3 pos = out_local;
                     pos[DIM] = local;
-
-                    uint local_index = to_linear3(pos, consts.mem_dim);
-                    float local_val = sourceData[i].values[local_index];
-
-                    acc += kernel_val * local_val;
+                    acc += kernel_val(kernel_offset) * sample_brick(pos, i);
                 }
 
                 // Border handling for last chunk in dim
                 if(chunk_pos == last_chunk) {
-                    for (int local=chunk_end_local+1; local<l_end_no_clip; ++local) {
+                    pos[DIM] = chunk_end_local; //Clip to volume/chunk
+                    float local_val = sample_brick(pos, i);
+
+                    for (int local=chunk_end_local+1; local<=l_end_no_clip; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        int kernel_buf_index = consts.extent - kernel_offset;
-                        float kernel_val = kernel.values[kernel_buf_index];
-
-                        uvec3 pos = out_local;
-                        pos[DIM] = chunk_end_local; //Clip to volume/chunk
-
-                        uint local_index = to_linear3(pos, consts.mem_dim);
-                        float local_val = sourceData[i].values[local_index];
-
-                        acc += kernel_val * local_val;
+                        acc += kernel_val(kernel_offset) * local_val;
                     }
                 }
             }
@@ -1155,10 +1145,11 @@ mod test {
     fn test_convolution_1d_clamp() {
         let size = VoxelPosition::fill(5.into());
         let start = VoxelPosition::fill(0.into());
+        let end = size - VoxelPosition::fill(1.into());
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            if v == start {
+            if v == start || v == end {
                 1.0
             } else {
                 0.0
@@ -1168,6 +1159,9 @@ mod test {
         compare_convolution_1d::<2>(&vol, &[7.0, 1.0, 3.0], |comp| {
             comp[[0, 0, 0]] = 4.0;
             comp[[0, 0, 1]] = 3.0;
+
+            comp[[4, 4, 3]] = 7.0;
+            comp[[4, 4, 4]] = 8.0;
         });
     }
 
