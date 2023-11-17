@@ -19,7 +19,7 @@ enum AccessState {
 
 #[derive(Copy, Clone, Debug)]
 pub struct StorageInfo {
-    pub data: *mut u8,
+    pub data: *mut MaybeUninit<u8>,
     pub layout: Layout,
 }
 
@@ -257,7 +257,7 @@ impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
 }
 
 pub struct RawWriteHandle<DropHandler> {
-    pub data: *mut u8,
+    pub data: *mut MaybeUninit<u8>,
     pub layout: Layout,
     drop_handler: DropHandler,
 }
@@ -337,7 +337,8 @@ pub type RawWriteHandleUninit<'a> = RawWriteHandle<DropError<'a>>;
 pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerUninitialized>;
 
 impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
-    /// Safety: The corresponding slot has to have been completely written to.
+    /// Safety: The corresponding slot has to have been completely written to, i.e. all
+    /// (non-padding) bytes of T must have been written.
     pub unsafe fn initialized<'inv>(
         self,
         ctx: OpaqueTaskContext<'a, 'inv>,
@@ -348,6 +349,8 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T> {
         }
     }
 
+    /// Safety: The corresponding slot has to have been completely written to, i.e. all
+    /// (non-padding) bytes of T must have been written.
     pub unsafe fn initialized_version<'inv>(
         self,
         ctx: OpaqueTaskContext<'a, 'inv>,
@@ -551,7 +554,11 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
-    fn alloc(&self, key: DataId, layout: Layout) -> Result<(*mut u8, AccessToken), Error> {
+    fn alloc(
+        &self,
+        key: DataId,
+        layout: Layout,
+    ) -> Result<(*mut MaybeUninit<u8>, AccessToken), Error> {
         let data = {
             let data = match self.allocator.alloc(layout) {
                 Ok(d) => d,
@@ -778,7 +785,7 @@ impl Allocator {
         })
     }
 
-    fn alloc(&self, layout: Layout) -> Result<*mut u8, Error> {
+    fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, Error> {
         let mut alloc = self.alloc.borrow_mut();
 
         assert!(layout.size() > 0);
@@ -787,15 +794,19 @@ impl Allocator {
         if ret.is_null() {
             Err("Out of memory".into())
         } else {
-            Ok(ret)
+            // Casting from *mut u8 to *mut MaybeUninit<u8> is always fine
+            Ok(ret.cast())
         }
     }
 
     /// Safety: `ptr` must have been allocated with this allocator and must not have been
     /// deallocated already.
-    unsafe fn dealloc(&self, ptr: *mut u8) {
+    unsafe fn dealloc(&self, ptr: *mut MaybeUninit<u8>) {
         let mut alloc = self.alloc.borrow_mut();
-        unsafe { alloc.dealloc(ptr) };
+
+        // Assuming the allocator does not read the bytes (why would it?) it is fine to cast
+        // from *mut MaybeUninit<u8> to *mut u8 here.
+        unsafe { alloc.dealloc(ptr.cast()) };
     }
 
     fn size(&self) -> usize {

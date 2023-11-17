@@ -266,10 +266,11 @@ impl TransferManager {
     }
 }
 
+/// Copy buffer from cpu to gpu. Both buffers must have the same layout.
 pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     device: &'cref DeviceContext,
-    in_buf: *const u8,
+    in_buf: *const MaybeUninit<u8>,
     layout: Layout,
     buffer_out: ash::vk::Buffer,
 ) {
@@ -309,12 +310,14 @@ pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     }
 }
 
+/// Copy buffer from gpu to cpu. Both buffers must have the same layout.
+/// All bytes of out_buf are written to in this call.
 pub async unsafe fn copy_to_cpu<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     device: &'cref DeviceContext,
     buffer_in: ash::vk::Buffer,
     layout: Layout,
-    out_buf: *mut u8,
+    out_buf: *mut MaybeUninit<u8>,
 ) {
     let staging_buf = device.staging_to_cpu.request(&device, layout);
 

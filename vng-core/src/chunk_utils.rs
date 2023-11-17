@@ -64,14 +64,15 @@ impl ChunkRequestTable {
         device: &'cref DeviceContext,
     ) -> Vec<RTElement> {
         let mut request_table_cpu = vec![0u32; self.num_elements];
-        let request_table_cpu_bytes = bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
+        let request_table_cpu_bytes: &mut [u8] =
+            bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
         unsafe {
             crate::vulkan::memory::copy_to_cpu(
                 ctx,
                 device,
                 self.allocation.buffer,
                 self.layout,
-                request_table_cpu_bytes.as_mut_ptr(),
+                request_table_cpu_bytes.as_mut_ptr().cast(),
             )
             .await
         };
