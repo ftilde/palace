@@ -75,7 +75,7 @@ pub fn slice_projection_mat(
 
 #[pyfunction]
 pub fn render_slice(
-    input: VolumeOperator,
+    input: LODVolumeOperator,
     result_metadata: ToOperator<ImageMetadataOperator>,
     projection_mat: ToOperator<Mat4Operator>,
 ) -> VolumeOperator {

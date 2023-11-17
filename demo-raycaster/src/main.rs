@@ -278,6 +278,8 @@ fn eval_network(
     //);
     //let vol = bin_ops::sub(vol, gen);
 
+    let vol = vng_core::operators::resample::create_lod(vol, 2.0, 3);
+
     let md = ImageMetaData {
         dimensions: window.size(),
         //chunk_size: window.size().local(),
@@ -295,13 +297,12 @@ fn eval_network(
         cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into()).into();
     let matrix = perspective * look_at;
     let eep = vng_core::operators::raycaster::entry_exit_points(
-        vol.metadata.clone(),
-        vol.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.into(),
         matrix.into(),
     );
-    let ml = vng_core::operators::resample::create_lod(vol, 2.0, 3);
-    let frame = vng_core::operators::raycaster::raycast(ml, eep);
+    let frame = vng_core::operators::raycaster::raycast(vol, eep);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

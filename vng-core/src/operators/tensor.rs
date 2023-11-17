@@ -169,6 +169,15 @@ impl<const N: usize, E> Identify for LODTensorOperator<N, E> {
     }
 }
 
+impl<const N: usize, E> LODTensorOperator<N, E> {
+    pub fn fine_metadata(&self) -> ScalarOperator<TensorMetaData<N>> {
+        self.levels[0].metadata.clone()
+    }
+    pub fn fine_embedding_data(&self) -> ScalarOperator<TensorEmbeddingData<N>> {
+        self.levels[0].embedding_data.clone()
+    }
+}
+
 #[allow(unused)]
 pub async fn map_values_inplace<
     'op,

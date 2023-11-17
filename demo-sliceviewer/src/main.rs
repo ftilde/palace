@@ -8,7 +8,7 @@ use vng_core::event::{
 };
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::volume::{
-    ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
+    ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator, VolumeOperator,
 };
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self};
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 float d_sq = sq.x + sq.y + sq.z;
                 result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
 
-            }"#
+                }"#
                 .to_owned(),
             },
             VolumeEmbeddingData {
@@ -219,7 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<2, f32>,
@@ -252,15 +252,16 @@ fn slice_viewer_z(
     let slice_num_g = ((*slice_num).max(0) as u32).into();
     let slice_proj_z = crate::operators::sliceviewer::slice_projection_mat(
         0,
-        slice_input.metadata.clone(),
-        slice_input.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.dimensions,
         crate::operators::scalar::constant(slice_num_g),
         crate::operators::scalar::constant(*offset),
         crate::operators::scalar::constant(*zoom_level),
     );
+
     let slice = crate::operators::sliceviewer::render_slice(
-        slice_input.into(),
+        vol,
         crate::operators::scalar::constant(md),
         slice_proj_z,
     );
@@ -270,7 +271,7 @@ fn slice_viewer_z(
 }
 
 fn slice_viewer_rot(
-    slice_input: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
@@ -288,13 +289,13 @@ fn slice_viewer_rot(
     };
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
-        slice_input.metadata.clone(),
-        slice_input.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.into(),
         (*angle).into(),
     );
-    let slice =
-        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_rot);
+
+    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot);
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
@@ -358,15 +359,16 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    let vol = vol.map_inner(|vol| {
-        let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(48.into()).into_elem());
+    //let vol = vol.map_inner(|vol| {
+    //    let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-        let after_kernel =
-            operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
-        //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
-        let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
-        scaled
-    });
+    //    let after_kernel =
+    //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
+    //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+    //    let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+    //    scaled
+    //});
+    let vol = vng_core::operators::resample::create_lod(vol, 2.0, 3);
 
     let left = slice_viewer_z(
         vol.clone(),

@@ -86,7 +86,10 @@ impl SliceviewState {
     }
 }
 
-use super::{scalar::ScalarOperator, volume::VolumeOperator};
+use super::{
+    scalar::ScalarOperator,
+    volume::{LODVolumeOperator, VolumeOperator},
+};
 
 pub fn slice_projection_mat_z_scaled_fit(
     input_data: ScalarOperator<VolumeMetaData>,
@@ -259,12 +262,13 @@ pub fn slice_projection_mat_centered_rotate(
 }
 
 pub fn render_slice(
-    input: VolumeOperator<f32>,
+    input: LODVolumeOperator<f32>,
     result_metadata: ScalarOperator<ImageMetaData>,
     projection_mat: ScalarOperator<Matrix<4, f32>>,
 ) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
+        transform: cgmath::Matrix4<f32>,
         vol_dim: cgmath::Vector3<u32>,
         chunk_dim: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector2<u32>,
@@ -290,23 +294,19 @@ layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
 } output_data;
 
-layout(std430, binding = 1) buffer Transform {
-    Mat4 value;
-} transform;
-
-layout(std430, binding = 2) buffer RefBuffer {
+layout(std430, binding = 1) buffer RefBuffer {
     BrickType values[NUM_BRICKS];
 } bricks;
 
-layout(std430, binding = 3) buffer QueryTable {
+layout(std430, binding = 2) buffer QueryTable {
     uint values[REQUEST_TABLE_SIZE];
 } request_table;
 
-layout(std430, binding = 4) buffer StateBuffer {
+layout(std430, binding = 3) buffer StateBuffer {
     uint values[];
 } state;
 
-layout(std430, binding = 5) buffer ValueBuffer{
+layout(std430, binding = 4) buffer ValueBuffer{
     float values[];
 } brick_values;
 
@@ -336,7 +336,8 @@ void main()
             val = vec4(0.0, 0.0, 1.0, 0.0);
         } else {
             vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
-            vec3 sample_pos_f = mulh_mat4(transform.value, pos);
+            //vec3 sample_pos_f = mulh_mat4(transform.value, pos);
+            vec3 sample_pos_f = (consts.transform * vec4(pos, 1)).xyz;
 
             VolumeMetaData m_in;
             m_in.dimensions = consts.vol_dim;
@@ -403,26 +404,61 @@ void main()
             async move {
                 let device = ctx.vulkan_device();
 
-                let m_in = ctx.submit(input.metadata.request_scalar()).await;
-
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (m2d, transform_gpu) = futures::join! {
+                let (m2d, emd_0, pixel_to_voxel) = futures::join! {
                     ctx.submit(result_metadata.request_scalar()),
-                    ctx.submit(projection_mat.request_scalar_gpu(device.id, dst_info)),
+                    ctx.submit(input.levels[0].embedding_data.request_scalar()),
+                    ctx.submit(projection_mat.request_scalar()),
                 };
+
+                let center: Vector<2, f32> = [0.0, 0.0].into();
+                let neighbors: [Vector<2, f32>; 2] = [[0.0, 1.0].into(), [1.0, 0.0].into()];
+
+                let transform_rw = emd_0.voxel_to_physical() * pixel_to_voxel;
+                let projected_center = transform_rw.transform(center.push_dim_large(0.0));
+                let projected_neighbors =
+                    neighbors.map(|v| transform_rw.transform(v.push_dim_large(0.0)));
+
+                let neighbor_dirs = projected_neighbors.map(|v| projected_center - v);
+                let mut selected_level = input.levels.len() - 1;
+
+                let coarse_lod_factor = 1.0; //TODO: make configurable
+                'outer: for (i, level) in input.levels.iter().enumerate() {
+                    let emd = ctx.submit(level.embedding_data.request_scalar()).await;
+
+                    for dir in neighbor_dirs {
+                        let abs_dir = dir.map(|v| v.abs()).normalized();
+                        let dir_spacing_dist = (abs_dir * emd.spacing).length();
+                        let pixel_dist = dir.length();
+                        if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
+                            selected_level = i;
+                            break 'outer;
+                        }
+                    }
+                }
+
+                let level = &input.levels[selected_level];
+
+                let (m_in, emd_l) = futures::join! {
+                    ctx.submit(level.metadata.request_scalar()),
+                    ctx.submit(level.embedding_data.request_scalar()),
+                };
+
+                let transform =
+                    emd_l.physical_to_voxel() * emd_0.voxel_to_physical() * pixel_to_voxel;
 
                 let m_out = full_info(m2d);
                 let out_info = m_out.chunk_info(pos);
 
-                let num_bricks = hmul(m_in.dimension_in_chunks()); //TODO: rename
+                let num_bricks = hmul(m_in.dimension_in_chunks());
 
                 let brick_index = device
                     .storage
-                    .get_index(*ctx, device, input.chunks.id(), num_bricks, dst_info)
+                    .get_index(*ctx, device, level.chunks.id(), num_bricks, dst_info)
                     .await;
 
                 let request_table_size = 256;
@@ -482,6 +518,7 @@ void main()
                     chunk_dim: m_in.chunk_size.raw().into(),
                     out_begin: out_info.begin.drop_dim(2).raw().into(),
                     out_mem_dim: out_info.mem_dimensions.drop_dim(2).raw().into(),
+                    transform: transform.into(),
                 };
 
                 let gpu_brick_out = ctx
@@ -510,7 +547,6 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            &transform_gpu,
                             &brick_index,
                             request_table.buffer(),
                             &state_initialized,
@@ -552,7 +588,7 @@ void main()
                     for batch in to_request_linear.chunks(request_batch_size) {
                         let to_request = batch.iter().map(|v| {
                             assert!(*v < num_bricks as _);
-                            input.chunks.request_gpu(
+                            level.chunks.request_gpu(
                                 device.id,
                                 from_linear(*v as usize, dim_in_bricks),
                                 DstBarrierInfo {

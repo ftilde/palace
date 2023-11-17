@@ -14,6 +14,7 @@ use super::{kernels::*, volume_gpu};
 use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
 
 pub fn multiscale_vesselness(
+    //TODO: Make this embedding-aware
     input: VolumeOperator<f32>,
     min_scale: ScalarOperator<f32>,
     max_scale: ScalarOperator<f32>,

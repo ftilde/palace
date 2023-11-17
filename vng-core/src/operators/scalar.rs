@@ -43,6 +43,7 @@ impl<T: Element> ScalarOperator<T> {
             },
         )
     }
+    // Just an alias, but sometimes it helps to use this to identify error messages
     pub fn map_scalar<D: Identify + 'static, O: Element>(
         self,
         data: D,

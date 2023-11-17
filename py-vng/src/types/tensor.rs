@@ -215,6 +215,16 @@ pub struct LODVolumeOperator {
     levels: Vec<EmbeddedVolumeOperator>,
 }
 
+#[pymethods]
+impl LODVolumeOperator {
+    pub fn fine_metadata(&self) -> VolumeMetadataOperator {
+        self.levels[0].inner.metadata.clone()
+    }
+    pub fn fine_embedding_data(&self) -> VolumeEmbeddingDataOperator {
+        self.levels[0].embedding_data.clone()
+    }
+}
+
 impl Into<CLODVolumeOperator<f32>> for LODVolumeOperator {
     fn into(self) -> CLODVolumeOperator<f32> {
         CLODVolumeOperator {

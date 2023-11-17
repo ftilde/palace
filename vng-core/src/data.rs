@@ -522,6 +522,11 @@ impl<T: num::One + Copy> Vector<3, T> {
         Vector::from([num::one(), self.z(), self.y(), self.x()])
     }
 }
+impl<T: Copy> Vector<4, T> {
+    pub fn to_non_homogeneous_coord(self) -> Vector<3, T> {
+        self.drop_dim(0)
+    }
+}
 
 impl Vector<3, f32> {
     pub fn length(self) -> f32 {
@@ -709,6 +714,12 @@ impl<const N: usize, T: Copy + Add<Output = T> + Mul<Output = T>> Mul<Vector<N, 
     fn mul(self, rhs: Vector<N, T>) -> Self::Output {
         let m = self.transposed();
         Self::Output::from_fn(|i| m.col(i).dot(&rhs))
+    }
+}
+
+impl<T: Copy + Add<Output = T> + Mul<Output = T> + num::One> Matrix<4, T> {
+    pub fn transform(self, rhs: Vector<3, T>) -> Vector<3, T> {
+        (self * rhs.to_homogeneous_coord()).to_non_homogeneous_coord()
     }
 }
 

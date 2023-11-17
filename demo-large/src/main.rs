@@ -9,7 +9,7 @@ use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::volume::{
-    ChunkSize, EmbeddedVolumeOperator, EmbeddedVolumeOperatorState, VolumeOperator,
+    ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator, VolumeOperator,
 };
 use vng_core::operators::volume_gpu;
 use vng_core::runtime::RunTime;
@@ -248,7 +248,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    slice_input: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     md: ImageMetaData,
     state: &mut SliceviewState,
     events: &mut EventStream,
@@ -273,12 +273,11 @@ fn slice_viewer_z(
 
     let slice_proj_z = state.projection_mat(
         0,
-        slice_input.metadata.clone(),
-        slice_input.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.dimensions,
     );
-    let slice =
-        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_z);
+    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z);
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice
@@ -286,7 +285,7 @@ fn slice_viewer_z(
 
 fn slice_viewer_rot(
     runtime: &mut RunTime,
-    slice_input: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     md: ImageMetaData,
     state: &mut RotSliceState,
     mut events: EventStream,
@@ -304,22 +303,24 @@ fn slice_viewer_rot(
     };
 
     let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
-        slice_input.metadata.clone(),
-        slice_input.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.into(),
         state.angle.into(),
     );
 
     let mat_ref = &slice_proj_rot;
-    let vol_ref = &slice_input;
+    let vol_ref = &vol;
 
     let info = if let Some(mouse_state) = &events.latest_state().mouse_state {
         let mouse_pos = mouse_state.pos;
+        let md = vol.fine_metadata();
+        let md_ref = &md;
         runtime
             .resolve(None, move |ctx, _| {
                 async move {
                     let mat = ctx.submit(mat_ref.request_scalar()).await;
-                    let m_in = ctx.submit(vol_ref.metadata.request_scalar()).await;
+                    let m_in = ctx.submit(md_ref.request_scalar()).await;
 
                     let mouse_pos = Vector::<4, f32>::from([
                         1.0,
@@ -340,7 +341,9 @@ fn slice_viewer_rot(
                         let chunk_pos = m_in.chunk_pos(vol_pos);
                         let chunk_info = m_in.chunk_info(chunk_pos);
 
-                        let brick = ctx.submit(vol_ref.chunks.request(chunk_pos)).await;
+                        let brick = ctx
+                            .submit(vol_ref.levels[0].chunks.request(chunk_pos))
+                            .await;
 
                         let local_pos = chunk_info.in_chunk(vol_pos);
                         let brick = vng_core::data::chunk(&brick, &chunk_info);
@@ -376,15 +379,14 @@ fn slice_viewer_rot(
             ui.label(s);
         });
     });
-    let slice =
-        crate::operators::sliceviewer::render_slice(slice_input.into(), md.into(), slice_proj_rot);
+    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot);
     let frame = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(frame);
     frame
 }
 
 fn raycaster(
-    input: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     size: Vector<2, GlobalCoordinate>,
     state: &mut CameraState,
     mut events: EventStream,
@@ -406,13 +408,12 @@ fn raycaster(
 
     let matrix = state.projection_mat(md.dimensions);
     let eep = vng_core::operators::raycaster::entry_exit_points(
-        input.metadata.clone(),
-        input.embedding_data.clone(),
+        vol.fine_metadata(),
+        vol.fine_embedding_data(),
         md.into(),
         matrix.into(),
     );
-    let ml = vng_core::operators::resample::create_lod(input, 2.0, 3);
-    vng_core::operators::raycaster::raycast(ml, eep)
+    vng_core::operators::raycaster::raycast(vol, eep)
 }
 
 fn eval_network(
@@ -449,7 +450,6 @@ fn eval_network(
         }),
         ProcessState::Vesselness => vol.map_inner(|vol| {
             operators::vesselness::multiscale_vesselness(
-                //TODO: this should actually be embedding-aware
                 vol,
                 app_state.vesselness.min_rad.into(),
                 app_state.vesselness.max_rad.into(),
@@ -464,6 +464,7 @@ fn eval_network(
             operators::resample::smooth_downsample(vol, md.into())
         }
     };
+    let processed = vng_core::operators::resample::create_lod(processed, 2.0, 3);
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -543,13 +544,11 @@ fn eval_network(
                     });
                 match app_state.rendering {
                     RenderingState::Slice => {
-                        let vol_ref = &processed;
+                        let md = processed.fine_metadata();
+                        let md_ref = &md;
                         let metadata = runtime
                             .resolve(Some(deadline), move |ctx, _| {
-                                async move {
-                                        Ok(ctx.submit(vol_ref.metadata.request_scalar()).await)
-                                    }
-                                    .into()
+                                async move { Ok(ctx.submit(md_ref.request_scalar()).await) }.into()
                             })
                             .unwrap();
                         let num_slices = metadata.dimensions.z().raw;

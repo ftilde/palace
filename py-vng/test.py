@@ -10,13 +10,13 @@ rt = vng.RunTime(ram_size, vram_size)
 
 window = vng.Window(rt)
 
-v = vng.open_volume("/nosnapshot/test-volumes/large.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
 #v2 = vng.linear_rescale(v1, 2, m1)
-#v = vng.separable_convolution(v, [k]*3)
-lod = v.create_lod(2.0, 3)
+#vol = vng.separable_convolution(vol, [k]*3)
+vol = vol.create_lod(2.0, 3)
 
 store = vng.Store()
 
@@ -29,7 +29,7 @@ slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 
 camera_state = vng.CameraState(
         vng.TrackballState(
-            [1.0, 0.0, 0.0],
+            [5.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
             [1.0, 1.0, 0.0],
             ),
@@ -58,7 +58,7 @@ def split(dim, fraction, render_first, render_last):
     return inner
 
 # Raycasting render component
-def render_raycast(camera_state):
+def render_raycast(vol, camera_state):
     def inner(size, events):
         events.act([
             vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))),
@@ -68,15 +68,15 @@ def render_raycast(camera_state):
         md = vng.tensor_metadata(size, [512]*2)
         proj = camera_state.load().projection_mat(size)
 
-        eep = vng.entry_exit_points(v.inner.metadata, v.embedding_data, md, proj)
-        frame = vng.raycast(lod, eep)
+        eep = vng.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
+        frame = vng.raycast(vol, eep)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
 
         return frame
     return inner
 
 # Slice render component
-def render_slice(dim, slice_state):
+def render_slice(vol, dim, slice_state):
     def inner(size, events):
         events.act([
             vng.OnMouseDrag(vng.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -86,9 +86,9 @@ def render_slice(dim, slice_state):
 
         md = vng.tensor_metadata(size, [512]*2)
 
-        proj = vng.slice_projection_mat(slice_state.load(), dim, v.inner.metadata, v.embedding_data, size)
+        proj = vng.slice_projection_mat(slice_state.load(), dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
 
-        frame = vng.render_slice(v.inner, md, proj)
+        frame = vng.render_slice(vol, md, proj)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
 
         return frame
@@ -106,8 +106,8 @@ def render(size, events):
         ]),
     ]))
 
-    lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(0, slice_state0), render_slice(1, slice_state1))
-    upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast(camera_state), render_slice(2, slice_state2))
+    lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(vol, 0, slice_state0), render_slice(vol, 1, slice_state1))
+    upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast(vol, camera_state), render_slice(vol, 2, slice_state2))
 
     frame = split(vng.SplitDirection.Vertical, 0.5, upper, lower)(size, events)
 
