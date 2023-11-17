@@ -129,7 +129,7 @@ pub struct StateCacheAccessToken<'a> {
     pub id: DataId,
 }
 
-//TODO: See if we can deduplicate the code in comparison with the "normal" AccessToken
+//TODO: See if we can deduplicate the code wrt the "normal" AccessToken
 impl<'a> StateCacheAccessToken<'a> {
     fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
         let mut index = storage.state_cache_index.borrow_mut();
@@ -767,8 +767,6 @@ impl Storage {
         {
             let mut index = self.data_index.borrow_mut();
             let entry = index.entry(id);
-            // TODO: See if we can instead pass the mutable reference to the entry into AccessToken
-            // to avoid touching the index twice
             self.ensure_presence(current_frame, entry);
         }
         AccessToken::new(self, device, id)
@@ -886,7 +884,6 @@ impl Storage {
         key: DataId,
         num: usize,
     ) -> Result<WriteHandle<'b>, Error> {
-        //TODO: Not sure if this actually works with std430
         let layout = Layout::array::<T>(num).unwrap();
         self.alloc_slot_raw(device, current_frame, key, layout)
     }

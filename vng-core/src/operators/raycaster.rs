@@ -212,7 +212,6 @@ void main() {
         },
         move |ctx, pos, (m_in, embedding_data, result_metadata, projection_mat)| {
             async move {
-                //TODO: Use spacing information of _m_in (or similar) here
                 let device = ctx.vulkan_device();
 
                 let (m_in, embedding_data, m2d, transform) = futures::join! {
