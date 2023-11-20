@@ -1,18 +1,17 @@
-use derive_more::{From, Into};
-
-use crate::conversion;
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::{
-    array::{ArrayMetaData, VolumeEmbeddingData, VolumeMetaData},
+    array::{ArrayMetaData, VolumeMetaData},
     data::{ChunkCoordinate, Vector},
-    operator::Operator,
+    id::Identify,
+    operator::Operator as COperator,
+    storage::Element,
 };
 
 use vng_core::array::ImageMetaData;
-use vng_core::operators::array::ArrayOperator as CArrayOperator;
-use vng_core::operators::volume::EmbeddedVolumeOperator as CEmbeddedVolumeOperator;
-use vng_core::operators::volume::LODVolumeOperator as CLODVolumeOperator;
-use vng_core::operators::volume::VolumeOperator as CVolumeOperator;
+use vng_core::operators::scalar::ScalarOperator as CScalarOperator;
+use vng_core::operators::tensor::EmbeddedTensorOperator as CEmbeddedTensorOperator;
+use vng_core::operators::tensor::LODTensorOperator as CLODTensorOperator;
+use vng_core::operators::tensor::TensorOperator as CTensorOperator;
 
 #[pyfunction]
 pub fn tensor_metadata(
@@ -55,231 +54,349 @@ pub fn tensor_metadata(
 }
 
 #[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ScalarOperatorF32(pub Operator<(), f32>);
-impl conversion::FromPyValue<f32> for ScalarOperatorF32 {
-    fn from_py(v: f32) -> PyResult<Self> {
-        Ok(ScalarOperatorF32(vng_core::operators::scalar::constant(v)))
-    }
-}
-impl<'source> conversion::FromPyValues<'source> for ScalarOperatorF32 {
-    type Converter = conversion::ToOperatorFrom<Self, (f32,)>;
+#[derive(Clone, Copy)]
+pub enum DType {
+    F32,
 }
 
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ScalarOperatorVec2F(pub Operator<(), Vector<2, f32>>);
-impl conversion::FromPyValue<[f32; 2]> for ScalarOperatorVec2F {
-    fn from_py(v: [f32; 2]) -> PyResult<Self> {
-        Ok(ScalarOperatorVec2F(vng_core::operators::scalar::constant(
-            v.into(),
-        )))
-    }
-}
-impl<'source> conversion::FromPyValues<'source> for ScalarOperatorVec2F {
-    type Converter = conversion::ToOperatorFrom<Self, ([f32; 2],)>;
-}
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ScalarOperatorU32(pub Operator<(), u32>);
-impl conversion::FromPyValue<u32> for ScalarOperatorU32 {
-    fn from_py(v: u32) -> PyResult<Self> {
-        Ok(ScalarOperatorU32(vng_core::operators::scalar::constant(v)))
-    }
-}
-impl<'source> conversion::FromPyValues<'source> for ScalarOperatorU32 {
-    type Converter = conversion::ToOperatorFrom<Self, (u32,)>;
-}
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ArrayMetadataOperator(pub Operator<(), ArrayMetaData>);
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct VolumeMetadataOperator(pub Operator<(), VolumeMetaData>);
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct VolumeEmbeddingDataOperator(pub Operator<(), VolumeEmbeddingData>);
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ImageMetadataOperator(pub Operator<(), ImageMetaData>);
-
-impl<'a> conversion::FromPyValue<ImageMetaData> for ImageMetadataOperator {
-    fn from_py(v: ImageMetaData) -> PyResult<Self> {
-        Ok(vng_core::operators::scalar::constant(v).into())
-    }
-}
-impl<'source> conversion::FromPyValues<'source> for ImageMetadataOperator {
-    type Converter = conversion::ToOperatorFrom<Self, (ImageMetaData,)>;
-}
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct ArrayValueOperator(pub Operator<Vector<1, ChunkCoordinate>, f32>);
-
-#[pyclass(unsendable)]
-#[derive(Clone, From, Into)]
-pub struct VolumeValueOperator(pub Operator<Vector<3, ChunkCoordinate>, f32>);
-
-#[pyclass(unsendable)]
-#[derive(Clone)]
-pub struct VolumeOperator {
-    #[pyo3(get, set)]
-    pub metadata: VolumeMetadataOperator,
-    #[pyo3(get, set)]
-    pub chunks: VolumeValueOperator,
-}
-
-impl Into<CVolumeOperator<f32>> for VolumeOperator {
-    fn into(self) -> CVolumeOperator<f32> {
-        CVolumeOperator {
-            metadata: self.metadata.into(),
-            chunks: self.chunks.into(),
+impl DType {
+    fn from<T: 'static>() -> PyResult<Self> {
+        fn is<L: std::any::Any, R: std::any::Any>() -> bool {
+            std::any::TypeId::of::<L>() == std::any::TypeId::of::<R>()
+        }
+        if is::<f32, T>() {
+            Ok(DType::F32)
+        } else {
+            //TODO: Not sure if we actually NEED to error out
+            Err(PyErr::new::<PyException, _>(format!(
+                "{} is not a registered DType",
+                std::any::type_name::<T>()
+            )))
         }
     }
 }
 
-impl From<CVolumeOperator<f32>> for VolumeOperator {
-    fn from(value: CVolumeOperator<f32>) -> Self {
+#[pyclass(unsendable)]
+pub struct ScalarOperator {
+    pub inner: Box<dyn std::any::Any>,
+    clone: fn(&Self) -> Self,
+}
+
+impl Clone for ScalarOperator {
+    fn clone(&self) -> Self {
+        (self.clone)(self)
+    }
+}
+
+impl<T: 'static> From<CScalarOperator<T>> for ScalarOperator {
+    fn from(value: CScalarOperator<T>) -> Self {
         Self {
-            metadata: value.metadata.into(),
-            chunks: value.chunks.into(),
+            inner: Box::new(value),
+            clone: |i| Self {
+                inner: Box::new(
+                    i.inner
+                        .downcast_ref::<CScalarOperator<T>>()
+                        .unwrap()
+                        .clone(),
+                ),
+                clone: i.clone,
+            },
         }
     }
 }
 
-#[pyclass(unsendable)]
-#[derive(Clone)]
-pub struct EmbeddedVolumeOperator {
-    #[pyo3(get, set)]
-    pub inner: VolumeOperator,
-    #[pyo3(get, set)]
-    pub embedding_data: VolumeEmbeddingDataOperator,
-}
+impl<T: 'static> TryInto<CScalarOperator<T>> for ScalarOperator {
+    type Error = PyErr;
 
-impl Into<CEmbeddedVolumeOperator<f32>> for EmbeddedVolumeOperator {
-    fn into(self) -> CEmbeddedVolumeOperator<f32> {
-        CEmbeddedVolumeOperator {
-            inner: self.inner.into(),
-            embedding_data: self.embedding_data.into(),
-        }
+    fn try_into(self) -> Result<CScalarOperator<T>, Self::Error> {
+        Ok(self.try_unpack()?.clone())
     }
 }
 
-impl From<CEmbeddedVolumeOperator<f32>> for EmbeddedVolumeOperator {
-    fn from(value: CEmbeddedVolumeOperator<f32>) -> Self {
-        Self {
-            inner: value.inner.into(),
-            embedding_data: value.embedding_data.into(),
-        }
+impl ScalarOperator {
+    pub fn try_unpack<T: 'static>(&self) -> PyResult<&CScalarOperator<T>> {
+        self.inner
+            .downcast_ref::<CScalarOperator<T>>()
+            .ok_or_else(|| {
+                PyErr::new::<PyException, _>(format!(
+                    "Expected ScalarOperator<{}>, but got something else",
+                    std::any::type_name::<T>()
+                ))
+            })
     }
-}
-
-#[pymethods]
-impl EmbeddedVolumeOperator {
-    fn create_lod(&self, step_factor: f32, num_levels: usize) -> LODVolumeOperator {
-        vng_core::operators::resample::create_lod(self.clone().into(), step_factor, num_levels)
-            .into()
+    pub fn try_unpack_mut<T: 'static>(&mut self) -> PyResult<&mut CScalarOperator<T>> {
+        self.inner
+            .downcast_mut::<CScalarOperator<T>>()
+            .ok_or_else(|| {
+                PyErr::new::<PyException, _>(PyErr::new::<PyException, _>(format!(
+                    "Expected ScalarOperator<{}>, but got something else",
+                    std::any::type_name::<T>()
+                )))
+            })
     }
 }
 
 #[derive(FromPyObject)]
-pub enum MaybeEmbeddedVolumeOperator {
-    Not(VolumeOperator),
-    Embedded(EmbeddedVolumeOperator),
+pub enum MaybeConstScalarOperator<T> {
+    Const(T),
+    Operator(ScalarOperator),
 }
 
-impl MaybeEmbeddedVolumeOperator {
-    pub fn map_inner(
-        self,
-        py: Python,
-        f: impl FnOnce(CVolumeOperator<f32>) -> CVolumeOperator<f32>,
-    ) -> PyObject {
+impl<T: Identify + vng_core::storage::Element> TryInto<CScalarOperator<T>>
+    for MaybeConstScalarOperator<T>
+{
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CScalarOperator<T>, Self::Error> {
         match self {
-            MaybeEmbeddedVolumeOperator::Not(v) => VolumeOperator::from(f(v.into())).into_py(py),
-            MaybeEmbeddedVolumeOperator::Embedded(v) => EmbeddedVolumeOperator::from(
-                Into::<CEmbeddedVolumeOperator<f32>>::into(v).map_inner(f),
-            )
-            .into_py(py),
+            MaybeConstScalarOperator::Const(c) => Ok(vng_core::operators::scalar::constant(c)),
+            MaybeConstScalarOperator::Operator(o) => o.try_into(),
+        }
+    }
+}
+
+type CTensorDataOperator<const N: usize, T> = COperator<Vector<N, ChunkCoordinate>, T>;
+
+#[pyclass(unsendable)]
+pub struct TensorDataOperator {
+    pub inner: Box<dyn std::any::Any>,
+    #[pyo3(get)]
+    pub dtype: DType,
+    #[pyo3(get)]
+    pub ndim: u32,
+    clone: fn(&Self) -> Self,
+}
+
+impl Clone for TensorDataOperator {
+    fn clone(&self) -> Self {
+        (self.clone)(self)
+    }
+}
+
+impl<const N: usize, T: std::any::Any> TryFrom<COperator<Vector<N, ChunkCoordinate>, T>>
+    for TensorDataOperator
+{
+    type Error = PyErr;
+
+    fn try_from(t: COperator<Vector<N, ChunkCoordinate>, T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            inner: Box::new(t),
+            dtype: DType::from::<T>()?,
+            ndim: N as _,
+            clone: |i| Self {
+                inner: Box::new(
+                    i.inner
+                        .downcast_ref::<COperator<Vector<N, ChunkCoordinate>, T>>()
+                        .unwrap()
+                        .clone(),
+                ),
+                dtype: i.dtype,
+                ndim: i.ndim,
+                clone: i.clone,
+            },
+        })
+    }
+}
+
+impl<const N: usize, T: std::any::Any> TryInto<COperator<Vector<N, ChunkCoordinate>, T>>
+    for TensorDataOperator
+{
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<COperator<Vector<N, ChunkCoordinate>, T>, Self::Error> {
+        Ok(self.try_unpack()?.clone())
+    }
+}
+
+impl TensorDataOperator {
+    pub fn try_unpack<const N: usize, T: 'static>(&self) -> PyResult<&CTensorDataOperator<N, T>> {
+        self.inner
+            .downcast_ref::<CTensorDataOperator<N, T>>()
+            .ok_or_else(|| {
+                PyErr::new::<PyException, _>(format!(
+                    "Expected Operator<Vector<{}, ChunkCoordinate>, {}>, but got something else",
+                    N,
+                    std::any::type_name::<T>()
+                ))
+            })
+    }
+    pub fn try_unpack_mut<const N: usize, T: 'static>(
+        &mut self,
+    ) -> PyResult<&mut CTensorDataOperator<N, T>> {
+        self.inner
+            .downcast_mut::<CTensorDataOperator<N, T>>()
+            .ok_or_else(|| {
+                PyErr::new::<PyException, _>(PyErr::new::<PyException, _>(format!(
+                    "Expected Operator<Vector<{}, ChunkCoordinate>, {}>, but got something else",
+                    N,
+                    std::any::type_name::<T>()
+                )))
+            })
+    }
+}
+
+//TODO: we should maybe do error-checking in the set-method here and in the othe cases?
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct TensorOperator {
+    #[pyo3(get, set)]
+    pub chunks: TensorDataOperator,
+    #[pyo3(get, set)]
+    pub metadata: ScalarOperator,
+}
+
+impl<const N: usize, T: 'static> TryFrom<CTensorOperator<N, T>> for TensorOperator {
+    type Error = PyErr;
+
+    fn try_from(t: CTensorOperator<N, T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            chunks: t.chunks.try_into()?,
+            metadata: t.metadata.into(),
+        })
+    }
+}
+impl<const N: usize, T: 'static> TryInto<CTensorOperator<N, T>> for TensorOperator {
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CTensorOperator<N, T>, Self::Error> {
+        Ok(CTensorOperator {
+            chunks: self.chunks.try_into()?,
+            metadata: self.metadata.try_into()?,
+        })
+    }
+}
+
+#[derive(FromPyObject)] //TODO: Derive macro appears to be broken when we use generics here??
+pub enum MaybeConstTensorOperator<'a> {
+    ConstD1(numpy::borrow::PyReadonlyArray1<'a, f32>),
+    Operator(TensorOperator),
+}
+
+impl<'a> TryInto<CTensorOperator<1, f32>> for MaybeConstTensorOperator<'a> {
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CTensorOperator<1, f32>, Self::Error> {
+        match self {
+            MaybeConstTensorOperator::ConstD1(c) => {
+                Ok(vng_core::operators::array::from_rc(c.as_slice()?.into()))
+            }
+            MaybeConstTensorOperator::Operator(o) => o.try_into(),
         }
     }
 }
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
-pub struct LODVolumeOperator {
-    levels: Vec<EmbeddedVolumeOperator>,
+pub struct EmbeddedTensorOperator {
+    #[pyo3(get, set)]
+    pub inner: TensorOperator,
+    #[pyo3(get, set)]
+    pub embedding_data: ScalarOperator,
+}
+
+impl<const N: usize, T: std::any::Any> TryFrom<CEmbeddedTensorOperator<N, T>>
+    for EmbeddedTensorOperator
+{
+    type Error = PyErr;
+
+    fn try_from(t: CEmbeddedTensorOperator<N, T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            inner: t.inner.try_into()?,
+            embedding_data: t.embedding_data.into(),
+        })
+    }
+}
+
+impl<const N: usize, T: std::any::Any> TryInto<CEmbeddedTensorOperator<N, T>>
+    for EmbeddedTensorOperator
+{
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CEmbeddedTensorOperator<N, T>, Self::Error> {
+        Ok(CEmbeddedTensorOperator {
+            inner: self.inner.try_into()?,
+            embedding_data: self.embedding_data.try_into()?,
+        })
+    }
 }
 
 #[pymethods]
-impl LODVolumeOperator {
-    pub fn fine_metadata(&self) -> VolumeMetadataOperator {
-        self.levels[0].inner.metadata.clone()
-    }
-    pub fn fine_embedding_data(&self) -> VolumeEmbeddingDataOperator {
-        self.levels[0].embedding_data.clone()
-    }
-}
-
-impl Into<CLODVolumeOperator<f32>> for LODVolumeOperator {
-    fn into(self) -> CLODVolumeOperator<f32> {
-        CLODVolumeOperator {
-            levels: self
-                .levels
-                .into_iter()
-                .map(|v| v.into())
-                .collect::<Vec<_>>(),
-        }
+impl EmbeddedTensorOperator {
+    //TODO: Generalize for other dims and maybe datatypes
+    fn create_lod(&self, step_factor: f32, num_levels: usize) -> PyResult<LODTensorOperator> {
+        let vol: CEmbeddedTensorOperator<3, f32> = self.clone().try_into()?;
+        vng_core::operators::resample::create_lod(vol, step_factor, num_levels).try_into()
     }
 }
 
-impl From<CLODVolumeOperator<f32>> for LODVolumeOperator {
-    fn from(value: CLODVolumeOperator<f32>) -> Self {
-        Self {
-            levels: value
-                .levels
-                .into_iter()
-                .map(|v| v.into())
-                .collect::<Vec<_>>(),
-        }
+#[derive(FromPyObject)]
+pub enum MaybeEmbeddedTensorOperator {
+    Not(TensorOperator),
+    Embedded(EmbeddedTensorOperator),
+}
+
+impl MaybeEmbeddedTensorOperator {
+    pub fn try_map_inner<const N: usize, T: Element + 'static>(
+        self,
+        py: Python,
+        f: impl FnOnce(CTensorOperator<N, T>) -> CTensorOperator<N, T>,
+    ) -> PyResult<PyObject> {
+        Ok(match self {
+            MaybeEmbeddedTensorOperator::Not(v) => {
+                let v: CTensorOperator<N, T> = v.try_into()?;
+                let v = f(v);
+                let v: TensorOperator = v.try_into()?;
+                v.into_py(py)
+            }
+            MaybeEmbeddedTensorOperator::Embedded(v) => {
+                let v: CEmbeddedTensorOperator<N, T> = v.try_into()?;
+                let v = v.map_inner(f);
+                let v: EmbeddedTensorOperator = v.try_into()?;
+                v.into_py(py)
+            }
+        })
     }
 }
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
-pub struct ArrayOperator {
-    pub metadata: ArrayMetadataOperator,
-    pub chunks: ArrayValueOperator,
+pub struct LODTensorOperator {
+    #[pyo3(get, set)]
+    pub levels: Vec<EmbeddedTensorOperator>,
 }
 
-impl Into<CArrayOperator<f32>> for ArrayOperator {
-    fn into(self) -> CArrayOperator<f32> {
-        CArrayOperator {
-            metadata: self.metadata.into(),
-            chunks: self.chunks.into(),
-        }
-    }
-}
+impl<const N: usize, T: std::any::Any> TryFrom<CLODTensorOperator<N, T>> for LODTensorOperator {
+    type Error = PyErr;
 
-impl From<CArrayOperator<f32>> for ArrayOperator {
-    fn from(value: CArrayOperator<f32>) -> Self {
-        Self {
-            metadata: value.metadata.into(),
-            chunks: value.chunks.into(),
-        }
+    fn try_from(t: CLODTensorOperator<N, T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            levels: t
+                .levels
+                .into_iter()
+                .map(|v| v.try_into())
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
+impl<const N: usize, T: std::any::Any> TryInto<CLODTensorOperator<N, T>> for LODTensorOperator {
+    type Error = PyErr;
 
-impl<'a> conversion::FromPyValue<numpy::borrow::PyReadonlyArray1<'a, f32>> for ArrayOperator {
-    fn from_py(v: numpy::borrow::PyReadonlyArray1<'a, f32>) -> PyResult<Self> {
-        Ok(vng_core::operators::array::from_rc(v.as_slice()?.into()).into())
+    fn try_into(self) -> Result<CLODTensorOperator<N, T>, Self::Error> {
+        Ok(CLODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|v| v.try_into())
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
-impl<'source> conversion::FromPyValues<'source> for ArrayOperator {
-    type Converter =
-        conversion::ToOperatorFrom<Self, (numpy::borrow::PyReadonlyArray1<'source, f32>,)>;
+#[pymethods]
+impl LODTensorOperator {
+    pub fn fine_metadata(&self) -> ScalarOperator {
+        self.levels[0].inner.metadata.clone()
+    }
+    pub fn fine_embedding_data(&self) -> ScalarOperator {
+        self.levels[0].embedding_data.clone()
+    }
 }

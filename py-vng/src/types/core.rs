@@ -5,7 +5,7 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
 };
 
-use super::{Events, ScalarOperatorF32, VolumeOperator};
+use super::{Events, ScalarOperator, TensorOperator};
 
 #[pyclass(unsendable)]
 pub struct RunTime {
@@ -29,9 +29,11 @@ impl RunTime {
         })
     }
 
-    fn resolve(&mut self, v: &ScalarOperatorF32) -> PyResult<f32> {
+    fn resolve(&mut self, v: ScalarOperator) -> PyResult<f32> {
+        let op: vng_core::operators::scalar::ScalarOperator<f32> = v.try_into()?;
+        let op_ref = &op;
         map_err(self.inner.resolve(None, |ctx, _| {
-            async move { Ok(ctx.submit(v.0.request_scalar()).await) }.into()
+            async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
     }
 }
@@ -120,7 +122,7 @@ impl Window {
                         let size = [size.y().raw, size.x().raw];
                         let events = Events(events.current_batch());
                         let frame = gen_frame.call((size, events), None)?;
-                        let frame = frame.extract::<VolumeOperator>().unwrap().into();
+                        let frame = frame.extract::<TensorOperator>()?.try_into()?;
 
                         let frame_ref = &frame;
                         let window = &mut self.window;

@@ -1,99 +1,124 @@
-use crate::{conversion::*, map_err, types::*};
+use crate::{map_err, types::*};
 use pyo3::prelude::*;
 use vng_core::{
-    data::{GlobalCoordinate, LocalVoxelPosition, Vector},
+    array::ImageMetaData,
+    data::{GlobalCoordinate, LocalVoxelPosition, Matrix, Vector},
     operators::sliceviewer::SliceviewState,
 };
 use vng_vvd::VvdVolumeSourceState;
 
 #[pyfunction]
-pub fn rechunk(vol: VolumeOperator, size: [ChunkSize; 3]) -> VolumeOperator {
+pub fn rechunk(
+    py: Python,
+    vol: MaybeEmbeddedTensorOperator,
+    size: [ChunkSize; 3],
+) -> PyResult<PyObject> {
     let size = Vector::from(size).map(|s: ChunkSize| s.0);
-    vng_core::operators::volume_gpu::rechunk(vol.into(), size).into()
+    vol.try_map_inner(
+        py,
+        |vol: vng_core::operators::volume::VolumeOperator<f32>| {
+            //TODO: ndim -> static dispatch
+            vng_core::operators::volume_gpu::rechunk(vol, size).into()
+        },
+    )
 }
 
 #[pyfunction]
 pub fn linear_rescale(
     py: Python,
-    vol: MaybeEmbeddedVolumeOperator,
-    scale: ToOperator<ScalarOperatorF32>,
-    offset: ToOperator<ScalarOperatorF32>,
-) -> PyObject {
-    vol.map_inner(py, |vol| {
-        vng_core::operators::volume_gpu::linear_rescale(vol.into(), scale.0.into(), offset.0.into())
-    })
+    vol: MaybeEmbeddedTensorOperator,
+    scale: MaybeConstScalarOperator<f32>,
+    offset: MaybeConstScalarOperator<f32>,
+) -> PyResult<PyObject> {
+    let scale = scale.try_into()?;
+    let offset = offset.try_into()?;
+    vol.try_map_inner(
+        py,
+        |vol: vng_core::operators::volume::VolumeOperator<f32>| {
+            //TODO: ndim -> static dispatch
+            vng_core::operators::volume_gpu::linear_rescale(vol, scale, offset)
+        },
+    )
 }
 
 #[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
-    vol: MaybeEmbeddedVolumeOperator,
-    zyx: [ToOperator<ArrayOperator>; 3],
-) -> PyObject {
+    vol: MaybeEmbeddedTensorOperator,
+    zyx: [MaybeConstTensorOperator; 3], //TODO
+) -> PyResult<PyObject> {
     let [z, y, x] = zyx;
-    vol.map_inner(py, |vol| {
-        vng_core::operators::volume_gpu::separable_convolution(
-            vol,
-            [z.0.into(), y.0.into(), x.0.into()],
-        )
+
+    let kernels = [z.try_into()?, y.try_into()?, x.try_into()?];
+    vol.try_map_inner(py, |vol| {
+        vng_core::operators::volume_gpu::separable_convolution(vol, kernels)
     })
 }
 
 #[pyfunction]
 pub fn entry_exit_points(
-    input_md: VolumeMetadataOperator,
-    embedding_data: VolumeEmbeddingDataOperator,
-    output_md: ToOperator<ImageMetadataOperator>,
-    projection: ToOperator<Mat4Operator>,
-) -> VolumeOperator {
+    input_md: ScalarOperator,
+    embedding_data: ScalarOperator,
+    output_md: MaybeConstScalarOperator<ImageMetaData>,
+    projection: MaybeConstScalarOperator<Matrix<4, f32>>,
+) -> PyResult<TensorOperator> {
     vng_core::operators::raycaster::entry_exit_points(
-        input_md.into(),
-        embedding_data.into(),
-        output_md.0.into(),
-        projection.0.into(),
+        input_md.try_into()?,
+        embedding_data.try_into()?,
+        output_md.try_into()?,
+        projection.try_into()?,
     )
-    .into()
+    .try_into()
 }
 
 #[pyfunction]
-pub fn raycast(vol: LODVolumeOperator, entry_exit_points: VolumeOperator) -> VolumeOperator {
-    vng_core::operators::raycaster::raycast(vol.into(), entry_exit_points.into()).into()
+pub fn raycast(
+    vol: LODTensorOperator,
+    entry_exit_points: TensorOperator,
+) -> PyResult<TensorOperator> {
+    vng_core::operators::raycaster::raycast(vol.try_into()?, entry_exit_points.try_into()?)
+        .try_into()
 }
 
 #[pyfunction]
 pub fn slice_projection_mat(
     state: SliceviewState,
     dim: usize,
-    input_data: VolumeMetadataOperator,
-    embedding_data: VolumeEmbeddingDataOperator,
+    input_data: ScalarOperator,
+    embedding_data: ScalarOperator,
     output_data: Vector<2, GlobalCoordinate>,
-) -> Mat4Operator {
-    state
-        .projection_mat(dim, input_data.into(), embedding_data.into(), output_data)
-        .into()
+) -> PyResult<ScalarOperator> {
+    Ok(state
+        .projection_mat(
+            dim,
+            input_data.try_into()?,
+            embedding_data.try_into()?,
+            output_data,
+        )
+        .into())
 }
 
 #[pyfunction]
 pub fn render_slice(
-    input: LODVolumeOperator,
-    result_metadata: ToOperator<ImageMetadataOperator>,
-    projection_mat: ToOperator<Mat4Operator>,
-) -> VolumeOperator {
+    input: LODTensorOperator,
+    result_metadata: MaybeConstScalarOperator<vng_core::array::ImageMetaData>,
+    projection_mat: MaybeConstScalarOperator<vng_core::data::Matrix<4, f32>>,
+) -> PyResult<TensorOperator> {
     vng_core::operators::sliceviewer::render_slice(
-        input.into(),
-        result_metadata.0.into(),
-        projection_mat.0.into(),
+        input.try_into()?,
+        result_metadata.try_into()?,
+        projection_mat.try_into()?,
     )
-    .into()
+    .try_into()
 }
 
 #[pyfunction]
-pub fn mean(vol: VolumeOperator) -> ScalarOperatorF32 {
-    vng_core::operators::volume_gpu::mean(vol.into()).into()
+pub fn mean(vol: TensorOperator) -> PyResult<ScalarOperator> {
+    Ok(vng_core::operators::volume_gpu::mean(vol.try_into()?).into())
 }
 
 #[pyfunction]
-pub fn open_volume(path: std::path::PathBuf) -> PyResult<EmbeddedVolumeOperator> {
+pub fn open_volume(path: std::path::PathBuf) -> PyResult<EmbeddedTensorOperator> {
     let brick_size_hint = LocalVoxelPosition::fill(32.into());
 
     let Some(file) = path.file_name() else {
@@ -124,5 +149,5 @@ pub fn open_volume(path: std::path::PathBuf) -> PyResult<EmbeddedVolumeOperator>
     use vng_core::operators::volume::EmbeddedVolumeOperatorState;
     let vol = vol_source.operate();
 
-    Ok(vol.into())
+    vol.try_into()
 }

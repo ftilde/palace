@@ -1,4 +1,4 @@
-use super::{core::RunTime, Events, VolumeOperator};
+use super::{core::RunTime, Events, TensorOperator};
 use numpy::PyArray0;
 use state_link::py::NodeHandleF32;
 use vng_core::{operators::gui as c, vulkan::state::VulkanState};
@@ -74,9 +74,9 @@ pub struct GuiRenderState(Option<c::GuiRenderState>);
 
 #[pymethods]
 impl GuiRenderState {
-    pub fn render(&mut self, input: VolumeOperator) -> PyResult<VolumeOperator> {
+    pub fn render(&mut self, input: TensorOperator) -> PyResult<TensorOperator> {
         if let Some(grs) = self.0.take() {
-            Ok(grs.render(input.into()).into())
+            grs.render(input.try_into()?).try_into()
         } else {
             Err(PyErr::new::<PyException, _>("GuiRenderState::render() was already called previously. Call GuiState::setup first to obtain a new GuiRenderState."))
         }

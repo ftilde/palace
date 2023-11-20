@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use vng_core::{array::ImageMetaData, data::Vector, operators::splitter as c};
 
-use super::{Events, VolumeOperator};
+use super::{Events, TensorOperator};
 
 #[pyclass(unsendable)]
 pub struct Splitter(c::Splitter);
@@ -23,8 +23,11 @@ impl Splitter {
         (Events(l), Events(r))
     }
 
-    fn render(&self, input_l: VolumeOperator, input_r: VolumeOperator) -> VolumeOperator {
-        self.0.clone().render(input_l.into(), input_r.into()).into()
+    fn render(&self, input_l: TensorOperator, input_r: TensorOperator) -> PyResult<TensorOperator> {
+        self.0
+            .clone()
+            .render(input_l.try_into()?, input_r.try_into()?)
+            .try_into()
     }
 
     fn metadata_l(&self) -> ImageMetaData {

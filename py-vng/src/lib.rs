@@ -1,6 +1,5 @@
 use pyo3::{exceptions::PyException, prelude::*};
 
-mod conversion;
 mod functions;
 mod types;
 
@@ -28,7 +27,6 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<vng_core::operators::splitter::SplitDirection>()?;
     m.add_class::<vng_core::operators::raycaster::CameraState>()?;
     m.add_class::<vng_core::operators::raycaster::TrackballState>()?;
-    m.add_class::<ScalarOperatorF32>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;
     m.add_class::<MouseButton>()?;
