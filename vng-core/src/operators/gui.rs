@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::volume::VolumeOperator;
+use super::tensor::FrameOperator;
 
 // TODO: We really need to clean this up for this to work properly with python. (Also we need to
 // generate some kind of accessor for all the egui functionality anyway)
@@ -491,7 +491,7 @@ fn transistion_image_layout_with_barrier(
 }
 
 impl GuiRenderState {
-    pub fn render(self, input: VolumeOperator<f32>) -> VolumeOperator<f32> {
+    pub fn render(self, input: FrameOperator) -> FrameOperator {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             frame_size: cgmath::Vector2<u32>,
@@ -566,7 +566,7 @@ void main() {
                     let m_out = ctx.submit(input.metadata.request_scalar()).await;
                     let out_info = m_out.chunk_info(pos);
 
-                    let format = vk::Format::R32G32B32A32_SFLOAT;
+                    let format = vk::Format::R8G8B8A8_UNORM;
 
                     let render_pass = device.request_state(
                         RessourceId::new("renderpass").of(ctx.current_op()),
@@ -765,7 +765,7 @@ void main() {
                         },
                     );
 
-                    let out_dim = out_info.logical_dimensions.drop_dim(2);
+                    let out_dim = out_info.logical_dimensions;
                     let width = out_dim.x().into();
                     let height = out_dim.y().into();
                     let extent = vk::Extent2D::builder().width(width).height(height).build();
@@ -891,7 +891,7 @@ void main() {
                         .clear_values(&[]);
 
                     let mut state_i = state.inner.borrow_mut();
-                    let size2d = m_out.dimensions.drop_dim(2).raw();
+                    let size2d = m_out.dimensions.raw();
                     let vp_size = size2d.map(|v| v as f32 * state_i.scale_factor);
                     let viewport = vk::Viewport::builder()
                         .x(0.0)
@@ -902,12 +902,7 @@ void main() {
                         .max_depth(1.0);
 
                     let push_constants = PushConstants {
-                        frame_size: out_info
-                            .mem_dimensions
-                            .drop_dim(2)
-                            .try_into_elem()
-                            .unwrap()
-                            .into(),
+                        frame_size: out_info.mem_dimensions.try_into_elem().unwrap().into(),
                     };
 
                     state_i.update(device, size2d);

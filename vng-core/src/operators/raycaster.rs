@@ -24,7 +24,8 @@ use pyo3::prelude::*;
 
 use super::{
     scalar::ScalarOperator,
-    volume::{LODVolumeOperator, VolumeOperator},
+    tensor::{FrameOperator, ImageOperator},
+    volume::LODVolumeOperator,
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -112,7 +113,7 @@ pub fn entry_exit_points(
     embedding_data: ScalarOperator<VolumeEmbeddingData>,
     result_metadata: ScalarOperator<ImageMetaData>,
     projection_mat: ScalarOperator<Matrix<4, f32>>,
-) -> VolumeOperator<f32> {
+) -> ImageOperator<[Vector<4, f32>; 2]> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
@@ -121,9 +122,6 @@ pub fn entry_exit_points(
 
     const VERTEX_SHADER: &str = "
 #version 450
-#extension GL_EXT_scalar_block_layout : require
-
-#include <mat.glsl>
 
 declare_push_consts(consts);
 
@@ -154,11 +152,13 @@ void main() {
 
     const FRAG_SHADER: &str = "
 #version 450
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
 
-layout(std430, binding = 0) buffer OutputBuffer{
-    float values[BRICK_MEM_SIZE];
+layout(scalar, binding = 0) buffer OutputBuffer{
+    vec4[2] values[BRICK_MEM_SIZE];
 } outputData;
 
 layout(location = 0) in vec3 norm_pos;
@@ -166,29 +166,17 @@ layout(location = 0) in vec3 norm_pos;
 declare_push_consts(consts);
 
 void main() {
-    uint n_channels = 8;
     uvec2 pos = uvec2(gl_FragCoord.xy);
-    uint linear_pos = n_channels * to_linear2(pos, consts.out_mem_dim);
+    uint linear_pos = to_linear2(pos, consts.out_mem_dim);
 
     vec4 color = vec4(norm_pos, 1.0);
     if(gl_FrontFacing) {
-        for(int c=0; c<4; ++c) {
-            outputData.values[linear_pos + c] = color[c];
-        }
+        outputData.values[linear_pos][0] = color;
     } else {
-        for(int c=0; c<4; ++c) {
-            outputData.values[linear_pos + c + 4] = color[c];
-        }
+        outputData.values[linear_pos][1] = color;
     }
 }
 ";
-    const N_CHANNELS: u32 = 8;
-    fn full_info(r: ImageMetaData) -> VolumeMetaData {
-        VolumeMetaData {
-            dimensions: [r.dimensions.y(), r.dimensions.x(), N_CHANNELS.into()].into(),
-            chunk_size: [r.chunk_size.y(), r.chunk_size.x(), N_CHANNELS.into()].into(),
-        }
-    }
 
     TensorOperator::unbatched(
         OperatorId::new("entry_exit_points")
@@ -205,8 +193,7 @@ void main() {
         move |ctx, result_metadata| {
             async move {
                 let r = ctx.submit(result_metadata.request_scalar()).await;
-                let m = full_info(r);
-                ctx.write(m)
+                ctx.write(r)
             }
             .into()
         },
@@ -214,13 +201,12 @@ void main() {
             async move {
                 let device = ctx.vulkan_device();
 
-                let (m_in, embedding_data, m2d, transform) = futures::join! {
+                let (m_in, embedding_data, m_out, transform) = futures::join! {
                     ctx.submit(m_in.request_scalar()),
                     ctx.submit(embedding_data.request_scalar()),
                     ctx.submit(result_metadata.request_scalar()),
                     ctx.submit(projection_mat.request_scalar()),
                 };
-                let m_out = full_info(m2d);
                 let out_info = m_out.chunk_info(pos);
 
                 let norm_to_world = Matrix::from_scale(
@@ -349,7 +335,7 @@ void main() {
                         )
                     });
 
-                let out_dim = out_info.logical_dimensions.drop_dim(2);
+                let out_dim = out_info.logical_dimensions;
                 let width = out_dim.x().into();
                 let height = out_dim.y().into();
                 let extent = vk::Extent2D::builder().width(width).height(height).build();
@@ -411,12 +397,9 @@ void main() {
                     .clear_values(&[]);
 
                 // Setup the viewport such that only the content of the current tile is rendered
-                let offset = out_info.begin().drop_dim(2).map(|v| v.raw as f32);
-                let full_size = m_out.dimensions.drop_dim(2).map(|v| v.raw as f32);
-                let tile_size = out_info
-                    .logical_dimensions
-                    .drop_dim(2)
-                    .map(|v| v.raw as f32);
+                let offset = out_info.begin().map(|v| v.raw as f32);
+                let full_size = m_out.dimensions.map(|v| v.raw as f32);
+                let tile_size = out_info.logical_dimensions.map(|v| v.raw as f32);
                 let scale_factor = full_size / tile_size;
                 let size = tile_size * scale_factor;
                 let viewport = vk::Viewport::builder()
@@ -432,12 +415,7 @@ void main() {
                     .extent(extent);
 
                 let push_constants = PushConstants {
-                    out_mem_dim: out_info
-                        .mem_dimensions
-                        .drop_dim(2)
-                        .try_into_elem()
-                        .unwrap()
-                        .into(),
+                    out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap().into(),
                     transform: transform.into(),
                 };
                 let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
@@ -488,8 +466,8 @@ void main() {
 
 pub fn raycast(
     input: LODVolumeOperator<f32>,
-    entry_exit_points: VolumeOperator<f32>,
-) -> VolumeOperator<f32> {
+    entry_exit_points: ImageOperator<[Vector<4, f32>; 2]>,
+) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
@@ -501,6 +479,7 @@ pub fn raycast(
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
 #include <hash.glsl>
@@ -527,11 +506,11 @@ struct LOD {
 layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(std430, binding = 0) buffer OutputBuffer{
-    float values[];
+    u8vec4 values[];
 } output_data;
 
-layout(std430, binding = 1) buffer EntryExitPoints{
-    float values[];
+layout(scalar, binding = 1) buffer EntryExitPoints{
+    vec4[2] values[];
 } entry_exit_points;
 
 layout(scalar, binding = 2) buffer LodBuffer {
@@ -549,9 +528,10 @@ layout(std430, binding = 3) buffer StateBuffer {
 
 declare_push_consts(consts);
 
-vec4 map_to_color(float v) {
+u8vec4 map_to_color(float v) {
     v = clamp(v, 0.0, 1.0);
-    return vec4(v, v, v, 1.0);
+    uint8_t u = uint8_t(v * 255); //TODO: is this correct?
+    return u8vec4(u, u, u, 255);
 }
 
 struct EEPoint {
@@ -583,12 +563,9 @@ bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
 
     uint gID = pos.x + pos.y * consts.out_mem_dim.x;
 
-    vec4 entry;
-    vec4 exit;
-    for(int c=0; c<4; ++c) {
-        entry[c] = entry_exit_points.values[8*gID+c];
-        exit[c] = entry_exit_points.values[8*gID+c+4];
-    }
+    vec4 entry = entry_exit_points.values[gID][0];
+    vec4 exit = entry_exit_points.values[gID][1];
+
     eep.entry = norm_to_world(entry.xyz, l);
     eep.exit = norm_to_world(exit.xyz, l);
 
@@ -609,7 +586,7 @@ void main()
         LOD root_level = vol.levels[0];
         bool valid = sample_ee(out_pos, eep, root_level);
 
-        vec4 color;
+        u8vec4 color;
         if(valid) {
             State state = state_cache.values[gID];
 
@@ -705,12 +682,10 @@ void main()
 
             color = map_to_color(state.intensity);
         } else {
-            color = vec4(0.0);
+            color = u8vec4(0);
         }
 
-        for(int c=0; c<4; ++c) {
-            output_data.values[4*gID+c] = color[c];
-        }
+        output_data.values[gID] = color;
     }
 }
 "#;
@@ -724,14 +699,6 @@ void main()
         spacing: Vector<3, f32>,
         _padding: u32,
     }
-    const N_CHANNELS: u32 = 4;
-    fn full_info(r: VolumeMetaData) -> VolumeMetaData {
-        assert_eq!(r.dimensions.x().raw, 2 * N_CHANNELS);
-        VolumeMetaData {
-            dimensions: [r.dimensions.z(), r.dimensions.y(), N_CHANNELS.into()].into(),
-            chunk_size: [r.chunk_size.z(), r.chunk_size.y(), N_CHANNELS.into()].into(),
-        }
-    }
 
     TensorOperator::unbatched(
         OperatorId::new("raycast")
@@ -744,8 +711,7 @@ void main()
                 let r = ctx
                     .submit(entry_exit_points.metadata.request_scalar())
                     .await;
-                let m = full_info(r);
-                ctx.write(m)
+                ctx.write(r)
             }
             .into()
         },
@@ -776,14 +742,13 @@ void main()
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (im, eep) = futures::join! {
+                let (m_out, eep) = futures::join! {
                     ctx.submit(entry_exit_points.metadata.request_scalar()),
                     ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
                 };
-                let m_out = full_info(im);
                 let out_info = m_out.chunk_info(pos);
 
-                let chunk_size = out_info.mem_dimensions.drop_dim(2).raw();
+                let chunk_size = out_info.mem_dimensions.raw();
                 let consts = PushConstants {
                     out_mem_dim: chunk_size.into(),
                 };
@@ -856,7 +821,7 @@ void main()
                         device,
                         pos,
                         "initialized",
-                        Layout::array::<(u32, f32)>(hmul(im.chunk_size)).unwrap(),
+                        Layout::array::<(u32, f32)>(hmul(m_out.chunk_size)).unwrap(),
                     )
                     .unwrap();
                 let state_initialized = state_initialized.init(|v| {

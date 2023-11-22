@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::BufWriter;
 
-use crate::{data::BrickPosition, task::OpaqueTaskContext};
+use crate::{data::Vector, task::OpaqueTaskContext};
 
-use super::volume::VolumeOperator;
+use super::tensor::ImageOperator;
 
 pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
-    input: &'inv VolumeOperator<f32>,
+    input: &'inv ImageOperator<Vector<4, u8>>,
     path: PathBuf,
 ) -> Result<(), crate::Error> {
     let m = ctx.submit(input.metadata.request_scalar()).await;
@@ -23,7 +23,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     }
 
     let img = ctx
-        .submit(input.chunks.request(BrickPosition::fill(0.into())))
+        .submit(input.chunks.request(Vector::fill(0.into())))
         .await;
 
     let file = File::create(path).unwrap();
@@ -46,7 +46,11 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
 
     let data = img
         .into_iter()
-        .map(|v| (v * 256.0).clamp(0.0, 255.0) as u8)
+        .map(|v| {
+            let res: [u8; 4] = (*v).into();
+            res
+        })
+        .flatten() //NO_PUSH_main test this!
         .collect::<Vec<_>>();
     writer.write_image_data(&data).unwrap();
 

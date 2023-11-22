@@ -1,14 +1,14 @@
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use futures::StreamExt;
+use itertools::Itertools;
 
 use crate::{
     array::VolumeMetaData,
-    data::{hmul, BrickPosition, LocalCoordinate, Vector},
-    id::Id,
+    data::{hmul, BrickPosition, ChunkCoordinate, LocalCoordinate, Vector},
     operator::OperatorId,
     operators::tensor::TensorOperator,
-    storage::gpu,
+    storage::{gpu, Element},
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -163,47 +163,99 @@ void main()
     )
 }
 
-pub fn rechunk(
-    input: VolumeOperator<f32>,
-    brick_size: Vector<3, ChunkSize>,
-) -> VolumeOperator<f32> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        mem_size_in: cgmath::Vector3<u32>,
-        mem_size_out: cgmath::Vector3<u32>,
-        begin_in: cgmath::Vector3<u32>,
-        begin_out: cgmath::Vector3<u32>,
-        region_size: cgmath::Vector3<u32>,
+pub trait GLSLType {
+    const TYPE_NAME: &'static str;
+}
+
+impl GLSLType for f32 {
+    const TYPE_NAME: &'static str = "float";
+}
+
+impl GLSLType for Vector<4, u8> {
+    const TYPE_NAME: &'static str = "uint8_t[4]";
+}
+
+pub fn rechunk<const N: usize, T: Element + GLSLType>(
+    input: TensorOperator<N, T>,
+    brick_size: Vector<N, ChunkSize>,
+) -> TensorOperator<N, T> {
+    #[derive(Copy, Clone, bytemuck::Zeroable)]
+    #[repr(C)]
+    #[allow(dead_code)] //It says these fields are not read otherwise?? Why?
+    struct PushConstants<const N: usize> {
+        mem_size_in: Vector<N, u32>,
+        mem_size_out: Vector<N, u32>,
+        begin_in: Vector<N, u32>,
+        begin_out: Vector<N, u32>,
+        region_size: Vector<N, u32>,
         global_size: u32,
     }
+    //TODO: This is fine for the current layout, but we really want a better general approach
+    unsafe impl<const N: usize> bytemuck::Pod for PushConstants<N> {}
     const SHADER: &'static str = r#"
 #version 450
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
 
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[BRICK_MEM_SIZE_IN];
+    T values[BRICK_MEM_SIZE_IN];
 } sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
-    float values[];
+    T values[];
 } outputData;
 
-declare_push_consts(constants);
+layout(scalar, push_constant) uniform PushConsts {
+    uint[N] mem_size_in;
+    uint[N] mem_size_out;
+    uint[N] begin_in;
+    uint[N] begin_out;
+    uint[N] region_size;
+    uint global_size;
+} constants;
+
+uint[N] from_linear(uint linear_pos, uint[N] dim) {
+    uint[N] res;
+    for(int i = N-1; i>= 0; i-=1) {
+        uint ddim = dim[i];
+        res[i] = linear_pos % ddim;
+        linear_pos /= ddim;
+    }
+    return res;
+}
+
+uint to_linear(uint[N] pos, uint[N] dim) {
+    uint res = pos[0];
+    for(int i=1; i<N; i+=1) {
+        res = res * dim[i] + pos[i];
+    }
+    return res;
+}
+
+uint[N] vec_add(uint[N] l, uint[N] r) {
+    uint[N] res;
+    for(int i=0; i<N; i+=1) {
+        res[i] = l[i] + r[i];
+    }
+    return res;
+}
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < constants.global_size) {
-        uvec3 region_pos = from_linear3(gID, constants.region_size);
+        uint[N] region_pos = from_linear(gID, constants.region_size);
 
-        uvec3 in_pos = constants.begin_in + region_pos;
-        uvec3 out_pos = constants.begin_out + region_pos;
+        uint[N] in_pos = vec_add(constants.begin_in, region_pos);
+        uint[N] out_pos = vec_add(constants.begin_out, region_pos);
 
-        uint in_index = to_linear3(in_pos, constants.mem_size_in);
-        uint out_index = to_linear3(out_pos, constants.mem_size_out);
+        uint in_index = to_linear(in_pos, constants.mem_size_in);
+        uint out_index = to_linear(out_pos, constants.mem_size_out);
 
         outputData.values[out_index] = sourceData.values[in_index];
     }
@@ -212,7 +264,9 @@ void main() {
     TensorOperator::with_state(
         OperatorId::new("volume_rechunk_gpu")
             .dependent_on(&input)
-            .dependent_on(&brick_size),
+            .dependent_on(&brick_size)
+            .dependent_on(T::TYPE_NAME)
+            .dependent_on(&N),
         input.clone(),
         input,
         move |ctx, input| {
@@ -236,19 +290,25 @@ void main() {
                     m_out
                 };
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(T::TYPE_NAME)
+                        .dependent_on(&N),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size)),
+                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size))
+                                    .add("N", N)
+                                    .add("T", T::TYPE_NAME),
                             ),
                             true,
                         )
-                    });
+                    },
+                );
 
                 let requests = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
@@ -258,13 +318,16 @@ void main() {
                     let in_begin_brick = m_in.chunk_pos(out_begin);
                     let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
 
-                    let in_brick_positions = itertools::iproduct! {
-                        in_begin_brick.z().raw..=in_end_brick.z().raw,
-                        in_begin_brick.y().raw..=in_end_brick.y().raw,
-                        in_begin_brick.x().raw..=in_end_brick.x().raw
-                    }
-                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
-                    .collect::<Vec<_>>();
+                    let in_brick_positions = (0..N)
+                        .into_iter()
+                        .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                        .multi_cartesian_product()
+                        .map(|coordinates| {
+                            Vector::<N, ChunkCoordinate>::from(
+                                <[u32; N]>::try_from(coordinates).unwrap(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
                             device.id,
@@ -320,14 +383,15 @@ void main() {
                             unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
 
-                                pipeline.push_constant(PushConstants {
-                                    mem_size_in: m_in.chunk_size.into_elem::<u32>().into(),
-                                    mem_size_out: m_out.chunk_size.into_elem::<u32>().into(),
-                                    begin_in: in_chunk_begin.into_elem::<u32>().into(),
-                                    begin_out: out_chunk_begin.into_elem::<u32>().into(),
-                                    region_size: overlap_size.into_elem::<u32>().into(),
+                                let consts = PushConstants {
+                                    mem_size_in: m_in.chunk_size.raw(),
+                                    mem_size_out: m_out.chunk_size.raw(),
+                                    begin_in: in_chunk_begin.raw(),
+                                    begin_out: out_chunk_begin.raw(),
+                                    region_size: overlap_size.raw(),
                                     global_size: global_size as _,
-                                });
+                                };
+                                pipeline.push_constant_pod(consts);
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
                             }
@@ -564,8 +628,8 @@ void main() {
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(Id::hash(&max_bricks))
-                        .dependent_on(Id::hash(&DIM)),
+                        .dependent_on(&max_bricks)
+                        .dependent_on(&DIM),
                     || {
                         ComputePipeline::new(
                             device,
@@ -918,7 +982,7 @@ void main()
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(Id::hash(&m.chunk_size)),
+                        .dependent_on(&m.chunk_size),
                     || {
                         ComputePipeline::new(
                             device,

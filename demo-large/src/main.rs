@@ -4,14 +4,12 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
-use vng_core::operators;
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::sliceviewer::SliceviewState;
-use vng_core::operators::volume::{
-    ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator, VolumeOperator,
-};
-use vng_core::operators::volume_gpu;
+use vng_core::operators::tensor::FrameOperator;
+use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use vng_core::operators::{self, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::state::VulkanState;
@@ -252,7 +250,7 @@ fn slice_viewer_z(
     md: ImageMetaData,
     state: &mut SliceviewState,
     events: &mut EventStream,
-) -> VolumeOperator<f32> {
+) -> FrameOperator {
     events.act(|c| {
         c.chain(state.offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -289,7 +287,7 @@ fn slice_viewer_rot(
     md: ImageMetaData,
     state: &mut RotSliceState,
     mut events: EventStream,
-) -> VolumeOperator<f32> {
+) -> FrameOperator {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             state.angle += delta.x() as f32 * 0.01;
@@ -390,7 +388,7 @@ fn raycaster(
     size: Vector<2, GlobalCoordinate>,
     state: &mut CameraState,
     mut events: EventStream,
-) -> VolumeOperator<f32> {
+) -> FrameOperator {
     events.act(|c| {
         c.chain(OnWheelMove(|delta, _| {
             state.trackball.move_inout(delta);

@@ -337,6 +337,9 @@ impl<const N: usize> Vector<N, u32> {
     pub fn global(self) -> Vector<N, GlobalCoordinate> {
         self.map(|v| v.into())
     }
+    pub fn brick(self) -> Vector<N, ChunkCoordinate> {
+        self.map(|v| v.into())
+    }
 }
 impl<const N: usize, T: CoordinateType> Vector<N, Coordinate<T>> {
     pub fn raw(self) -> Vector<N, u32> {

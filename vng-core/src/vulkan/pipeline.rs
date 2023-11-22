@@ -381,6 +381,18 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
             );
         }
     }
+    pub fn push_constant_bytes(&mut self, bytes: &[u8], stage: vk::ShaderStageFlags) {
+        unsafe {
+            let cmd_raw = self.cmd.raw();
+            self.cmd.functions().cmd_push_constants(
+                cmd_raw,
+                self.pipeline.pipeline_layout,
+                stage,
+                0,
+                bytes,
+            );
+        }
+    }
 
     pub fn push_constant_at<V: AsStd140>(&mut self, val: V, stage: vk::ShaderStageFlags) {
         let v = val.as_std140();
@@ -392,16 +404,7 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
         // end of the last, while...
         // - crevice appears to think that the size is rounded up to the alignment of the struct.
         let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
-        unsafe {
-            let cmd_raw = self.cmd.raw();
-            self.cmd.functions().cmd_push_constants(
-                cmd_raw,
-                self.pipeline.pipeline_layout,
-                stage,
-                0,
-                bytes,
-            );
-        }
+        self.push_constant_bytes(bytes, stage);
     }
 }
 
@@ -420,6 +423,11 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
     }
     pub fn push_constant<V: AsStd140>(&mut self, val: V) {
         self.push_constant_at(val, vk::ShaderStageFlags::COMPUTE);
+    }
+
+    pub fn push_constant_pod<B: bytemuck::Pod>(&mut self, val: B) {
+        let bytes = bytemuck::bytes_of(&val);
+        self.push_constant_bytes(bytes, vk::ShaderStageFlags::COMPUTE);
     }
 }
 

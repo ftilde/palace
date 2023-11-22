@@ -7,11 +7,9 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::volume::{
-    ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator, VolumeOperator,
-};
-use vng_core::operators::volume_gpu;
-use vng_core::operators::{self};
+use vng_core::operators::tensor::FrameOperator;
+use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use vng_core::operators::{self, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::state::VulkanState;
@@ -225,7 +223,7 @@ fn slice_viewer_z(
     offset: &mut Vector<2, f32>,
     zoom_level: &mut f32,
     events: &mut EventStream,
-) -> VolumeOperator<f32> {
+) -> FrameOperator {
     events.act(|c| {
         c.chain(offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
@@ -275,7 +273,7 @@ fn slice_viewer_rot(
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
-) -> VolumeOperator<f32> {
+) -> FrameOperator {
     events.act(|c| {
         c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
             *angle += delta.x() as f32 * 0.01;
@@ -359,15 +357,15 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    //let vol = vol.map_inner(|vol| {
-    //    let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(48.into()).into_elem());
+    let vol = vol.map_inner(|vol| {
+        let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());
 
-    //    let after_kernel =
-    //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
-    //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
-    //    let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
-    //    scaled
-    //});
+        //    let after_kernel =
+        //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
+        //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+        let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
+        scaled
+    });
     let vol = vng_core::operators::resample::create_lod(vol, 2.0, 3);
 
     let left = slice_viewer_z(

@@ -14,8 +14,8 @@ use super::pipeline::{DescriptorConfig, GraphicsPipeline};
 use super::shader::ShaderDefines;
 use super::state::VulkanState;
 use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
-use crate::data::{BrickPosition, GlobalCoordinate, Vector};
-use crate::operators::volume::VolumeOperator;
+use crate::data::{ChunkCoordinate, GlobalCoordinate, Vector};
+use crate::operators::tensor::FrameOperator;
 use crate::storage::DataVersionType;
 use crate::task::OpaqueTaskContext;
 
@@ -590,7 +590,7 @@ impl Window {
     pub async fn render<'cref, 'inv: 'cref, 'op: 'inv>(
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
-        input: &'inv VolumeOperator<f32>,
+        input: &'inv FrameOperator,
     ) -> Result<DataVersionType, crate::Error> {
         let m = ctx.submit(input.metadata.request_scalar()).await;
 
@@ -598,16 +598,12 @@ impl Window {
             return Err("Image must consist of a single chunk".into());
         }
 
-        if m.dimensions.x().raw != 4 {
-            return Err("Image must have exactly four channels".into());
-        }
-
         let device = &ctx.device_contexts[self.device_id];
 
         let img = ctx
             .submit(input.chunks.request_gpu(
                 device.id,
-                BrickPosition::fill(0.into()),
+                Vector::<2, ChunkCoordinate>::fill(0.into()),
                 super::DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
@@ -672,7 +668,7 @@ impl Window {
             .extent(self.swap_chain.extent);
 
         let push_constants = PushConstants {
-            size: m.dimensions.drop_dim(2).try_into_elem().unwrap().into(),
+            size: m.dimensions.try_into_elem().unwrap().into(),
         };
 
         device.with_cmd_buffer(|cmd| unsafe {
@@ -763,8 +759,11 @@ void main() {
 const FRAG_SHADER: &str = "
 #version 450
 
-layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[];
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout(scalar, binding = 0) readonly buffer InputBuffer{
+    u8vec4 values[];
 } sourceData;
 
 declare_push_consts(constants);
@@ -777,8 +776,6 @@ void main() {
     uvec2 buffer_pos = uvec2(norm_pos * vec2(constants.size));
     uint buffer_index = buffer_pos.x + buffer_pos.y * constants.size.x;
 
-    for(int c = 0; c < 4; ++c) {
-        out_color[c] = sourceData.values[4*buffer_index + c];
-    }
+    out_color = vec4(sourceData.values[buffer_index])/255; //NO_PUSH_main
 }
 ";

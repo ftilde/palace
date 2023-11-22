@@ -2,7 +2,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{ImageMetaData, TensorMetaData, VolumeMetaData},
+    array::{ImageMetaData, TensorMetaData},
     data::{PixelPosition, Vector},
     event::{EventChain, EventStream},
     operator::OperatorId,
@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::volume::VolumeOperator;
+use super::tensor::FrameOperator;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -42,8 +42,6 @@ pub struct Splitter {
     split_pos: f32,
     split_dim: usize,
 }
-
-const NUM_CHANNELS: u32 = 4;
 
 impl Splitter {
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
@@ -104,19 +102,14 @@ impl Splitter {
             chunk_size: s.local(),
         }
     }
-    pub fn metadata_out(&self) -> VolumeMetaData {
-        let s = self.size.add_dim(2, NUM_CHANNELS.into());
-        VolumeMetaData {
-            dimensions: s,
-            chunk_size: s.local(),
+    pub fn metadata_out(&self) -> ImageMetaData {
+        TensorMetaData {
+            dimensions: self.size,
+            chunk_size: self.size.local(),
         }
     }
 
-    pub fn render(
-        self,
-        input_l: VolumeOperator<f32>,
-        input_r: VolumeOperator<f32>,
-    ) -> VolumeOperator<f32> {
+    pub fn render(self, input_l: FrameOperator, input_r: FrameOperator) -> FrameOperator {
         #[derive(Copy, Clone, AsStd140, GlslStruct)]
         struct PushConstants {
             size_out: cgmath::Vector2<u32>,
@@ -127,18 +120,21 @@ impl Splitter {
         const SHADER: &'static str = r#"
 #version 450
 
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_scalar_block_layout : require
+
 layout (local_size_x = 32, local_size_y = 32) in;
 
-layout(std430, binding = 0) readonly buffer InputBufferL{
-    float values[];
+layout(scalar, binding = 0) readonly buffer InputBufferL{
+    u8vec4 values[];
 } input_l;
 
-layout(std430, binding = 1) readonly buffer InputBufferR{
-    float values[];
+layout(scalar, binding = 1) readonly buffer InputBufferR{
+    u8vec4 values[];
 } input_r;
 
-layout(std430, binding = 2) buffer OutputBuffer {
-    float values[];
+layout(scalar, binding = 2) buffer OutputBuffer {
+    u8vec4 values[];
 } output_buf;
 
 declare_push_consts(consts);
@@ -149,28 +145,22 @@ void main()
     uint g_id_out = out_pos.x + out_pos.y * consts.size_out.x;
 
     if(all(lessThan(out_pos, consts.size_out))) {
-        vec4 out_val = vec4(0.0);
+        u8vec4 out_val;
 
         if(out_pos[consts.split_dim] < consts.size_first[consts.split_dim]) {
             uvec2 pos_first = out_pos;
 
             uint g_id_l = pos_first.x + pos_first.y * consts.size_first.x;
-            for(int c=0; c<4; ++c) {
-                out_val[c] = input_l.values[g_id_l*4 + c];
-            }
+            out_val = input_l.values[g_id_l];
         } else {
             uvec2 pos_last = out_pos;
             pos_last[consts.split_dim] -= consts.size_first[consts.split_dim];
 
             uint g_id_r = pos_last.x + pos_last.y * consts.size_last.x;
-            for(int c=0; c<4; ++c) {
-                out_val[c] = input_r.values[g_id_r*4 + c];
-            }
+            out_val = input_r.values[g_id_r];
         }
 
-        for(int c=0; c<4; ++c) {
-            output_buf.values[g_id_out*4 + c] = out_val[c];
-        }
+        output_buf.values[g_id_out] = out_val;
     }
 }
 "#;
@@ -200,8 +190,8 @@ void main()
                         ctx.submit(input_r.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
                     };
 
-                    assert_eq!(m_l.dimensions.drop_dim(2), this.metadata_first().dimensions);
-                    assert_eq!(m_r.dimensions.drop_dim(2), this.metadata_last().dimensions);
+                    assert_eq!(m_l.dimensions, this.metadata_first().dimensions);
+                    assert_eq!(m_r.dimensions, this.metadata_last().dimensions);
 
                     let m = this.metadata_out();
 
@@ -227,15 +217,15 @@ void main()
                         ]);
 
                         let chunk_size = m.chunk_size.raw();
-                        let global_size = chunk_size.drop_dim(2).add_dim(0, 1);
+                        let global_size = chunk_size.add_dim(0, 1);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(PushConstants {
-                                size_out: m.dimensions.drop_dim(2).into_elem::<u32>().into(),
-                                size_first: m_l.dimensions.drop_dim(2).into_elem::<u32>().into(),
-                                size_last: m_r.dimensions.drop_dim(2).into_elem::<u32>().into(),
+                                size_out: m.dimensions.into_elem::<u32>().into(),
+                                size_first: m_l.dimensions.into_elem::<u32>().into(),
+                                size_last: m_r.dimensions.into_elem::<u32>().into(),
                                 split_dim,
                             });
                             pipeline.push_descriptor_set(0, descriptor_config);

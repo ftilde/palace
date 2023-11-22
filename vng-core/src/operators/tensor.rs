@@ -390,3 +390,6 @@ pub fn from_rc<const N: usize, E: Element + Identify>(
         },
     ))
 }
+
+pub type ImageOperator<E> = TensorOperator<2, E>;
+pub type FrameOperator = ImageOperator<Vector<4, u8>>;

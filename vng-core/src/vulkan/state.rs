@@ -4,7 +4,11 @@ use std::{
     cell::{RefCell, UnsafeCell},
 };
 
-use crate::{id::Id, operator::OperatorId, util::Map};
+use crate::{
+    id::{Id, Identify},
+    operator::OperatorId,
+    util::Map,
+};
 
 use super::DeviceContext;
 
@@ -18,8 +22,8 @@ impl RessourceId {
     pub fn of(self, op: OperatorId) -> Self {
         RessourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
     }
-    pub fn dependent_on(self, id: impl Into<Id>) -> Self {
-        RessourceId(Id::combine(&[self.0, id.into()]))
+    pub fn dependent_on(self, id: &(impl Identify + ?Sized)) -> Self {
+        RessourceId(Id::combine(&[self.0, id.id()]))
     }
     pub fn inner(&self) -> Id {
         self.0
