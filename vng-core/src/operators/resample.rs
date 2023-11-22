@@ -107,7 +107,6 @@ pub fn create_lod<'op>(
     num_levels: usize,
 ) -> LODTensorOperator<N, f32> {
     assert!(step_factor > 1.0);
-    assert!(num_levels >= 1);
 
     let mut levels = Vec::new();
     let mut current = input;
