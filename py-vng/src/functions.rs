@@ -1,5 +1,5 @@
 use crate::{map_err, types::*};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::{
     array::ImageMetaData,
     data::{GlobalCoordinate, LocalVoxelPosition, Matrix, Vector},
@@ -11,16 +11,37 @@ use vng_vvd::VvdVolumeSourceState;
 pub fn rechunk(
     py: Python,
     vol: MaybeEmbeddedTensorOperator,
-    size: [ChunkSize; 3],
+    size: Vec<ChunkSize>,
 ) -> PyResult<PyObject> {
-    let size = Vector::from(size).map(|s: ChunkSize| s.0);
-    vol.try_map_inner(
-        py,
-        |vol: vng_core::operators::volume::VolumeOperator<f32>| {
-            //TODO: ndim -> static dispatch
-            vng_core::operators::volume_gpu::rechunk(vol, size).into()
-        },
-    )
+    //TODO: We REALLY need to figure out the dispatch here...
+    //Macro and some for some selected types and dims?
+    //Otherwise code will blow up
+    match size.len() {
+        2 => {
+            let size =
+                Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
+            vol.try_map_inner(
+                py,
+                |vol: vng_core::operators::tensor::TensorOperator<2, Vector<4, u8>>| {
+                    vng_core::operators::volume_gpu::rechunk(vol, size).into()
+                },
+            )
+        }
+        3 => {
+            let size =
+                Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
+            vol.try_map_inner(
+                py,
+                |vol: vng_core::operators::tensor::TensorOperator<3, f32>| {
+                    vng_core::operators::volume_gpu::rechunk(vol, size).into()
+                },
+            )
+        }
+        n => Err(PyErr::new::<PyException, _>(format!(
+            "Rechunk for dim {} not supported, yet",
+            n
+        ))),
+    }
 }
 
 #[pyfunction]

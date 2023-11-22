@@ -17,7 +17,7 @@ use vng_core::operators::volume::ChunkSize as CChunkSize;
 #[derive(Clone)]
 pub struct ChunkSizeFull;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ChunkSize(pub CChunkSize);
 
 impl<'source> FromPyObject<'source> for ChunkSize {

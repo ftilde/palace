@@ -70,7 +70,7 @@ def render_raycast(vol, camera_state):
 
         eep = vng.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
         frame = vng.raycast(vol, eep)
-        frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
+        frame = vng.rechunk(frame, [vng.chunk_size_full]*2)
 
         return frame
     return inner
@@ -89,7 +89,7 @@ def render_slice(vol, dim, slice_state):
         proj = vng.slice_projection_mat(slice_state.load(), dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
 
         frame = vng.render_slice(vol, md, proj)
-        frame = vng.rechunk(frame, [vng.chunk_size_full]*3)
+        frame = vng.rechunk(frame, [vng.chunk_size_full]*2)
 
         return frame
     return inner

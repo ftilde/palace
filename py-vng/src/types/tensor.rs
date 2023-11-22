@@ -57,6 +57,8 @@ pub fn tensor_metadata(
 #[derive(Clone, Copy)]
 pub enum DType {
     F32,
+    U8Vec4,
+    F32Vec4A2,
 }
 
 impl DType {
@@ -66,6 +68,10 @@ impl DType {
         }
         if is::<f32, T>() {
             Ok(DType::F32)
+        } else if is::<Vector<4, u8>, T>() {
+            Ok(DType::U8Vec4)
+        } else if is::<[Vector<4, f32>; 2], T>() {
+            Ok(DType::F32Vec4A2)
         } else {
             //TODO: Not sure if we actually NEED to error out
             Err(PyErr::new::<PyException, _>(format!(
@@ -128,10 +134,10 @@ impl ScalarOperator {
         self.inner
             .downcast_mut::<CScalarOperator<T>>()
             .ok_or_else(|| {
-                PyErr::new::<PyException, _>(PyErr::new::<PyException, _>(format!(
+                PyErr::new::<PyException, _>(format!(
                     "Expected ScalarOperator<{}>, but got something else",
                     std::any::type_name::<T>()
-                )))
+                ))
             })
     }
 }
@@ -226,11 +232,11 @@ impl TensorDataOperator {
         self.inner
             .downcast_mut::<CTensorDataOperator<N, T>>()
             .ok_or_else(|| {
-                PyErr::new::<PyException, _>(PyErr::new::<PyException, _>(format!(
+                PyErr::new::<PyException, _>(format!(
                     "Expected Operator<Vector<{}, ChunkCoordinate>, {}>, but got something else",
                     N,
                     std::any::type_name::<T>()
-                )))
+                ))
             })
     }
 }

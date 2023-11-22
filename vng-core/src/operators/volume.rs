@@ -86,7 +86,7 @@ pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
     )
 }
 
-#[derive(Copy, Clone, From, Hash)]
+#[derive(Copy, Clone, From, Hash, Debug)]
 pub enum ChunkSize {
     Fixed(LocalCoordinate),
     //Relative(f32),
