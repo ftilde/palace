@@ -48,9 +48,8 @@ impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
         TensorOperator::with_state(
             OperatorId::new("VvdVolumeSourceState::operate")
                 .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
-            self.metadata.clone(),
+            self.metadata,
             self.clone(),
-            move |ctx, m| async move { ctx.write(*m) }.into(),
             move |ctx, positions, this| {
                 async move {
                     this.raw

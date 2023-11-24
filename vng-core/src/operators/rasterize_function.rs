@@ -95,9 +95,8 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VolumeOperatorState
                 //same type!
                 .dependent_on(&crate::id::func_id::<F>())
                 .dependent_on(&self.metadata),
-            self.metadata.clone(),
+            self.metadata,
             self.clone(),
-            move |ctx, m| async move { ctx.write(*m) }.into(),
             move |ctx, positions, this| {
                 async move { rasterize(&this.metadata, &this.function, ctx, positions).await }
                     .into()

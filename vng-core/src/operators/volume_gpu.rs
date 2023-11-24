@@ -25,9 +25,14 @@ use super::{
 
 pub fn linear_rescale<'op, const N: usize>(
     input: TensorOperator<N, f32>,
-    scale: ScalarOperator<f32>,
-    offset: ScalarOperator<f32>,
+    scale: f32,
+    offset: f32,
 ) -> TensorOperator<N, f32> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        scale: f32,
+        offset: f32,
+    }
     const SHADER: &'static str = r#"
 #version 450
 
@@ -35,30 +40,24 @@ pub fn linear_rescale<'op, const N: usize>(
 
 layout (local_size_x = 256) in;
 
-layout(std430, binding = 0) readonly buffer InputScale{
-    float value;
-} scale;
-
-layout(std430, binding = 1) readonly buffer InputOffset{
-    float value;
-} offset;
-
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
-layout(std430, binding = 2) readonly buffer InputBuffer{
+layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
 } sourceData;
 
-layout(std430, binding = 3) buffer OutputBuffer{
+layout(std430, binding = 1) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
+
+declare_push_consts(consts);
 
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < BRICK_MEM_SIZE) {
-        outputData.values[gID] = scale.value*sourceData.values[gID] + offset.value;
+        outputData.values[gID] = consts.scale*sourceData.values[gID] + consts.offset;
     }
 }
 "#;
@@ -68,16 +67,8 @@ void main()
             .dependent_on(&input)
             .dependent_on(&scale)
             .dependent_on(&offset),
-        input.clone(),
-        (input.clone(), scale, offset),
-        move |ctx, input| {
-            async move {
-                let req = input.metadata.request_scalar();
-                let m = ctx.submit(req).await;
-                ctx.write(m)
-            }
-            .into()
-        },
+        input.metadata,
+        (input, scale, offset),
         move |ctx, positions, (input, scale, offset)| {
             async move {
                 let device = ctx.vulkan_device();
@@ -86,11 +77,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
-                let (scale_gpu, offset_gpu, m) = futures::join! {
-                    ctx.submit(scale.request_gpu(device.id, (), access_info)),
-                    ctx.submit(offset.request_gpu(device.id, (), access_info)),
-                    ctx.submit(input.metadata.request_scalar()),
-                };
+                let m = input.metadata;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -98,7 +85,9 @@ void main()
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
+                                ShaderDefines::new()
+                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size))
+                                    .push_const_block::<PushConstants>(),
                             ),
                             true,
                         )
@@ -128,17 +117,19 @@ void main()
                         };
 
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([
-                            &scale_gpu,
-                            &offset_gpu,
-                            gpu_brick_in,
-                            gpu_brick_out,
-                        ]);
+                        let descriptor_config =
+                            DescriptorConfig::new([gpu_brick_in, gpu_brick_out]);
 
                         let global_size = brick_info.mem_elements();
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
+
+                            let consts = PushConstants {
+                                scale: *scale,
+                                offset: *offset,
+                            };
+                            pipeline.push_constant(consts);
 
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
@@ -267,23 +258,18 @@ void main() {
             .dependent_on(&brick_size)
             .dependent_on(T::TYPE_NAME)
             .dependent_on(&N),
-        input.clone(),
-        input,
-        move |ctx, input| {
-            async move {
-                let req = input.metadata.request_scalar();
-                let mut m = ctx.submit(req).await;
-                m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
-                ctx.write(m)
-            }
-            .into()
+        {
+            let mut m = input.metadata;
+            m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
+            m
         },
+        input,
         move |ctx, positions, input| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let device = ctx.vulkan_device();
 
-                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let m_in = input.metadata;
                 let m_out = {
                     let mut m_out = m_in;
                     m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
@@ -545,32 +531,24 @@ void main() {
         OperatorId::new("convolution_1d_gpu")
             .dependent_on(&input)
             .dependent_on(&kernel),
-        input.clone(),
+        input.metadata,
         (input, kernel),
-        move |ctx, input| {
-            async move {
-                let req = input.metadata.request_scalar();
-                let m = ctx.submit(req).await;
-                ctx.write(m)
-            }
-            .into()
-        },
         move |ctx, positions, (input, kernel)| {
             async move {
                 let device = ctx.vulkan_device();
 
-                let (m_in, kernel_m, kernel_handle) = futures::join!(
-                    ctx.submit(input.metadata.request_scalar()),
-                    ctx.submit(kernel.metadata.request_scalar()),
-                    ctx.submit(kernel.chunks.request_gpu(
+                let m_in = input.metadata;
+                let kernel_m = kernel.metadata;
+                let kernel_handle = ctx
+                    .submit(kernel.chunks.request_gpu(
                         device.id,
                         [0].into(),
                         DstBarrierInfo {
                             stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             access: vk::AccessFlags2::SHADER_READ,
-                        }
-                    )),
-                );
+                        },
+                    ))
+                    .await;
 
                 let m_out = m_in;
 
@@ -809,7 +787,7 @@ void main()
             async move {
                 let device = ctx.vulkan_device();
 
-                let m = ctx.submit(input.metadata.request_scalar()).await;
+                let m = input.metadata;
 
                 let to_request = m.brick_positions().collect::<Vec<_>>();
                 let batch_size = 1024;
@@ -912,7 +890,7 @@ void main()
     )
 }
 
-pub fn rasterize_gpu(metadata: ScalarOperator<VolumeMetaData>, body: &str) -> VolumeOperator<f32> {
+pub fn rasterize_gpu(metadata: VolumeMetaData, body: &str) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         offset: cgmath::Vector3<u32>,
@@ -964,20 +942,13 @@ void main()
         OperatorId::new("rasterize_gpu")
             .dependent_on(body)
             .dependent_on(&metadata),
-        metadata.clone(),
+        metadata,
         (metadata, shader),
-        move |ctx, metadata| {
-            async move {
-                let m = ctx.submit(metadata.request_scalar()).await;
-                ctx.write(m)
-            }
-            .into()
-        },
         move |ctx, positions, (metadata, shader)| {
             async move {
                 let device = ctx.vulkan_device();
 
-                let m = ctx.submit(metadata.request_scalar()).await;
+                let m = metadata;
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
@@ -1049,10 +1020,7 @@ pub struct VoxelRasterizerGLSL {
 
 impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
     fn operate(&self) -> VolumeOperator<f32> {
-        rasterize_gpu(
-            crate::operators::scalar::constant(self.metadata),
-            &self.body,
-        )
+        rasterize_gpu(self.metadata, &self.body)
     }
 }
 

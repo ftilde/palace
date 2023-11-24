@@ -23,7 +23,6 @@ use crate::{
 use pyo3::prelude::*;
 
 use super::{
-    scalar::ScalarOperator,
     tensor::{FrameOperator, ImageOperator},
     volume::LODVolumeOperator,
 };
@@ -109,10 +108,10 @@ impl CameraState {
 }
 
 pub fn entry_exit_points(
-    input_metadata: ScalarOperator<VolumeMetaData>,
-    embedding_data: ScalarOperator<VolumeEmbeddingData>,
-    result_metadata: ScalarOperator<ImageMetaData>,
-    projection_mat: ScalarOperator<Matrix<4, f32>>,
+    input_metadata: VolumeMetaData,
+    embedding_data: VolumeEmbeddingData,
+    result_metadata: ImageMetaData,
+    projection_mat: Matrix<4, f32>,
 ) -> ImageOperator<[Vector<4, f32>; 2]> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -183,30 +182,17 @@ void main() {
             .dependent_on(&input_metadata)
             .dependent_on(&result_metadata)
             .dependent_on(&projection_mat),
-        result_metadata.clone(),
+        result_metadata,
         (
             input_metadata,
             embedding_data,
             result_metadata,
             projection_mat,
         ),
-        move |ctx, result_metadata| {
-            async move {
-                let r = ctx.submit(result_metadata.request_scalar()).await;
-                ctx.write(r)
-            }
-            .into()
-        },
-        move |ctx, pos, (m_in, embedding_data, result_metadata, projection_mat)| {
+        move |ctx, pos, (m_in, embedding_data, m_out, transform)| {
             async move {
                 let device = ctx.vulkan_device();
 
-                let (m_in, embedding_data, m_out, transform) = futures::join! {
-                    ctx.submit(m_in.request_scalar()),
-                    ctx.submit(embedding_data.request_scalar()),
-                    ctx.submit(result_metadata.request_scalar()),
-                    ctx.submit(projection_mat.request_scalar()),
-                };
                 let out_info = m_out.chunk_info(pos);
 
                 let norm_to_world = Matrix::from_scale(
@@ -214,7 +200,7 @@ void main() {
                 )
                 .to_homogeneuous()
                     * Matrix::from_translation(Vector::fill(-0.5));
-                let transform = transform * norm_to_world;
+                let transform = *transform * norm_to_world;
 
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),
@@ -704,17 +690,8 @@ void main()
         OperatorId::new("raycast")
             .dependent_on(&input)
             .dependent_on(&entry_exit_points),
-        entry_exit_points.clone(),
-        (input, entry_exit_points),
-        move |ctx, entry_exit_points| {
-            async move {
-                let r = ctx
-                    .submit(entry_exit_points.metadata.request_scalar())
-                    .await;
-                ctx.write(r)
-            }
-            .into()
-        },
+        entry_exit_points.metadata,
+        (input, entry_exit_points.clone()),
         move |ctx, pos, (input, entry_exit_points)| {
             async move {
                 let device = ctx.vulkan_device();
@@ -742,10 +719,14 @@ void main()
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (m_out, eep) = futures::join! {
-                    ctx.submit(entry_exit_points.metadata.request_scalar()),
-                    ctx.submit(entry_exit_points.chunks.request_gpu(device.id, pos, dst_info)),
-                };
+                let m_out = entry_exit_points.metadata;
+                let eep = ctx
+                    .submit(
+                        entry_exit_points
+                            .chunks
+                            .request_gpu(device.id, pos, dst_info),
+                    )
+                    .await;
                 let out_info = m_out.chunk_info(pos);
 
                 let chunk_size = out_info.mem_dimensions.raw();
@@ -756,10 +737,8 @@ void main()
                 let mut lods = Vec::new();
                 let mut lod_data = Vec::new();
                 for level in &input.levels {
-                    let (m_in, emd) = futures::join! {
-                        ctx.submit(level.metadata.request_scalar()),
-                        ctx.submit(level.embedding_data.request_scalar()),
-                    };
+                    let m_in = level.metadata;
+                    let emd = level.embedding_data;
                     let num_bricks = hmul(m_in.dimension_in_chunks());
                     //let dim_in_bricks = m_in.dimension_in_chunks();
 

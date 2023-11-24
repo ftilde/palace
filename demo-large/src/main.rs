@@ -126,15 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = vol_state.operate();
     let vol = &vol;
-    let vol_size = runtime
-        .resolve(None, move |ctx, _| {
-            async move {
-                let md = ctx.submit(vol.metadata.request_scalar()).await;
-                Ok(md.dimensions.raw())
-            }
-            .into()
-        })
-        .unwrap();
+    let vol_size = vol.metadata.dimensions.raw();
 
     let mut state = State {
         gui: GuiState::default(),
@@ -317,8 +309,8 @@ fn slice_viewer_rot(
         runtime
             .resolve(None, move |ctx, _| {
                 async move {
-                    let mat = ctx.submit(mat_ref.request_scalar()).await;
-                    let m_in = ctx.submit(md_ref.request_scalar()).await;
+                    let mat = mat_ref;
+                    let m_in = md_ref;
 
                     let mouse_pos = Vector::<4, f32>::from([
                         1.0,
@@ -326,7 +318,7 @@ fn slice_viewer_rot(
                         mouse_pos.y() as f32,
                         mouse_pos.x() as f32,
                     ]);
-                    let vol_pos = mat * mouse_pos;
+                    let vol_pos = *mat * mouse_pos;
                     let vol_pos = vol_pos.drop_dim(0).map(|v| v.round() as i32);
 
                     let dim = m_in.dimensions.raw();
@@ -542,13 +534,8 @@ fn eval_network(
                     });
                 match app_state.rendering {
                     RenderingState::Slice => {
-                        let md = processed.fine_metadata();
-                        let md_ref = &md;
-                        let metadata = runtime
-                            .resolve(Some(deadline), move |ctx, _| {
-                                async move { Ok(ctx.submit(md_ref.request_scalar()).await) }.into()
-                            })
-                            .unwrap();
+                        let metadata = processed.fine_metadata();
+
                         let num_slices = metadata.dimensions.z().raw;
                         let max_slice = num_slices - 1;
 

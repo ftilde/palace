@@ -549,21 +549,17 @@ void main() {
             OperatorId::new("gui")
                 .dependent_on(&input)
                 .dependent_on(&version),
-            input.clone(),
-            (input, self),
-            move |ctx, input| {
-                async move {
-                    let m = ctx.submit(input.metadata.request_scalar()).await;
-                    assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));
-                    ctx.write(m)
-                }
-                .into()
+            {
+                let m = input.metadata;
+                assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));
+                m
             },
+            (input.clone(), self),
             move |ctx, pos, (input, state)| {
                 async move {
                     let device = ctx.vulkan_device();
 
-                    let m_out = ctx.submit(input.metadata.request_scalar()).await;
+                    let m_out = input.metadata;
                     let out_info = m_out.chunk_info(pos);
 
                     let format = vk::Format::R8G8B8A8_UNORM;

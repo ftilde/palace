@@ -7,8 +7,8 @@ use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
+use vng_core::operators::volume_gpu;
 use vng_core::operators::{self};
-use vng_core::operators::{scalar, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;
@@ -259,7 +259,7 @@ fn eval_network(
         //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
         //let after_kernel =
         //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
-        let after_kernel = operators::vesselness::vesselness(vol, scalar::constant(*stddev));
+        let after_kernel = operators::vesselness::vesselness(vol, *stddev);
 
         let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
         scaled

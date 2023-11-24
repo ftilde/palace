@@ -19,7 +19,6 @@ fn vng(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
     m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
-    m.add_function(wrap_pyfunction!(slice_projection_mat, m)?)?;
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
     m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;

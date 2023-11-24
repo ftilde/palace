@@ -6,7 +6,6 @@ use crate::{
     array::TensorMetaData,
     data::{hmul, Matrix, Vector, AABB},
     operator::{OpaqueOperator, OperatorId},
-    storage::P,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -15,87 +14,60 @@ use crate::{
     },
 };
 
-use super::{
-    scalar::ScalarOperator,
-    tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
-};
+use super::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator};
 
 //TODO: generalize to arbitrary N.
 //This is difficult atm because (at least) we cannot specify the matrix size as N+1
 const N: usize = 3;
 
 pub fn resample_rescale_mat<'op>(
-    input_size: ScalarOperator<TensorMetaData<N>>,
-    output_size: ScalarOperator<TensorMetaData<N>>,
-) -> ScalarOperator<Matrix<{ N + 1 }, f32>> {
-    crate::operators::scalar::scalar(
-        OperatorId::new("resample_rescale_mat")
-            .dependent_on(&input_size)
-            .dependent_on(&output_size),
-        (input_size, output_size),
-        move |ctx, (input_size, output_size)| {
-            async move {
-                let (input_size, output_size) = futures::join! {
-                    ctx.submit(input_size.request_scalar()),
-                    ctx.submit(output_size.request_scalar()),
-                };
-                let to_input_center = Matrix::from_translation(Vector::<N, f32>::fill(-0.5));
-                let rescale = Matrix::from_scale(
-                    input_size.dimensions.raw().f32() / output_size.dimensions.raw().f32(),
-                )
-                .to_homogeneuous();
-                let to_output_center = Matrix::from_translation(Vector::<N, f32>::fill(0.5));
-                let out = to_input_center * rescale * to_output_center;
+    input_size: TensorMetaData<N>,
+    output_size: TensorMetaData<N>,
+) -> Matrix<{ N + 1 }, f32> {
+    let to_input_center = Matrix::from_translation(Vector::<N, f32>::fill(-0.5));
+    let rescale =
+        Matrix::from_scale(input_size.dimensions.raw().f32() / output_size.dimensions.raw().f32())
+            .to_homogeneuous();
+    let to_output_center = Matrix::from_translation(Vector::<N, f32>::fill(0.5));
+    let out = to_input_center * rescale * to_output_center;
 
-                ctx.write(out)
-            }
-            .into()
-        },
-    )
+    out
 }
 
 pub fn resample<'op>(
     input: EmbeddedTensorOperator<N, f32>,
-    output_size: ScalarOperator<TensorMetaData<N>>,
+    output_size: TensorMetaData<N>,
 ) -> EmbeddedTensorOperator<N, f32> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size, mat.clone());
-    let emd = mat
-        .zip(input.embedding_data)
-        .map_scalar((), |P(mat, mut embedding_data), _| {
-            // We know that mat is only an affine transformation, so we can extract the scaling
-            // parts directly.
-            let scale_mat = mat.to_scaling_part();
-            let scale = Vector::<N, f32>::from_fn(|i| *scale_mat.at(i, i));
-            embedding_data.spacing = embedding_data.spacing * scale;
-            embedding_data
-        });
+    let mut embedding_data = input.embedding_data;
+
+    // We know that mat is only an affine transformation, so we can extract the scaling
+    // parts directly.
+    let scale_mat = mat.to_scaling_part();
+    let scale = Vector::<N, f32>::from_fn(|i| *scale_mat.at(i, i));
+    embedding_data.spacing = embedding_data.spacing * scale;
+
     EmbeddedTensorOperator {
         inner,
-        embedding_data: emd,
+        embedding_data,
     }
 }
 
 pub fn smooth_downsample<'op>(
     input: EmbeddedTensorOperator<N, f32>,
-    output_size: ScalarOperator<TensorMetaData<N>>,
+    output_size: TensorMetaData<N>,
 ) -> EmbeddedTensorOperator<N, f32> {
-    let scale =
-        input
-            .clone()
-            .inner
-            .metadata
-            .zip(output_size.clone())
-            .map((), |P(m_in, m_out), _| {
-                let s_in = m_in.dimensions.raw().f32();
-                let s_out = m_out.dimensions.raw().f32();
+    let scale = {
+        let s_in = input.metadata.dimensions.raw().f32();
+        let s_out = output_size.dimensions.raw().f32();
 
-                let downsample_factor = s_in / s_out;
-                let stddev = downsample_factor.scale(0.5);
-                stddev
-            });
-    let kernels =
-        Vector::from_fn(|i| crate::operators::kernels::gauss(scale.clone().map(i, |v, i| v[*i])));
+        let downsample_factor = s_in / s_out;
+        let stddev = downsample_factor.scale(0.5);
+        stddev
+    };
+
+    let kernels = Vector::from_fn(|i| crate::operators::kernels::gauss(scale[i]));
     let smoothed =
         input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernels.into()));
     resample(smoothed, output_size)
@@ -114,23 +86,22 @@ pub fn create_lod<'op>(
     levels.push(current.clone());
 
     for _ in 0..num_levels {
-        let new_md = current
-            .metadata
-            .clone()
-            .zip(current.embedding_data.clone())
-            .map(step_factor, |P(m, e), step_factor| {
-                let new_spacing_raw = e.spacing * Vector::fill(step_factor);
-                let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
-                let new_spacing = e.spacing.zip(Vector::fill(smallest_new), |a, b| a.max(b));
-                let element_ratio = e.spacing / new_spacing;
-                let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
-                    .map(|v| v.ceil() as u32)
-                    .global();
-                TensorMetaData {
-                    dimensions: new_dimensions,
-                    chunk_size: m.chunk_size,
-                }
-            });
+        let new_md = {
+            let e = current.embedding_data;
+            let m = current.metadata;
+
+            let new_spacing_raw = e.spacing * Vector::fill(step_factor);
+            let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
+            let new_spacing = e.spacing.zip(Vector::fill(smallest_new), |a, b| a.max(b));
+            let element_ratio = e.spacing / new_spacing;
+            let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
+                .map(|v| v.ceil() as u32)
+                .global();
+            TensorMetaData {
+                dimensions: new_dimensions,
+                chunk_size: m.chunk_size,
+            }
+        };
 
         current = smooth_downsample(current, new_md);
         levels.push(current.clone());
@@ -141,11 +112,12 @@ pub fn create_lod<'op>(
 
 pub fn resample_transform<'op>(
     input: TensorOperator<N, f32>,
-    output_size: ScalarOperator<TensorMetaData<N>>,
-    element_out_to_in: ScalarOperator<Matrix<{ N + 1 }, f32>>,
+    output_size: TensorMetaData<N>,
+    element_out_to_in: Matrix<{ N + 1 }, f32>,
 ) -> TensorOperator<N, f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
+        transform: cgmath::Matrix4<f32>,
         chunk_dim_in: cgmath::Vector3<u32>,
         vol_dim_in: cgmath::Vector3<u32>,
         out_begin: cgmath::Vector3<u32>,
@@ -171,11 +143,7 @@ layout(std430, binding = 0) buffer RefBuffer {
     BrickType values[NUM_CHUNKS];
 } bricks;
 
-layout(std430, binding = 1) buffer Transform {
-    Mat4 value;
-} transform;
-
-layout(std430, binding = 2) buffer OutputBuffer{
+layout(std430, binding = 1) buffer OutputBuffer{
     float values[];
 } outputData;
 
@@ -188,7 +156,7 @@ void main() {
        out_brick_pos.y < consts.mem_size_out.y &&
        out_brick_pos.z < consts.mem_size_out.z) {
         uvec3 global_pos = out_brick_pos + consts.out_begin;
-        vec3 sample_posf = mulh_mat4(transform.value, vec3(global_pos));
+        vec3 sample_posf = (consts.transform * vec4(vec3(global_pos), 1.0)).xyz;
         ivec3 sample_pos = ivec3(round(sample_posf));
         //ivec3 sample_pos = ivec3(floor(sample_posf) + vec3(0.5));
 
@@ -225,16 +193,8 @@ void main() {
             .dependent_on(&input)
             .dependent_on(&output_size)
             .dependent_on(&element_out_to_in),
-        output_size.clone(),
+        output_size,
         (input, output_size, element_out_to_in),
-        move |ctx, output_size| {
-            async move {
-                let req = output_size.request_scalar();
-                let m = ctx.submit(req).await;
-                ctx.write(m)
-            }
-            .into()
-        },
         move |ctx, positions, (input, output_size, element_out_to_in)| {
             async move {
                 let device = ctx.vulkan_device();
@@ -244,12 +204,8 @@ void main() {
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let (element_out_to_in_g, element_out_to_in, m_in, m_out) = futures::join! {
-                    ctx.submit(element_out_to_in.request_gpu(device.id, (), dst_info)),
-                    ctx.submit(element_out_to_in.request_scalar()),
-                    ctx.submit(input.metadata.request_scalar()),
-                    ctx.submit(output_size.request_scalar()),
-                };
+                let m_in = input.metadata;
+                let m_out = output_size;
 
                 let num_chunks = hmul(m_in.dimension_in_chunks());
 
@@ -345,13 +301,13 @@ void main() {
                     ))
                     .await;
 
-                    let descriptor_config =
-                        DescriptorConfig::new([&chunk_index, &element_out_to_in_g, &gpu_brick_out]);
+                    let descriptor_config = DescriptorConfig::new([&chunk_index, &gpu_brick_out]);
 
                     device.with_cmd_buffer(|cmd| unsafe {
                         let mut pipeline = pipeline.bind(cmd);
 
                         pipeline.push_constant(PushConstants {
+                            transform: (*element_out_to_in).into(),
                             chunk_dim_in: m_in.chunk_size.raw().into(),
                             vol_dim_in: m_in.dimensions.raw().into(),
 

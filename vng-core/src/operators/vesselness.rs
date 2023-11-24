@@ -4,58 +4,52 @@ use futures::StreamExt;
 use crate::data::hmul;
 use crate::operator::OperatorId;
 use crate::operators::array::ArrayOperator;
-use crate::storage::P;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
 use crate::vulkan::shader::ShaderDefines;
 use crate::vulkan::state::RessourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 
 use super::{kernels::*, volume_gpu};
-use super::{scalar::ScalarOperator, tensor::TensorOperator, volume::VolumeOperator};
+use super::{tensor::TensorOperator, volume::VolumeOperator};
 
 pub fn multiscale_vesselness(
     //TODO: Make this embedding-aware
     input: VolumeOperator<f32>,
-    min_scale: ScalarOperator<f32>,
-    max_scale: ScalarOperator<f32>,
+    min_scale: f32,
+    max_scale: f32,
     num_steps: usize,
 ) -> VolumeOperator<f32> {
     assert!(num_steps > 0);
     if num_steps == 1 {
-        return vesselness(input.clone(), min_scale.clone());
+        return vesselness(input.clone(), min_scale);
     }
 
-    let mut out = vesselness(input.clone(), min_scale.clone());
-
-    let scales = min_scale.clone().zip(max_scale.clone());
+    let mut out = vesselness(input.clone(), min_scale);
 
     let num_reductions = num_steps - 1;
     for step in 1..num_steps {
         let alpha = step as f32 / num_reductions as f32;
 
-        let step_scale = scales.clone().map(alpha, |P(min, max), alpha| {
-            let min_log = min.ln();
-            let max_log = max.ln();
+        let step_scale = {
+            let min_log = min_scale.ln();
+            let max_log = max_scale.ln();
 
             let inter_log = min_log * (1.0 - alpha) + max_log * alpha;
 
             let scale = inter_log.exp();
             scale
-        });
+        };
 
         let vesselness = vesselness(input.clone(), step_scale.clone());
-        let step_vesselness = crate::operators::volume_gpu::linear_rescale(
-            vesselness,
-            step_scale.map((), |v, _| v * v),
-            crate::operators::scalar::constant(0.0),
-        );
+        let step_vesselness =
+            crate::operators::volume_gpu::linear_rescale(vesselness, step_scale * step_scale, 0.0);
         out = crate::operators::bin_ops::max(out, step_vesselness);
     }
 
     out
 }
 
-pub fn vesselness(input: VolumeOperator<f32>, scale: ScalarOperator<f32>) -> VolumeOperator<f32> {
+pub fn vesselness(input: VolumeOperator<f32>, scale: f32) -> VolumeOperator<f32> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -117,7 +111,7 @@ void main() {
 }
 "#;
 
-    type Conv = fn(ScalarOperator<f32>) -> ArrayOperator<f32>;
+    type Conv = fn(f32) -> ArrayOperator<f32>;
 
     let g = |f1: Conv, f2: Conv, f3: Conv| {
         volume_gpu::separable_convolution(
@@ -137,20 +131,13 @@ void main() {
         OperatorId::new("vesselness")
             .dependent_on(&input)
             .dependent_on(&scale),
-        input.clone(),
+        input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),
-        move |ctx, input| {
-            async move {
-                let m = ctx.submit(input.metadata.request_scalar()).await;
-                ctx.write(m)
-            }
-            .into()
-        },
         move |ctx, positions, (input, hessian)| {
             async move {
                 let device = ctx.vulkan_device();
 
-                let m = ctx.submit(input.metadata.request_scalar()).await;
+                let m = input.metadata;
 
                 let requests = positions.into_iter().map(|pos| {
                     let hessian_bricks = ctx.group(hessian.into_iter().map(|entry| {

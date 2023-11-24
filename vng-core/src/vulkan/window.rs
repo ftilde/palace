@@ -592,7 +592,7 @@ impl Window {
         ctx: OpaqueTaskContext<'cref, 'inv>,
         input: &'inv FrameOperator,
     ) -> Result<DataVersionType, crate::Error> {
-        let m = ctx.submit(input.metadata.request_scalar()).await;
+        let m = input.metadata;
 
         if m.dimensions != m.chunk_size.global() {
             return Err("Image must consist of a single chunk".into());

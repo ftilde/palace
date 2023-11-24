@@ -111,9 +111,8 @@ impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
                         .dependent_on(data.to_string_lossy().as_bytes())
                 }
             },
-            self.0.metadata.clone(),
+            self.0.metadata,
             self.clone(),
-            move |ctx, m| async move { ctx.write(*m) }.into(),
             move |ctx, mut positions, this| {
                 positions.sort_by_key(|p| p.z());
                 async move {

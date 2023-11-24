@@ -172,8 +172,7 @@ void main()
                 .dependent_on(&input_l)
                 .dependent_on(&input_r),
             self.metadata_out(),
-            (input_l.clone(), input_r.clone(), self),
-            move |ctx, m_out| async move { ctx.write(*m_out) }.into(),
+            (input_l, input_r, self),
             move |ctx, positions, (input_l, input_r, this)| {
                 async move {
                     let device = ctx.vulkan_device();
@@ -183,12 +182,13 @@ void main()
                         access: vk::AccessFlags2::SHADER_READ,
                     };
 
-                    let (m_l, img_l, m_r, img_r) = futures::join! {
-                        ctx.submit(input_l.metadata.request_scalar()),
+                    let m_l = input_l.metadata;
+                    let m_r = input_r.metadata;
+                    let (img_l, img_r) = futures::join! {
                         ctx.submit(input_l.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
-                        ctx.submit(input_r.metadata.request_scalar()),
                         ctx.submit(input_r.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
                     };
+
 
                     assert_eq!(m_l.dimensions, this.metadata_first().dimensions);
                     assert_eq!(m_r.dimensions, this.metadata_last().dimensions);

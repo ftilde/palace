@@ -1,6 +1,6 @@
 use crate::{array::ArrayMetaData, data::Vector, operator::OperatorId, storage::Element};
 
-use super::{array::ArrayOperator, scalar::ScalarOperator, tensor::TensorOperator};
+use super::{array::ArrayOperator, tensor::TensorOperator};
 
 struct Extent(usize);
 
@@ -105,7 +105,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
     gen_kernel_sum_zero(func, norm_nom, extent)
 }
 
-pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
+pub fn gauss<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("gauss").dependent_on(&stddev),
         stddev,
@@ -113,7 +113,7 @@ pub fn gauss<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
         comp_kernel_gauss,
     )
 }
-pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
+pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("dgauss_dx").dependent_on(&stddev),
         stddev,
@@ -121,7 +121,7 @@ pub fn dgauss_dx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
         comp_kernel_dgauss_dx,
     )
 }
-pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
+pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
         OperatorId::new("ddgauss_dxdx").dependent_on(&stddev),
         stddev,
@@ -132,35 +132,29 @@ pub fn ddgauss_dxdx<'a>(stddev: ScalarOperator<f32>) -> ArrayOperator<f32> {
 
 fn gen_kernel_operator<Params: Element>(
     id: OperatorId,
-    get_params: ScalarOperator<Params>,
+    params: Params,
     get_size: impl Fn(&Params) -> usize + Clone + 'static,
     gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'static,
 ) -> ArrayOperator<f32> {
     TensorOperator::unbatched(
         id,
-        (get_params.clone(), get_size.clone()),
-        (get_params, get_size.clone(), gen_kernel),
-        move |ctx, (get_params, get_size)| {
-            async move {
-                let params = ctx.submit(get_params.request_scalar()).await;
-                let size = get_size(&params) as u32;
-                ctx.write(ArrayMetaData {
-                    dimensions: Vector::fill(size.into()),
-                    chunk_size: Vector::fill(size.into()),
-                })
+        {
+            let size = get_size(&params) as u32;
+            ArrayMetaData {
+                dimensions: Vector::fill(size.into()),
+                chunk_size: Vector::fill(size.into()),
             }
-            .into()
         },
-        move |ctx, pos, (get_params, get_size, gen_kernel)| {
+        (params, get_size.clone(), gen_kernel),
+        move |ctx, pos, (params, get_size, gen_kernel)| {
             assert_eq!(pos.raw, 0);
             async move {
-                let params = ctx.submit(get_params.request_scalar()).await;
                 let size = get_size(&params);
 
                 let mut out = ctx.alloc_slot(pos, size).unwrap();
                 let mut out_data = &mut *out;
                 ctx.submit(ctx.spawn_compute(move || {
-                    let kernel = gen_kernel(params);
+                    let kernel = gen_kernel(*params);
                     assert_eq!(kernel.len(), size);
                     crate::data::write_slice_uninit(&mut out_data, &kernel);
                 }))

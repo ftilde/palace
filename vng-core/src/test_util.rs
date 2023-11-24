@@ -2,7 +2,8 @@ use crate::{
     data::{from_linear, hmul, BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     operators::{
         tensor::TensorOperator,
-        volume::{rechunk, ChunkSize, VolumeOperator, VolumeOperatorState},
+        volume::{ChunkSize, VolumeOperator, VolumeOperatorState},
+        volume_gpu::rechunk,
     },
     runtime::RunTime,
 };
@@ -20,7 +21,7 @@ pub fn compare_volume(
         .resolve(None, |ctx, _| {
             async move {
                 let pos = BrickPosition::from([0, 0, 0]);
-                let m = ctx.submit(full_vol.metadata.request_scalar()).await;
+                let m = full_vol.metadata;
                 let info = m.chunk_info(pos);
                 let vol = ctx.submit(full_vol.chunks.request(pos)).await;
                 let vol = crate::data::chunk(&vol, &info);
@@ -36,6 +37,36 @@ pub fn compare_volume(
         .unwrap();
 }
 
+//TODO: Fix this once better vec support is there
+//pub fn compare_frame(
+//    vol: FrameOperator,
+//    fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut2<Vector<4, u8>>),
+//) {
+//    let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
+//
+//    let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
+//    let full_vol = &full_vol;
+//
+//    runtime
+//        .resolve(None, |ctx, _| {
+//            async move {
+//                let pos = Vector::from([0, 0]);
+//                let m = full_vol.metadata;
+//                let info = m.chunk_info(pos);
+//                let vol = ctx.submit(full_vol.chunks.request(pos)).await;
+//                let vol = crate::data::chunk(&vol, &info);
+//
+//                let mut comp = vec![0.0; info.mem_elements()];
+//                let mut comp = crate::data::chunk_mut(&mut comp, &info);
+//                fill_expected(&mut comp);
+//                assert_eq!(vol, comp);
+//                Ok(())
+//            }
+//            .into()
+//        })
+//        .unwrap();
+//}
+
 pub fn compare_tensor<const N: usize>(
     result: TensorOperator<N, f32>,
     expected: TensorOperator<N, f32>,
@@ -48,8 +79,8 @@ pub fn compare_tensor<const N: usize>(
             let expected = &expected;
             async move {
                 let m = {
-                    let m_r = ctx.submit(result.metadata.request_scalar()).await;
-                    let m_e = ctx.submit(expected.metadata.request_scalar()).await;
+                    let m_r = result.metadata;
+                    let m_e = expected.metadata;
 
                     assert_eq!(m_r, m_e);
 

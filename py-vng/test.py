@@ -86,7 +86,7 @@ def render_slice(vol, dim, slice_state):
 
         md = vng.tensor_metadata(size, [512]*2)
 
-        proj = vng.slice_projection_mat(slice_state.load(), dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
+        proj = slice_state.load().projection_mat(dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
 
         frame = vng.render_slice(vol, md, proj)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*2)

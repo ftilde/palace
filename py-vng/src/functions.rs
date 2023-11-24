@@ -1,9 +1,8 @@
 use crate::{map_err, types::*};
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::{
-    array::ImageMetaData,
-    data::{GlobalCoordinate, LocalVoxelPosition, Matrix, Vector},
-    operators::sliceviewer::SliceviewState,
+    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
+    data::{LocalVoxelPosition, Matrix, Vector},
 };
 use vng_vvd::VvdVolumeSourceState;
 
@@ -48,11 +47,9 @@ pub fn rechunk(
 pub fn linear_rescale(
     py: Python,
     vol: MaybeEmbeddedTensorOperator,
-    scale: MaybeConstScalarOperator<f32>,
-    offset: MaybeConstScalarOperator<f32>,
+    scale: f32,
+    offset: f32,
 ) -> PyResult<PyObject> {
-    let scale = scale.try_into()?;
-    let offset = offset.try_into()?;
     vol.try_map_inner(
         py,
         |vol: vng_core::operators::volume::VolumeOperator<f32>| {
@@ -78,16 +75,16 @@ pub fn separable_convolution<'py>(
 
 #[pyfunction]
 pub fn entry_exit_points(
-    input_md: ScalarOperator,
-    embedding_data: ScalarOperator,
-    output_md: MaybeConstScalarOperator<ImageMetaData>,
-    projection: MaybeConstScalarOperator<Matrix<4, f32>>,
+    input_md: VolumeMetaData,
+    embedding_data: VolumeEmbeddingData,
+    output_md: ImageMetaData,
+    projection: Matrix<4, f32>,
 ) -> PyResult<TensorOperator> {
     vng_core::operators::raycaster::entry_exit_points(
-        input_md.try_into()?,
-        embedding_data.try_into()?,
-        output_md.try_into()?,
-        projection.try_into()?,
+        input_md,
+        embedding_data,
+        output_md,
+        projection,
     )
     .try_into()
 }
@@ -102,28 +99,10 @@ pub fn raycast(
 }
 
 #[pyfunction]
-pub fn slice_projection_mat(
-    state: SliceviewState,
-    dim: usize,
-    input_data: ScalarOperator,
-    embedding_data: ScalarOperator,
-    output_data: Vector<2, GlobalCoordinate>,
-) -> PyResult<ScalarOperator> {
-    Ok(state
-        .projection_mat(
-            dim,
-            input_data.try_into()?,
-            embedding_data.try_into()?,
-            output_data,
-        )
-        .into())
-}
-
-#[pyfunction]
 pub fn render_slice(
     input: LODTensorOperator,
-    result_metadata: MaybeConstScalarOperator<vng_core::array::ImageMetaData>,
-    projection_mat: MaybeConstScalarOperator<vng_core::data::Matrix<4, f32>>,
+    result_metadata: vng_core::array::ImageMetaData,
+    projection_mat: vng_core::data::Matrix<4, f32>,
 ) -> PyResult<TensorOperator> {
     vng_core::operators::sliceviewer::render_slice(
         input.try_into()?,

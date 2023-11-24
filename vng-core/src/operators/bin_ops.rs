@@ -64,19 +64,13 @@ void main()
             .dependent_on(&input1)
             .dependent_on(&input2)
             .dependent_on(body),
-        (input1.clone(), input2.clone()),
-        (input1.clone(), input2.clone(), shader),
-        move |ctx, (input1, input2)| {
-            async move {
-                let (m1, m2) = futures::join! {
-                    ctx.submit(input1.metadata.request_scalar()),
-                    ctx.submit(input2.metadata.request_scalar()),
-                };
-                assert_eq!(m1, m2);
-                ctx.write(m1)
-            }
-            .into()
+        {
+            let m1 = input1.metadata;
+            let m2 = input2.metadata;
+            assert_eq!(m1, m2);
+            m1
         },
+        (input1.clone(), input2.clone(), shader),
         move |ctx, positions, (input1, input2, shader)| {
             async move {
                 let device = ctx.vulkan_device();
@@ -85,7 +79,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
-                let m = ctx.submit(input1.metadata.request_scalar()).await;
+                let m = input1.metadata;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {

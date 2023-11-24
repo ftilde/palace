@@ -12,7 +12,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     input: &'inv ImageOperator<Vector<4, u8>>,
     path: PathBuf,
 ) -> Result<(), crate::Error> {
-    let m = ctx.submit(input.metadata.request_scalar()).await;
+    let m = input.metadata;
 
     if m.dimensions != m.chunk_size.global() {
         return Err("Image must consist of a single chunk".into());

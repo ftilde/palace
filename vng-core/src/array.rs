@@ -126,6 +126,27 @@ mod py {
             v.into_py(py)
         }
     }
+
+    impl<'source, const N: usize> FromPyObject<'source> for TensorEmbeddingData<N> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            Ok(TensorEmbeddingData {
+                spacing: ob.getattr("spacing")?.extract()?,
+            })
+        }
+    }
+
+    impl<const N: usize> IntoPy<PyObject> for TensorEmbeddingData<N> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            let m = py.import("collections").unwrap();
+            let ty = m
+                .getattr("namedtuple")
+                .unwrap()
+                .call(("TensorEmbeddingData", ["spacing"]), None)
+                .unwrap();
+            let v = ty.call((self.spacing.into_py(py),), None).unwrap();
+            v.into_py(py)
+        }
+    }
 }
 
 impl<const N: usize> TensorMetaData<N> {
@@ -171,6 +192,7 @@ impl VolumeMetaData {
 }
 
 pub type ImageMetaData = TensorMetaData<2>;
+pub type ImageEmbeddingData = TensorEmbeddingData<2>;
 impl ImageMetaData {
     pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
         let bp = self.dimension_in_chunks();

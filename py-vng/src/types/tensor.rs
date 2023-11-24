@@ -1,4 +1,6 @@
 use pyo3::{exceptions::PyException, prelude::*};
+use vng_core::array::TensorEmbeddingData as CTensorEmbeddingData;
+use vng_core::array::TensorMetaData as CTensorMetaData;
 use vng_core::{
     array::{ArrayMetaData, VolumeMetaData},
     data::{ChunkCoordinate, Vector},
@@ -164,31 +166,68 @@ impl<T: Identify + vng_core::storage::Element> TryInto<CScalarOperator<T>>
 type CTensorDataOperator<const N: usize, T> = COperator<Vector<N, ChunkCoordinate>, T>;
 
 #[pyclass(unsendable)]
-pub struct TensorDataOperator {
+#[derive(Clone)]
+pub struct TensorMetaData {
+    #[pyo3(get)]
+    pub dimensions: Vec<u32>,
+    #[pyo3(get)]
+    pub chunk_size: Vec<u32>,
+}
+
+impl<const N: usize> From<CTensorMetaData<N>> for TensorMetaData {
+    fn from(t: CTensorMetaData<N>) -> Self {
+        Self {
+            dimensions: t.dimensions.raw().into_iter().collect(),
+            chunk_size: t.chunk_size.raw().into_iter().collect(),
+        }
+    }
+}
+
+impl<const N: usize> TryInto<CTensorMetaData<N>> for TensorMetaData {
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CTensorMetaData<N>, Self::Error> {
+        if N != self.dimensions.len() {
+            return Err(PyErr::new::<PyException, _>(format!(
+                "Expected TensorMetaData<{}>, but got TensorMetaData<{}>",
+                N,
+                self.dimensions.len()
+            )));
+        }
+
+        assert_eq!(self.dimensions.len(), self.chunk_size.len());
+
+        Ok(CTensorMetaData {
+            dimensions: std::array::from_fn(|i| self.dimensions[i]).into(),
+            chunk_size: std::array::from_fn(|i| self.chunk_size[i]).into(),
+        })
+    }
+}
+
+#[pyclass(unsendable)]
+pub struct TensorOperator {
     pub inner: Box<dyn std::any::Any>,
     #[pyo3(get)]
     pub dtype: DType,
     #[pyo3(get)]
-    pub ndim: u32,
+    metadata: TensorMetaData,
     clone: fn(&Self) -> Self,
 }
 
-impl Clone for TensorDataOperator {
+impl Clone for TensorOperator {
     fn clone(&self) -> Self {
         (self.clone)(self)
     }
 }
 
-impl<const N: usize, T: std::any::Any> TryFrom<COperator<Vector<N, ChunkCoordinate>, T>>
-    for TensorDataOperator
-{
+impl<const N: usize, T: std::any::Any> TryFrom<CTensorOperator<N, T>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_from(t: COperator<Vector<N, ChunkCoordinate>, T>) -> Result<Self, Self::Error> {
+    fn try_from(t: CTensorOperator<N, T>) -> Result<Self, Self::Error> {
         Ok(Self {
-            inner: Box::new(t),
+            inner: Box::new(t.chunks),
             dtype: DType::from::<T>()?,
-            ndim: N as _,
+            metadata: t.metadata.into(),
             clone: |i| Self {
                 inner: Box::new(
                     i.inner
@@ -197,26 +236,19 @@ impl<const N: usize, T: std::any::Any> TryFrom<COperator<Vector<N, ChunkCoordina
                         .clone(),
                 ),
                 dtype: i.dtype,
-                ndim: i.ndim,
+                metadata: i.metadata.clone(),
                 clone: i.clone,
             },
         })
     }
 }
 
-impl<const N: usize, T: std::any::Any> TryInto<COperator<Vector<N, ChunkCoordinate>, T>>
-    for TensorDataOperator
-{
+impl<const N: usize, T: std::any::Any> TryInto<CTensorOperator<N, T>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<COperator<Vector<N, ChunkCoordinate>, T>, Self::Error> {
-        Ok(self.try_unpack()?.clone())
-    }
-}
-
-impl TensorDataOperator {
-    pub fn try_unpack<const N: usize, T: 'static>(&self) -> PyResult<&CTensorDataOperator<N, T>> {
-        self.inner
+    fn try_into(self) -> Result<CTensorOperator<N, T>, Self::Error> {
+        let inner = self
+            .inner
             .downcast_ref::<CTensorDataOperator<N, T>>()
             .ok_or_else(|| {
                 PyErr::new::<PyException, _>(format!(
@@ -224,49 +256,10 @@ impl TensorDataOperator {
                     N,
                     std::any::type_name::<T>()
                 ))
-            })
-    }
-    pub fn try_unpack_mut<const N: usize, T: 'static>(
-        &mut self,
-    ) -> PyResult<&mut CTensorDataOperator<N, T>> {
-        self.inner
-            .downcast_mut::<CTensorDataOperator<N, T>>()
-            .ok_or_else(|| {
-                PyErr::new::<PyException, _>(format!(
-                    "Expected Operator<Vector<{}, ChunkCoordinate>, {}>, but got something else",
-                    N,
-                    std::any::type_name::<T>()
-                ))
-            })
-    }
-}
+            })?;
 
-//TODO: we should maybe do error-checking in the set-method here and in the othe cases?
-#[pyclass(unsendable)]
-#[derive(Clone)]
-pub struct TensorOperator {
-    #[pyo3(get, set)]
-    pub chunks: TensorDataOperator,
-    #[pyo3(get, set)]
-    pub metadata: ScalarOperator,
-}
-
-impl<const N: usize, T: 'static> TryFrom<CTensorOperator<N, T>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_from(t: CTensorOperator<N, T>) -> Result<Self, Self::Error> {
-        Ok(Self {
-            chunks: t.chunks.try_into()?,
-            metadata: t.metadata.into(),
-        })
-    }
-}
-impl<const N: usize, T: 'static> TryInto<CTensorOperator<N, T>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<CTensorOperator<N, T>, Self::Error> {
         Ok(CTensorOperator {
-            chunks: self.chunks.try_into()?,
+            chunks: inner.clone(),
             metadata: self.metadata.try_into()?,
         })
     }
@@ -293,11 +286,44 @@ impl<'a> TryInto<CTensorOperator<1, f32>> for MaybeConstTensorOperator<'a> {
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
+pub struct TensorEmbeddingData {
+    #[pyo3(get)]
+    pub spacing: Vec<f32>,
+}
+
+impl<const N: usize> From<CTensorEmbeddingData<N>> for TensorEmbeddingData {
+    fn from(t: CTensorEmbeddingData<N>) -> Self {
+        Self {
+            spacing: t.spacing.into_iter().collect(),
+        }
+    }
+}
+
+impl<const N: usize> TryInto<CTensorEmbeddingData<N>> for TensorEmbeddingData {
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CTensorEmbeddingData<N>, Self::Error> {
+        if N != self.spacing.len() {
+            return Err(PyErr::new::<PyException, _>(format!(
+                "Expected TensorEmbeddingData<{}>, but got TensorEmbeddingData<{}>",
+                N,
+                self.spacing.len()
+            )));
+        }
+
+        Ok(CTensorEmbeddingData {
+            spacing: std::array::from_fn(|i| self.spacing[i]).into(),
+        })
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
 pub struct EmbeddedTensorOperator {
     #[pyo3(get, set)]
     pub inner: TensorOperator,
     #[pyo3(get, set)]
-    pub embedding_data: ScalarOperator,
+    pub embedding_data: TensorEmbeddingData,
 }
 
 impl<const N: usize, T: std::any::Any> TryFrom<CEmbeddedTensorOperator<N, T>>
@@ -319,8 +345,9 @@ impl<const N: usize, T: std::any::Any> TryInto<CEmbeddedTensorOperator<N, T>>
     type Error = PyErr;
 
     fn try_into(self) -> Result<CEmbeddedTensorOperator<N, T>, Self::Error> {
+        let inner = self.inner.try_into()?;
         Ok(CEmbeddedTensorOperator {
-            inner: self.inner.try_into()?,
+            inner,
             embedding_data: self.embedding_data.try_into()?,
         })
     }
@@ -399,10 +426,10 @@ impl<const N: usize, T: std::any::Any> TryInto<CLODTensorOperator<N, T>> for LOD
 }
 #[pymethods]
 impl LODTensorOperator {
-    pub fn fine_metadata(&self) -> ScalarOperator {
+    pub fn fine_metadata(&self) -> TensorMetaData {
         self.levels[0].inner.metadata.clone()
     }
-    pub fn fine_embedding_data(&self) -> ScalarOperator {
+    pub fn fine_embedding_data(&self) -> TensorEmbeddingData {
         self.levels[0].embedding_data.clone()
     }
 }

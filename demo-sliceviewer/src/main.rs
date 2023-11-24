@@ -253,16 +253,12 @@ fn slice_viewer_z(
         vol.fine_metadata(),
         vol.fine_embedding_data(),
         md.dimensions,
-        crate::operators::scalar::constant(slice_num_g),
-        crate::operators::scalar::constant(*offset),
-        crate::operators::scalar::constant(*zoom_level),
+        slice_num_g,
+        *offset,
+        *zoom_level,
     );
 
-    let slice = crate::operators::sliceviewer::render_slice(
-        vol,
-        crate::operators::scalar::constant(md),
-        slice_proj_z,
-    );
+    let slice = crate::operators::sliceviewer::render_slice(vol, md, slice_proj_z);
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice

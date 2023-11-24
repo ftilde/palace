@@ -46,7 +46,7 @@ pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
         input,
         move |ctx, input| {
             async move {
-                let vol = ctx.submit(input.metadata.request_scalar()).await;
+                let vol = input.metadata;
 
                 let to_request = vol.brick_positions().collect::<Vec<_>>();
                 let batch_size = 1024;
@@ -114,21 +114,16 @@ pub fn rechunk<E: Element>(
         OperatorId::new("volume_rechunk")
             .dependent_on(&input)
             .dependent_on(&brick_size),
-        input.clone(),
-        input,
-        move |ctx, input| {
-            async move {
-                let req = input.metadata.request_scalar();
-                let mut m = ctx.submit(req).await;
-                m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
-                ctx.write(m)
-            }
-            .into()
+        {
+            let mut m = input.metadata;
+            m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
+            m
         },
+        input,
         move |ctx, positions, input| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
-                let m_in = ctx.submit(input.metadata.request_scalar()).await;
+                let m_in = input.metadata;
                 let m_out = {
                     let mut m_out = m_in;
                     m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
@@ -236,24 +231,14 @@ pub fn convolution_1d<const DIM: usize>(
         OperatorId::new("convolution_1d")
             .dependent_on(&input)
             .dependent_on(&kernel),
-        input.clone(),
+        input.metadata,
         (input, kernel),
-        move |ctx, input| {
-            async move {
-                let req = input.metadata.request_scalar();
-                let m = ctx.submit(req).await;
-                ctx.write(m)
-            }
-            .into()
-        },
         move |ctx, positions, (input, kernel)| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
-                let (m_in, kernel_m, kernel_handle) = futures::join!(
-                    ctx.submit(input.metadata.request_scalar()),
-                    ctx.submit(kernel.metadata.request_scalar()),
-                    ctx.submit(kernel.chunks.request([0].into())),
-                );
+                let m_in = input.metadata;
+                let kernel_m = kernel.metadata;
+                let kernel_handle = ctx.submit(kernel.chunks.request([0].into())).await;
 
                 assert_eq!(
                     kernel_m.dimensions.raw(),
