@@ -20,9 +20,6 @@ pub fn multiscale_vesselness(
     num_steps: usize,
 ) -> VolumeOperator<f32> {
     assert!(num_steps > 0);
-    if num_steps == 1 {
-        return vesselness(input.clone(), min_scale);
-    }
 
     let mut out = vesselness(input.clone(), min_scale);
 

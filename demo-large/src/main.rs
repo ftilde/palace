@@ -501,7 +501,7 @@ fn eval_network(
                                 .logarithmic(true),
                         );
                         ui.add(
-                            egui::Slider::new(&mut app_state.vesselness.steps, 2..=10)
+                            egui::Slider::new(&mut app_state.vesselness.steps, 1..=10)
                                 .text("Scale space steps"),
                         );
                     }
