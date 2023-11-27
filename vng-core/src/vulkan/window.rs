@@ -762,6 +762,8 @@ const FRAG_SHADER: &str = "
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_scalar_block_layout : require
 
+#include <color.glsl>
+
 layout(scalar, binding = 0) readonly buffer InputBuffer{
     u8vec4 values[];
 } sourceData;
@@ -776,6 +778,6 @@ void main() {
     uvec2 buffer_pos = uvec2(norm_pos * vec2(constants.size));
     uint buffer_index = buffer_pos.x + buffer_pos.y * constants.size.x;
 
-    out_color = vec4(sourceData.values[buffer_index])/255; //NO_PUSH_main
+    out_color = to_uniform(sourceData.values[buffer_index]);
 }
 ";

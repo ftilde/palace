@@ -471,6 +471,7 @@ pub fn raycast(
 #include <hash.glsl>
 #include <sample.glsl>
 #include <vec.glsl>
+#include <color.glsl>
 
 layout(buffer_reference, std430) buffer IndexType {
     BrickType values[];
@@ -513,12 +514,6 @@ layout(std430, binding = 3) buffer StateBuffer {
 } state_cache;
 
 declare_push_consts(consts);
-
-u8vec4 map_to_color(float v) {
-    v = clamp(v, 0.0, 1.0);
-    uint8_t u = uint8_t(v * 255); //TODO: is this correct?
-    return u8vec4(u, u, u, 255);
-}
 
 struct EEPoint {
     vec3 entry;
@@ -666,7 +661,7 @@ void main()
                 state_cache.values[gID] = state;
             }
 
-            color = map_to_color(state.intensity);
+            color = intensity_to_grey(state.intensity);
         } else {
             color = u8vec4(0);
         }

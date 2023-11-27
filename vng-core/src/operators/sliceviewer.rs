@@ -214,6 +214,7 @@ pub fn render_slice(
 #extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
+#include <color.glsl>
 #include <hash.glsl>
 #include <mat.glsl>
 #include <sample.glsl>
@@ -246,12 +247,6 @@ declare_push_consts(consts);
 #define INIT_VAL 1
 #define INIT_EMPTY 2
 
-u8vec4 map_to_color(float v) {
-    v = clamp(v, 0.0, 1.0);
-    uint8_t u = uint8_t(v * 255); //TODO: is this correct?
-    return u8vec4(u, u, u, 255);
-}
-
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
@@ -262,7 +257,7 @@ void main()
         u8vec4 val;
         if(s == INIT_VAL) {
             float v = brick_values.values[gID];
-            val = map_to_color(v);
+            val = intensity_to_grey(v);
         } else if(s == INIT_EMPTY) {
             val = u8vec4(0, 0, 255, 255);
         } else {
@@ -287,7 +282,7 @@ void main()
             try_sample(sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
             if(res == SAMPLE_RES_FOUND) {
-                val = map_to_color(sampled_intensity);
+                val = intensity_to_grey(sampled_intensity);
 
                 state.values[gID] = INIT_VAL;
                 brick_values.values[gID] = sampled_intensity;
