@@ -278,7 +278,7 @@ fn eval_network(
     //);
     //let vol = bin_ops::sub(vol, gen);
 
-    let vol = vng_core::operators::resample::create_lod(vol, 2.0, 3);
+    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
 
     let md = ImageMetaData {
         dimensions: window.size(),

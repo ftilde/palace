@@ -362,7 +362,7 @@ fn eval_network(
         let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
         scaled
     });
-    let vol = vng_core::operators::resample::create_lod(vol, 2.0, 3);
+    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
 
     let left = slice_viewer_z(
         vol.clone(),

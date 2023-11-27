@@ -356,9 +356,9 @@ impl<const N: usize, T: std::any::Any> TryInto<CEmbeddedTensorOperator<N, T>>
 #[pymethods]
 impl EmbeddedTensorOperator {
     //TODO: Generalize for other dims and maybe datatypes
-    fn create_lod(&self, step_factor: f32, num_levels: usize) -> PyResult<LODTensorOperator> {
+    fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
         let vol: CEmbeddedTensorOperator<3, f32> = self.clone().try_into()?;
-        vng_core::operators::resample::create_lod(vol, step_factor, num_levels).try_into()
+        vng_core::operators::resample::create_lod(vol, step_factor).try_into()
     }
 }
 

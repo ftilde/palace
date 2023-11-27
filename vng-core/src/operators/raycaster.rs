@@ -99,7 +99,7 @@ impl CameraState {
             cgmath::Deg(self.fov),
             size.x().raw as f32 / size.y().raw as f32,
             0.001,
-            100.0,
+            1000.0,
         )
         .into();
         let matrix = perspective * self.trackball.view_mat();

@@ -16,7 +16,7 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
 #v2 = vng.linear_rescale(v1, 2, m1)
 #vol = vng.separable_convolution(vol, [k]*3)
-vol = vol.create_lod(2.0, 3)
+vol = vol.create_lod(2.0)
 
 store = vng.Store()
 

@@ -454,7 +454,7 @@ fn eval_network(
             operators::resample::smooth_downsample(vol, md.into())
         }
     };
-    let processed = vng_core::operators::resample::create_lod(processed, 2.0, 3);
+    let processed = vng_core::operators::resample::create_lod(processed, 2.0);
     let mut take_screenshot = false;
 
     let gui = app_state.gui.setup(&mut events, |ctx| {

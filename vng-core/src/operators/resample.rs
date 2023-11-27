@@ -76,7 +76,6 @@ pub fn smooth_downsample<'op>(
 pub fn create_lod<'op>(
     input: EmbeddedTensorOperator<N, f32>,
     step_factor: f32,
-    num_levels: usize,
 ) -> LODTensorOperator<N, f32> {
     assert!(step_factor > 1.0);
 
@@ -85,7 +84,7 @@ pub fn create_lod<'op>(
 
     levels.push(current.clone());
 
-    for _ in 0..num_levels {
+    loop {
         let new_md = {
             let e = current.embedding_data;
             let m = current.metadata;
@@ -105,6 +104,10 @@ pub fn create_lod<'op>(
 
         current = smooth_downsample(current, new_md);
         levels.push(current.clone());
+
+        if hmul(new_md.dimension_in_chunks()) == 1 {
+            break;
+        }
     }
 
     LODTensorOperator { levels }
