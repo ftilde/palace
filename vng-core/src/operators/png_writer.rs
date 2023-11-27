@@ -18,10 +18,6 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
         return Err("Image must consist of a single chunk".into());
     }
 
-    if m.dimensions.x().raw != 4 {
-        return Err("Image must have exactly four channels".into());
-    }
-
     let img = ctx
         .submit(input.chunks.request(Vector::fill(0.into())))
         .await;
@@ -29,11 +25,10 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     let file = File::create(path).unwrap();
     let ref mut w = BufWriter::new(file);
 
-    let mut encoder = png::Encoder::new(w, m.dimensions.raw()[1], m.dimensions.raw()[0]); // Width is 2 pixels and height is 1.
+    let mut encoder = png::Encoder::new(w, m.dimensions.raw().x(), m.dimensions.raw().y());
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    //encoder.set_source_gamma(png::ScaledFloat::from_scaled(45455)); // 1.0 / 2.2, scaled by 100000
-    encoder.set_source_gamma(png::ScaledFloat::new(1.0 / 2.2)); // 1.0 / 2.2, unscaled, but rounded
+    encoder.set_source_gamma(png::ScaledFloat::new(1.0));
     let source_chromaticities = png::SourceChromaticities::new(
         // Using unscaled instantiation here
         (0.31270, 0.32900),
@@ -50,7 +45,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
             let res: [u8; 4] = (*v).into();
             res
         })
-        .flatten() //NO_PUSH_main test this!
+        .flatten()
         .collect::<Vec<_>>();
     writer.write_image_data(&data).unwrap();
 

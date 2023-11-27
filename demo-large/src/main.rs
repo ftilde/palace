@@ -455,6 +455,7 @@ fn eval_network(
         }
     };
     let processed = vng_core::operators::resample::create_lod(processed, 2.0, 3);
+    let mut take_screenshot = false;
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -570,6 +571,9 @@ fn eval_network(
                         );
                     }
                 }
+                if ui.button("Save Screenshot").clicked() {
+                    take_screenshot = true;
+                }
             });
         });
     });
@@ -616,6 +620,18 @@ fn eval_network(
     let version = runtime.resolve(Some(deadline), |ctx, _| {
         async move { window.render(ctx, slice_ref).await }.into()
     })?;
+
+    if take_screenshot {
+        runtime
+            .resolve(Some(deadline), |ctx, _| {
+                async move {
+                    vng_core::operators::png_writer::write(ctx, slice_ref, "screenshot.png".into())
+                        .await
+                }
+                .into()
+            })
+            .unwrap();
+    }
 
     Ok(version)
 }
