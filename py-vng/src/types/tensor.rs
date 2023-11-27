@@ -198,8 +198,8 @@ impl<const N: usize> TryInto<CTensorMetaData<N>> for TensorMetaData {
         assert_eq!(self.dimensions.len(), self.chunk_size.len());
 
         Ok(CTensorMetaData {
-            dimensions: std::array::from_fn(|i| self.dimensions[i]).into(),
-            chunk_size: std::array::from_fn(|i| self.chunk_size[i]).into(),
+            dimensions: self.dimensions.try_into().unwrap(),
+            chunk_size: self.chunk_size.try_into().unwrap(),
         })
     }
 }
@@ -312,7 +312,7 @@ impl<const N: usize> TryInto<CTensorEmbeddingData<N>> for TensorEmbeddingData {
         }
 
         Ok(CTensorEmbeddingData {
-            spacing: std::array::from_fn(|i| self.spacing[i]).into(),
+            spacing: self.spacing.try_into().unwrap(),
         })
     }
 }

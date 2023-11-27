@@ -232,6 +232,17 @@ impl<const N: usize, T, I: Copy + Into<T>> From<[I; N]> for Vector<N, T> {
     }
 }
 
+impl<const N: usize, T, I: Copy + Into<T>> TryFrom<Vec<I>> for Vector<N, T> {
+    type Error = ();
+
+    fn try_from(value: Vec<I>) -> Result<Self, Self::Error> {
+        if value.len() != N {
+            return Err(());
+        }
+        Ok(Self::from_fn(|i| value[i].into()))
+    }
+}
+
 impl<const N: usize, T> Into<[T; N]> for Vector<N, T> {
     fn into(self) -> [T; N] {
         self.0

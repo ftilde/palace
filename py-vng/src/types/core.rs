@@ -1,11 +1,11 @@
 use crate::map_err;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyException, prelude::*};
 use winit::{
     event::{Event, WindowEvent},
     platform::run_return::EventLoopExtRunReturn,
 };
 
-use super::{Events, ScalarOperator, TensorOperator};
+use super::{Events, TensorOperator};
 
 #[pyclass(unsendable)]
 pub struct RunTime {
@@ -29,12 +29,31 @@ impl RunTime {
         })
     }
 
-    fn resolve(&mut self, v: ScalarOperator) -> PyResult<f32> {
-        let op: vng_core::operators::scalar::ScalarOperator<f32> = v.try_into()?;
-        let op_ref = &op;
-        map_err(self.inner.resolve(None, |ctx, _| {
-            async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
-        }))
+    fn resolve(&mut self, py: Python, v: TensorOperator, pos: Vec<u32>) -> PyResult<PyObject> {
+        match pos.len() {
+            1 => {
+                let op: vng_core::operators::tensor::TensorOperator<1, f32> = v.try_into()?;
+                let op_ref = &op;
+                map_err(self.inner.resolve(None, |ctx, _| {
+                    async move {
+                        let chunk = ctx
+                            .submit(op_ref.chunks.request(pos.try_into().unwrap()))
+                            .await;
+                        Ok(chunk.to_vec())
+                    }
+                    .into()
+                }))
+                .map(|v| numpy::PyArray1::from_vec(py, v).into_py(py))
+            }
+            //TODO: Construct owned chunk using ndarray integration and then use use
+            //PyArray::from_owned_array outside of the task
+            n => {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "{}-dimensional tensor resolving not yet implemented.",
+                    n
+                )))
+            }
+        }
     }
 }
 
