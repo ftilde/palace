@@ -204,7 +204,6 @@ mod py {
     use super::*;
     use pyo3::prelude::*;
 
-    // Matrix
     impl<'source, const N: usize, T: numpy::Element> FromPyObject<'source> for Matrix<N, T> {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             let np = ob.extract::<numpy::borrow::PyReadonlyArray2<T>>()?;
@@ -228,5 +227,52 @@ mod py {
             )
             .into_py(py)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn dot() {
+        let v1 = Vector::<5, usize>::from_fn(|i| (i + 1) * 5);
+        let v2 = Vector::<5, usize>::new([1, 0, 1, 0, 2]);
+        assert_eq!(v1.dot(&v2), 5 + 15 + 50);
+    }
+
+    #[test]
+    fn mul_mat_vec() {
+        let v = Vector::<2, usize>::new([5, 2]);
+        let m = Matrix::<2, usize>::new([[1usize, 2].into(), [3usize, 4].into()]);
+        let r = Vector::<2, usize>::new([5 + 6, 10 + 8]);
+        assert_eq!(m * v, r);
+    }
+
+    #[test]
+    fn mul_mat_mat() {
+        let m1 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let m2 = Matrix::<2, i32>::new([[9, 8].into(), [0, -1].into()]);
+        let r = Matrix::<2, i32>::new([[9 + 24, 18 + 32].into(), [-3, -4].into()]);
+        assert_eq!(m1 * m2, r);
+
+        let m1 = Matrix::<2, i32>::identity();
+        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        assert_eq!(m1 * m2, m2);
+        assert_eq!(m2 * m1, m2);
+        assert_eq!(m1 * m1, m1);
+
+        let m1 = Matrix::<2, i32>::new([[1, 0].into(), [0, 0].into()]);
+        let m2 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let r = Matrix::<2, i32>::new([[1, 0].into(), [3, 0].into()]);
+        assert_eq!(m1 * m2, r);
+    }
+
+    #[test]
+    fn add_mat_mat() {
+        let m1 = Matrix::<2, i32>::new([[1, 2].into(), [3, 4].into()]);
+        let m2 = Matrix::<2, i32>::new([[9, 8].into(), [0, -1].into()]);
+        let r = Matrix::<2, i32>::new([[1 + 9, 2 + 8].into(), [3, 3].into()]);
+        assert_eq!(m1 + m2, r);
     }
 }
