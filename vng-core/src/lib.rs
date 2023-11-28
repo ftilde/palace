@@ -1,3 +1,4 @@
+pub mod aabb;
 pub mod array;
 pub mod chunk_utils;
 pub mod coordinate;
