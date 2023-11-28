@@ -35,13 +35,11 @@ impl<D: Dimension> ChunkInfo<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern)]
 pub struct TensorMetaData<D: Dimension> {
     pub dimensions: Vector<D, GlobalCoordinate>,
     pub chunk_size: Vector<D, LocalCoordinate>,
 }
-
-unsafe impl<D: Dimension> bytemuck::AnyBitPattern for TensorMetaData<D> {}
 
 impl<D: Dimension> crate::id::Identify for TensorMetaData<D> {
     fn id(&self) -> crate::id::Id {
