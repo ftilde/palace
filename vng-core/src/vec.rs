@@ -435,3 +435,37 @@ mod py {
         }
     }
 }
+
+pub fn hmul<const N: usize, T: CoordinateType>(s: Vector<N, Coordinate<T>>) -> usize {
+    s.into_iter().map(|v| v.raw as usize).product()
+}
+
+pub fn to_linear<const N: usize, T: CoordinateType>(
+    pos: Vector<N, Coordinate<T>>,
+    dim: Vector<N, Coordinate<T>>,
+) -> usize {
+    let mut out = pos[0].raw as usize;
+    for i in 1..N {
+        out = out * dim[i].raw as usize + pos[i].raw as usize;
+    }
+    out
+}
+
+pub fn from_linear<const N: usize, T: CoordinateType>(
+    mut linear_pos: usize,
+    dim: Vector<N, Coordinate<T>>,
+) -> Vector<N, Coordinate<T>> {
+    let mut out = Vector::<N, Coordinate<T>>::fill(0.into());
+    for i in (0..N).rev() {
+        let ddim = dim[i].raw as usize;
+        out[i] = ((linear_pos % ddim) as u32).into();
+        linear_pos /= ddim;
+    }
+    out
+}
+
+pub type LocalVoxelPosition = Vector<3, LocalCoordinate>;
+pub type VoxelPosition = Vector<3, GlobalCoordinate>;
+pub type BrickPosition = Vector<3, ChunkCoordinate>;
+
+pub type PixelPosition = Vector<2, GlobalCoordinate>;
