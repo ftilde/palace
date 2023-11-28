@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Matrix, Vector, VoxelPosition};
+use vng_core::dim::*;
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
@@ -212,9 +213,9 @@ fn eval_network(
     window: &mut Window,
     vol: &dyn EmbeddedVolumeOperatorState,
     fov: &mut f32,
-    eye: &mut Vector<3, f32>,
-    center: &mut Vector<3, f32>,
-    up: &mut Vector<3, f32>,
+    eye: &mut Vector<D3, f32>,
+    center: &mut Vector<D3, f32>,
+    up: &mut Vector<D3, f32>,
     scale: &mut f32,
     offset: &mut f32,
     stddev: &mut f32,
@@ -286,14 +287,14 @@ fn eval_network(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let perspective: Matrix<4, f32> = cgmath::perspective(
+    let perspective: Matrix<D4, f32> = cgmath::perspective(
         cgmath::Deg(*fov),
         md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
         0.001, //TODO:
         100.0,
     )
     .into();
-    let look_at: Matrix<4, f32> =
+    let look_at: Matrix<D4, f32> =
         cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into()).into();
     let matrix = perspective * look_at;
     let eep = vng_core::operators::raycaster::entry_exit_points(

@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
+use vng_core::dim::*;
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
 use vng_core::operators::raycaster::CameraState;
@@ -77,8 +78,8 @@ struct VesselnessState {
 }
 
 struct DownSampleState {
-    target: Vector<3, u32>,
-    vol_size: Vector<3, u32>,
+    target: Vector<D3, u32>,
+    vol_size: Vector<D3, u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -312,7 +313,7 @@ fn slice_viewer_rot(
                     let mat = mat_ref;
                     let m_in = md_ref;
 
-                    let mouse_pos = Vector::<4, f32>::from([
+                    let mouse_pos = Vector::<D4, f32>::from([
                         1.0,
                         0.0,
                         mouse_pos.y() as f32,
@@ -377,7 +378,7 @@ fn slice_viewer_rot(
 
 fn raycaster(
     vol: LODVolumeOperator<f32>,
-    size: Vector<2, GlobalCoordinate>,
+    size: Vector<D2, GlobalCoordinate>,
     state: &mut CameraState,
     mut events: EventStream,
 ) -> FrameOperator {

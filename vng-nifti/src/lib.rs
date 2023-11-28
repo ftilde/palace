@@ -5,6 +5,7 @@ use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 use vng_core::{
     array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
     data::{self, LocalCoordinate, Vector, VoxelPosition},
+    dim::*,
     operator::OperatorId,
     operators::{
         tensor::TensorOperator,
@@ -23,7 +24,7 @@ pub struct NiftiVolumeSourceState(Rc<NiftiVolumeSourceStateInner>);
 
 pub struct NiftiVolumeSourceStateInner {
     metadata: VolumeMetaData,
-    embedding_data: TensorEmbeddingData<3>,
+    embedding_data: TensorEmbeddingData<D3>,
     type_: Type,
     header: NiftiHeader,
 }
@@ -50,7 +51,7 @@ fn read_metadata(header: &NiftiHeader) -> Result<(VolumeMetaData, VolumeEmbeddin
         nifti::Unit::Micron => 0.001,
         _ => return Err("Invalid length unit".into()),
     };
-    let spacing = Vector::new([sz, sy, sx]).scale(factor);
+    let spacing = Vector::from([sz, sy, sx]).scale(factor);
 
     let chunk_size = [
         1.into(),

@@ -1,5 +1,6 @@
 use crate::map_err;
 use pyo3::{exceptions::PyException, prelude::*};
+use vng_core::dim::*;
 use winit::{
     event::{Event, WindowEvent},
     platform::run_return::EventLoopExtRunReturn,
@@ -32,7 +33,7 @@ impl RunTime {
     fn resolve(&mut self, py: Python, v: TensorOperator, pos: Vec<u32>) -> PyResult<PyObject> {
         match pos.len() {
             1 => {
-                let op: vng_core::operators::tensor::TensorOperator<1, f32> = v.try_into()?;
+                let op: vng_core::operators::tensor::TensorOperator<D1, f32> = v.try_into()?;
                 let op_ref = &op;
                 map_err(self.inner.resolve(None, |ctx, _| {
                     async move {

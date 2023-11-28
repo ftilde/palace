@@ -5,6 +5,7 @@ use crevice::std140::{AsStd140, Std140};
 
 use crate::{
     data::Vector,
+    dim::*,
     storage::gpu::{Allocation, IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
     util::Map,
     vulkan::shader::Shader,
@@ -24,7 +25,7 @@ impl PipelineType for GraphicsPipelineType {
 }
 
 pub struct ComputePipelineType {
-    local_size: Vector<3, u32>,
+    local_size: Vector<D3, u32>,
 }
 impl PipelineType for ComputePipelineType {
     const BINDPOINT: vk::PipelineBindPoint = vk::PipelineBindPoint::COMPUTE;
@@ -413,7 +414,7 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
         self.dispatch3d([1u32, 1, global_size.try_into().unwrap()].into())
     }
 
-    pub unsafe fn dispatch3d(&mut self, global_size: Vector<3, u32>) {
+    pub unsafe fn dispatch3d(&mut self, global_size: Vector<D3, u32>) {
         let num_wgs = crate::util::div_round_up(global_size, self.pipeline.type_.local_size);
 
         let cmd_raw = self.cmd.raw();

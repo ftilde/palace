@@ -6,6 +6,7 @@ use itertools::Itertools;
 use crate::{
     array::VolumeMetaData,
     data::{hmul, BrickPosition, ChunkCoordinate, LocalCoordinate, Vector},
+    dim::*,
     operator::OperatorId,
     operators::tensor::TensorOperator,
     storage::{gpu, Element},
@@ -23,11 +24,11 @@ use super::{
     volume::{ChunkSize, VolumeOperator},
 };
 
-pub fn linear_rescale<'op, const N: usize>(
-    input: TensorOperator<N, f32>,
+pub fn linear_rescale<'op, D: Dimension>(
+    input: TensorOperator<D, f32>,
     scale: f32,
     offset: f32,
-) -> TensorOperator<N, f32> {
+) -> TensorOperator<D, f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         scale: f32,
@@ -162,27 +163,28 @@ impl GLSLType for f32 {
     const TYPE_NAME: &'static str = "float";
 }
 
-impl GLSLType for Vector<4, u8> {
+impl GLSLType for Vector<D4, u8> {
     const TYPE_NAME: &'static str = "uint8_t[4]";
 }
 
-pub fn rechunk<const N: usize, T: Element + GLSLType>(
-    input: TensorOperator<N, T>,
-    brick_size: Vector<N, ChunkSize>,
-) -> TensorOperator<N, T> {
-    #[derive(Copy, Clone, bytemuck::Zeroable)]
+pub fn rechunk<D: Dimension, T: Element + GLSLType>(
+    input: TensorOperator<D, T>,
+    brick_size: Vector<D, ChunkSize>,
+) -> TensorOperator<D, T> {
+    #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
     #[allow(dead_code)] //It says these fields are not read otherwise?? Why?
-    struct PushConstants<const N: usize> {
-        mem_size_in: Vector<N, u32>,
-        mem_size_out: Vector<N, u32>,
-        begin_in: Vector<N, u32>,
-        begin_out: Vector<N, u32>,
-        region_size: Vector<N, u32>,
+    struct PushConstants<D: Dimension> {
+        mem_size_in: Vector<D, u32>,
+        mem_size_out: Vector<D, u32>,
+        begin_in: Vector<D, u32>,
+        begin_out: Vector<D, u32>,
+        region_size: Vector<D, u32>,
         global_size: u32,
     }
+    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
     //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<const N: usize> bytemuck::Pod for PushConstants<N> {}
+    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
     const SHADER: &'static str = r#"
 #version 450
 
@@ -222,7 +224,7 @@ uint[N] from_linear(uint linear_pos, uint[N] dim) {
 
 uint to_linear(uint[N] pos, uint[N] dim) {
     uint res = pos[0];
-    for(int i=1; i<N; i+=1) {
+    for(int i=1; i<D; i+=1) {
         res = res * dim[i] + pos[i];
     }
     return res;
@@ -230,7 +232,7 @@ uint to_linear(uint[N] pos, uint[N] dim) {
 
 uint[N] vec_add(uint[N] l, uint[N] r) {
     uint[N] res;
-    for(int i=0; i<N; i+=1) {
+    for(int i=0; i<D; i+=1) {
         res[i] = l[i] + r[i];
     }
     return res;
@@ -257,7 +259,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on(&brick_size)
             .dependent_on(T::TYPE_NAME)
-            .dependent_on(&N),
+            .dependent_on(&D::N),
         {
             let mut m = input.metadata;
             m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -280,7 +282,7 @@ void main() {
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(T::TYPE_NAME)
-                        .dependent_on(&N),
+                        .dependent_on(&D::N),
                     || {
                         ComputePipeline::new(
                             device,
@@ -288,7 +290,7 @@ void main() {
                                 SHADER,
                                 ShaderDefines::new()
                                     .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size))
-                                    .add("N", N)
+                                    .add("N", D::N)
                                     .add("T", T::TYPE_NAME),
                             ),
                             true,
@@ -304,14 +306,12 @@ void main() {
                     let in_begin_brick = m_in.chunk_pos(out_begin);
                     let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
 
-                    let in_brick_positions = (0..N)
+                    let in_brick_positions = (0..D::N)
                         .into_iter()
                         .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
                         .multi_cartesian_product()
                         .map(|coordinates| {
-                            Vector::<N, ChunkCoordinate>::from(
-                                <[u32; N]>::try_from(coordinates).unwrap(),
-                            )
+                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
                         })
                         .collect::<Vec<_>>();
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {

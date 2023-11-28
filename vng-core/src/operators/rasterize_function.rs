@@ -3,6 +3,7 @@ use futures::StreamExt;
 use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
+    dim::*,
     operator::OperatorId,
     task::TaskContext,
     Error,
@@ -36,7 +37,7 @@ pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 pub fn normalized(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
-    f: impl 'static + Fn(Vector<3, f32>) -> f32 + Sync + Clone,
+    f: impl 'static + Fn(Vector<D3, f32>) -> f32 + Sync + Clone,
 ) -> VoxelPosRasterizer<impl 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> {
     let dim_f = dimensions.map(|v| v.raw as f32);
     voxel(dimensions, brick_size, move |pos: VoxelPosition| {

@@ -4,6 +4,7 @@ use winit::{
 };
 
 use crate::data::Vector;
+use crate::dim::*;
 
 pub type Change = winit::event::WindowEvent<'static>;
 
@@ -38,8 +39,8 @@ impl<F: FnMut()> Behavior for OnKeyPress<F> {
 pub use winit::event::ModifiersState;
 pub use winit::event::MouseButton;
 
-pub type MousePosition = Vector<2, i32>;
-pub type MouseDelta = Vector<2, i32>;
+pub type MousePosition = Vector<D2, i32>;
+pub type MouseDelta = Vector<D2, i32>;
 
 impl TryFrom<PhysicalPosition<f64>> for MousePosition {
     type Error = std::num::TryFromIntError;
@@ -338,7 +339,7 @@ impl<F: FnMut(f32, &EventState)> Behavior for OnWheelMove<F> {
     }
 }
 
-pub struct DragVec2<'a>(pub MouseButton, pub &'a mut Vector<2, f32>);
+pub struct DragVec2<'a>(pub MouseButton, pub &'a mut Vector<D2, f32>);
 
 impl<'a> Behavior for DragVec2<'a> {
     fn input(&mut self, event: Event) -> EventChain {
@@ -349,7 +350,7 @@ impl<'a> Behavior for DragVec2<'a> {
     }
 }
 
-impl<'a> Vector<2, f32> {
+impl<'a> Vector<D2, f32> {
     pub fn drag(&mut self, button: MouseButton) -> DragVec2 {
         DragVec2(button, self)
     }

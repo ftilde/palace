@@ -5,6 +5,7 @@ use futures::StreamExt;
 use crate::{
     array::TensorMetaData,
     data::{hmul, Matrix, Vector, AABB},
+    dim::*,
     operator::{OpaqueOperator, OperatorId},
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -18,26 +19,26 @@ use super::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator};
 
 //TODO: generalize to arbitrary N.
 //This is difficult atm because (at least) we cannot specify the matrix size as N+1
-const N: usize = 3;
+type D = D3;
 
 pub fn resample_rescale_mat<'op>(
-    input_size: TensorMetaData<N>,
-    output_size: TensorMetaData<N>,
-) -> Matrix<{ N + 1 }, f32> {
-    let to_input_center = Matrix::from_translation(Vector::<N, f32>::fill(-0.5));
+    input_size: TensorMetaData<D>,
+    output_size: TensorMetaData<D>,
+) -> Matrix<<D3 as LargerDim>::Larger, f32> {
+    let to_input_center = Matrix::from_translation(Vector::<D, f32>::fill(-0.5));
     let rescale =
         Matrix::from_scale(input_size.dimensions.raw().f32() / output_size.dimensions.raw().f32())
             .to_homogeneuous();
-    let to_output_center = Matrix::from_translation(Vector::<N, f32>::fill(0.5));
+    let to_output_center = Matrix::from_translation(Vector::<D, f32>::fill(0.5));
     let out = to_input_center * rescale * to_output_center;
 
     out
 }
 
 pub fn resample<'op>(
-    input: EmbeddedTensorOperator<N, f32>,
-    output_size: TensorMetaData<N>,
-) -> EmbeddedTensorOperator<N, f32> {
+    input: EmbeddedTensorOperator<D, f32>,
+    output_size: TensorMetaData<D>,
+) -> EmbeddedTensorOperator<D, f32> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size, mat.clone());
     let mut embedding_data = input.embedding_data;
@@ -45,7 +46,7 @@ pub fn resample<'op>(
     // We know that mat is only an affine transformation, so we can extract the scaling
     // parts directly.
     let scale_mat = mat.to_scaling_part();
-    let scale = Vector::<N, f32>::from_fn(|i| *scale_mat.at(i, i));
+    let scale = Vector::<D, f32>::from_fn(|i| *scale_mat.at(i, i));
     embedding_data.spacing = embedding_data.spacing * scale;
 
     EmbeddedTensorOperator {
@@ -55,9 +56,9 @@ pub fn resample<'op>(
 }
 
 pub fn smooth_downsample<'op>(
-    input: EmbeddedTensorOperator<N, f32>,
-    output_size: TensorMetaData<N>,
-) -> EmbeddedTensorOperator<N, f32> {
+    input: EmbeddedTensorOperator<D, f32>,
+    output_size: TensorMetaData<D>,
+) -> EmbeddedTensorOperator<D, f32> {
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
         let s_out = output_size.dimensions.raw().f32();
@@ -67,16 +68,16 @@ pub fn smooth_downsample<'op>(
         stddev
     };
 
-    let kernels = Vector::from_fn(|i| crate::operators::kernels::gauss(scale[i]));
+    let kernels = std::array::from_fn(|i| crate::operators::kernels::gauss(scale[i]));
     let smoothed =
         input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernels.into()));
     resample(smoothed, output_size)
 }
 
 pub fn create_lod<'op>(
-    input: EmbeddedTensorOperator<N, f32>,
+    input: EmbeddedTensorOperator<D, f32>,
     step_factor: f32,
-) -> LODTensorOperator<N, f32> {
+) -> LODTensorOperator<D, f32> {
     assert!(step_factor > 1.0);
 
     let mut levels = Vec::new();
@@ -114,10 +115,10 @@ pub fn create_lod<'op>(
 }
 
 pub fn resample_transform<'op>(
-    input: TensorOperator<N, f32>,
-    output_size: TensorMetaData<N>,
-    element_out_to_in: Matrix<{ N + 1 }, f32>,
-) -> TensorOperator<N, f32> {
+    input: TensorOperator<D, f32>,
+    output_size: TensorMetaData<D>,
+    element_out_to_in: Matrix<<D3 as LargerDim>::Larger, f32>,
+) -> TensorOperator<D, f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,

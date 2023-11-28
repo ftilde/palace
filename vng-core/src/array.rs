@@ -1,13 +1,14 @@
 use crate::data::{hmul, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
+use crate::dim::*;
 
-pub struct ChunkInfo<const N: usize> {
-    pub mem_dimensions: Vector<N, LocalCoordinate>,
-    pub logical_dimensions: Vector<N, LocalCoordinate>,
-    pub begin: Vector<N, GlobalCoordinate>,
+pub struct ChunkInfo<D: Dimension> {
+    pub mem_dimensions: Vector<D, LocalCoordinate>,
+    pub logical_dimensions: Vector<D, LocalCoordinate>,
+    pub begin: Vector<D, GlobalCoordinate>,
 }
-impl<const N: usize> ChunkInfo<N> {
+impl<D: Dimension> ChunkInfo<D> {
     pub fn is_contiguous(&self) -> bool {
-        for i in 1..N {
+        for i in 1..D::N {
             if self.mem_dimensions[i] != self.logical_dimensions[i] {
                 return false;
             }
@@ -21,26 +22,28 @@ impl<const N: usize> ChunkInfo<N> {
         hmul(self.mem_dimensions)
     }
 
-    pub fn in_chunk(&self, pos: Vector<N, GlobalCoordinate>) -> Vector<N, LocalCoordinate> {
+    pub fn in_chunk(&self, pos: Vector<D, GlobalCoordinate>) -> Vector<D, LocalCoordinate> {
         (pos - self.begin).map(LocalCoordinate::interpret_as)
     }
 
-    pub fn begin(&self) -> Vector<N, GlobalCoordinate> {
+    pub fn begin(&self) -> Vector<D, GlobalCoordinate> {
         self.begin
     }
-    pub fn end(&self) -> Vector<N, GlobalCoordinate> {
+    pub fn end(&self) -> Vector<D, GlobalCoordinate> {
         self.begin + self.logical_dimensions
     }
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern)]
-pub struct TensorMetaData<const N: usize> {
-    pub dimensions: Vector<N, GlobalCoordinate>,
-    pub chunk_size: Vector<N, LocalCoordinate>,
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::Zeroable)]
+pub struct TensorMetaData<D: Dimension> {
+    pub dimensions: Vector<D, GlobalCoordinate>,
+    pub chunk_size: Vector<D, LocalCoordinate>,
 }
 
-impl<const N: usize> crate::id::Identify for TensorMetaData<N> {
+unsafe impl<D: Dimension> bytemuck::AnyBitPattern for TensorMetaData<D> {}
+
+impl<D: Dimension> crate::id::Identify for TensorMetaData<D> {
     fn id(&self) -> crate::id::Id {
         crate::id::Id::hash(self)
     }
@@ -48,15 +51,15 @@ impl<const N: usize> crate::id::Identify for TensorMetaData<N> {
 
 // We have to do this manually since bytemuck cannot verify this in general due to the const
 // parameter N. It is fine though (as long as we don't change anything on TensorMetaData).
-//unsafe impl<const N: usize> bytemuck::Pod for TensorMetaData<N> {}
+//unsafe impl<D: Dimension> bytemuck::Pod for TensorMetaData<D> {}
 
 //TODO: generalize
-impl TensorMetaData<3> {
-    pub fn norm_to_voxel(&self) -> Matrix<4, f32> {
+impl TensorMetaData<D3> {
+    pub fn norm_to_voxel(&self) -> Matrix<D4, f32> {
         Matrix::from_translation(Vector::fill(-0.5))
             * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneuous()
     }
-    pub fn voxel_to_norm(&self) -> Matrix<4, f32> {
+    pub fn voxel_to_norm(&self) -> Matrix<D4, f32> {
         Matrix::from_scale(self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneuous()
             * Matrix::from_translation(Vector::fill(0.5))
     }
@@ -64,43 +67,46 @@ impl TensorMetaData<3> {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable)]
-pub struct TensorEmbeddingData<const N: usize> {
-    pub spacing: Vector<N, f32>,
+pub struct TensorEmbeddingData<D: Dimension> {
+    pub spacing: Vector<D, f32>,
     // NOTE: need to change identify impl if we want to add members
 }
 
-impl<const N: usize> crate::id::Identify for TensorEmbeddingData<N> {
+impl<D: Dimension> crate::id::Identify for TensorEmbeddingData<D> {
     fn id(&self) -> crate::id::Id {
         self.spacing.id()
     }
 }
 
 //TODO: generalize
-impl TensorEmbeddingData<3> {
-    pub fn voxel_to_physical(&self) -> Matrix<4, f32> {
+impl TensorEmbeddingData<D3> {
+    pub fn voxel_to_physical(&self) -> Matrix<D4, f32> {
         Matrix::from_scale(self.spacing).to_homogeneuous()
     }
-    pub fn physical_to_voxel(&self) -> Matrix<4, f32> {
+    pub fn physical_to_voxel(&self) -> Matrix<D4, f32> {
         Matrix::from_scale(self.spacing.map(|v| 1.0 / v)).to_homogeneuous()
     }
 }
 
-pub fn norm_to_physical(md: &TensorMetaData<3>, emd: &TensorEmbeddingData<3>) -> Matrix<4, f32> {
+pub fn norm_to_physical(md: &TensorMetaData<D3>, emd: &TensorEmbeddingData<D3>) -> Matrix<D4, f32> {
     emd.voxel_to_physical() * md.norm_to_voxel()
 }
-pub fn physical_to_voxel(md: &TensorMetaData<3>, emd: &TensorEmbeddingData<3>) -> Matrix<4, f32> {
+pub fn physical_to_voxel(
+    md: &TensorMetaData<D3>,
+    emd: &TensorEmbeddingData<D3>,
+) -> Matrix<D4, f32> {
     md.voxel_to_norm() * emd.physical_to_voxel()
 }
 
 //TODO: Revisit this. This is definitely fine as long as we don't add other members
-unsafe impl<const N: usize> bytemuck::Pod for TensorEmbeddingData<N> {}
+unsafe impl<D: Dimension + bytemuck::Zeroable> bytemuck::Pod for TensorEmbeddingData<D> {}
 
 #[cfg(feature = "python")]
 mod py {
     use super::*;
     use pyo3::prelude::*;
 
-    impl<'source, const N: usize> FromPyObject<'source> for TensorMetaData<N> {
+    impl<'source, D: Dimension> FromPyObject<'source> for TensorMetaData<D> {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             Ok(TensorMetaData {
                 dimensions: ob.getattr("dimensions")?.extract()?,
@@ -109,7 +115,7 @@ mod py {
         }
     }
 
-    impl<const N: usize> IntoPy<PyObject> for TensorMetaData<N> {
+    impl<D: Dimension> IntoPy<PyObject> for TensorMetaData<D> {
         fn into_py(self, py: Python<'_>) -> PyObject {
             let m = py.import("collections").unwrap();
             let ty = m
@@ -127,7 +133,7 @@ mod py {
         }
     }
 
-    impl<'source, const N: usize> FromPyObject<'source> for TensorEmbeddingData<N> {
+    impl<'source, D: Dimension> FromPyObject<'source> for TensorEmbeddingData<D> {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             Ok(TensorEmbeddingData {
                 spacing: ob.getattr("spacing")?.extract()?,
@@ -135,7 +141,7 @@ mod py {
         }
     }
 
-    impl<const N: usize> IntoPy<PyObject> for TensorEmbeddingData<N> {
+    impl<D: Dimension> IntoPy<PyObject> for TensorEmbeddingData<D> {
         fn into_py(self, py: Python<'_>) -> PyObject {
             let m = py.import("collections").unwrap();
             let ty = m
@@ -149,27 +155,27 @@ mod py {
     }
 }
 
-impl<const N: usize> TensorMetaData<N> {
+impl<D: Dimension> TensorMetaData<D> {
     pub fn num_elements(&self) -> usize {
         hmul(self.dimensions)
     }
-    pub fn dimension_in_chunks(&self) -> Vector<N, ChunkCoordinate> {
+    pub fn dimension_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
         self.dimensions.zip(self.chunk_size, |a, b| {
             crate::util::div_round_up(a.raw, b.raw).into()
         })
     }
-    pub fn chunk_pos(&self, pos: Vector<N, GlobalCoordinate>) -> Vector<N, ChunkCoordinate> {
+    pub fn chunk_pos(&self, pos: Vector<D, GlobalCoordinate>) -> Vector<D, ChunkCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
     }
-    fn chunk_begin(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalCoordinate> {
+    fn chunk_begin(&self, pos: Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
         pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
-    fn chunk_end(&self, pos: Vector<N, ChunkCoordinate>) -> Vector<N, GlobalCoordinate> {
+    fn chunk_end(&self, pos: Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
         let next_pos = pos + Vector::fill(1u32);
         let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
     }
-    pub fn chunk_info(&self, pos: Vector<N, ChunkCoordinate>) -> ChunkInfo<N> {
+    pub fn chunk_info(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkInfo<D> {
         let begin = self.chunk_begin(pos);
         let end = self.chunk_end(pos);
         let logical_dim = (end - begin).map(LocalCoordinate::interpret_as);
@@ -181,20 +187,20 @@ impl<const N: usize> TensorMetaData<N> {
     }
 }
 
-pub type VolumeMetaData = TensorMetaData<3>;
-pub type VolumeEmbeddingData = TensorEmbeddingData<3>;
+pub type VolumeMetaData = TensorMetaData<D3>;
+pub type VolumeEmbeddingData = TensorEmbeddingData<D3>;
 impl VolumeMetaData {
-    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<3, ChunkCoordinate>> {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<D3, ChunkCoordinate>> {
         let bp = self.dimension_in_chunks();
         itertools::iproduct! { 0..bp.z().raw, 0..bp.y().raw, 0..bp.x().raw }
             .map(|(z, y, x)| [z, y, x].into())
     }
 }
 
-pub type ImageMetaData = TensorMetaData<2>;
-pub type ImageEmbeddingData = TensorEmbeddingData<2>;
+pub type ImageMetaData = TensorMetaData<D2>;
+pub type ImageEmbeddingData = TensorEmbeddingData<D2>;
 impl ImageMetaData {
-    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<2, ChunkCoordinate>> {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<D2, ChunkCoordinate>> {
         let bp = self.dimension_in_chunks();
         itertools::iproduct! { 0..bp.y().raw, 0..bp.x().raw }.map(|(y, x)| [y, x].into())
     }
@@ -206,9 +212,9 @@ impl ImageMetaData {
     }
 }
 
-pub type ArrayMetaData = TensorMetaData<1>;
+pub type ArrayMetaData = TensorMetaData<D1>;
 impl ArrayMetaData {
-    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<1, ChunkCoordinate>> {
+    pub fn brick_positions(&self) -> impl Iterator<Item = Vector<D1, ChunkCoordinate>> {
         let bp = self.dimension_in_chunks();
         (0..bp[0].raw).into_iter().map(|x| Vector::from([x]))
     }

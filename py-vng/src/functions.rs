@@ -1,5 +1,6 @@
 use crate::{map_err, types::*};
 use pyo3::{exceptions::PyException, prelude::*};
+use vng_core::dim::*;
 use vng_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
@@ -21,7 +22,7 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: vng_core::operators::tensor::TensorOperator<2, Vector<4, u8>>| {
+                |vol: vng_core::operators::tensor::TensorOperator<D2, Vector<D4, u8>>| {
                     vng_core::operators::volume_gpu::rechunk(vol, size).into()
                 },
             )
@@ -31,7 +32,7 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: vng_core::operators::tensor::TensorOperator<3, f32>| {
+                |vol: vng_core::operators::tensor::TensorOperator<D3, f32>| {
                     vng_core::operators::volume_gpu::rechunk(vol, size).into()
                 },
             )
@@ -78,7 +79,7 @@ pub fn entry_exit_points(
     input_md: VolumeMetaData,
     embedding_data: VolumeEmbeddingData,
     output_md: ImageMetaData,
-    projection: Matrix<4, f32>,
+    projection: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     vng_core::operators::raycaster::entry_exit_points(
         input_md,
@@ -102,7 +103,7 @@ pub fn raycast(
 pub fn render_slice(
     input: LODTensorOperator,
     result_metadata: vng_core::array::ImageMetaData,
-    projection_mat: vng_core::data::Matrix<4, f32>,
+    projection_mat: vng_core::data::Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     vng_core::operators::sliceviewer::render_slice(
         input.try_into()?,

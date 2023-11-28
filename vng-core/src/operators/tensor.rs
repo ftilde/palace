@@ -5,6 +5,7 @@ use futures::StreamExt;
 use crate::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
+    dim::*,
     id::{Id, Identify},
     operator::{Operator, OperatorId},
     storage::{
@@ -15,22 +16,22 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct TensorOperator<const N: usize, E> {
-    pub metadata: TensorMetaData<N>,
-    pub chunks: Operator<Vector<N, ChunkCoordinate>, E>,
+pub struct TensorOperator<D: Dimension, E> {
+    pub metadata: TensorMetaData<D>,
+    pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,
 }
 
-impl<const N: usize, E: Element> TensorOperator<N, E> {
+impl<D: Dimension, E: Element> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
-                Vec<Vector<N, ChunkCoordinate>>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                Vec<Vector<D, ChunkCoordinate>>,
                 &'inv (),
             ) -> Task<'cref>
             + 'static,
     >(
         base_id: OperatorId,
-        metadata: TensorMetaData<N>,
+        metadata: TensorMetaData<D>,
         chunks: B,
     ) -> Self {
         Self::with_state(base_id, metadata, (), chunks)
@@ -39,14 +40,14 @@ impl<const N: usize, E: Element> TensorOperator<N, E> {
     pub fn with_state<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
-                Vec<Vector<N, ChunkCoordinate>>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                Vec<Vector<D, ChunkCoordinate>>,
                 &'inv SB,
             ) -> Task<'cref>
             + 'static,
     >(
         base_id: OperatorId,
-        metadata: TensorMetaData<N>,
+        metadata: TensorMetaData<D>,
         state_chunks: SB,
         chunks: B,
     ) -> Self {
@@ -59,14 +60,14 @@ impl<const N: usize, E: Element> TensorOperator<N, E> {
     pub fn unbatched<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
-                Vector<N, ChunkCoordinate>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                Vector<D, ChunkCoordinate>,
                 &'inv SB,
             ) -> Task<'cref>
             + 'static,
     >(
         base_id: OperatorId,
-        metadata: TensorMetaData<N>,
+        metadata: TensorMetaData<D>,
         state_chunks: SB,
         chunks: B,
     ) -> Self {
@@ -76,7 +77,7 @@ impl<const N: usize, E: Element> TensorOperator<N, E> {
         }
     }
 
-    pub fn embedded(self, data: TensorEmbeddingData<N>) -> EmbeddedTensorOperator<N, E> {
+    pub fn embedded(self, data: TensorEmbeddingData<D>) -> EmbeddedTensorOperator<D, E> {
         EmbeddedTensorOperator {
             inner: self,
             embedding_data: data,
@@ -84,52 +85,52 @@ impl<const N: usize, E: Element> TensorOperator<N, E> {
     }
 }
 
-impl<const N: usize, E> Identify for TensorOperator<N, E> {
+impl<D: Dimension, E> Identify for TensorOperator<D, E> {
     fn id(&self) -> Id {
         Id::combine(&[(&self.metadata).id(), (&self.chunks).id()])
     }
 }
 
 #[derive(Clone)]
-pub struct EmbeddedTensorOperator<const N: usize, E> {
-    pub inner: TensorOperator<N, E>,
-    pub embedding_data: TensorEmbeddingData<N>,
+pub struct EmbeddedTensorOperator<D: Dimension, E> {
+    pub inner: TensorOperator<D, E>,
+    pub embedding_data: TensorEmbeddingData<D>,
 }
 
-impl<const N: usize, E> Identify for EmbeddedTensorOperator<N, E> {
+impl<D: Dimension, E> Identify for EmbeddedTensorOperator<D, E> {
     fn id(&self) -> Id {
         Id::combine(&[(&self.inner).id(), (&self.embedding_data).id()])
     }
 }
 
-impl<const N: usize, E> std::ops::Deref for EmbeddedTensorOperator<N, E> {
-    type Target = TensorOperator<N, E>;
+impl<D: Dimension, E> std::ops::Deref for EmbeddedTensorOperator<D, E> {
+    type Target = TensorOperator<D, E>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<const N: usize, E> std::ops::DerefMut for EmbeddedTensorOperator<N, E> {
+impl<D: Dimension, E> std::ops::DerefMut for EmbeddedTensorOperator<D, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<const N: usize, E> Into<TensorOperator<N, E>> for EmbeddedTensorOperator<N, E> {
-    fn into(self) -> TensorOperator<N, E> {
+impl<D: Dimension, E> Into<TensorOperator<D, E>> for EmbeddedTensorOperator<D, E> {
+    fn into(self) -> TensorOperator<D, E> {
         self.inner
     }
 }
 
-impl<const N: usize, E> EmbeddedTensorOperator<N, E> {
-    pub fn single_level_lod(self) -> LODTensorOperator<N, E> {
+impl<D: Dimension, E> EmbeddedTensorOperator<D, E> {
+    pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
 }
 
-impl<const N: usize, E> EmbeddedTensorOperator<N, E> {
-    pub fn map_inner(self, f: impl FnOnce(TensorOperator<N, E>) -> TensorOperator<N, E>) -> Self {
+impl<D: Dimension, E> EmbeddedTensorOperator<D, E> {
+    pub fn map_inner(self, f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, E>) -> Self {
         EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,
@@ -138,21 +139,21 @@ impl<const N: usize, E> EmbeddedTensorOperator<N, E> {
 }
 
 #[derive(Clone)]
-pub struct LODTensorOperator<const N: usize, E> {
-    pub levels: Vec<EmbeddedTensorOperator<N, E>>,
+pub struct LODTensorOperator<D: Dimension, E> {
+    pub levels: Vec<EmbeddedTensorOperator<D, E>>,
 }
 
-impl<const N: usize, E> Identify for LODTensorOperator<N, E> {
+impl<D: Dimension, E> Identify for LODTensorOperator<D, E> {
     fn id(&self) -> Id {
         self.levels.as_slice().id()
     }
 }
 
-impl<const N: usize, E> LODTensorOperator<N, E> {
-    pub fn fine_metadata(&self) -> TensorMetaData<N> {
+impl<D: Dimension, E> LODTensorOperator<D, E> {
+    pub fn fine_metadata(&self) -> TensorMetaData<D> {
         self.levels[0].metadata.clone()
     }
-    pub fn fine_embedding_data(&self) -> TensorEmbeddingData<N> {
+    pub fn fine_embedding_data(&self) -> TensorEmbeddingData<D> {
         self.levels[0].embedding_data.clone()
     }
 }
@@ -164,11 +165,11 @@ pub async fn map_values_inplace<
     'inv,
     E: Element,
     F: Fn(E) -> E + Send + Copy + 'static,
-    const N: usize,
+    D: Dimension,
 >(
-    ctx: TaskContext<'cref, 'inv, Vector<N, ChunkCoordinate>, E>,
-    input: &'op Operator<Vector<N, ChunkCoordinate>, E>,
-    positions: Vec<Vector<N, ChunkCoordinate>>,
+    ctx: TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+    input: &'op Operator<Vector<D, ChunkCoordinate>, E>,
+    positions: Vec<Vector<D, ChunkCoordinate>>,
     f: F,
 ) where
     'op: 'inv,
@@ -211,10 +212,10 @@ pub async fn map_values_inplace<
 }
 
 #[allow(unused)]
-pub fn map<const N: usize, E: Element>(
-    input: TensorOperator<N, E>,
+pub fn map<D: Dimension, E: Element>(
+    input: TensorOperator<D, E>,
     f: fn(E) -> E,
-) -> TensorOperator<N, E> {
+) -> TensorOperator<D, E> {
     TensorOperator::with_state(
         OperatorId::new("tensor_map")
             .dependent_on(&input)
@@ -233,11 +234,11 @@ pub fn map<const N: usize, E: Element>(
 }
 
 #[allow(unused)]
-pub fn linear_rescale<const N: usize>(
-    input: TensorOperator<N, f32>,
+pub fn linear_rescale<D: Dimension>(
+    input: TensorOperator<D, f32>,
     factor: f32,
     offset: f32,
-) -> TensorOperator<N, f32> {
+) -> TensorOperator<D, f32> {
     TensorOperator::with_state(
         OperatorId::new("tensor_linear_scale")
             .dependent_on(&input)
@@ -259,10 +260,10 @@ pub fn linear_rescale<const N: usize>(
     )
 }
 
-pub fn from_static<const N: usize, E: Element + Identify>(
-    size: Vector<N, GlobalCoordinate>,
+pub fn from_static<D: Dimension, E: Element + Identify>(
+    size: Vector<D, GlobalCoordinate>,
     values: &'static [E],
-) -> Result<TensorOperator<N, E>, crate::Error> {
+) -> Result<TensorOperator<D, E>, crate::Error> {
     let m = TensorMetaData {
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
@@ -285,7 +286,7 @@ pub fn from_static<const N: usize, E: Element + Identify>(
         move |ctx, _, values| {
             async move {
                 let mut out = ctx
-                    .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
+                    .alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len())
                     .unwrap();
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
@@ -304,10 +305,10 @@ pub fn from_static<const N: usize, E: Element + Identify>(
     ))
 }
 
-pub fn from_rc<const N: usize, E: Element + Identify>(
-    size: Vector<N, GlobalCoordinate>,
+pub fn from_rc<D: Dimension, E: Element + Identify>(
+    size: Vector<D, GlobalCoordinate>,
     values: Rc<[E]>,
-) -> Result<TensorOperator<N, E>, crate::Error> {
+) -> Result<TensorOperator<D, E>, crate::Error> {
     let m = TensorMetaData {
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
@@ -330,7 +331,7 @@ pub fn from_rc<const N: usize, E: Element + Identify>(
         move |ctx, _, values| {
             async move {
                 let mut out = ctx
-                    .alloc_slot(Vector::<N, ChunkCoordinate>::fill(0.into()), values.len())
+                    .alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len())
                     .unwrap();
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
@@ -349,5 +350,5 @@ pub fn from_rc<const N: usize, E: Element + Identify>(
     ))
 }
 
-pub type ImageOperator<E> = TensorOperator<2, E>;
-pub type FrameOperator = ImageOperator<Vector<4, u8>>;
+pub type ImageOperator<E> = TensorOperator<D2, E>;
+pub type FrameOperator = ImageOperator<Vector<D4, u8>>;

@@ -9,6 +9,7 @@ use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
+    dim::*,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -30,7 +31,7 @@ pub struct SliceviewState {
     #[pyo3(get, set)]
     pub selected: u32,
     #[pyo3(get, set)]
-    pub offset: Vector<2, f32>,
+    pub offset: Vector<D2, f32>,
     #[pyo3(get, set)]
     pub zoom_level: f32,
 }
@@ -38,7 +39,7 @@ pub struct SliceviewState {
 #[cfg_attr(feature = "python", pymethods)]
 impl SliceviewState {
     #[new]
-    pub fn new(selected: u32, offset: Vector<2, f32>, zoom_level: f32) -> Self {
+    pub fn new(selected: u32, offset: Vector<D2, f32>, zoom_level: f32) -> Self {
         Self {
             selected,
             offset,
@@ -50,7 +51,7 @@ impl SliceviewState {
         self.store_py(py, store)
     }
 
-    pub fn drag(&mut self, delta: Vector<2, f32>) {
+    pub fn drag(&mut self, delta: Vector<D2, f32>) {
         self.offset = self.offset + delta;
     }
 
@@ -58,7 +59,7 @@ impl SliceviewState {
         self.selected = (self.selected as i32 + delta).max(0) as u32;
     }
 
-    pub fn zoom(&mut self, delta: f32, on: Vector<2, f32>) {
+    pub fn zoom(&mut self, delta: f32, on: Vector<D2, f32>) {
         let zoom_change = (-delta * 0.05).exp(); //TODO: not entirely happy about the magic
                                                  //constant here...
         self.zoom_level *= zoom_change;
@@ -70,8 +71,8 @@ impl SliceviewState {
         dim: usize,
         input_data: VolumeMetaData,
         embedding_data: VolumeEmbeddingData,
-        output_size: Vector<2, GlobalCoordinate>,
-    ) -> Matrix<4, f32> {
+        output_size: Vector<D2, GlobalCoordinate>,
+    ) -> Matrix<D4, f32> {
         slice_projection_mat(
             dim,
             input_data,
@@ -88,8 +89,9 @@ pub fn slice_projection_mat_z_scaled_fit(
     input_data: VolumeMetaData,
     output_data: ImageMetaData,
     selected_slice: GlobalCoordinate,
-) -> Matrix<4, f32> {
-    let to_pixel_center = Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
+) -> Matrix<D4, f32> {
+    let to_pixel_center =
+        Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
     let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
     let img_dim = output_data.dimensions.map(|v| v.raw as f32);
     let scale = Matrix::from_scale(
@@ -101,7 +103,7 @@ pub fn slice_projection_mat_z_scaled_fit(
     .to_homogeneuous();
     let slice_select =
         Matrix::from_translation(Vector::from([selected_slice.raw as f32, 0.0, 0.0]));
-    let to_voxel_center = Matrix::from_translation(Vector::<3, f32>::fill(-0.5));
+    let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
     let out = to_voxel_center * slice_select * scale * to_pixel_center;
     out
 }
@@ -110,11 +112,11 @@ pub fn slice_projection_mat(
     dim: usize,
     input_data: VolumeMetaData,
     embedding_data: VolumeEmbeddingData,
-    output_size: Vector<2, GlobalCoordinate>,
+    output_size: Vector<D2, GlobalCoordinate>,
     selected_slice: GlobalCoordinate,
-    offset: Vector<2, f32>,
+    offset: Vector<D2, f32>,
     zoom_level: f32,
-) -> Matrix<4, f32> {
+) -> Matrix<D4, f32> {
     assert!(dim < 3);
 
     let vol_dim_voxel = input_data.dimensions.map(|v| v.raw as f32);
@@ -142,19 +144,20 @@ pub fn slice_projection_mat(
     let offset_x = (img_dim.x() - (h_size / scaling_factor)).max(0.0) * 0.5;
     let offset_y = (img_dim.y() - (v_size / scaling_factor)).max(0.0) * 0.5;
 
-    let zero = Vector::<3, f32>::fill(0.0);
+    let zero = Vector::<D3, f32>::fill(0.0);
     let col0 = zero.map_element(h_dim, |_| 1.0);
     let col1 = zero.map_element(v_dim, |_| 1.0);
     let permute = Matrix::new([zero, col1, col0]).to_homogeneuous();
 
-    let to_pixel_center = Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
+    let to_pixel_center =
+        Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
     let pixel_transform = permute
         * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
         * Matrix::from_scale(Vector::fill(zoom_level)).to_homogeneuous()
         * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0))
         * to_pixel_center;
 
-    let mut translation = Vector::<3, f32>::fill(-0.5); //For "centered" voxel positions
+    let mut translation = Vector::<D3, f32>::fill(-0.5); //For "centered" voxel positions
     translation[dim] += selected_slice.raw as f32;
     let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
     let slice_select = Matrix::from_translation(translation);
@@ -169,14 +172,15 @@ pub fn slice_projection_mat_centered_rotate(
     embedding_data: VolumeEmbeddingData,
     output_data: ImageMetaData,
     rotation: f32,
-) -> Matrix<4, f32> {
+) -> Matrix<D4, f32> {
     let vol_dim = input_data.dimensions.map(|v| v.raw as f32) * embedding_data.spacing;
     let img_dim = output_data.dimensions.map(|v| v.raw as f32);
 
     let min_dim_img = img_dim.x().min(img_dim.y());
     let min_dim_vol = vol_dim.fold(f32::INFINITY, |a, b| a.min(b));
 
-    let to_pixel_center = Matrix::from_translation(Vector::<2, f32>::fill(0.5).push_dim_large(0.0));
+    let to_pixel_center =
+        Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
     let central_normalized = Matrix::from_scale(Vector::fill(2.0 / min_dim_img)).to_homogeneuous()
         * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0))
         * to_pixel_center;
@@ -185,7 +189,7 @@ pub fn slice_projection_mat_centered_rotate(
     let norm_to_rw = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
         * Matrix::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneuous();
     let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneuous();
-    let to_voxel_center = Matrix::from_translation(Vector::<3, f32>::fill(-0.5));
+    let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
     let out = to_voxel_center * rw_to_voxel * norm_to_rw * rotation * central_normalized;
     out
 }
@@ -193,7 +197,7 @@ pub fn slice_projection_mat_centered_rotate(
 pub fn render_slice(
     input: LODVolumeOperator<f32>,
     result_metadata: ImageMetaData,
-    projection_mat: Matrix<4, f32>,
+    projection_mat: Matrix<D4, f32>,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -321,8 +325,8 @@ void main()
                 let emd_0 = input.levels[0].embedding_data;
                 let pixel_to_voxel = projection_mat;
 
-                let center: Vector<2, f32> = [0.0, 0.0].into();
-                let neighbors: [Vector<2, f32>; 2] = [[0.0, 1.0].into(), [1.0, 0.0].into()];
+                let center: Vector<D2, f32> = [0.0, 0.0].into();
+                let neighbors: [Vector<D2, f32>; 2] = [[0.0, 1.0].into(), [1.0, 0.0].into()];
 
                 let transform_rw = emd_0.voxel_to_physical() * *pixel_to_voxel;
                 let projected_center = transform_rw.transform(center.push_dim_large(0.0));

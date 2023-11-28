@@ -7,6 +7,7 @@ use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
     data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
+    dim::*,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -31,17 +32,17 @@ use super::{
 #[derive(state_link::State, Clone)]
 pub struct TrackballState {
     #[pyo3(get, set)]
-    pub eye: Vector<3, f32>,
+    pub eye: Vector<D3, f32>,
     #[pyo3(get, set)]
-    pub center: Vector<3, f32>,
+    pub center: Vector<D3, f32>,
     #[pyo3(get, set)]
-    pub up: Vector<3, f32>,
+    pub up: Vector<D3, f32>,
 }
 
 #[cfg_attr(feature = "python", pymethods)]
 impl TrackballState {
     #[new]
-    pub fn new(eye: Vector<3, f32>, center: Vector<3, f32>, up: Vector<3, f32>) -> Self {
+    pub fn new(eye: Vector<D3, f32>, center: Vector<D3, f32>, up: Vector<D3, f32>) -> Self {
         Self { eye, center, up }
     }
 
@@ -49,7 +50,7 @@ impl TrackballState {
         self.store_py(py, store)
     }
 
-    pub fn pan_around(&mut self, delta: Vector<2, i32>) {
+    pub fn pan_around(&mut self, delta: Vector<D2, i32>) {
         let look = self.center - self.eye;
         let look_len = look.length();
         let left = self.up.cross(look).normalized();
@@ -69,7 +70,7 @@ impl TrackballState {
         let new_look = look.scale(1.0 - delta * 0.1);
         self.eye = self.center - new_look;
     }
-    pub fn view_mat(&self) -> Matrix<4, f32> {
+    pub fn view_mat(&self) -> Matrix<D4, f32> {
         cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into()).into()
     }
 }
@@ -94,8 +95,8 @@ impl CameraState {
         self.store_py(py, store)
     }
 
-    pub fn projection_mat(&self, size: Vector<2, GlobalCoordinate>) -> Matrix<4, f32> {
-        let perspective: Matrix<4, f32> = cgmath::perspective(
+    pub fn projection_mat(&self, size: Vector<D2, GlobalCoordinate>) -> Matrix<D4, f32> {
+        let perspective: Matrix<D4, f32> = cgmath::perspective(
             cgmath::Deg(self.fov),
             size.x().raw as f32 / size.y().raw as f32,
             0.001,
@@ -111,8 +112,8 @@ pub fn entry_exit_points(
     input_metadata: VolumeMetaData,
     embedding_data: VolumeEmbeddingData,
     result_metadata: ImageMetaData,
-    projection_mat: Matrix<4, f32>,
-) -> ImageOperator<[Vector<4, f32>; 2]> {
+    projection_mat: Matrix<D4, f32>,
+) -> ImageOperator<[Vector<D4, f32>; 2]> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
@@ -452,7 +453,7 @@ void main() {
 
 pub fn raycast(
     input: LODVolumeOperator<f32>,
-    entry_exit_points: ImageOperator<[Vector<4, f32>; 2]>,
+    entry_exit_points: ImageOperator<[Vector<D4, f32>; 2]>,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -675,9 +676,9 @@ void main()
     struct LOD {
         index: u64,
         query_table: u64,
-        dim: Vector<3, u32>,
-        chunk_dim: Vector<3, u32>,
-        spacing: Vector<3, f32>,
+        dim: Vector<D3, u32>,
+        chunk_dim: Vector<D3, u32>,
+        spacing: Vector<D3, f32>,
         _padding: u32,
     }
 

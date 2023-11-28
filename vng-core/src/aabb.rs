@@ -1,8 +1,8 @@
-use crate::{mat::Matrix, vec::Vector};
+use crate::{dim::*, mat::Matrix, vec::Vector};
 
-pub struct AABB<const N: usize, T> {
-    min: Vector<N, T>,
-    max: Vector<N, T>,
+pub struct AABB<D: Dimension, T: Copy> {
+    min: Vector<D, T>,
+    max: Vector<D, T>,
 }
 
 fn partial_ord_min<T: PartialOrd>(v1: T, v2: T) -> T {
@@ -20,15 +20,15 @@ fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
     }
 }
 
-impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
-    pub fn new(p1: Vector<N, T>, p2: Vector<N, T>) -> Self {
+impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
+    pub fn new(p1: Vector<D, T>, p2: Vector<D, T>) -> Self {
         Self {
             min: p1.zip(p2, partial_ord_min),
             max: p1.zip(p2, partial_ord_max),
         }
     }
 
-    pub fn from_points(mut points: impl Iterator<Item = Vector<N, T>>) -> Self {
+    pub fn from_points(mut points: impl Iterator<Item = Vector<D, T>>) -> Self {
         let first = points.next().unwrap();
         let mut s = Self {
             min: first,
@@ -40,20 +40,20 @@ impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
         s
     }
 
-    pub fn add_point(&mut self, p: Vector<N, T>) {
+    pub fn add_point(&mut self, p: Vector<D, T>) {
         self.min = self.min.zip(p, partial_ord_min);
         self.max = self.max.zip(p, partial_ord_max);
     }
 
-    pub fn lower(&self) -> Vector<N, T> {
+    pub fn lower(&self) -> Vector<D, T> {
         self.min
     }
 
-    pub fn upper(&self) -> Vector<N, T> {
+    pub fn upper(&self) -> Vector<D, T> {
         self.max
     }
 
-    //pub fn contains(&self, p: Vector<N, T>) -> bool {
+    //pub fn contains(&self, p: Vector<D, T>) -> bool {
     //    let bigger_than_min = self.min.zip(p, |v1, v2| v1.le(&v2));
     //    let smaller_than_max = p.zip(self.max, |v1, v2| v1.lt(&v2));
     //    bigger_than_min
@@ -63,11 +63,11 @@ impl<const N: usize, T: Copy + PartialOrd> AABB<N, T> {
     //        .all(|v| *v)
     //}
 }
-impl AABB<3, f32> {
+impl AABB<D3, f32> {
     #[must_use]
-    pub fn transform(&self, t: &Matrix<4, f32>) -> Self {
+    pub fn transform(&self, t: &Matrix<D4, f32>) -> Self {
         let points = (0..8).into_iter().map(|b| {
-            let p = Vector::<3, f32>::from_fn(|i| {
+            let p = Vector::<D3, f32>::from_fn(|i| {
                 if (b & (1 << i)) != 0 {
                     self.min[i]
                 } else {

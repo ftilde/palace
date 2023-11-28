@@ -15,6 +15,7 @@ use super::shader::ShaderDefines;
 use super::state::VulkanState;
 use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
 use crate::data::{ChunkCoordinate, GlobalCoordinate, Vector};
+use crate::dim::*;
 use crate::operators::tensor::FrameOperator;
 use crate::storage::DataVersionType;
 use crate::task::OpaqueTaskContext;
@@ -563,7 +564,7 @@ impl Window {
             current_frame: 0,
         })
     }
-    pub fn size(&self) -> Vector<2, GlobalCoordinate> {
+    pub fn size(&self) -> Vector<D2, GlobalCoordinate> {
         [self.swap_chain.extent.height, self.swap_chain.extent.width].into()
     }
     pub fn inner(&self) -> &winit::window::Window {
@@ -603,7 +604,7 @@ impl Window {
         let img = ctx
             .submit(input.chunks.request_gpu(
                 device.id,
-                Vector::<2, ChunkCoordinate>::fill(0.into()),
+                Vector::<D2, ChunkCoordinate>::fill(0.into()),
                 super::DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,

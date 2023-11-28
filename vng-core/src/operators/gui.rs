@@ -13,6 +13,7 @@ pub use egui;
 
 use crate::{
     data::Vector,
+    dim::*,
     event::{EventChain, EventStream},
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -37,14 +38,14 @@ pub struct GuiState(Rc<RefCell<GuiStateInner>>);
 pub struct GuiStateInner {
     egui_ctx: egui::Context,
     version: u64,
-    latest_size: Cell<Vector<2, u32>>,
+    latest_size: Cell<Vector<D2, u32>>,
     textures_delta: TexturesDelta,
     textures: Map<TextureId, (ImageAllocation, vk::ImageView)>,
     scale_factor: f32,
 }
 
 impl GuiStateInner {
-    fn update(&mut self, device: &DeviceContext, size: Vector<2, u32>) {
+    fn update(&mut self, device: &DeviceContext, size: Vector<D2, u32>) {
         self.latest_size.set(size);
 
         let textures_delta = &mut self.textures_delta;
@@ -195,7 +196,7 @@ impl GuiStateInner {
             let _ = TempRessource::new(device, img_view);
         }
     }
-    fn pointer_pos(&self, p: Vector<2, i32>) -> egui::Pos2 {
+    fn pointer_pos(&self, p: Vector<D2, i32>) -> egui::Pos2 {
         let pos = p.map(|v| v as f32 / self.scale_factor);
         (pos.x(), pos.y()).into()
     }

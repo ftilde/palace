@@ -4,6 +4,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, TensorMetaData},
     data::{PixelPosition, Vector},
+    dim::*,
     event::{EventChain, EventStream},
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -46,7 +47,7 @@ pub struct Splitter {
 impl Splitter {
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
         let size_last = self.size_last()[self.split_dim].raw as i32;
-        let t = |p| p - Vector::<2, i32>::fill(0).map_element(self.split_dim, |_| size_last);
+        let t = |p| p - Vector::<D2, i32>::fill(0).map_element(self.split_dim, |_| size_last);
 
         let mut first = EventStream::with_state(e.latest_state().clone());
         let mut last = EventStream::with_state(e.latest_state().clone().transform(t));
@@ -217,7 +218,7 @@ void main()
                         ]);
 
                         let chunk_size = m.chunk_size.raw();
-                        let global_size = chunk_size.add_dim(0, 1);
+                        let global_size = chunk_size.push_dim_large(1);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);

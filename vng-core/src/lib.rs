@@ -3,6 +3,7 @@ pub mod array;
 pub mod chunk_utils;
 pub mod coordinate;
 pub mod data;
+pub mod dim;
 pub mod event;
 pub mod id;
 pub mod mat;

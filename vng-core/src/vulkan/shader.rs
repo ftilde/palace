@@ -4,7 +4,7 @@ use spirq::{EntryPoint, ReflectConfig};
 use spirv_compiler::ShaderKind;
 use std::{cell::RefCell, collections::BTreeMap};
 
-use crate::{data::Vector, util::Map};
+use crate::{data::Vector, dim::*, util::Map};
 
 use super::{pipeline::DynamicDescriptorSetPool, state::VulkanState, DeviceFunctions};
 
@@ -160,7 +160,7 @@ impl DescriptorBindings {
 }
 
 pub struct ShaderBindingInfo {
-    pub local_size: Option<Vector<3, u32>>,
+    pub local_size: Option<Vector<D3, u32>>,
     pub push_const: Option<vk::PushConstantRange>,
     pub descriptor_bindings: DescriptorBindings,
 }

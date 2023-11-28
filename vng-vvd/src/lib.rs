@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use vng_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
+    dim::*,
     operator::OperatorId,
     operators::{
         raw::RawVolumeSourceState,
@@ -19,7 +20,7 @@ use vng_core::{
 pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
     metadata: VolumeMetaData,
-    embedding_data: TensorEmbeddingData<3>,
+    embedding_data: TensorEmbeddingData<D3>,
 }
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {

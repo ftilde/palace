@@ -6,6 +6,7 @@ use crate::{
     data::{
         chunk, chunk_mut, slice_range, BrickPosition, GlobalCoordinate, LocalCoordinate, Vector,
     },
+    dim::*,
     operator::OperatorId,
     storage::Element,
     task::RequestStream,
@@ -35,9 +36,9 @@ impl<O: VolumeOperatorState> EmbeddedVolumeOperatorState for (O, VolumeEmbedding
     }
 }
 
-pub type VolumeOperator<E> = TensorOperator<3, E>;
-pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<3, E>;
-pub type LODVolumeOperator<E> = LODTensorOperator<3, E>;
+pub type VolumeOperator<E> = TensorOperator<D3, E>;
+pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<D3, E>;
+pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
 
 #[allow(unused)]
 pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
@@ -108,7 +109,7 @@ impl ChunkSize {
 #[allow(unused)]
 pub fn rechunk<E: Element>(
     input: VolumeOperator<E>,
-    brick_size: Vector<3, ChunkSize>,
+    brick_size: Vector<D3, ChunkSize>,
 ) -> VolumeOperator<E> {
     TensorOperator::with_state(
         OperatorId::new("volume_rechunk")
@@ -337,7 +338,7 @@ pub fn convolution_1d<const DIM: usize>(
                                     let begin_i_local = (begin_o_global + offset) - begin_i_global;
                                     let end_i_local = (end_o_global + offset) - begin_i_global;
 
-                                    let iter_i_begin = Vector::<3, i32>::fill(0)
+                                    let iter_i_begin = Vector::<D3, i32>::fill(0)
                                         .map_element(DIM, |a| a.max(begin_i_local))
                                         .map(|v| v as usize);
                                     let iter_i_end = in_info
@@ -349,7 +350,7 @@ pub fn convolution_1d<const DIM: usize>(
                                     let begin_o_local = (begin_i_global - offset) - begin_o_global;
                                     let end_o_local = (end_i_global - offset) - begin_o_global;
 
-                                    let iter_o_begin = Vector::<3, i32>::fill(0)
+                                    let iter_o_begin = Vector::<D3, i32>::fill(0)
                                         .map_element(DIM, |a| a.max(begin_o_local))
                                         .map(|v| v as usize);
                                     let iter_o_end = out_info

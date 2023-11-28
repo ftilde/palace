@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use vng_core::dim::*;
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
@@ -220,7 +221,7 @@ fn slice_viewer_z(
     vol: LODVolumeOperator<f32>,
     md: ImageMetaData,
     slice_num: &mut i32,
-    offset: &mut Vector<2, f32>,
+    offset: &mut Vector<D2, f32>,
     zoom_level: &mut f32,
     events: &mut EventStream,
 ) -> FrameOperator {
@@ -300,7 +301,7 @@ fn eval_network(
     vol: &dyn EmbeddedVolumeOperatorState,
     angle: &mut f32,
     slice_num: &mut i32,
-    slice_offset: &mut Vector<2, f32>,
+    slice_offset: &mut Vector<D2, f32>,
     slice_zoom_level: &mut f32,
     scale: &mut f32,
     offset: &mut f32,
