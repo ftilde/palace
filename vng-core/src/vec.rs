@@ -1,4 +1,3 @@
-#![allow(unused)] //NO_PUSH_main
 use std::{
     mem::MaybeUninit,
     ops::{Add, Div, Mul, Neg, Sub},
@@ -32,7 +31,6 @@ impl<D: Dimension, T: Copy + Eq> Eq for Vector<D, T> {}
 
 impl<D: Dimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use std::cmp::Ordering;
         Vector::zip(*self, *other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
             (Some(l), Some(r)) => Some(l.then(r)),
             (Some(l), None) => Some(l),
@@ -563,11 +561,11 @@ pub fn hmul<D: Dimension, T: CoordinateType>(s: Vector<D, Coordinate<T>>) -> usi
 }
 
 pub fn hand<D: Dimension>(s: Vector<D, bool>) -> bool {
-    s.fold(true, |l, r| r && r)
+    s.fold(true, |l, r| l && r)
 }
 
 pub fn hor<D: Dimension>(s: Vector<D, bool>) -> bool {
-    s.fold(false, |l, r| r || r)
+    s.fold(false, |l, r| l || r)
 }
 
 pub fn to_linear<D: Dimension, T: CoordinateType>(
