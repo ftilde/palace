@@ -1,4 +1,4 @@
-use crate::data::{hmul, ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
+use crate::data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
 use crate::dim::*;
 
 pub struct ChunkInfo<D: Dimension> {
@@ -19,7 +19,7 @@ impl<D: Dimension> ChunkInfo<D> {
         self.mem_dimensions == self.logical_dimensions
     }
     pub fn mem_elements(&self) -> usize {
-        hmul(self.mem_dimensions)
+        self.mem_dimensions.hmul()
     }
 
     pub fn in_chunk(&self, pos: Vector<D, GlobalCoordinate>) -> Vector<D, LocalCoordinate> {
@@ -162,7 +162,7 @@ mod py {
 
 impl<D: Dimension> TensorMetaData<D> {
     pub fn num_elements(&self) -> usize {
-        hmul(self.dimensions)
+        self.dimensions.hmul()
     }
     pub fn dimension_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
         self.dimensions.zip(self.chunk_size, |a, b| {

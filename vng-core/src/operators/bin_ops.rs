@@ -2,7 +2,6 @@ use ash::vk;
 use futures::StreamExt;
 
 use crate::{
-    data::hmul,
     dim::*,
     operator::OperatorId,
     vulkan::{
@@ -88,7 +87,7 @@ void main()
                             device,
                             (
                                 shader.as_str(),
-                                ShaderDefines::new().add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
+                                ShaderDefines::new().add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                             ),
                             true,
                         )

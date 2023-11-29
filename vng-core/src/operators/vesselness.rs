@@ -1,7 +1,6 @@
 use ash::vk;
 use futures::StreamExt;
 
-use crate::data::hmul;
 use crate::operator::OperatorId;
 use crate::operators::array::ArrayOperator;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
@@ -157,7 +156,7 @@ void main() {
                             device,
                             (
                                 SHADER,
-                                ShaderDefines::new().add("BRICK_MEM_SIZE", hmul(m.chunk_size)), //.push_const_block::<PushConstants>(),
+                                ShaderDefines::new().add("BRICK_MEM_SIZE", m.chunk_size.hmul()), //.push_const_block::<PushConstants>(),
                             ),
                             true,
                         )
@@ -167,7 +166,7 @@ void main() {
                 while let Some((hessian_bricks, pos)) = stream.next().await {
                     let out_info = m.chunk_info(pos);
 
-                    let global_size = hmul(out_info.mem_dimensions);
+                    let global_size = out_info.mem_dimensions.hmul();
 
                     let gpu_brick_out = ctx
                         .alloc_slot_gpu(device, pos, out_info.mem_elements())

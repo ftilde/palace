@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{
     array::TensorMetaData,
-    data::{hmul, Matrix, Vector, AABB},
+    data::{Matrix, Vector, AABB},
     dim::*,
     operator::{OpaqueOperator, OperatorId},
     vulkan::{
@@ -106,7 +106,7 @@ pub fn create_lod<'op>(
         current = smooth_downsample(current, new_md);
         levels.push(current.clone());
 
-        if hmul(new_md.dimension_in_chunks()) == 1 {
+        if new_md.dimension_in_chunks().hmul() == 1 {
             break;
         }
     }
@@ -211,7 +211,7 @@ void main() {
                 let m_in = input.metadata;
                 let m_out = output_size;
 
-                let num_chunks = hmul(m_in.dimension_in_chunks());
+                let num_chunks = m_in.dimension_in_chunks().hmul();
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -222,7 +222,7 @@ void main() {
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
                                     .add("NUM_CHUNKS", num_chunks)
-                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size)),
+                                    .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul()),
                             ),
                             true,
                         )

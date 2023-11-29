@@ -24,7 +24,7 @@ unsafe impl<D: Dimension, T: Copy + bytemuck::Pod> bytemuck::Pod for Vector<D, T
 
 impl<D: Dimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
     fn eq(&self, other: &Self) -> bool {
-        hand(Vector::zip(*self, *other, |l, r| l == r))
+        Vector::zip(*self, *other, |l, r| l == r).hand()
     }
 }
 impl<D: Dimension, T: Copy + Eq> Eq for Vector<D, T> {}
@@ -555,17 +555,19 @@ pub mod state_link_impl {
     }
 }
 
-//TODO: make these methods
-pub fn hmul<D: Dimension, T: CoordinateType>(s: Vector<D, Coordinate<T>>) -> usize {
-    s.into_iter().map(|v| v.raw as usize).product()
+impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+    pub fn hmul(&self) -> usize {
+        self.into_iter().map(|v| v.raw as usize).product()
+    }
 }
+impl<D: Dimension> Vector<D, bool> {
+    pub fn hand(self) -> bool {
+        self.fold(true, |l, r| l && r)
+    }
 
-pub fn hand<D: Dimension>(s: Vector<D, bool>) -> bool {
-    s.fold(true, |l, r| l && r)
-}
-
-pub fn hor<D: Dimension>(s: Vector<D, bool>) -> bool {
-    s.fold(false, |l, r| l || r)
+    pub fn hor(self) -> bool {
+        self.fold(false, |l, r| l || r)
+    }
 }
 
 pub fn to_linear<D: Dimension, T: CoordinateType>(

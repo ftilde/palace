@@ -8,7 +8,7 @@ use super::{tensor::FrameOperator, volume::LODVolumeOperator};
 use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
+    data::{from_linear, GlobalCoordinate, Matrix, Vector},
     dim::*,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
@@ -361,7 +361,7 @@ void main()
 
                 let out_info = m_out.chunk_info(pos);
 
-                let num_bricks = hmul(m_in.dimension_in_chunks());
+                let num_bricks = m_in.dimension_in_chunks().hmul();
 
                 let brick_index = device
                     .storage
@@ -379,7 +379,7 @@ void main()
                                 SHADER,
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
+                                    .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                     .add("NUM_BRICKS", num_bricks)
                                     .add("REQUEST_TABLE_SIZE", request_table_size),
                             ),
@@ -392,7 +392,7 @@ void main()
                         device,
                         pos,
                         "initialized",
-                        Layout::array::<u32>(hmul(m_out.chunk_size)).unwrap(),
+                        Layout::array::<u32>(m_out.chunk_size.hmul()).unwrap(),
                     )
                     .unwrap();
                 let state_initialized = state_initialized.init(|v| {
@@ -411,7 +411,7 @@ void main()
                         device,
                         pos,
                         "values",
-                        Layout::array::<f32>(hmul(m_out.chunk_size)).unwrap(),
+                        Layout::array::<f32>(m_out.chunk_size.hmul()).unwrap(),
                     )
                     .unwrap()
                     .unpack();

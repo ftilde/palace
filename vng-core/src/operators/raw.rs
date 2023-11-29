@@ -26,7 +26,7 @@ impl RawVolumeSourceState {
         let file = File::open(&path)?;
         let mmap = unsafe { memmap::Mmap::map(&file)? };
 
-        let byte_size = crate::data::hmul(size) * std::mem::size_of::<f32>();
+        let byte_size = size.hmul() * std::mem::size_of::<f32>();
         assert_eq!(file.metadata()?.len(), byte_size as u64);
 
         Ok(Self(Rc::new(RawVolumeSourceStateInner {
@@ -88,7 +88,7 @@ impl RawVolumeSourceState {
         let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
             .unwrap();
         let work = batches.into_iter().map(|positions| {
-            let num_voxels = crate::data::hmul(m.chunk_size);
+            let num_voxels = m.chunk_size.hmul();
 
             let mut brick_handles = positions
                 .into_iter()

@@ -6,7 +6,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, hmul, GlobalCoordinate, Matrix, Vector},
+    data::{from_linear, GlobalCoordinate, Matrix, Vector},
     dim::*,
     operator::{OpaqueOperator, OperatorId},
     operators::tensor::TensorOperator,
@@ -735,7 +735,7 @@ void main()
                 for level in &input.levels {
                     let m_in = level.metadata;
                     let emd = level.embedding_data;
-                    let num_bricks = hmul(m_in.dimension_in_chunks());
+                    let num_bricks = m_in.dimension_in_chunks().hmul();
                     //let dim_in_bricks = m_in.dimension_in_chunks();
 
                     let brick_index = device
@@ -796,7 +796,7 @@ void main()
                         device,
                         pos,
                         "initialized",
-                        Layout::array::<(u32, f32)>(hmul(m_out.chunk_size)).unwrap(),
+                        Layout::array::<(u32, f32)>(m_out.chunk_size.hmul()).unwrap(),
                     )
                     .unwrap();
                 let state_initialized = state_initialized.init(|v| {
@@ -874,7 +874,7 @@ void main()
                         requested_anything = true;
 
                         let dim_in_bricks = data.2.dimension_in_chunks();
-                        let num_bricks = hmul(dim_in_bricks);
+                        let num_bricks = dim_in_bricks.hmul();
 
                         // Fulfill requests
                         to_request_linear.sort_unstable();

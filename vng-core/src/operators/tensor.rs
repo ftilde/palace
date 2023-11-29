@@ -268,7 +268,7 @@ pub fn from_static<D: Dimension, E: Element + Identify>(
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
     };
-    let n_elem = crate::data::hmul(size);
+    let n_elem = size.hmul();
     if n_elem != values.len() {
         return Err(format!(
             "Tensor ({}) and data ({}) size do not match",
@@ -313,7 +313,7 @@ pub fn from_rc<D: Dimension, E: Element + Identify>(
         dimensions: size,
         chunk_size: size.map(LocalCoordinate::interpret_as),
     };
-    let n_elem = crate::data::hmul(size);
+    let n_elem = size.hmul();
     if n_elem != values.len() {
         return Err(format!(
             "Tensor ({}) and data ({}) size do not match",

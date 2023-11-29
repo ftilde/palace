@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::{
     array::VolumeMetaData,
-    data::{hmul, BrickPosition, ChunkCoordinate, LocalCoordinate, Vector},
+    data::{BrickPosition, ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -87,7 +87,7 @@ void main()
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size))
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
                                     .push_const_block::<PushConstants>(),
                             ),
                             true,
@@ -289,7 +289,7 @@ void main() {
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE_IN", hmul(m_in.chunk_size))
+                                    .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
                                     .add("N", D::N)
                                     .add("T", T::TYPE_NAME),
                             ),
@@ -363,7 +363,7 @@ void main() {
                             let descriptor_config =
                                 DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
 
-                            let global_size = hmul(overlap_size);
+                            let global_size = overlap_size.hmul();
 
                             //TODO initialization of outside regions
                             unsafe {
@@ -616,7 +616,7 @@ void main() {
                                 ShaderDefines::new()
                                     .add("MAX_BRICKS", max_bricks.to_string())
                                     .add("DIM", shader_dimension.to_string())
-                                    .add("BRICK_MEM_SIZE", hmul(m_in.chunk_size))
+                                    .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                     .add("KERNEL_SIZE", kernel_size)
                                     .push_const_block::<PushConstants>(),
                             ),
@@ -652,7 +652,7 @@ void main() {
                     assert_eq!(num_chunks, intersecting_bricks.len());
 
                     let first_chunk_pos = in_brick_positions.first().unwrap()[DIM].raw;
-                    let global_size = hmul(m_out.chunk_size);
+                    let global_size = m_out.chunk_size.hmul();
 
                     let consts = PushConstants {
                         mem_dim: m_out.chunk_size.into_elem::<u32>().into(),
@@ -800,7 +800,7 @@ void main()
                                 SHADER,
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                             ),
                             true,
                         )
@@ -808,7 +808,7 @@ void main()
 
                 let sum = ctx.alloc_scalar_gpu(device)?;
 
-                let normalization_factor = 1.0 / (hmul(m.dimensions) as f32);
+                let normalization_factor = 1.0 / (m.dimensions.hmul() as f32);
 
                 device.with_cmd_buffer(|cmd| {
                     unsafe {
@@ -961,7 +961,7 @@ void main()
                                 shader.as_str(),
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", hmul(m.chunk_size)),
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                             ),
                             true,
                         )
