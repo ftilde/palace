@@ -1,6 +1,6 @@
 use crate::map_err;
 use pyo3::{exceptions::PyException, prelude::*};
-use vng_core::dim::*;
+use vng_core::vec::Vector;
 use winit::{
     event::{Event, WindowEvent},
     platform::run_return::EventLoopExtRunReturn,
@@ -11,6 +11,34 @@ use super::{Events, TensorOperator};
 #[pyclass(unsendable)]
 pub struct RunTime {
     pub inner: vng_core::runtime::RunTime,
+}
+
+macro_rules! match_dim {
+    ($n:expr, $call:expr, $call_err:expr) => {
+        match $n {
+            1 => {
+                type D = vng_core::dim::D1;
+                $call()
+            }
+            2 => {
+                type D = vng_core::dim::D2;
+                $call()
+            }
+            3 => {
+                type D = vng_core::dim::D3;
+                $call()
+            }
+            4 => {
+                type D = vng_core::dim::D4;
+                $call()
+            }
+            5 => {
+                type D = vng_core::dim::D5;
+                $call()
+            }
+            n => $call_err(n),
+        }
+    };
 }
 
 #[pymethods]
@@ -31,30 +59,28 @@ impl RunTime {
     }
 
     fn resolve(&mut self, py: Python, v: TensorOperator, pos: Vec<u32>) -> PyResult<PyObject> {
-        match pos.len() {
-            1 => {
-                let op: vng_core::operators::tensor::TensorOperator<D1, f32> = v.try_into()?;
+        match_dim!(
+            pos.len(),
+            || {
+                let op: vng_core::operators::tensor::TensorOperator<D, f32> = v.try_into()?;
                 let op_ref = &op;
                 map_err(self.inner.resolve(None, |ctx, _| {
                     async move {
-                        let chunk = ctx
-                            .submit(op_ref.chunks.request(pos.try_into().unwrap()))
-                            .await;
-                        Ok(chunk.to_vec())
+                        let pos: Vector<D, u32> = pos.try_into().unwrap();
+                        let chunk = ctx.submit(op_ref.chunks.request(pos.chunk())).await;
+                        let chunk_info = op.metadata.chunk_info(pos.chunk());
+                        let chunk = vng_core::data::chunk(&chunk, &chunk_info);
+                        Ok(chunk.to_owned())
                     }
                     .into()
                 }))
-                .map(|v| numpy::PyArray1::from_vec(py, v).into_py(py))
-            }
-            //TODO: Construct owned chunk using ndarray integration and then use use
-            //PyArray::from_owned_array outside of the task
-            n => {
-                return Err(PyErr::new::<PyException, _>(format!(
-                    "{}-dimensional tensor resolving not yet implemented.",
-                    n
-                )))
-            }
-        }
+                .map(|v| numpy::PyArray::from_owned_array(py, v).into_py(py))
+            },
+            |n| Err(PyErr::new::<PyException, _>(format!(
+                "{}-dimensional tensor resolving not yet implemented.",
+                n
+            )))
+        )
     }
 }
 

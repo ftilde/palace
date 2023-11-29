@@ -18,6 +18,12 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 #vol = vng.separable_convolution(vol, [k]*3)
 vol = vol.create_lod(2.0)
 
+#rechunked = vng.rechunk(vol.levels[-1], [4]*3)
+#vol_sparse = vol.levels[-1]
+#print(vol_sparse.inner.metadata.dimensions)
+#print(rt.resolve(rechunked.inner, [0]*3))
+#print(rt.resolve(vol.levels[0].inner, [0]*3))
+
 store = vng.Store()
 
 slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
@@ -116,5 +122,10 @@ def render(size, events):
     frame = gui.render(frame)
 
     return frame
+
+
+# So this does not actually work, because Vector<4, u8> cannot be converted into a numpy type. hmm...
+# (And also currently only the conversion for f32 is implemented...)
+#print(rt.resolve(render([10, 10], vng.Events.none()), [0]*2))
 
 window.run(render, timeout_ms=10)

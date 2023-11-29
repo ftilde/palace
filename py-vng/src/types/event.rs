@@ -8,6 +8,10 @@ pub struct Events(pub vng_core::event::EventStream);
 
 #[pymethods]
 impl Events {
+    #[staticmethod]
+    fn none() -> Self {
+        Events(vng_core::event::EventStream::empty())
+    }
     fn act(&mut self, py: Python, behaviours: Vec<Behaviour>) -> PyResult<()> {
         let mut err = None;
         self.0.act(|e| {
