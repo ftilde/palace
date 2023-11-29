@@ -5,19 +5,13 @@ pub trait Array<T: Sized + Copy>:
     + Copy
 {
     const N: usize;
-    type Mapped<U: Copy>: Array<U>; //NO_PUSH_main try to remove this OR to make sure it is actually used
     fn from_fn(f: impl FnMut(usize) -> T) -> Self;
-    fn map<O: Copy>(self, f: impl FnMut(T) -> O) -> Self::Mapped<O>;
 }
 
 impl<const N: usize, T: Copy> Array<T> for [T; N] {
     const N: usize = N;
-    type Mapped<U: Copy> = [U; N];
     fn from_fn(f: impl FnMut(usize) -> T) -> Self {
         std::array::from_fn(f)
-    }
-    fn map<O: Copy>(self, f: impl FnMut(T) -> O) -> Self::Mapped<O> {
-        self.map(f)
     }
 }
 
