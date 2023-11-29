@@ -104,7 +104,11 @@ mod py {
     use super::*;
     use pyo3::prelude::*;
 
-    impl<'source, D: Dimension> FromPyObject<'source> for TensorMetaData<D> {
+    impl<'source, D: Dimension> FromPyObject<'source> for TensorMetaData<D>
+    where
+        Vector<D, LocalCoordinate>: FromPyObject<'source>,
+        Vector<D, GlobalCoordinate>: FromPyObject<'source>,
+    {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             Ok(TensorMetaData {
                 dimensions: ob.getattr("dimensions")?.extract()?,
@@ -131,7 +135,10 @@ mod py {
         }
     }
 
-    impl<'source, D: Dimension> FromPyObject<'source> for TensorEmbeddingData<D> {
+    impl<'source, D: Dimension> FromPyObject<'source> for TensorEmbeddingData<D>
+    where
+        Vector<D, f32>: FromPyObject<'source>,
+    {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             Ok(TensorEmbeddingData {
                 spacing: ob.getattr("spacing")?.extract()?,

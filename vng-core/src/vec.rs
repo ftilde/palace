@@ -1,5 +1,8 @@
 #![allow(unused)] //NO_PUSH_main
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::{
+    mem::MaybeUninit,
+    ops::{Add, Div, Mul, Neg, Sub},
+};
 
 use crate::{
     coordinate::{ChunkCoordinate, Coordinate, CoordinateType, GlobalCoordinate, LocalCoordinate},
@@ -11,30 +14,9 @@ use crate::{
 #[derive(Copy, Clone)]
 pub struct Vector<D: Dimension, T: Copy>(D::Array<T>);
 
-impl<D: Dimension, T: Copy> state_link::State for Vector<D, T> {
-    type NodeHandle = state_link::NodeHandleSpecialized<Self>;
-
-    fn write(
-        &self,
-        store: &mut state_link::Store,
-        at: state_link::NodeRef,
-    ) -> state_link::Result<()> {
-        todo!()
-    }
-
-    fn store(&self, store: &mut state_link::Store) -> state_link::NodeRef {
-        todo!()
-    }
-
-    fn load(store: &state_link::Store, location: state_link::NodeRef) -> state_link::Result<Self> {
-        todo!()
-    }
-}
-
 impl<D: Dimension, T: Copy + Identify> Identify for Vector<D, T> {
     fn id(&self) -> Id {
-        //(&self[0..D::N]).id()
-        todo!()
+        Id::combine_it(self.into_iter().map(|v| v.id()))
     }
 }
 
@@ -43,30 +25,41 @@ unsafe impl<D: Dimension, T: Copy + bytemuck::Pod> bytemuck::Pod for Vector<D, T
 
 impl<D: Dimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
     fn eq(&self, other: &Self) -> bool {
-        todo!()
-        //self.zip(other, |l, r| *l == r).fold(false, |l, r| r && r)
+        hand(Vector::zip(*self, *other, |l, r| l == r))
     }
 }
 impl<D: Dimension, T: Copy + Eq> Eq for Vector<D, T> {}
 
 impl<D: Dimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        todo!()
+        use std::cmp::Ordering;
+        Vector::zip(*self, *other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
+            (Some(l), Some(r)) => Some(l.then(r)),
+            (Some(l), None) => Some(l),
+            (None, o) => o,
+        })
     }
 }
 impl<D: Dimension, T: Copy + Ord> Ord for Vector<D, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        todo!()
+        use std::cmp::Ordering;
+        Vector::zip(*self, *other, |l, r| l.cmp(&r)).fold(Ordering::Equal, Ordering::then)
     }
 }
 impl<D: Dimension, T: Copy + std::fmt::Debug> std::fmt::Debug for Vector<D, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        let mut f = f.debug_list();
+        for v in *self {
+            f.entry(&v);
+        }
+        f.finish()
     }
 }
 impl<D: Dimension, T: Copy + std::hash::Hash> std::hash::Hash for Vector<D, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        todo!()
+        for v in *self {
+            v.hash(state);
+        }
     }
 }
 
@@ -154,15 +147,13 @@ impl<D: Dimension, T: Copy> Vector<D, T> {
     where
         T: TryInto<U>,
     {
-        todo!()
-        //NO_PUSH_main
-        //// Safety: Standard way to initialize an MaybeUninit array
-        //let mut out: [MaybeUninit<U>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-        //for i in 0..N {
-        //    out[i].write(T::try_into(self.0[i])?);
-        //}
-        //// Safety: We have just initialized all values in the loop above
-        //Ok(Vector(out.map(|v| unsafe { v.assume_init() })))
+        // Safety: Standard way to initialize an MaybeUninit array
+        let mut out: Vector<D, MaybeUninit<U>> = unsafe { MaybeUninit::uninit().assume_init() };
+        for i in 0..D::N {
+            out[i].write(T::try_into(self.0[i])?);
+        }
+        // Safety: We have just initialized all values in the loop above
+        Ok(out.map(|v| unsafe { v.assume_init() }))
     }
 }
 impl<D: Dimension, T: std::ops::Mul<Output = T> + Copy> Vector<D, T> {
@@ -274,13 +265,37 @@ impl<D: SmallerDim, T: Copy> Vector<D, T> {
     }
 }
 
-impl<D: Dimension, T: Copy> IntoIterator for Vector<D, T> {
-    type Item = <<D as Dimension>::Array<T> as IntoIterator>::Item;
+pub struct VecIter<D: Dimension, T: Copy> {
+    vec: Vector<D, T>,
+    i: usize,
+}
 
-    type IntoIter = <<D as Dimension>::Array<T> as IntoIterator>::IntoIter;
+impl<D: Dimension, T: Copy> Iterator for VecIter<D, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i < D::N {
+            let i = self.i;
+            self.i += 1;
+            Some(self.vec[i])
+        } else {
+            None
+        }
+    }
+}
+impl<D: Dimension, T: Copy> ExactSizeIterator for VecIter<D, T> {
+    fn len(&self) -> usize {
+        D::N - self.i
+    }
+}
+
+impl<D: Dimension, T: Copy> IntoIterator for Vector<D, T> {
+    type Item = T;
+
+    type IntoIter = VecIter<D, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        VecIter { vec: self, i: 0 }
     }
 }
 
@@ -421,35 +436,20 @@ impl Vector<D3, f32> {
 #[cfg(feature = "python")]
 mod py {
     use super::*;
-    use pyo3::prelude::*;
+    use pyo3::{prelude::*, types::PyList};
 
-    // Coordinate
-    impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            let raw: u32 = ob.extract()?;
-            Ok(Coordinate::from(raw))
-        }
-    }
-    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            self.raw.into_py(py)
-        }
-    }
-
-    // Vector
-    impl<'source, D: Dimension, T: Copy + FromPyObject<'source>> FromPyObject<'source>
-        for Vector<D, T>
+    impl<'source, D: Dimension, T: Copy> FromPyObject<'source> for Vector<D, T>
+    where
+        D::Array<T>: FromPyObject<'source>,
     {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            //ob.extract::<D::Array<T>>().map(Self::from)
-            todo!()
+            ob.extract::<D::Array<T>>().map(Self)
         }
     }
 
     impl<D: Dimension, T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Vector<D, T> {
         fn into_py(self, py: Python<'_>) -> PyObject {
-            //PyList::new(py, self.into_iter().map(|v| v.into_py(py))).into()
-            todo!()
+            PyList::new(py, self.into_iter().map(|v| v.into_py(py))).into()
         }
     }
 
@@ -459,20 +459,115 @@ mod py {
     //    }
     //}
 
-    impl<D: Dimension, T: Copy + state_link::py::PyState> state_link::py::PyState for Vector<D, T> {
+    impl<D: Dimension, T: Copy + state_link::py::PyState> state_link::py::PyState for Vector<D, T>
+    where
+        D::Array<T>: IntoPy<PyObject> + for<'f> FromPyObject<'f>,
+    {
         fn build_handle(
             py: Python,
             inner: state_link::GenericNodeHandle,
             store: Py<state_link::py::Store>,
         ) -> PyObject {
-            //<D::Array<T>>::build_handle(py, inner.index(0), store)
-            todo!()
+            let init = state_link::py::NodeHandleArray::new::<T>(inner, D::N, store);
+            PyCell::new(py, init).unwrap().to_object(py)
         }
     }
 }
 
+pub mod state_link_impl {
+    use super::*;
+    use state_link::*;
+
+    pub struct VecNodeHandle<D, T> {
+        inner: state_link::GenericNodeHandle,
+        _d: std::marker::PhantomData<D>,
+        _t: std::marker::PhantomData<T>,
+    }
+    impl<D: Dimension, T: Copy + State> NodeHandle for VecNodeHandle<D, T> {
+        type NodeType = Vector<D, T>;
+
+        fn pack(t: GenericNodeHandle) -> Self {
+            Self {
+                inner: t,
+                _d: Default::default(),
+                _t: Default::default(),
+            }
+        }
+
+        fn unpack(&self) -> &GenericNodeHandle {
+            &self.inner
+        }
+    }
+    impl<D: Dimension, T: Copy + State> State for Vector<D, T> {
+        type NodeHandle = VecNodeHandle<D, T>;
+
+        fn store(&self, store: &mut Store) -> NodeRef {
+            let refs = self.into_iter().map(|v| v.store(store)).collect();
+            store.push(Node::Seq(refs))
+        }
+
+        fn load(store: &Store, location: NodeRef) -> Result<Self> {
+            // If only std::array::try_from_fn were stable...
+            // TODO: replace once it is https://github.com/rust-lang/rust/issues/89379
+            if let ResolveResult::Seq(seq) = store.to_val(location)? {
+                let results = Vector::from_fn(|i| {
+                    seq.get(i)
+                        .ok_or(Error::SeqTooShort)
+                        .and_then(|v| T::load(store, *v))
+                });
+                for (i, r) in results.into_iter().enumerate() {
+                    if let Err(_e) = r {
+                        match results.into_iter().nth(i).unwrap() {
+                            Ok(_) => std::unreachable!(),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+                Ok(results.map(|v| match v {
+                    Ok(e) => e,
+                    Err(_) => std::unreachable!(),
+                }))
+            } else {
+                Err(Error::IncorrectType)
+            }
+        }
+
+        fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+            let seq = if let ResolveResult::Seq(seq) = store.to_val(at)? {
+                seq.clone() //TODO: instead of cloning we can probably also just take the old value out
+            } else {
+                return Err(Error::IncorrectType);
+            };
+
+            if seq.len() != D::N {
+                return Err(Error::IncorrectType);
+            }
+
+            for (v, slot) in self.into_iter().zip(seq.iter()) {
+                v.write(store, *slot)?;
+            }
+
+            Ok(())
+        }
+    }
+    impl<D: Dimension, T: Copy + State> VecNodeHandle<D, T> {
+        pub fn at(&self, i: usize) -> <T as State>::NodeHandle {
+            <T as State>::NodeHandle::pack(self.inner.index(i))
+        }
+    }
+}
+
+//TODO: make these methods
 pub fn hmul<D: Dimension, T: CoordinateType>(s: Vector<D, Coordinate<T>>) -> usize {
     s.into_iter().map(|v| v.raw as usize).product()
+}
+
+pub fn hand<D: Dimension>(s: Vector<D, bool>) -> bool {
+    s.fold(true, |l, r| r && r)
+}
+
+pub fn hor<D: Dimension>(s: Vector<D, bool>) -> bool {
+    s.fold(false, |l, r| r || r)
 }
 
 pub fn to_linear<D: Dimension, T: CoordinateType>(

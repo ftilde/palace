@@ -179,3 +179,20 @@ impl<T> Identify for Coordinate<T> {
         self.raw.id()
     }
 }
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::prelude::*;
+
+    impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
+        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+            let raw: u32 = ob.extract()?;
+            Ok(Coordinate::from(raw))
+        }
+    }
+    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
+        fn into_py(self, py: Python<'_>) -> PyObject {
+            self.raw.into_py(py)
+        }
+    }
+}

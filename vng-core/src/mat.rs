@@ -13,7 +13,7 @@ pub struct Matrix<D: Dimension, T: Copy>(Vector<D, Vector<D, T>>);
 
 impl<D: Dimension, T: Copy + Identify> Identify for Matrix<D, T> {
     fn id(&self) -> Id {
-        todo!()
+        Id::combine_it(self.0.into_iter().map(|v| v.id()))
     }
 }
 

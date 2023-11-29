@@ -36,7 +36,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     quote! {
                         #name: {
                             let field_name = stringify!(#name);
-                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name.to_owned()))?;
+                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name))?;
                             <#ty>::load(store, *loc)?
                         },
                     }
@@ -71,7 +71,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     quote! {
                         {
                             let field_name = stringify!(#name);
-                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name.to_owned()))?;
+                            let loc = map.get(field_name).ok_or(state_link::Error::MissingField(field_name))?;
                             ::state_link::State::write(&self.#name, store, *loc)?;
                         }
                     }

@@ -164,7 +164,7 @@ impl<const I: usize, T: PyState> PyState for [T; I] {
 }
 
 impl NodeHandleArray {
-    fn new<
+    pub fn new<
         T: std::any::Any
             + IntoPy<PyObject>
             + super::State

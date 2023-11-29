@@ -224,7 +224,7 @@ uint[N] from_linear(uint linear_pos, uint[N] dim) {
 
 uint to_linear(uint[N] pos, uint[N] dim) {
     uint res = pos[0];
-    for(int i=1; i<D; i+=1) {
+    for(int i=1; i<N; i+=1) {
         res = res * dim[i] + pos[i];
     }
     return res;
@@ -232,7 +232,7 @@ uint to_linear(uint[N] pos, uint[N] dim) {
 
 uint[N] vec_add(uint[N] l, uint[N] r) {
     uint[N] res;
-    for(int i=0; i<D; i+=1) {
+    for(int i=0; i<N; i+=1) {
         res[i] = l[i] + r[i];
     }
     return res;

@@ -26,6 +26,8 @@ slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 
 #slice_state1.zoom_level().link_to(slice_state0.zoom_level())
 #slice_state2.zoom_level().link_to(slice_state0.zoom_level())
+#slice_state1.offset().link_to(slice_state0.offset())
+#slice_state2.offset().link_to(slice_state0.offset())
 
 camera_state = vng.CameraState(
         vng.TrackballState(

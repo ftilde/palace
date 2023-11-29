@@ -31,11 +31,11 @@ pub enum ResolveResult<'a> {
     Atom(Value),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Error {
     IncorrectType,
     SeqTooShort,
-    MissingField(String),
+    MissingField(&'static str),
     LinkReferenceCycle,
 }
 

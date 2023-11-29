@@ -5,7 +5,7 @@ pub trait Array<T: Sized + Copy>:
     + Copy
 {
     const N: usize;
-    type Mapped<U: Copy>: Array<U>;
+    type Mapped<U: Copy>: Array<U>; //NO_PUSH_main try to remove this OR to make sure it is actually used
     fn from_fn(f: impl FnMut(usize) -> T) -> Self;
     fn map<O: Copy>(self, f: impl FnMut(T) -> O) -> Self::Mapped<O>;
 }
