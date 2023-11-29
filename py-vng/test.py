@@ -19,9 +19,9 @@ k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 vol = vol.create_lod(2.0)
 
 #rechunked = vng.rechunk(vol.levels[-1], [4]*3)
-#vol_sparse = vol.levels[-1]
-#print(vol_sparse.inner.metadata.dimensions)
 #print(rt.resolve(rechunked.inner, [0]*3))
+#m = vng.mean(vol.levels[-1].inner)
+#print(rt.resolve_scalar(m))
 #print(rt.resolve(vol.levels[0].inner, [0]*3))
 
 store = vng.Store()

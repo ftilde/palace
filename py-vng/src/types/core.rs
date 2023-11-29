@@ -6,7 +6,7 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
 };
 
-use super::{Events, TensorOperator};
+use super::{Events, ScalarOperator, TensorOperator};
 
 #[pyclass(unsendable)]
 pub struct RunTime {
@@ -81,6 +81,14 @@ impl RunTime {
                 n
             )))
         )
+    }
+
+    fn resolve_scalar(&mut self, v: ScalarOperator) -> PyResult<f32> {
+        let op: vng_core::operators::scalar::ScalarOperator<f32> = v.try_into()?;
+        let op_ref = &op;
+        map_err(self.inner.resolve(None, |ctx, _| {
+            async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
+        }))
     }
 }
 
