@@ -1,17 +1,21 @@
 use crate::{
-    data::{from_linear, BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
+    data::{from_linear, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     operators::{
         tensor::TensorOperator,
-        volume::{ChunkSize, VolumeOperator, VolumeOperatorState},
+        volume::{ChunkSize, VolumeOperatorState},
         volume_gpu::rechunk,
     },
     runtime::RunTime,
+    storage::Element,
 };
 
-pub fn compare_volume(
-    vol: VolumeOperator<f32>,
-    fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
+pub fn compare_tensor_fn<
+    D: Dimension,
+    T: PartialEq + crate::operators::volume_gpu::GLSLType + Element + Default + std::fmt::Debug,
+>(
+    vol: TensorOperator<D, T>,
+    fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
 ) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
 
@@ -21,13 +25,13 @@ pub fn compare_volume(
     runtime
         .resolve(None, |ctx, _| {
             async move {
-                let pos = BrickPosition::from([0, 0, 0]);
+                let pos = Vector::fill(0.into());
                 let m = full_vol.metadata;
                 let info = m.chunk_info(pos);
                 let vol = ctx.submit(full_vol.chunks.request(pos)).await;
                 let vol = crate::data::chunk(&vol, &info);
 
-                let mut comp = vec![0.0; info.mem_elements()];
+                let mut comp = vec![T::default(); info.mem_elements()];
                 let mut comp = crate::data::chunk_mut(&mut comp, &info);
                 fill_expected(&mut comp);
                 assert_eq!(vol, comp);
@@ -37,36 +41,6 @@ pub fn compare_volume(
         })
         .unwrap();
 }
-
-//TODO: Fix this once better vec support is there
-//pub fn compare_frame(
-//    vol: FrameOperator,
-//    fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut2<Vector<4, u8>>),
-//) {
-//    let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
-//
-//    let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
-//    let full_vol = &full_vol;
-//
-//    runtime
-//        .resolve(None, |ctx, _| {
-//            async move {
-//                let pos = Vector::from([0, 0]);
-//                let m = full_vol.metadata;
-//                let info = m.chunk_info(pos);
-//                let vol = ctx.submit(full_vol.chunks.request(pos)).await;
-//                let vol = crate::data::chunk(&vol, &info);
-//
-//                let mut comp = vec![0.0; info.mem_elements()];
-//                let mut comp = crate::data::chunk_mut(&mut comp, &info);
-//                fill_expected(&mut comp);
-//                assert_eq!(vol, comp);
-//                Ok(())
-//            }
-//            .into()
-//        })
-//        .unwrap();
-//}
 
 pub fn compare_tensor<D: Dimension>(
     result: TensorOperator<D, f32>,

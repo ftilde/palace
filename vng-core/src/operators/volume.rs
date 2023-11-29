@@ -428,7 +428,7 @@ mod test {
         let input = input.operate();
         let kernel = crate::operators::array::from_rc(kernel.into());
         let output = convolution_1d::<DIM>(input, kernel);
-        compare_volume(output, fill_expected);
+        compare_tensor_fn(output, fill_expected);
     }
 
     fn test_convolution_1d_generic<const DIM: usize>() {
@@ -486,7 +486,7 @@ mod test {
         let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
         let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
         let output = separable_convolution(point_vol.operate(), kernels);
-        compare_volume(output, |comp| {
+        compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {
                     for dx in -1..=1 {

@@ -1057,7 +1057,7 @@ mod test {
         let offset = (1.0).into();
         let input = point_vol.operate();
         let output = linear_rescale(input, scale, offset);
-        compare_volume(output, fill_expected);
+        compare_tensor_fn(output, fill_expected);
     }
 
     #[test]
@@ -1086,7 +1086,7 @@ mod test {
                 input.clone(),
                 LocalVoxelPosition::from(chunk_size).into_elem(),
             );
-            compare_volume(output, fill_expected);
+            compare_tensor_fn(output, fill_expected);
         }
     }
 
@@ -1114,7 +1114,7 @@ mod test {
             };
             let input = input.operate();
             let output = rechunk(input, LocalVoxelPosition::from(chunk_size).into_elem());
-            compare_volume(output, fill_expected);
+            compare_tensor_fn(output, fill_expected);
         }
     }
 
@@ -1125,7 +1125,7 @@ mod test {
     ) {
         let input = input.operate();
         let output = convolution_1d::<DIM>(input, crate::operators::array::from_rc(kernel.into()));
-        compare_volume(output, fill_expected);
+        compare_tensor_fn(output, fill_expected);
     }
 
     fn test_convolution_1d_generic<const DIM: usize>() {
@@ -1207,7 +1207,7 @@ mod test {
         let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
         let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
         let output = separable_convolution(point_vol.operate(), kernels);
-        compare_volume(output, |comp| {
+        compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {
                     for dx in -1..=1 {

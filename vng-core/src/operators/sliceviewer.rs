@@ -543,78 +543,78 @@ void main()
     )
 }
 
-//TODO: Fix this once better general vec support is available (and thus compare_frame)
-//#[cfg(test)]
-//mod test {
-//    use crate::{
-//        array::ImageMetaData,
-//        data::{GlobalCoordinate, Vector},
-//        operators::{volume::VolumeOperatorState, volume_gpu::VoxelRasterizerGLSL},
-//        test_util::compare_frame,
-//    };
-//
-//    fn test_sliceviewer_configuration(
-//        img_size: Vector<2, GlobalCoordinate>,
-//        vol_size: Vector<3, GlobalCoordinate>,
-//    ) {
-//        let num_channels = 4;
-//        let img_size_c = Vector::<2, GlobalCoordinate>::from([img_size.y(), img_size.x()]);
-//        for z in 0..vol_size.z().raw {
-//            let fill_expected = |comp: &mut ndarray::ArrayViewMut2<Vector<4, u8>>| {
-//                for y in 0..img_size_c[0].raw {
-//                    for x in 0..img_size_c[1].raw {
-//                        let pos = Vector::<2, GlobalCoordinate>::from([y, x]);
-//                        let voxel_y = (y as f32 + 0.5) / img_size.y().raw as f32
-//                            * vol_size.y().raw as f32
-//                            - 0.5;
-//                        let voxel_x = (x as f32 + 0.5) / img_size.x().raw as f32
-//                            * vol_size.x().raw as f32
-//                            - 0.5;
-//
-//                        let out = Vector::fill(
-//                            (((voxel_x.round() + voxel_y.round() + z as f32) / 32.0) * 255.0) as u8,
-//                        );
-//                        comp[pos.as_index()] = out;
-//                    }
-//                }
-//            };
-//
-//            let input = VoxelRasterizerGLSL {
-//                metadata: crate::array::VolumeMetaData {
-//                    dimensions: vol_size,
-//                    chunk_size: (vol_size / Vector::fill(2u32)).local(),
-//                },
-//                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0;"#.to_owned(),
-//            };
-//
-//            let img_meta = ImageMetaData {
-//                dimensions: img_size,
-//                chunk_size: (img_size / Vector::fill(3u32)).local(),
-//            };
-//            let input = input.operate();
-//            let slice_proj = super::slice_projection_mat_z_scaled_fit(
-//                input.metadata.clone(),
-//                img_meta.into(),
-//                z.into(),
-//            );
-//            let slice = super::render_slice(
-//                input
-//                    .embedded(crate::array::TensorEmbeddingData {
-//                        spacing: Vector::fill(1.0),
-//                    })
-//                    .single_level_lod(),
-//                img_meta.into(),
-//                slice_proj,
-//            );
-//            compare_frame(slice, fill_expected);
-//        }
-//    }
-//    #[test]
-//    fn test_sliceviewer() {
-//        for img_size in [[5, 3], [6, 6], [10, 20]] {
-//            for vol_size in [[5, 3, 2], [6, 6, 6], [2, 10, 20]] {
-//                test_sliceviewer_configuration(img_size.into(), vol_size.into())
-//            }
-//        }
-//    }
-//}
+#[cfg(test)]
+mod test {
+    use crate::{
+        array::ImageMetaData,
+        data::{GlobalCoordinate, Vector},
+        dim::*,
+        operators::{volume::VolumeOperatorState, volume_gpu::VoxelRasterizerGLSL},
+        test_util::compare_tensor_fn,
+    };
+
+    fn test_sliceviewer_configuration(
+        img_size: Vector<D2, GlobalCoordinate>,
+        vol_size: Vector<D3, GlobalCoordinate>,
+    ) {
+        let img_size_c = Vector::<D2, GlobalCoordinate>::from([img_size.y(), img_size.x()]);
+        for z in 0..vol_size.z().raw {
+            let fill_expected = |comp: &mut ndarray::ArrayViewMut2<Vector<D4, u8>>| {
+                for y in 0..img_size_c[0].raw {
+                    for x in 0..img_size_c[1].raw {
+                        let pos = Vector::<D2, GlobalCoordinate>::from([y, x]);
+                        let voxel_y = (y as f32 + 0.5) / img_size.y().raw as f32
+                            * vol_size.y().raw as f32
+                            - 0.5;
+                        let voxel_x = (x as f32 + 0.5) / img_size.x().raw as f32
+                            * vol_size.x().raw as f32
+                            - 0.5;
+
+                        let mut out = Vector::fill(
+                            (((voxel_x.round() + voxel_y.round() + z as f32) / 32.0) * 255.0) as u8,
+                        );
+                        out[3] = 255;
+                        comp[pos.as_index()] = out;
+                    }
+                }
+            };
+
+            let input = VoxelRasterizerGLSL {
+                metadata: crate::array::VolumeMetaData {
+                    dimensions: vol_size,
+                    chunk_size: (vol_size / Vector::fill(2u32)).local(),
+                },
+                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0;"#.to_owned(),
+            };
+
+            let img_meta = ImageMetaData {
+                dimensions: img_size,
+                chunk_size: (img_size / Vector::fill(3u32)).local(),
+            };
+            let input = input.operate();
+            let slice_proj = super::slice_projection_mat_z_scaled_fit(
+                input.metadata.clone(),
+                img_meta.into(),
+                z.into(),
+            );
+            let slice = super::render_slice(
+                input
+                    .embedded(crate::array::TensorEmbeddingData {
+                        spacing: Vector::fill(1.0),
+                    })
+                    .single_level_lod(),
+                img_meta.into(),
+                slice_proj,
+            );
+            compare_tensor_fn(slice, fill_expected);
+        }
+    }
+    #[test]
+    fn test_sliceviewer() {
+        for img_size in [[5, 3], [6, 6], [10, 20]] {
+            for vol_size in [[5, 3, 2], [6, 6, 6], [2, 10, 20]] {
+                test_sliceviewer_configuration(img_size.into(), vol_size.into())
+            }
+        }
+    }
+}

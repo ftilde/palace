@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Vector<D: Dimension, T: Copy>(D::Array<T>);
 
 impl<D: Dimension, T: Copy + Identify> Identify for Vector<D, T> {
@@ -102,9 +102,10 @@ impl<D: Dimension, T: Copy> Vector<D, T> {
     pub fn dim() -> usize {
         D::N
     }
-}
+    pub fn inner(self) -> D::Array<T> {
+        self.0
+    }
 
-impl<D: Dimension, T: Copy> Vector<D, T> {
     pub fn fill(val: T) -> Self {
         Self::from_fn(|_| val)
     }
@@ -558,6 +559,10 @@ pub mod state_link_impl {
 impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn hmul(&self) -> usize {
         self.into_iter().map(|v| v.raw as usize).product()
+    }
+
+    pub fn to_ndarray_dim(self) -> D::NDArrayDim {
+        D::to_ndarray_dim(self.as_index())
     }
 }
 impl<D: Dimension> Vector<D, bool> {
