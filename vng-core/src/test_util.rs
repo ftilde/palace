@@ -1,5 +1,6 @@
 use crate::{
-    data::{from_linear, hmul, BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
+    data::{from_linear, BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
+    dim::*,
     operators::{
         tensor::TensorOperator,
         volume::{ChunkSize, VolumeOperator, VolumeOperatorState},
@@ -67,9 +68,9 @@ pub fn compare_volume(
 //        .unwrap();
 //}
 
-pub fn compare_tensor<const N: usize>(
-    result: TensorOperator<N, f32>,
-    expected: TensorOperator<N, f32>,
+pub fn compare_tensor<D: Dimension>(
+    result: TensorOperator<D, f32>,
+    expected: TensorOperator<D, f32>,
 ) {
     let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
 
@@ -87,7 +88,7 @@ pub fn compare_tensor<const N: usize>(
                     m_r
                 };
                 let dib = m.dimension_in_chunks();
-                let n_chunks = hmul(dib);
+                let n_chunks = dib.hmul();
                 for i in 0..n_chunks {
                     let pos = from_linear(i, dib);
 

@@ -1211,7 +1211,7 @@ mod test {
             for dz in -1..=1 {
                 for dy in -1..=1 {
                     for dx in -1..=1 {
-                        let offset = Vector::new([dz, dy, dx]);
+                        let offset = Vector::<D3, i32>::new([dz, dy, dx]);
                         let l1_dist = offset.map(i32::abs).fold(0, std::ops::Add::add);
                         let expected_val = 1 << l1_dist;
                         comp[(center.try_into_elem::<i32>().unwrap() + offset)
