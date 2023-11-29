@@ -114,8 +114,8 @@ pub fn render_slice(
 }
 
 #[pyfunction]
-pub fn mean(vol: TensorOperator) -> PyResult<ScalarOperator> {
-    Ok(vng_core::operators::volume_gpu::mean(vol.try_into()?).into())
+pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
+    Ok(vng_core::operators::volume_gpu::mean(vol.inner().try_into()?).into())
 }
 
 #[pyfunction]

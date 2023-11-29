@@ -6,7 +6,7 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
 };
 
-use super::{Events, ScalarOperator, TensorOperator};
+use super::{Events, MaybeEmbeddedTensorOperator, ScalarOperator, TensorOperator};
 
 #[pyclass(unsendable)]
 pub struct RunTime {
@@ -58,7 +58,13 @@ impl RunTime {
         })
     }
 
-    fn resolve(&mut self, py: Python, v: TensorOperator, pos: Vec<u32>) -> PyResult<PyObject> {
+    fn resolve(
+        &mut self,
+        py: Python,
+        v: MaybeEmbeddedTensorOperator,
+        pos: Vec<u32>,
+    ) -> PyResult<PyObject> {
+        let v = v.inner();
         match_dim!(
             pos.len(),
             || {

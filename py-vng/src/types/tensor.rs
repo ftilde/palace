@@ -370,6 +370,12 @@ pub enum MaybeEmbeddedTensorOperator {
 }
 
 impl MaybeEmbeddedTensorOperator {
+    pub fn inner(self) -> TensorOperator {
+        match self {
+            MaybeEmbeddedTensorOperator::Not(i) => i,
+            MaybeEmbeddedTensorOperator::Embedded(e) => e.inner,
+        }
+    }
     pub fn try_map_inner<D: Dimension, T: Element + 'static>(
         self,
         py: Python,
