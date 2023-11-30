@@ -42,7 +42,7 @@ pub enum Error {
 pub type Result<S> = std::result::Result<S, Error>;
 
 pub trait State: Sized {
-    type NodeHandle: NodeHandle;
+    type NodeHandle: NodeHandle<NodeType = Self>;
     fn write(&self, store: &mut Store, at: NodeRef) -> Result<()>;
     fn store(&self, store: &mut Store) -> NodeRef;
     fn load(store: &Store, location: NodeRef) -> Result<Self>;
