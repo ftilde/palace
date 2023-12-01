@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use vng_core::data::{LocalVoxelPosition, VoxelPosition};
+use vng_core::dim::D3;
 use vng_core::operators::{self, volume::VolumeOperatorState};
 use vng_core::runtime::RunTime;
+use vng_core::vec::Vector;
 use vng_core::{array, operators::volume_gpu};
 //use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
@@ -129,14 +131,9 @@ fn eval_network(
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
-    let convolved = volume_gpu::separable_convolution(
-        rechunked.clone(),
-        [
-            smoothing_kernel.clone(),
-            smoothing_kernel.clone(),
-            smoothing_kernel,
-        ],
-    );
+    let kernels: [_; 3] = std::array::from_fn(|_| smoothing_kernel.clone());
+    let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
+    let convolved = volume_gpu::separable_convolution(rechunked.clone(), kernel_refs);
     let mapped = convolved; //tensor::map(convolved, |v| v.min(0.5));
 
     let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());

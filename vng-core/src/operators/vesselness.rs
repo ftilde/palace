@@ -1,8 +1,10 @@
 use ash::vk;
 use futures::StreamExt;
 
+use crate::dim::*;
 use crate::operator::OperatorId;
 use crate::operators::array::ArrayOperator;
+use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
 use crate::vulkan::shader::ShaderDefines;
 use crate::vulkan::state::RessourceId;
@@ -110,10 +112,9 @@ void main() {
     type Conv = fn(f32) -> ArrayOperator<f32>;
 
     let g = |f1: Conv, f2: Conv, f3: Conv| {
-        volume_gpu::separable_convolution(
-            input.clone(),
-            [f1(scale.clone()), f2(scale.clone()), f3(scale.clone())],
-        )
+        let kernels = [f1(scale.clone()), f2(scale.clone()), f3(scale.clone())];
+        let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
+        volume_gpu::separable_convolution(input.clone(), kernel_refs)
     };
 
     let xx = g(gauss, gauss, ddgauss_dxdx);

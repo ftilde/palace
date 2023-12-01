@@ -1,3 +1,24 @@
+#ifndef MAT_GLSL
+#define MAT_GLSL
+
+#define Mat(N) float[N][N]
+
+#define _N 1
+#include <mat_generic.glsl>
+#undef _N
+#define _N 2
+#include <mat_generic.glsl>
+#undef _N
+#define _N 3
+#include <mat_generic.glsl>
+#undef _N
+#define _N 4
+#include <mat_generic.glsl>
+#undef _N
+#define _N 5
+#include <mat_generic.glsl>
+#undef _N
+
 struct Mat4 {
     mat4 inner;
 };
@@ -18,3 +39,5 @@ vec4 mul_mat4(Mat4 m, vec4 v) {
 vec3 mulh_mat4(Mat4 m, vec3 v) {
     return (m.inner * vec4(1, v.zyx)).wzy;
 }
+
+#endif

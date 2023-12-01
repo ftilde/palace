@@ -87,8 +87,8 @@ impl<D: Dimension, T: num::Zero + num::One + Copy> Matrix<D, T> {
     }
 }
 
-impl<T: num::Zero + num::One + Copy> Matrix<D4, T> {
-    pub fn from_translation(translation_vec: Vector<D3, T>) -> Self {
+impl<D: SmallerDim, T: num::Zero + num::One + Copy> Matrix<D, T> {
+    pub fn from_translation(translation_vec: Vector<D::Smaller, T>) -> Self {
         Self::from_col_fn(|i| {
             if i == 0 {
                 translation_vec.push_dim_large(T::one())
@@ -99,11 +99,11 @@ impl<T: num::Zero + num::One + Copy> Matrix<D4, T> {
     }
 }
 
-impl<T: num::Zero + num::One + Copy> Matrix<D3, T> {
-    pub fn to_homogeneuous(self) -> Matrix<D4, T> {
-        Matrix::<D4, T>::from_col_fn(|i| {
+impl<D: LargerDim, T: num::Zero + num::One + Copy> Matrix<D, T> {
+    pub fn to_homogeneous(self) -> Matrix<D::Larger, T> {
+        Matrix::<D::Larger, T>::from_col_fn(|i| {
             if i == 0 {
-                let v = Vector::<D3, T>::fill(T::zero());
+                let v = Vector::<D, T>::fill(T::zero());
                 v.to_homogeneous_coord()
             } else {
                 let v = self
@@ -116,9 +116,9 @@ impl<T: num::Zero + num::One + Copy> Matrix<D3, T> {
     }
 }
 
-impl<T: num::Zero + num::One + Copy> Matrix<D4, T> {
-    pub fn to_scaling_part(self) -> Matrix<D3, T> {
-        Matrix::<D3, T>::from_col_fn(|i| self.col(i + 1).drop_dim(0))
+impl<D: SmallerDim, T: num::Zero + num::One + Copy> Matrix<D, T> {
+    pub fn to_scaling_part(self) -> Matrix<D::Smaller, T> {
+        Matrix::<D::Smaller, T>::from_col_fn(|i| self.col(i + 1).drop_dim(0))
     }
 }
 

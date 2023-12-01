@@ -199,7 +199,7 @@ void main() {
                 let norm_to_world = Matrix::from_scale(
                     m_in.dimensions.map(|v| v.raw as f32) * embedding_data.spacing,
                 )
-                .to_homogeneuous()
+                .to_homogeneous()
                     * Matrix::from_translation(Vector::fill(-0.5));
                 let transform = *transform * norm_to_world;
 
@@ -468,11 +468,15 @@ pub fn raycast(
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
+//TODO: Find a better way. Maybe a macro for TensorMetaData?
+#define N 3
+
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
 #include <vec.glsl>
 #include <color.glsl>
+
 
 layout(buffer_reference, std430) buffer IndexType {
     BrickType values[];
@@ -627,13 +631,14 @@ void main()
                     }
                     LOD level = vol.levels[level_num];
 
-                    VolumeMetaData m_in;
-                    m_in.dimensions = to_glsl_uvec3(level.dimensions);
-                    m_in.chunk_size = to_glsl_uvec3(level.chunk_size);
+                    TensorMetaData m_in;
+                    m_in.dimensions = level.dimensions.vals;
+                    m_in.chunk_size = level.chunk_size.vals;
 
                     vec3 p = start + state.t*dir;
 
-                    vec3 pos_voxel = round(world_to_voxel(p, level));
+                    vec3 pos_voxel_g = round(world_to_voxel(p, level));
+                    float[3] pos_voxel = from_glsl(pos_voxel_g);
 
                     int res;
                     uint sample_brick_pos_linear;

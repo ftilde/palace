@@ -100,7 +100,7 @@ pub fn slice_projection_mat_z_scaled_fit(
             .zip(img_dim, |v, i| v / i)
             .push_dim_large(1.0),
     )
-    .to_homogeneuous();
+    .to_homogeneous();
     let slice_select =
         Matrix::from_translation(Vector::from([selected_slice.raw as f32, 0.0, 0.0]));
     let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
@@ -147,21 +147,21 @@ pub fn slice_projection_mat(
     let zero = Vector::<D3, f32>::fill(0.0);
     let col0 = zero.map_element(h_dim, |_| 1.0);
     let col1 = zero.map_element(v_dim, |_| 1.0);
-    let permute = Matrix::new([zero, col1, col0]).to_homogeneuous();
+    let permute = Matrix::<D3, _>::new([zero, col1, col0]).to_homogeneous();
 
     let to_pixel_center =
         Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
     let pixel_transform = permute
         * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
-        * Matrix::from_scale(Vector::fill(zoom_level)).to_homogeneuous()
+        * Matrix::from_scale(Vector::<D3, _>::fill(zoom_level)).to_homogeneous()
         * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0))
         * to_pixel_center;
 
     let mut translation = Vector::<D3, f32>::fill(-0.5); //For "centered" voxel positions
     translation[dim] += selected_slice.raw as f32;
-    let scale = Matrix::from_scale(Vector::fill(scaling_factor)).to_homogeneuous();
+    let scale = Matrix::from_scale(Vector::<D3, _>::fill(scaling_factor)).to_homogeneous();
     let slice_select = Matrix::from_translation(translation);
-    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneuous();
+    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
     let mat = slice_select * rw_to_voxel * scale * pixel_transform;
 
     mat
@@ -181,14 +181,15 @@ pub fn slice_projection_mat_centered_rotate(
 
     let to_pixel_center =
         Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
-    let central_normalized = Matrix::from_scale(Vector::fill(2.0 / min_dim_img)).to_homogeneuous()
+    let central_normalized = Matrix::from_scale(Vector::<D3, _>::fill(2.0 / min_dim_img))
+        .to_homogeneous()
         * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0))
         * to_pixel_center;
 
     let rotation = Matrix::from_angle_y(rotation);
     let norm_to_rw = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
-        * Matrix::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneuous();
-    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneuous();
+        * Matrix::<D3, _>::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneous();
+    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
     let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
     let out = to_voxel_center * rw_to_voxel * norm_to_rw * rotation * central_normalized;
     out
@@ -217,10 +218,11 @@ pub fn render_slice(
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
+#define N 3
+
 #include <util.glsl>
 #include <color.glsl>
 #include <hash.glsl>
-#include <mat.glsl>
 #include <sample.glsl>
 
 layout (local_size_x = 32, local_size_y = 32) in;
@@ -269,14 +271,15 @@ void main()
             //vec3 sample_pos_f = mulh_mat4(transform.value, pos);
             vec3 sample_pos_f = (consts.transform * vec4(pos, 1)).xyz;
 
-            VolumeMetaData m_in;
-            m_in.dimensions = consts.vol_dim;
-            m_in.chunk_size = consts.chunk_dim;
+            TensorMetaData m_in;
+            m_in.dimensions = from_glsl(consts.vol_dim);
+            m_in.chunk_size = from_glsl(consts.chunk_dim);
 
             // Round to nearest neighbor
             // Floor+0.5 is chosen instead of round to ensure compatibility with f32::round() (see
             // test_sliceviewer below)
-            vec3 sample_pos = floor(sample_pos_f + vec3(0.5));
+            vec3 sample_pos_g = floor(sample_pos_f + vec3(0.5));
+            float[3] sample_pos = from_glsl(sample_pos_g);
 
             ivec3 vol_dim = ivec3(consts.vol_dim);
 

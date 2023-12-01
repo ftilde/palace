@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::{
     array::VolumeMetaData,
-    data::{BrickPosition, ChunkCoordinate, LocalCoordinate, Vector},
+    data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
     operator::OperatorId,
     operators::tensor::TensorOperator,
@@ -192,6 +192,7 @@ pub fn rechunk<D: Dimension, T: Element + GLSLType>(
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
+#include <vec.glsl>
 
 layout (local_size_x = 256) in;
 
@@ -212,40 +213,14 @@ layout(scalar, push_constant) uniform PushConsts {
     uint global_size;
 } constants;
 
-uint[N] from_linear(uint linear_pos, uint[N] dim) {
-    uint[N] res;
-    for(int i = N-1; i>= 0; i-=1) {
-        uint ddim = dim[i];
-        res[i] = linear_pos % ddim;
-        linear_pos /= ddim;
-    }
-    return res;
-}
-
-uint to_linear(uint[N] pos, uint[N] dim) {
-    uint res = pos[0];
-    for(int i=1; i<N; i+=1) {
-        res = res * dim[i] + pos[i];
-    }
-    return res;
-}
-
-uint[N] vec_add(uint[N] l, uint[N] r) {
-    uint[N] res;
-    for(int i=0; i<N; i+=1) {
-        res[i] = l[i] + r[i];
-    }
-    return res;
-}
-
 void main() {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < constants.global_size) {
         uint[N] region_pos = from_linear(gID, constants.region_size);
 
-        uint[N] in_pos = vec_add(constants.begin_in, region_pos);
-        uint[N] out_pos = vec_add(constants.begin_out, region_pos);
+        uint[N] in_pos = add(constants.begin_in, region_pos);
+        uint[N] out_pos = add(constants.begin_out, region_pos);
 
         uint in_index = to_linear(in_pos, constants.mem_size_in);
         uint out_index = to_linear(out_pos, constants.mem_size_out);
@@ -404,25 +379,34 @@ void main() {
 /// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
 /// supported (and thus always applied) border handling routine.
 //TODO It should be relatively easy to support other strategies now
-pub fn convolution_1d<const DIM: usize>(
-    input: VolumeOperator<f32>,
+pub fn convolution_1d<D: Dimension>(
+    input: TensorOperator<D, f32>,
     kernel: ArrayOperator<f32>,
-) -> VolumeOperator<f32> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        mem_dim: cgmath::Vector3<u32>,
-        logical_dim_out: cgmath::Vector3<u32>,
-        out_begin: cgmath::Vector3<u32>,
-        global_dim: cgmath::Vector3<u32>,
-        dim_in_chunks: cgmath::Vector3<u32>,
+    dim: usize,
+) -> TensorOperator<D, f32> {
+    assert!(dim < D::N);
+    #[derive(Clone, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct PushConstants<D: Dimension> {
+        mem_dim: Vector<D, u32>,
+        logical_dim_out: Vector<D, u32>,
+        out_begin: Vector<D, u32>,
+        global_dim: Vector<D, u32>,
+        dim_in_chunks: Vector<D, u32>,
         num_chunks: u32,
         first_chunk_pos: u32,
         extent: i32,
     }
+    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
+    //TODO: This is fine for the current layout, but we really want a better general approach
+    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
     const SHADER: &'static str = r#"
 #version 450
 
+#extension GL_EXT_scalar_block_layout : require
+
 #include <util.glsl>
+#include <vec.glsl>
 
 layout (local_size_x = 256) in;
 
@@ -438,15 +422,24 @@ layout(std430, binding = 2) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
 
-declare_push_consts(consts);
+layout(scalar, push_constant) uniform PushConsts {
+    uint[N] mem_dim;
+    uint[N] logical_dim_out;
+    uint[N] out_begin;
+    uint[N] global_dim;
+    uint[N] dim_in_chunks;
+    uint num_chunks;
+    uint first_chunk_pos;
+    int extent;
+} consts;
 
 float kernel_val(int p) {
     int kernel_buf_index = consts.extent - p;
     return kernel.values[kernel_buf_index];
 }
 
-float sample_brick(uvec3 pos, int brick) {
-    uint local_index = to_linear3(pos, consts.mem_dim);
+float sample_brick(uint[N] pos, int brick) {
+    uint local_index = to_linear(pos, consts.mem_dim);
     return sourceData[brick].values[local_index];
 }
 
@@ -454,10 +447,10 @@ void main() {
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < BRICK_MEM_SIZE) {
-        uvec3 out_local = from_linear3(gID, consts.mem_dim);
+        uint[N] out_local = from_linear(gID, consts.mem_dim);
         float acc = 0.0;
 
-        if(all(lessThan(out_local, consts.logical_dim_out))) {
+        if(all(less_than(out_local, consts.logical_dim_out))) {
 
             int out_chunk_to_global = int(consts.out_begin[DIM]);
             int out_global = int(out_local[DIM]) + out_chunk_to_global;
@@ -489,7 +482,7 @@ void main() {
                 int l_begin = max(l_begin_no_clip, chunk_begin_local);
                 int l_end = min(l_end_no_clip, chunk_end_local);
 
-                uvec3 pos = out_local;
+                uint[N] pos = out_local;
 
                 // Border handling for first chunk in dim
                 if(chunk_pos == 0) {
@@ -530,7 +523,8 @@ void main() {
     TensorOperator::with_state(
         OperatorId::new("convolution_1d_gpu")
             .dependent_on(&input)
-            .dependent_on(&kernel),
+            .dependent_on(&kernel)
+            .dependent_on(&dim),
         input.metadata,
         (input, kernel),
         move |ctx, positions, (input, kernel)| {
@@ -568,20 +562,21 @@ void main() {
                     let out_end = out_info.end();
 
                     let in_begin = out_begin
-                        .map_element(DIM, |v| (v.raw.saturating_sub(extent as u32)).into());
+                        .map_element(dim, |v| (v.raw.saturating_sub(extent as u32)).into());
                     let in_end = out_end
-                        .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions[DIM]));
+                        .map_element(dim, |v| (v + extent as u32).min(m_out.dimensions[dim]));
 
                     let in_begin_brick = m_in.chunk_pos(in_begin);
                     let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
 
-                    let in_brick_positions = itertools::iproduct! {
-                        in_begin_brick.z().raw..=in_end_brick.z().raw,
-                        in_begin_brick.y().raw..=in_end_brick.y().raw,
-                        in_begin_brick.x().raw..=in_end_brick.x().raw
-                    }
-                    .map(|(z, y, x)| BrickPosition::from([z, y, x]))
-                    .collect::<Vec<_>>();
+                    let in_brick_positions = (0..D::N)
+                        .into_iter()
+                        .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                        .multi_cartesian_product()
+                        .map(|coordinates| {
+                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                        })
+                        .collect::<Vec<_>>();
 
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
@@ -598,27 +593,27 @@ void main() {
                 });
 
                 let max_bricks =
-                    2 * crate::util::div_round_up(extent, m_in.chunk_size[DIM].raw) + 1;
+                    2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
 
                 //TODO: This is really ugly, we should investigate to use z,y,x ordering in shaders
                 //as well.
-                let shader_dimension = 2 - DIM;
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&max_bricks)
-                        .dependent_on(&DIM),
+                        .dependent_on(&D::N)
+                        .dependent_on(&dim),
                     || {
                         ComputePipeline::new(
                             device,
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("MAX_BRICKS", max_bricks.to_string())
-                                    .add("DIM", shader_dimension.to_string())
+                                    .add("MAX_BRICKS", max_bricks)
+                                    .add("DIM", dim)
+                                    .add("N", D::N)
                                     .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
-                                    .add("KERNEL_SIZE", kernel_size)
-                                    .push_const_block::<PushConstants>(),
+                                    .add("KERNEL_SIZE", kernel_size),
                             ),
                             true,
                         )
@@ -637,8 +632,8 @@ void main() {
                     let out_begin = out_info.begin();
 
                     for window in in_brick_positions.windows(2) {
-                        for d in 0..3 {
-                            if d == DIM {
+                        for d in 0..D::N {
+                            if d == dim {
                                 assert_eq!(window[0][d] + 1u32, window[1][d]);
                             } else {
                                 assert_eq!(window[0][d], window[1][d]);
@@ -651,15 +646,15 @@ void main() {
 
                     assert_eq!(num_chunks, intersecting_bricks.len());
 
-                    let first_chunk_pos = in_brick_positions.first().unwrap()[DIM].raw;
+                    let first_chunk_pos = in_brick_positions.first().unwrap()[dim].raw;
                     let global_size = m_out.chunk_size.hmul();
 
                     let consts = PushConstants {
-                        mem_dim: m_out.chunk_size.into_elem::<u32>().into(),
-                        logical_dim_out: out_info.logical_dimensions.into_elem::<u32>().into(),
-                        out_begin: out_begin.into_elem::<u32>().into(),
-                        global_dim: m_out.dimensions.into_elem::<u32>().into(),
-                        dim_in_chunks: m_out.dimension_in_chunks().into_elem::<u32>().into(),
+                        mem_dim: m_out.chunk_size.raw(),
+                        logical_dim_out: out_info.logical_dimensions.raw(),
+                        out_begin: out_begin.raw(),
+                        global_dim: m_out.dimensions.raw(),
+                        dim_in_chunks: m_out.dimension_in_chunks().raw(),
                         num_chunks: num_chunks as _,
                         first_chunk_pos,
                         extent: extent as i32,
@@ -684,7 +679,7 @@ void main() {
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant(consts);
+                            pipeline.push_constant_pod(consts);
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
                         }
@@ -709,13 +704,14 @@ void main() {
     .into()
 }
 
-pub fn separable_convolution(
-    v: VolumeOperator<f32>,
-    [k0, k1, k2]: [ArrayOperator<f32>; 3],
-) -> VolumeOperator<f32> {
-    let v = convolution_1d::<2>(v, k2);
-    let v = convolution_1d::<1>(v, k1);
-    let v = convolution_1d::<0>(v, k0);
+//TODO: kind of annoying that we have to use a reference to the operator here, but that is the only way it is copy...
+pub fn separable_convolution<D: Dimension>(
+    mut v: TensorOperator<D, f32>,
+    kernels: Vector<D, &ArrayOperator<f32>>,
+) -> TensorOperator<D, f32> {
+    for dim in (0..D::N).rev() {
+        v = convolution_1d(v, kernels[dim].clone(), dim);
+    }
     v
 }
 
@@ -1118,27 +1114,33 @@ mod test {
         }
     }
 
-    fn compare_convolution_1d<const DIM: usize>(
+    fn compare_convolution_1d(
         input: &dyn VolumeOperatorState,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
+        dim: usize,
     ) {
         let input = input.operate();
-        let output = convolution_1d::<DIM>(input, crate::operators::array::from_rc(kernel.into()));
+        let output = convolution_1d(input, crate::operators::array::from_rc(kernel.into()), dim);
         compare_tensor_fn(output, fill_expected);
     }
 
-    fn test_convolution_1d_generic<const DIM: usize>() {
+    fn test_convolution_1d_generic(dim: usize) {
         // Small
         let size = VoxelPosition::fill(5.into());
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let (point_vol, center) = center_point_vol(size, brick_size);
-        compare_convolution_1d::<DIM>(&point_vol, &[1.0, -1.0, 2.0], |comp| {
-            comp[center.map_element(DIM, |v| v - 1u32).as_index()] = 1.0;
-            comp[center.map_element(DIM, |v| v).as_index()] = -1.0;
-            comp[center.map_element(DIM, |v| v + 1u32).as_index()] = 2.0;
-        });
+        compare_convolution_1d(
+            &point_vol,
+            &[1.0, -1.0, 2.0],
+            |comp| {
+                comp[center.map_element(dim, |v| v - 1u32).as_index()] = 1.0;
+                comp[center.map_element(dim, |v| v).as_index()] = -1.0;
+                comp[center.map_element(dim, |v| v + 1u32).as_index()] = 2.0;
+            },
+            dim,
+        );
 
         // Larger
         let size = VoxelPosition::fill(13.into());
@@ -1152,25 +1154,30 @@ mod test {
         kernel[1] = -2.0;
         kernel[kernel_size - 1] = 1.0;
         kernel[kernel_size - 2] = 2.0;
-        compare_convolution_1d::<DIM>(&point_vol, &kernel, |comp| {
-            comp[center.map_element(DIM, |v| v - extent).as_index()] = -1.0;
-            comp[center.map_element(DIM, |v| v - extent + 1u32).as_index()] = -2.0;
-            comp[center.map_element(DIM, |v| v + extent).as_index()] = 1.0;
-            comp[center.map_element(DIM, |v| v + extent - 1u32).as_index()] = 2.0;
-        });
+        compare_convolution_1d(
+            &point_vol,
+            &kernel,
+            |comp| {
+                comp[center.map_element(dim, |v| v - extent).as_index()] = -1.0;
+                comp[center.map_element(dim, |v| v - extent + 1u32).as_index()] = -2.0;
+                comp[center.map_element(dim, |v| v + extent).as_index()] = 1.0;
+                comp[center.map_element(dim, |v| v + extent - 1u32).as_index()] = 2.0;
+            },
+            dim,
+        );
     }
 
     #[test]
     fn test_convolution_1d_x() {
-        test_convolution_1d_generic::<2>();
+        test_convolution_1d_generic(2);
     }
     #[test]
     fn test_convolution_1d_y() {
-        test_convolution_1d_generic::<1>();
+        test_convolution_1d_generic(1);
     }
     #[test]
     fn test_convolution_1d_z() {
-        test_convolution_1d_generic::<0>();
+        test_convolution_1d_generic(0);
     }
 
     #[test]
@@ -1188,13 +1195,18 @@ mod test {
             }
         });
 
-        compare_convolution_1d::<2>(&vol, &[7.0, 1.0, 3.0], |comp| {
-            comp[[0, 0, 0]] = 4.0;
-            comp[[0, 0, 1]] = 3.0;
+        compare_convolution_1d(
+            &vol,
+            &[7.0, 1.0, 3.0],
+            |comp| {
+                comp[[0, 0, 0]] = 4.0;
+                comp[[0, 0, 1]] = 3.0;
 
-            comp[[4, 4, 3]] = 7.0;
-            comp[[4, 4, 4]] = 8.0;
-        });
+                comp[[4, 4, 3]] = 7.0;
+                comp[[4, 4, 4]] = 8.0;
+            },
+            2,
+        );
     }
 
     #[test]
@@ -1205,7 +1217,9 @@ mod test {
         let (point_vol, center) = center_point_vol(size, brick_size);
 
         let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
-        let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
+        let kernels: [_; 3] =
+            std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
+        let kernels = Vector::from_fn(|i| &kernels[i]);
         let output = separable_convolution(point_vol.operate(), kernels);
         compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {

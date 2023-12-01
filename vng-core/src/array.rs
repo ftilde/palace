@@ -51,14 +51,13 @@ impl<D: Dimension> crate::id::Identify for TensorMetaData<D> {
 // parameter N. It is fine though (as long as we don't change anything on TensorMetaData).
 //unsafe impl<D: Dimension> bytemuck::Pod for TensorMetaData<D> {}
 
-//TODO: generalize
-impl TensorMetaData<D3> {
-    pub fn norm_to_voxel(&self) -> Matrix<D4, f32> {
+impl<D: LargerDim> TensorMetaData<D> {
+    pub fn norm_to_voxel(&self) -> Matrix<D::Larger, f32> {
         Matrix::from_translation(Vector::fill(-0.5))
-            * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneuous()
+            * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneous()
     }
-    pub fn voxel_to_norm(&self) -> Matrix<D4, f32> {
-        Matrix::from_scale(self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneuous()
+    pub fn voxel_to_norm(&self) -> Matrix<D::Larger, f32> {
+        Matrix::from_scale(self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneous()
             * Matrix::from_translation(Vector::fill(0.5))
     }
 }
@@ -76,23 +75,26 @@ impl<D: Dimension> crate::id::Identify for TensorEmbeddingData<D> {
     }
 }
 
-//TODO: generalize
-impl TensorEmbeddingData<D3> {
-    pub fn voxel_to_physical(&self) -> Matrix<D4, f32> {
-        Matrix::from_scale(self.spacing).to_homogeneuous()
+impl<D: LargerDim> TensorEmbeddingData<D> {
+    pub fn voxel_to_physical(&self) -> Matrix<D::Larger, f32> {
+        Matrix::from_scale(self.spacing).to_homogeneous()
     }
-    pub fn physical_to_voxel(&self) -> Matrix<D4, f32> {
-        Matrix::from_scale(self.spacing.map(|v| 1.0 / v)).to_homogeneuous()
+    pub fn physical_to_voxel(&self) -> Matrix<D::Larger, f32> {
+        Matrix::from_scale(self.spacing.map(|v| 1.0 / v)).to_homogeneous()
     }
 }
 
-pub fn norm_to_physical(md: &TensorMetaData<D3>, emd: &TensorEmbeddingData<D3>) -> Matrix<D4, f32> {
+pub fn norm_to_physical<D: LargerDim>(
+    md: &TensorMetaData<D>,
+    emd: &TensorEmbeddingData<D>,
+) -> Matrix<D::Larger, f32> {
     emd.voxel_to_physical() * md.norm_to_voxel()
 }
-pub fn physical_to_voxel(
-    md: &TensorMetaData<D3>,
-    emd: &TensorEmbeddingData<D3>,
-) -> Matrix<D4, f32> {
+
+pub fn physical_to_voxel<D: LargerDim>(
+    md: &TensorMetaData<D>,
+    emd: &TensorEmbeddingData<D>,
+) -> Matrix<D::Larger, f32> {
     md.voxel_to_norm() * emd.physical_to_voxel()
 }
 

@@ -434,10 +434,9 @@ fn eval_network(
         ProcessState::PassThrough => vol,
         ProcessState::Smooth => vol.map_inner(|vol| {
             let kernel = operators::kernels::gauss(app_state.smoothing_std.into());
-            operators::volume_gpu::separable_convolution(
-                vol,
-                [kernel.clone(), kernel.clone(), kernel],
-            )
+            let kernels: [_; 3] = std::array::from_fn(|_| kernel.clone());
+            let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
+            operators::volume_gpu::separable_convolution(vol, kernel_refs)
         }),
         ProcessState::Vesselness => vol.map_inner(|vol| {
             operators::vesselness::multiscale_vesselness(

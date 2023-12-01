@@ -36,10 +36,10 @@ pub trait Dimension:
 }
 
 pub trait LargerDim: Dimension {
-    type Larger: Dimension;
+    type Larger: SmallerDim<Smaller = Self>;
 }
 pub trait SmallerDim: Dimension {
-    type Smaller: Dimension;
+    type Smaller: LargerDim<Larger = Self>;
 }
 
 impl Dimension for D1 {

@@ -69,8 +69,9 @@ pub fn separable_convolution<'py>(
     let [z, y, x] = zyx;
 
     let kernels = [z.try_into()?, y.try_into()?, x.try_into()?];
+    let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
     vol.try_map_inner(py, |vol| {
-        vng_core::operators::volume_gpu::separable_convolution(vol, kernels)
+        vng_core::operators::volume_gpu::separable_convolution(vol, kernel_refs)
     })
 }
 

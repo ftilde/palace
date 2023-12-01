@@ -63,11 +63,11 @@ impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
     //        .all(|v| *v)
     //}
 }
-impl AABB<D3, f32> {
+impl<D: LargerDim> AABB<D, f32> {
     #[must_use]
-    pub fn transform(&self, t: &Matrix<D4, f32>) -> Self {
+    pub fn transform(&self, t: &Matrix<D::Larger, f32>) -> Self {
         let points = (0..8).into_iter().map(|b| {
-            let p = Vector::<D3, f32>::from_fn(|i| {
+            let p = Vector::<D, f32>::from_fn(|i| {
                 if (b & (1 << i)) != 0 {
                     self.min[i]
                 } else {

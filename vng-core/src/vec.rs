@@ -154,6 +154,13 @@ impl<D: Dimension, T: Copy> Vector<D, T> {
         // Safety: We have just initialized all values in the loop above
         Ok(out.map(|v| unsafe { v.assume_init() }))
     }
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index < D::N {
+            Some(&self.0[index])
+        } else {
+            None
+        }
+    }
 }
 impl<D: Dimension, T: std::ops::Mul<Output = T> + Copy> Vector<D, T> {
     pub fn scale(self, v: T) -> Self {
