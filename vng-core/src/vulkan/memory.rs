@@ -15,6 +15,24 @@ use crate::{
 
 use super::{state::VulkanState, CmdBufferEpoch, DeviceContext};
 
+// Since we are using a direct mapping of repr(c) structs to scalar layout glsl structs in a bunch
+// of places, we need to ensure that the vulkan/spirv rule* of size == align for scalars is true on
+// the host system as well:
+// * See https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#interfaces-resources-layout
+const fn _scalar_align_check<T>() {
+    assert!(std::mem::size_of::<T>() == std::mem::align_of::<T>());
+}
+const _: () = _scalar_align_check::<u8>();
+const _: () = _scalar_align_check::<i8>();
+const _: () = _scalar_align_check::<u16>();
+const _: () = _scalar_align_check::<i16>();
+const _: () = _scalar_align_check::<u32>();
+const _: () = _scalar_align_check::<i32>();
+const _: () = _scalar_align_check::<u64>();
+const _: () = _scalar_align_check::<i64>();
+const _: () = _scalar_align_check::<f32>();
+const _: () = _scalar_align_check::<f64>();
+
 pub struct CachedAllocation {
     inner: Allocation,
     requested_layout: Layout, //May differ from layout of the allocation, at least in size
