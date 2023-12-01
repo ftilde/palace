@@ -202,14 +202,14 @@ void main() {
 
         float default_val = 0.5;
 
-        TensorMetaData m_in;
+        TensorMetaData(N) m_in;
         m_in.dimensions = consts.vol_dim_in;
         m_in.chunk_size = consts.chunk_dim_in;
 
         int res;
         uint sample_brick_pos_linear;
         float sampled_intensity;
-        try_sample(sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+        try_sample(N, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
         if(res == SAMPLE_RES_FOUND) {
             // Nothing to do!

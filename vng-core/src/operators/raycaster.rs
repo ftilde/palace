@@ -468,9 +468,6 @@ pub fn raycast(
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
-//TODO: Find a better way. Maybe a macro for TensorMetaData?
-#define N 3
-
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
@@ -631,7 +628,7 @@ void main()
                     }
                     LOD level = vol.levels[level_num];
 
-                    TensorMetaData m_in;
+                    TensorMetaData(3) m_in;
                     m_in.dimensions = level.dimensions.vals;
                     m_in.chunk_size = level.chunk_size.vals;
 
@@ -643,7 +640,7 @@ void main()
                     int res;
                     uint sample_brick_pos_linear;
                     float sampled_intensity;
-                    try_sample(pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
+                    try_sample(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
                     if(res == SAMPLE_RES_FOUND) {
                         state.intensity = max(state.intensity, sampled_intensity);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {

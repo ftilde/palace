@@ -218,8 +218,6 @@ pub fn render_slice(
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
-#define N 3
-
 #include <util.glsl>
 #include <color.glsl>
 #include <hash.glsl>
@@ -271,7 +269,7 @@ void main()
             //vec3 sample_pos_f = mulh_mat4(transform.value, pos);
             vec3 sample_pos_f = (consts.transform * vec4(pos, 1)).xyz;
 
-            TensorMetaData m_in;
+            TensorMetaData(3) m_in;
             m_in.dimensions = from_glsl(consts.vol_dim);
             m_in.chunk_size = from_glsl(consts.chunk_dim);
 
@@ -286,7 +284,7 @@ void main()
             int res;
             uint sample_brick_pos_linear;
             float sampled_intensity;
-            try_sample(sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+            try_sample(3, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
             if(res == SAMPLE_RES_FOUND) {
                 val = intensity_to_grey(sampled_intensity);

@@ -1,36 +1,36 @@
+#ifndef GLSL_SAMPLE
+#define GLSL_SAMPLE
+
 #include<vec.glsl>
+
+#define TensorMetaDataI(N) TensorMetaDataImpl ## N
+#define TensorMetaData(N) TensorMetaDataI(N)
+
+#define _N 1
+#include <tensormetadata_generic.glsl>
+#undef _N
+#define _N 2
+#include <tensormetadata_generic.glsl>
+#undef _N
+#define _N 3
+#include <tensormetadata_generic.glsl>
+#undef _N
+#define _N 4
+#include <tensormetadata_generic.glsl>
+#undef _N
+#define _N 5
+#include <tensormetadata_generic.glsl>
+#undef _N
 
 layout(buffer_reference, std430) buffer BrickType {
     float values[];
 };
 
-struct TensorMetaData {
-    uint[N] dimensions;
-    uint[N] chunk_size;
-};
-
-uint[N] dim_in_bricks(TensorMetaData vm) {
-    return div_round_up(vm.dimensions, vm.chunk_size);
-}
-
-struct VolumeMetaData {
-    uvec3 dimensions;
-    uvec3 chunk_size;
-};
-
-uvec3 div_round_up3(uvec3 v1, uvec3 v2) {
-    return (v1 + v2 - uvec3(1)) / v2;
-}
-
-uvec3 dim_in_bricks(VolumeMetaData vm) {
-    return div_round_up3(vm.dimensions, vm.chunk_size);
-}
-
 const int SAMPLE_RES_FOUND = 0;
 const int SAMPLE_RES_OUTSIDE = 1;
 const int SAMPLE_RES_NOT_PRESENT = 2;
 
-#define try_sample(sample_pos_in, vm, bricks, found, sample_brick_pos_linear, value) {\
+#define try_sample(N, sample_pos_in, vm, bricks, found, sample_brick_pos_linear, value) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \
     if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
@@ -58,7 +58,4 @@ const int SAMPLE_RES_NOT_PRESENT = 2;
     }\
 }
 
-//#define sample_or_request(sample_pos, chunk_dim, dim_in_bricks) {
-//}
-        //uint64_t sbp = uint64_t(sample_brick_pos_linear);
-        //try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+#endif
