@@ -151,7 +151,7 @@ fn gen_kernel_operator<Params: Element>(
             async move {
                 let size = get_size(&params);
 
-                let mut out = ctx.alloc_slot(pos, size).unwrap();
+                let mut out = ctx.alloc_slot(pos, size);
                 let mut out_data = &mut *out;
                 ctx.submit(ctx.spawn_compute(move || {
                     let kernel = gen_kernel(*params);

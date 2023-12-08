@@ -553,7 +553,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         &'cref self,
         item: ItemDescriptor,
         size: usize,
-    ) -> Result<WriteHandleUninit<'cref, [MaybeUninit<Output>]>, Error> {
+    ) -> WriteHandleUninit<'cref, [MaybeUninit<Output>]> {
         let id = DataId::new(self.current_op(), &item);
         self.inner.storage.alloc_slot(id, size)
     }
@@ -567,7 +567,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         device: &'a DeviceContext,
         item: ItemDescriptor,
         size: usize,
-    ) -> Result<WriteHandle<'a>, Error> {
+    ) -> WriteHandle<'a> {
         let id = DataId::new(self.current_op(), &item);
         device
             .storage
@@ -589,19 +589,14 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
 }
 
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
-    pub fn write(&self, value: Output) -> Result<(), Error> {
-        let mut slot = self.alloc_slot((), 1)?;
+    pub fn write(&self, value: Output) {
+        let mut slot = self.alloc_slot((), 1);
         slot[0].write(value);
         unsafe { slot.initialized(**self) };
-
-        Ok(())
     }
 }
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
-    pub fn alloc_scalar_gpu<'a>(
-        &'a self,
-        device: &'a DeviceContext,
-    ) -> Result<WriteHandle<'a>, Error> {
+    pub fn alloc_scalar_gpu<'a>(&'a self, device: &'a DeviceContext) -> WriteHandle<'a> {
         let id = DataId::new(self.current_op(), &());
         device
             .storage

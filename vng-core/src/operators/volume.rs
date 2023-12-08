@@ -80,7 +80,8 @@ pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
 
                 let v = sum / vol.num_elements() as f32;
 
-                ctx.write(v)
+                ctx.write(v);
+                Ok(())
             }
             .into()
         },
@@ -159,7 +160,7 @@ pub fn rechunk<E: Element>(
                     ctx.into(),
                     |(intersecting_bricks, (pos, in_brick_positions))| {
                         let out_info = m_out.chunk_info(pos);
-                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements()).unwrap();
+                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements());
                         let mut brick_handle = brick_handle.into_thread_handle();
                         let intersecting_bricks = intersecting_bricks
                             .into_iter()
@@ -287,7 +288,7 @@ pub fn convolution_1d<const DIM: usize>(
                     ctx.into(),
                     |(intersecting_bricks, (pos, in_brick_positions))| {
                         let out_info = m_out.chunk_info(pos);
-                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements()).unwrap();
+                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements());
                         let mut brick_handle = brick_handle.into_thread_handle();
                         let intersecting_bricks = intersecting_bricks
                             .into_iter()

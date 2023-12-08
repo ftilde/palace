@@ -110,8 +110,7 @@ void main()
                     let gpu_brick_in1 = in_chunks.next().unwrap();
                     let gpu_brick_in2 = in_chunks.next().unwrap();
 
-                    let gpu_brick_out =
-                        ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config =

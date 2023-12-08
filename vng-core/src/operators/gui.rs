@@ -1062,9 +1062,7 @@ void main() {
                         )
                         .build();
 
-                    let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_copy_image_to_buffer(

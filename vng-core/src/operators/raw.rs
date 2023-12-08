@@ -92,14 +92,7 @@ impl RawVolumeSourceState {
 
             let mut brick_handles = positions
                 .into_iter()
-                .map(|pos| {
-                    (
-                        pos,
-                        ctx.alloc_slot(pos, num_voxels)
-                            .unwrap()
-                            .into_thread_handle(),
-                    )
-                })
+                .map(|pos| (pos, ctx.alloc_slot(pos, num_voxels).into_thread_handle()))
                 .collect::<Vec<_>>();
             ctx.spawn_io(move || {
                 if brick_handles.is_empty() {

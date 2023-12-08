@@ -109,7 +109,6 @@ void main()
 
                 while let Some((inplace, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
-                    let inplace = inplace?;
 
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
@@ -309,9 +308,7 @@ void main() {
                 {
                     let out_info = m_out.chunk_info(pos);
 
-                    let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                     device.with_cmd_buffer(|cmd| {
                         let out_begin = out_info.begin();
@@ -625,9 +622,7 @@ void main() {
                     stream.next().await
                 {
                     let out_info = m_out.chunk_info(pos);
-                    let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                     let out_begin = out_info.begin();
 
@@ -802,7 +797,7 @@ void main()
                         )
                     });
 
-                let sum = ctx.alloc_scalar_gpu(device)?;
+                let sum = ctx.alloc_scalar_gpu(device);
 
                 let normalization_factor = 1.0 / (m.dimensions.hmul() as f32);
 
@@ -967,8 +962,7 @@ void main()
                 for pos in positions {
                     let brick_info = m.chunk_info(pos);
 
-                    let gpu_brick_out =
-                        ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements())?;
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 

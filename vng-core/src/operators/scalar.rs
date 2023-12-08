@@ -37,7 +37,8 @@ impl<T: Element> ScalarOperator<T> {
             move |ctx, (s, data, f)| {
                 async move {
                     let v = ctx.submit(s.request_scalar()).await;
-                    ctx.write(f(v, data))
+                    ctx.write(f(v, data));
+                    Ok(())
                 }
                 .into()
             },
@@ -66,7 +67,8 @@ impl<T: Element> ScalarOperator<T> {
                         ctx.submit(s.request_scalar()),
                         ctx.submit(other.request_scalar()),
                     };
-                    ctx.write(crate::storage::P(l, r))
+                    ctx.write(crate::storage::P(l, r));
+                    Ok(())
                 }
                 .into()
             },
@@ -77,7 +79,11 @@ impl<T: Element> ScalarOperator<T> {
 pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<T> {
     let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(&val);
     scalar(op_id, (), move |ctx, _| {
-        async move { ctx.write(val) }.into()
+        async move {
+            ctx.write(val);
+            Ok(())
+        }
+        .into()
     })
 }
 

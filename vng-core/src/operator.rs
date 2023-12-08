@@ -6,7 +6,6 @@ use crate::{
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
     vulkan::{DeviceId, DstBarrierInfo},
-    Error,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -255,7 +254,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         o_ctx: OpaqueTaskContext<'req, 'inv>,
         item: ItemDescriptor,
         write_id: OperatorId,
-    ) -> Request<'req, 'inv, Result<ram::InplaceResult<'req, Output>, Error>> {
+    ) -> Request<'req, 'inv, ram::InplaceResult<'req, Output>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 
@@ -328,7 +327,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         item: ItemDescriptor,
         write_id: OperatorId,
         dst_info: DstBarrierInfo,
-    ) -> Request<'req, 'inv, Result<gpu::InplaceResult<'req>, Error>> {
+    ) -> Request<'req, 'inv, gpu::InplaceResult<'req>> {
         let read_id = DataId::new(self.id, &item);
         let write_id = DataId::new(write_id, &item);
 

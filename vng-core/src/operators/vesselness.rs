@@ -169,9 +169,7 @@ void main() {
 
                     let global_size = out_info.mem_dimensions.hmul();
 
-                    let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([

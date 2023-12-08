@@ -554,11 +554,7 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
-    fn alloc(
-        &self,
-        key: DataId,
-        layout: Layout,
-    ) -> Result<(*mut MaybeUninit<u8>, AccessToken), Error> {
+    fn alloc(&self, key: DataId, layout: Layout) -> (*mut MaybeUninit<u8>, AccessToken) {
         let data = {
             let data = match self.allocator.alloc(layout) {
                 Ok(d) => d,
@@ -568,7 +564,9 @@ impl Storage {
                     let garbage_collect_goal =
                         self.allocator.size() / super::GARBAGE_COLLECT_GOAL_FRACTION as usize;
                     self.try_garbage_collect(garbage_collect_goal);
-                    self.allocator.alloc(layout)?
+                    self.allocator
+                        .alloc(layout)
+                        .expect("Out of memory and nothing we can do about it.")
                 }
             };
 
@@ -587,39 +585,35 @@ impl Storage {
             data
         };
 
-        Ok((data, AccessToken::new(self, key)))
+        (data, AccessToken::new(self, key))
     }
 
-    pub fn alloc_slot_raw(
-        &self,
-        key: DataId,
-        layout: Layout,
-    ) -> Result<RawWriteHandleUninit, Error> {
-        let (ptr, access) = self.alloc(key, layout)?;
+    pub fn alloc_slot_raw(&self, key: DataId, layout: Layout) -> RawWriteHandleUninit {
+        let (ptr, access) = self.alloc(key, layout);
 
-        Ok(RawWriteHandleUninit {
+        RawWriteHandleUninit {
             data: ptr,
             layout,
             drop_handler: DropError { access },
-        })
+        }
     }
 
     pub fn alloc_slot<T: Element>(
         &self,
         key: DataId,
         size: usize,
-    ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, Error> {
+    ) -> WriteHandleUninit<[MaybeUninit<T>]> {
         let layout = Layout::array::<T>(size).unwrap();
-        let (ptr, access) = self.alloc(key, layout)?;
+        let (ptr, access) = self.alloc(key, layout);
 
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        Ok(WriteHandleUninit {
+        WriteHandleUninit {
             data: t_ref,
             drop_handler: DropError { access },
-        })
+        }
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
@@ -678,7 +672,7 @@ impl Storage {
         ctx: OpaqueTaskContext<'t, 'inv>,
         old_access: AccessToken<'t>,
         new_key: DataId,
-    ) -> Result<Result<InplaceResult<'b, T>, Error>, AccessToken<'t>> {
+    ) -> Result<InplaceResult<'b, T>, AccessToken<'t>> {
         let old_key = old_access.id;
 
         let mut index = self.index.borrow_mut();
@@ -698,7 +692,7 @@ impl Storage {
         // Only allow inplace if we are EXACTLY the one reader
         let in_place_possible = matches!(entry.access, AccessState::Some(1));
 
-        Ok(Ok(if in_place_possible {
+        Ok(if in_place_possible {
             // Repurpose access key for the read/write handle
             let mut new_access = old_access;
             new_access.id = new_key;
@@ -738,16 +732,14 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = match self.alloc_slot(new_key, num_elements) {
-                Ok(w) => w,
-                Err(e) => return Ok(Err(e)),
-            };
+            let w = self.alloc_slot(new_key, num_elements);
+
             let r = ReadHandle {
                 data: t_ref,
                 access: AccessToken::new(self, old_key),
             };
             InplaceResult::New(r, w)
-        }))
+        })
     }
 }
 
@@ -755,6 +747,11 @@ pub struct Allocator {
     alloc: RefCell<Pin<Box<good_memory_allocator::Allocator>>>,
     buffer: *mut u8,
     storage_layout: Layout,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct OOMError {
+    //requested: usize,
 }
 
 impl Allocator {
@@ -785,14 +782,16 @@ impl Allocator {
         })
     }
 
-    fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, Error> {
+    fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, OOMError> {
         let mut alloc = self.alloc.borrow_mut();
 
         assert!(layout.size() > 0);
         // Safety: We ensure that layout.size() > 0
         let ret = unsafe { alloc.alloc(layout) };
         if ret.is_null() {
-            Err("Out of memory".into())
+            Err(OOMError {
+                //requested: layout.size(),
+            })
         } else {
             // Casting from *mut u8 to *mut MaybeUninit<u8> is always fine
             Ok(ret.cast())

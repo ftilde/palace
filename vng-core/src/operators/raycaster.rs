@@ -345,9 +345,7 @@ void main() {
                 );
 
                 // Actual rendering
-                let gpu_brick_out = ctx
-                    .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                    .unwrap();
+                let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                 device.with_cmd_buffer(|cmd| {
                     unsafe {
@@ -813,9 +811,7 @@ void main()
                     });
                 });
 
-                let gpu_brick_out = ctx
-                    .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                    .unwrap();
+                let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                 // Actual rendering

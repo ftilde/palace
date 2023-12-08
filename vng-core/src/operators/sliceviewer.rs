@@ -429,9 +429,7 @@ void main()
                     transform: transform.into(),
                 };
 
-                let gpu_brick_out = ctx
-                    .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                    .unwrap();
+                let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
                 let chunk_size = m_out.chunk_size.raw();
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 

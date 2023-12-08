@@ -20,7 +20,6 @@ use crate::{
         state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
         SrcBarrierInfo,
     },
-    Error,
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -836,7 +835,7 @@ impl Storage {
         current_frame: FrameNumber,
         key: DataId,
         layout: Layout,
-    ) -> Result<(ash::vk::Buffer, AccessToken<'b>), Error> {
+    ) -> (ash::vk::Buffer, AccessToken<'b>) {
         let allocation = self.alloc_ssbo(device, layout);
 
         let buffer = allocation.buffer;
@@ -856,7 +855,7 @@ impl Storage {
             entry.state = StorageEntryState::Initializing(info);
         }
 
-        Ok((buffer, AccessToken::new(self, device, key)))
+        (buffer, AccessToken::new(self, device, key))
     }
 
     pub fn alloc_slot_raw<'b>(
@@ -865,16 +864,16 @@ impl Storage {
         current_frame: FrameNumber,
         key: DataId,
         layout: Layout,
-    ) -> Result<WriteHandle<'b>, Error> {
+    ) -> WriteHandle<'b> {
         let size = layout.size();
-        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, key, layout)?;
+        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, key, layout);
 
-        Ok(WriteHandle {
+        WriteHandle {
             buffer,
             size: size as u64,
             access,
             drop_handler: DropError,
-        })
+        }
     }
 
     pub fn alloc_slot<'b, T: Element>(
@@ -883,7 +882,7 @@ impl Storage {
         current_frame: FrameNumber,
         key: DataId,
         num: usize,
-    ) -> Result<WriteHandle<'b>, Error> {
+    ) -> WriteHandle<'b> {
         let layout = Layout::array::<T>(num).unwrap();
         self.alloc_slot_raw(device, current_frame, key, layout)
     }
@@ -996,7 +995,7 @@ impl Storage {
         old_access: AccessToken<'t>,
         new_key: DataId,
         dst_info: DstBarrierInfo,
-    ) -> Result<Result<InplaceResult<'b>, Error>, AccessToken<'t>> {
+    ) -> Result<InplaceResult<'b>, AccessToken<'t>> {
         let old_key = old_access.id;
 
         let mut index = self.data_index.borrow_mut();
@@ -1017,7 +1016,7 @@ impl Storage {
         // Only allow inplace if we are EXACTLY the one reader
         let in_place_possible = matches!(entry.access, AccessState::Some(1));
 
-        Ok(Ok(if in_place_possible {
+        Ok(if in_place_possible {
             let layout = info.layout;
             let buffer = info.allocation.buffer;
 
@@ -1057,10 +1056,8 @@ impl Storage {
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = match self.alloc_slot_raw(device, current_frame, new_key, layout) {
-                Ok(w) => w,
-                Err(e) => return Ok(Err(e)),
-            };
+            let w = self.alloc_slot_raw(device, current_frame, new_key, layout);
+
             let r = ReadHandle {
                 buffer,
                 layout,
@@ -1068,7 +1065,7 @@ impl Storage {
                 version: old_version,
             };
             InplaceResult::New(r, w)
-        }))
+        })
     }
 
     pub fn access_state_cache<'b>(

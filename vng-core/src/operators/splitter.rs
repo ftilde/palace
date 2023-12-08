@@ -207,8 +207,7 @@ void main()
 
                     let out_info = m.chunk_info(pos);
                     let gpu_brick_out = ctx
-                        .alloc_slot_gpu(device, pos, out_info.mem_elements())
-                        .unwrap();
+                        .alloc_slot_gpu(device, pos, out_info.mem_elements());
 
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([

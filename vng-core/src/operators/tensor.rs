@@ -181,7 +181,7 @@ pub async fn map_values_inplace<
     let stream = ctx
         .submit_unordered(requests)
         .then_req(ctx.into(), |brick_handle| {
-            let mut brick_handle = brick_handle.unwrap().into_thread_handle();
+            let mut brick_handle = brick_handle.into_thread_handle();
             ctx.spawn_compute(move || {
                 match &mut brick_handle {
                     ThreadInplaceResult::Inplace(ref mut rw) => {
@@ -285,9 +285,8 @@ pub fn from_static<D: Dimension, E: Element + Identify>(
         values,
         move |ctx, _, values| {
             async move {
-                let mut out = ctx
-                    .alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len())
-                    .unwrap();
+                let mut out =
+                    ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len());
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {
@@ -330,9 +329,8 @@ pub fn from_rc<D: Dimension, E: Element + Identify>(
         values,
         move |ctx, _, values| {
             async move {
-                let mut out = ctx
-                    .alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len())
-                    .unwrap();
+                let mut out =
+                    ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len());
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {

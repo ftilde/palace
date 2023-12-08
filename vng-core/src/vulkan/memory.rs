@@ -225,10 +225,9 @@ impl TransferManager {
             };
             let layout = input_buf.info.layout;
 
-            let gpu_buf_out =
-                device
-                    .storage
-                    .alloc_slot_raw(device, ctx.current_frame, key, layout)?;
+            let gpu_buf_out = device
+                .storage
+                .alloc_slot_raw(device, ctx.current_frame, key, layout);
 
             unsafe {
                 copy_to_gpu(ctx, device, input_buf.info.data, layout, gpu_buf_out.buffer).await
@@ -269,7 +268,7 @@ impl TransferManager {
             };
             let layout = gpu_buf_in.layout;
 
-            let out_buf = storage.alloc_slot_raw(key, layout).unwrap();
+            let out_buf = storage.alloc_slot_raw(key, layout);
 
             unsafe { copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await };
 
