@@ -7,7 +7,7 @@ use crate::{
     array::VolumeMetaData,
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::{gpu, Element},
     vulkan::{
@@ -64,10 +64,10 @@ void main()
 "#;
 
     TensorOperator::with_state(
-        OperatorId::new("volume_scale_gpu")
+        OperatorDescriptor::new("volume_scale_gpu")
             .dependent_on(&input)
-            .dependent_on(&scale)
-            .dependent_on(&offset),
+            .dependent_on_data(&scale)
+            .dependent_on_data(&offset),
         input.metadata,
         (input, scale, offset),
         move |ctx, positions, (input, scale, offset)| {
@@ -229,11 +229,11 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        OperatorId::new("volume_rechunk_gpu")
+        OperatorDescriptor::new("volume_rechunk_gpu")
             .dependent_on(&input)
-            .dependent_on(&brick_size)
-            .dependent_on(T::TYPE_NAME)
-            .dependent_on(&D::N),
+            .dependent_on_data(&brick_size)
+            .dependent_on_data(T::TYPE_NAME)
+            .dependent_on_data(&D::N),
         {
             let mut m = input.metadata;
             m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -518,10 +518,10 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        OperatorId::new("convolution_1d_gpu")
+        OperatorDescriptor::new("convolution_1d_gpu")
             .dependent_on(&input)
             .dependent_on(&kernel)
-            .dependent_on(&dim),
+            .dependent_on_data(&dim),
         input.metadata,
         (input, kernel),
         move |ctx, positions, (input, kernel)| {
@@ -772,7 +772,7 @@ void main()
 "#;
 
     crate::operators::scalar::scalar(
-        OperatorId::new("volume_mean_gpu").dependent_on(&input),
+        OperatorDescriptor::new("volume_mean_gpu").dependent_on(&input),
         input,
         move |ctx, input| {
             async move {
@@ -930,9 +930,9 @@ void main()
     );
 
     TensorOperator::with_state(
-        OperatorId::new("rasterize_gpu")
-            .dependent_on(body)
-            .dependent_on(&metadata),
+        OperatorDescriptor::new("rasterize_gpu")
+            .dependent_on_data(body)
+            .dependent_on_data(&metadata),
         metadata,
         (metadata, shader),
         move |ctx, positions, (metadata, shader)| {

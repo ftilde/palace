@@ -8,7 +8,7 @@ use crate::{
     chunk_utils::ChunkRequestTable,
     data::{from_linear, GlobalCoordinate, Matrix, Vector},
     dim::*,
-    operator::{OpaqueOperator, OperatorId},
+    operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -179,10 +179,11 @@ void main() {
 ";
 
     TensorOperator::unbatched(
-        OperatorId::new("entry_exit_points")
-            .dependent_on(&input_metadata)
-            .dependent_on(&result_metadata)
-            .dependent_on(&projection_mat),
+        OperatorDescriptor::new("entry_exit_points")
+            .dependent_on_data(&input_metadata)
+            .dependent_on_data(&result_metadata)
+            .dependent_on_data(&projection_mat)
+            .unstable(),
         result_metadata,
         (
             input_metadata,
@@ -683,7 +684,7 @@ void main()
     }
 
     TensorOperator::unbatched(
-        OperatorId::new("raycast")
+        OperatorDescriptor::new("raycast")
             .dependent_on(&input)
             .dependent_on(&entry_exit_points),
         entry_exit_points.metadata,

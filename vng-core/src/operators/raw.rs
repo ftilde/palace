@@ -6,7 +6,7 @@ use futures::StreamExt;
 use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
-    operator::{Operator, OperatorId},
+    operator::{Operator, OperatorDescriptor},
     task::TaskContext,
     Error,
 };
@@ -161,8 +161,8 @@ impl RawVolumeSourceState {
     #[allow(unused)] // We probably will use it directly at some point
     pub fn operate(&self, brick_size: LocalVoxelPosition) -> Operator<BrickPosition, f32> {
         Operator::with_state(
-            OperatorId::new("RawVolumeSourceState::operate")
-                .dependent_on(self.0.path.to_string_lossy().as_bytes()),
+            OperatorDescriptor::new("RawVolumeSourceState::operate")
+                .dependent_on_data(self.0.path.to_string_lossy().as_bytes()),
             self.clone(),
             move |ctx, positions, this| {
                 async move { this.load_raw_bricks(brick_size, ctx, positions).await }.into()

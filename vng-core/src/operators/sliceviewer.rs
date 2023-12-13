@@ -10,7 +10,7 @@ use crate::{
     chunk_utils::ChunkRequestTable,
     data::{from_linear, GlobalCoordinate, Matrix, Vector},
     dim::*,
-    operator::{OpaqueOperator, OperatorId},
+    operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -307,10 +307,11 @@ void main()
 "#;
 
     TensorOperator::unbatched(
-        OperatorId::new("sliceviewer")
+        OperatorDescriptor::new("sliceviewer")
             .dependent_on(&input)
-            .dependent_on(&result_metadata)
-            .dependent_on(&projection_mat),
+            .dependent_on_data(&result_metadata)
+            .dependent_on_data(&projection_mat)
+            .unstable(),
         result_metadata,
         (input, result_metadata, projection_mat),
         move |ctx, pos, (input, result_metadata, projection_mat)| {

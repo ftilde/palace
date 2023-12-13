@@ -3,7 +3,7 @@ use futures::StreamExt;
 
 use crate::{
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -60,10 +60,10 @@ void main()
     );
 
     TensorOperator::with_state(
-        OperatorId::new("bin_op")
+        OperatorDescriptor::new("bin_op")
             .dependent_on(&input1)
             .dependent_on(&input2)
-            .dependent_on(body),
+            .dependent_on_data(body),
         {
             let m1 = input1.metadata;
             let m2 = input2.metadata;

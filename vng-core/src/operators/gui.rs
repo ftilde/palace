@@ -15,7 +15,7 @@ use crate::{
     data::Vector,
     dim::*,
     event::{EventChain, EventStream},
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::gpu::ImageAllocation,
     util::Map,
@@ -547,9 +547,10 @@ void main() {
 
         let version = self.inner.0.borrow().version;
         TensorOperator::unbatched(
-            OperatorId::new("gui")
+            OperatorDescriptor::new("gui")
                 .dependent_on(&input)
-                .dependent_on(&version),
+                .dependent_on_data(&version)
+                .ephemeral(),
             {
                 let m = input.metadata;
                 assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));

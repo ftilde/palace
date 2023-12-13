@@ -7,7 +7,7 @@ use vng_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     operators::{
         raw::RawVolumeSourceState,
         tensor::TensorOperator,
@@ -47,8 +47,8 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
 impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
     fn operate(&self) -> EmbeddedVolumeOperator<f32> {
         TensorOperator::with_state(
-            OperatorId::new("VvdVolumeSourceState::operate")
-                .dependent_on(self.raw.path.to_string_lossy().as_bytes()),
+            OperatorDescriptor::new("VvdVolumeSourceState::operate")
+                .dependent_on_data(self.raw.path.to_string_lossy().as_bytes()),
             self.metadata,
             self.clone(),
             move |ctx, positions, this| {

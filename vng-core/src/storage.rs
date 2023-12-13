@@ -96,6 +96,29 @@ impl<T> Default for LRUManager<T> {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum DataLongevity {
+    Ephemeral,
+    Unstable,
+    Stable,
+}
+
+//impl Ord for DataLongevity {
+//    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//        match (self, other) {
+//            (DataLongevity::Longer, DataLongevity::Longer) => std::cmp::Ordering::Equal,
+//            (DataLongevity::Ephemeral, DataLongevity::Ephemeral) => std::cmp::Ordering::Equal,
+//            (DataLongevity::Longer, DataLongevity::Ephemeral) => std::cmp::Ordering::Greater,
+//            (DataLongevity::Ephemeral, DataLongevity::Longer) => std::cmp::Ordering::Less,
+//        }
+//    }
+//}
+//impl PartialOrd for DataLongevity {
+//    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//        Some(self.cmp(other))
+//    }
+//}
+
 impl<T: Clone> LRUManager<T> {
     fn remove(&mut self, old: LRUIndex) {
         self.list.remove(&old).unwrap();
@@ -144,5 +167,16 @@ impl NewDataManager {
         let mut m = self.inner.borrow_mut();
         let ret = std::mem::take(&mut *m);
         ret.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_longevity_cmp() {
+        assert!(DataLongevity::Ephemeral < DataLongevity::Unstable);
+        assert!(DataLongevity::Unstable < DataLongevity::Stable);
     }
 }

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     id::{Id, Identify},
-    storage::{gpu, ram, DataLocation, Element, VisibleDataLocation},
+    storage::{gpu, ram, DataLocation, DataLongevity, Element, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
     vulkan::{DeviceId, DstBarrierInfo},
@@ -15,12 +15,8 @@ impl OperatorId {
         let id = Id::from_data(name.as_bytes());
         OperatorId(id, name)
     }
-    pub fn dependent_on(self, v: &(impl Identify + ?Sized)) -> Self {
-        OperatorId(Id::combine(&[self.0, v.id()]), self.1)
-    }
-    pub fn slot(&self, slot_number: usize) -> Self {
-        let id = Id::combine(&[self.0, Id::from_data(bytemuck::bytes_of(&slot_number))]);
-        OperatorId(id, self.1)
+    fn dependent_on(self, v: Id) -> Self {
+        OperatorId(Id::combine(&[self.0, v]), self.1)
     }
     pub fn inner(&self) -> Id {
         self.0
@@ -32,9 +28,43 @@ impl Into<Id> for OperatorId {
         self.0
     }
 }
-impl<I, O> Identify for Operator<I, O> {
-    fn id(&self) -> Id {
-        self.id.into()
+
+#[derive(Clone, Copy)]
+pub struct OperatorDescriptor {
+    pub id: OperatorId,
+    pub data_longevity: DataLongevity,
+}
+
+impl OperatorDescriptor {
+    pub fn new(name: &'static str) -> Self {
+        let id = OperatorId::new(name);
+        Self {
+            id,
+            data_longevity: DataLongevity::Stable,
+        }
+    }
+    pub fn dependent_on(self, v: &dyn OperatorNetworkNode) -> Self {
+        let d = v.descriptor();
+        Self {
+            id: self.id.dependent_on(d.id.into()),
+            data_longevity: self.data_longevity.min(d.data_longevity),
+        }
+    }
+    pub fn dependent_on_data(self, v: &(impl Identify + ?Sized)) -> Self {
+        Self {
+            id: self.id.dependent_on(v.id()),
+            data_longevity: self.data_longevity,
+        }
+    }
+    pub fn data_longevity(mut self, data_longevity: DataLongevity) -> Self {
+        self.data_longevity = data_longevity;
+        self
+    }
+    pub fn ephemeral(self) -> Self {
+        self.data_longevity(DataLongevity::Ephemeral)
+    }
+    pub fn unstable(self) -> Self {
+        self.data_longevity(DataLongevity::Unstable)
     }
 }
 
@@ -83,6 +113,16 @@ pub enum ItemGranularity {
     Batched,
 }
 
+pub trait OperatorNetworkNode {
+    fn descriptor(&self) -> OperatorDescriptor;
+}
+
+impl<I, O> OperatorNetworkNode for Operator<I, O> {
+    fn descriptor(&self) -> OperatorDescriptor {
+        self.descriptor
+    }
+}
+
 pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
     fn granularity(&self) -> ItemGranularity;
@@ -94,7 +134,7 @@ pub trait OpaqueOperator {
 }
 
 pub struct Operator<ItemDescriptor, Output: ?Sized> {
-    id: OperatorId,
+    descriptor: OperatorDescriptor,
     state: Rc<TypeErased>,
     granularity: ItemGranularity,
     compute: ComputeFunction<ItemDescriptor, Output>,
@@ -102,7 +142,7 @@ pub struct Operator<ItemDescriptor, Output: ?Sized> {
 impl<ItemDescriptor, Output: ?Sized> Clone for Operator<ItemDescriptor, Output> {
     fn clone(&self) -> Self {
         Self {
-            id: self.id.clone(),
+            descriptor: self.descriptor.clone(),
             state: self.state.clone(),
             granularity: self.granularity.clone(),
             compute: self.compute.clone(),
@@ -114,7 +154,7 @@ impl<Output: Element> Operator<(), Output> {
     #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
-        let id = DataId::new(self.id, &item);
+        let id = DataId::new(self.id(), &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
@@ -160,10 +200,10 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
             ) -> Task<'cref>
             + 'static,
     >(
-        id: OperatorId,
+        descriptor: OperatorDescriptor,
         compute: F,
     ) -> Self {
-        Self::with_state(id, (), compute)
+        Self::with_state(descriptor, (), compute)
     }
 
     pub fn with_state<
@@ -175,12 +215,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
             ) -> Task<'cref>
             + 'static,
     >(
-        id: OperatorId,
+        descriptor: OperatorDescriptor,
         state: S,
         compute: F,
     ) -> Self {
         Self {
-            id,
+            descriptor,
             state: Rc::new(TypeErased::pack(state)),
             granularity: ItemGranularity::Batched,
             compute: Rc::new(move |ctx, items, state| {
@@ -201,12 +241,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
             ) -> Task<'cref>
             + 'static,
     >(
-        id: OperatorId,
+        descriptor: OperatorDescriptor,
         state: S,
         compute: F,
     ) -> Self {
         Self {
-            id,
+            descriptor,
             state: Rc::new(TypeErased::pack(state)),
             granularity: ItemGranularity::Single,
             compute: Rc::new(move |ctx, items, state| {
@@ -225,7 +265,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         &'inv self,
         item: ItemDescriptor,
     ) -> Request<'req, 'inv, ram::ReadHandle<'req, [Output]>> {
-        let id = DataId::new(self.id, &item);
+        let id = DataId::new(self.id(), &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
@@ -255,7 +295,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         item: ItemDescriptor,
         write_id: OperatorId,
     ) -> Request<'req, 'inv, ram::InplaceResult<'req, Output>> {
-        let read_id = DataId::new(self.id, &item);
+        let read_id = DataId::new(self.id(), &item);
         let write_id = DataId::new(write_id, &item);
 
         Request {
@@ -290,7 +330,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         item: ItemDescriptor,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
-        let id = DataId::new(self.id, &item);
+        let id = DataId::new(self.id(), &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
@@ -328,7 +368,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         write_id: OperatorId,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::InplaceResult<'req>> {
-        let read_id = DataId::new(self.id, &item);
+        let read_id = DataId::new(self.id(), &item);
         let write_id = DataId::new(write_id, &item);
 
         Request {
@@ -370,7 +410,7 @@ impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
     for Operator<ItemDescriptor, Output>
 {
     fn id(&self) -> OperatorId {
-        self.id
+        self.descriptor.id
     }
     fn granularity(&self) -> ItemGranularity {
         self.granularity

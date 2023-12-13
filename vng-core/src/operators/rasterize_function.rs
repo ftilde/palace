@@ -4,7 +4,7 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     task::TaskContext,
     Error,
 };
@@ -90,12 +90,12 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VolumeOperatorState
 {
     fn operate(&self) -> VolumeOperator<f32> {
         TensorOperator::with_state(
-            OperatorId::new("ImplicitFunctionRasterizer::operate")
+            OperatorDescriptor::new("ImplicitFunctionRasterizer::operate")
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
                 //same type!
-                .dependent_on(&crate::id::func_id::<F>())
-                .dependent_on(&self.metadata),
+                .dependent_on_data(&crate::id::func_id::<F>())
+                .dependent_on_data(&self.metadata),
             self.metadata,
             self.clone(),
             move |ctx, positions, this| {

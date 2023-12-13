@@ -6,7 +6,7 @@ use vng_core::{
     array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
     data::{self, LocalCoordinate, Vector, VoxelPosition},
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     operators::{
         tensor::TensorOperator,
         volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
@@ -104,12 +104,12 @@ impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
     fn operate(&self) -> EmbeddedVolumeOperator<f32> {
         TensorOperator::with_state(
             match &self.0.type_ {
-                Type::Single(path) => OperatorId::new("NiftiVolumeSourceState::operate")
-                    .dependent_on(path.to_string_lossy().as_bytes()),
+                Type::Single(path) => OperatorDescriptor::new("NiftiVolumeSourceState::operate")
+                    .dependent_on_data(path.to_string_lossy().as_bytes()),
                 Type::Separate { header, data } => {
-                    OperatorId::new("NiftiVolumeSourceState::operate")
-                        .dependent_on(header.to_string_lossy().as_bytes())
-                        .dependent_on(data.to_string_lossy().as_bytes())
+                    OperatorDescriptor::new("NiftiVolumeSourceState::operate")
+                        .dependent_on_data(header.to_string_lossy().as_bytes())
+                        .dependent_on_data(data.to_string_lossy().as_bytes())
                 }
             },
             self.0.metadata,

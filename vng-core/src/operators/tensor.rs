@@ -7,7 +7,7 @@ use crate::{
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
     id::{Id, Identify},
-    operator::{Operator, OperatorId},
+    operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         ram::{InplaceResult, ThreadInplaceResult},
         Element,
@@ -21,6 +21,12 @@ pub struct TensorOperator<D: Dimension, E> {
     pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,
 }
 
+impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {
+    fn descriptor(&self) -> OperatorDescriptor {
+        self.chunks.descriptor().dependent_on_data(&self.metadata)
+    }
+}
+
 impl<D: Dimension, E: Element> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
@@ -30,11 +36,11 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
             ) -> Task<'cref>
             + 'static,
     >(
-        base_id: OperatorId,
+        descriptor: OperatorDescriptor,
         metadata: TensorMetaData<D>,
         chunks: B,
     ) -> Self {
-        Self::with_state(base_id, metadata, (), chunks)
+        Self::with_state(descriptor, metadata, (), chunks)
     }
 
     pub fn with_state<
@@ -46,14 +52,14 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
             ) -> Task<'cref>
             + 'static,
     >(
-        base_id: OperatorId,
+        descriptor: OperatorDescriptor,
         metadata: TensorMetaData<D>,
         state_chunks: SB,
         chunks: B,
     ) -> Self {
         Self {
             metadata,
-            chunks: Operator::with_state(base_id, state_chunks, chunks),
+            chunks: Operator::with_state(descriptor, state_chunks, chunks),
         }
     }
 
@@ -66,14 +72,14 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
             ) -> Task<'cref>
             + 'static,
     >(
-        base_id: OperatorId,
+        descriptor: OperatorDescriptor,
         metadata: TensorMetaData<D>,
         state_chunks: SB,
         chunks: B,
     ) -> Self {
         Self {
             metadata,
-            chunks: Operator::unbatched(base_id, state_chunks, chunks),
+            chunks: Operator::unbatched(descriptor, state_chunks, chunks),
         }
     }
 
@@ -85,21 +91,17 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, E> Identify for TensorOperator<D, E> {
-    fn id(&self) -> Id {
-        Id::combine(&[(&self.metadata).id(), (&self.chunks).id()])
-    }
-}
-
 #[derive(Clone)]
 pub struct EmbeddedTensorOperator<D: Dimension, E> {
     pub inner: TensorOperator<D, E>,
     pub embedding_data: TensorEmbeddingData<D>,
 }
 
-impl<D: Dimension, E> Identify for EmbeddedTensorOperator<D, E> {
-    fn id(&self) -> Id {
-        Id::combine(&[(&self.inner).id(), (&self.embedding_data).id()])
+impl<D: Dimension, E> OperatorNetworkNode for EmbeddedTensorOperator<D, E> {
+    fn descriptor(&self) -> OperatorDescriptor {
+        self.chunks
+            .descriptor()
+            .dependent_on_data(&self.embedding_data)
     }
 }
 
@@ -143,9 +145,13 @@ pub struct LODTensorOperator<D: Dimension, E> {
     pub levels: Vec<EmbeddedTensorOperator<D, E>>,
 }
 
-impl<D: Dimension, E> Identify for LODTensorOperator<D, E> {
-    fn id(&self) -> Id {
-        self.levels.as_slice().id()
+impl<D: Dimension, E> OperatorNetworkNode for LODTensorOperator<D, E> {
+    fn descriptor(&self) -> OperatorDescriptor {
+        let mut d = self.levels[0].descriptor();
+        for l in &self.levels[1..] {
+            d = d.dependent_on(l);
+        }
+        d
     }
 }
 
@@ -217,9 +223,9 @@ pub fn map<D: Dimension, E: Element>(
     f: fn(E) -> E,
 ) -> TensorOperator<D, E> {
     TensorOperator::with_state(
-        OperatorId::new("tensor_map")
+        OperatorDescriptor::new("tensor_map")
             .dependent_on(&input)
-            .dependent_on(&Id::hash(&f)),
+            .dependent_on_data(&Id::hash(&f)),
         input.metadata,
         input,
         move |ctx, positions, input| {
@@ -240,10 +246,10 @@ pub fn linear_rescale<D: Dimension>(
     offset: f32,
 ) -> TensorOperator<D, f32> {
     TensorOperator::with_state(
-        OperatorId::new("tensor_linear_scale")
+        OperatorDescriptor::new("tensor_linear_scale")
             .dependent_on(&input)
-            .dependent_on(&factor)
-            .dependent_on(&offset),
+            .dependent_on_data(&factor)
+            .dependent_on_data(&offset),
         input.metadata,
         (input, factor, offset),
         move |ctx, positions, (input, factor, offset)| {
@@ -278,9 +284,9 @@ pub fn from_static<D: Dimension, E: Element + Identify>(
         .into());
     }
     Ok(TensorOperator::with_state(
-        OperatorId::new("tensor_from_static")
-            .dependent_on(&size)
-            .dependent_on(values), //TODO: this is a performance problem for
+        OperatorDescriptor::new("tensor_from_static")
+            .dependent_on_data(&size)
+            .dependent_on_data(values), //TODO: this is a performance problem for
         m,
         values,
         move |ctx, _, values| {
@@ -322,9 +328,9 @@ pub fn from_rc<D: Dimension, E: Element + Identify>(
         .into());
     }
     Ok(TensorOperator::with_state(
-        OperatorId::new("tensor_from_static")
-            .dependent_on(&size)
-            .dependent_on(&values[..]), //TODO: this is a performance problem for large arrays
+        OperatorDescriptor::new("tensor_from_static")
+            .dependent_on_data(&size)
+            .dependent_on_data(&values[..]), //TODO: this is a performance problem for large arrays
         m,
         values,
         move |ctx, _, values| {

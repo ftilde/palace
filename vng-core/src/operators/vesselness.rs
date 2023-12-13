@@ -2,7 +2,7 @@ use ash::vk;
 use futures::StreamExt;
 
 use crate::dim::*;
-use crate::operator::OperatorId;
+use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
@@ -125,9 +125,9 @@ void main() {
     let zz = g(ddgauss_dxdx, gauss, gauss);
 
     TensorOperator::with_state(
-        OperatorId::new("vesselness")
+        OperatorDescriptor::new("vesselness")
             .dependent_on(&input)
-            .dependent_on(&scale),
+            .dependent_on_data(&scale),
         input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),
         move |ctx, positions, (input, hessian)| {

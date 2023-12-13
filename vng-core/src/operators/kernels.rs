@@ -1,4 +1,4 @@
-use crate::{array::ArrayMetaData, data::Vector, operator::OperatorId, storage::Element};
+use crate::{array::ArrayMetaData, data::Vector, operator::OperatorDescriptor, storage::Element};
 
 use super::{array::ArrayOperator, tensor::TensorOperator};
 
@@ -107,7 +107,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
 
 pub fn gauss<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
-        OperatorId::new("gauss").dependent_on(&stddev),
+        OperatorDescriptor::new("gauss").dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_gauss,
@@ -115,7 +115,7 @@ pub fn gauss<'a>(stddev: f32) -> ArrayOperator<f32> {
 }
 pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
-        OperatorId::new("dgauss_dx").dependent_on(&stddev),
+        OperatorDescriptor::new("dgauss_dx").dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_dgauss_dx,
@@ -123,7 +123,7 @@ pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<f32> {
 }
 pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<f32> {
     gen_kernel_operator(
-        OperatorId::new("ddgauss_dxdx").dependent_on(&stddev),
+        OperatorDescriptor::new("ddgauss_dxdx").dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_ddgauss_dxdx,
@@ -131,13 +131,13 @@ pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<f32> {
 }
 
 fn gen_kernel_operator<Params: Element>(
-    id: OperatorId,
+    descriptor: OperatorDescriptor,
     params: Params,
     get_size: impl Fn(&Params) -> usize + Clone + 'static,
     gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'static,
 ) -> ArrayOperator<f32> {
     TensorOperator::unbatched(
-        id,
+        descriptor,
         {
             let size = get_size(&params) as u32;
             ArrayMetaData {

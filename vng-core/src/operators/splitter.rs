@@ -6,7 +6,7 @@ use crate::{
     data::{PixelPosition, Vector},
     dim::*,
     event::{EventChain, EventStream},
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -169,7 +169,7 @@ void main()
         let split_dim = 1 - self.split_dim as u32;
 
         TensorOperator::with_state(
-            OperatorId::new("splitter")
+            OperatorDescriptor::new("splitter")
                 .dependent_on(&input_l)
                 .dependent_on(&input_r),
             self.metadata_out(),

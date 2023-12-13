@@ -7,7 +7,7 @@ use crate::{
         chunk, chunk_mut, slice_range, BrickPosition, GlobalCoordinate, LocalCoordinate, Vector,
     },
     dim::*,
-    operator::OperatorId,
+    operator::OperatorDescriptor,
     storage::Element,
     task::RequestStream,
 };
@@ -43,7 +43,7 @@ pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
 #[allow(unused)]
 pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
     crate::operators::scalar::scalar(
-        OperatorId::new("volume_mean").dependent_on(&input),
+        OperatorDescriptor::new("volume_mean").dependent_on(&input),
         input,
         move |ctx, input| {
             async move {
@@ -113,9 +113,9 @@ pub fn rechunk<E: Element>(
     brick_size: Vector<D3, ChunkSize>,
 ) -> VolumeOperator<E> {
     TensorOperator::with_state(
-        OperatorId::new("volume_rechunk")
+        OperatorDescriptor::new("volume_rechunk")
             .dependent_on(&input)
-            .dependent_on(&brick_size),
+            .dependent_on_data(&brick_size),
         {
             let mut m = input.metadata;
             m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -230,7 +230,7 @@ pub fn convolution_1d<const DIM: usize>(
     kernel: ArrayOperator<f32>,
 ) -> VolumeOperator<f32> {
     TensorOperator::with_state(
-        OperatorId::new("convolution_1d")
+        OperatorDescriptor::new("convolution_1d")
             .dependent_on(&input)
             .dependent_on(&kernel),
         input.metadata,

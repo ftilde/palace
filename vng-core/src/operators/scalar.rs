@@ -1,6 +1,6 @@
 use crate::{
     id::{Id, Identify},
-    operator::{Operator, OperatorId},
+    operator::{Operator, OperatorDescriptor},
     storage::Element,
     task::{Task, TaskContext},
 };
@@ -12,11 +12,11 @@ pub fn scalar<
     S: 'static,
     F: for<'cref, 'inv> Fn(TaskContext<'cref, 'inv, (), T>, &'inv S) -> Task<'cref> + 'static,
 >(
-    id: OperatorId,
+    descriptor: OperatorDescriptor,
     state: S,
     compute: F,
 ) -> ScalarOperator<T> {
-    Operator::with_state(id, state, move |ctx, d, s| {
+    Operator::with_state(descriptor, state, move |ctx, d, s| {
         assert!(d.len() == 1);
         compute(ctx, s)
     })
@@ -29,10 +29,10 @@ impl<T: Element> ScalarOperator<T> {
         f: fn(T, &D) -> O,
     ) -> ScalarOperator<O> {
         scalar(
-            OperatorId::new("ScalarOperator::map")
+            OperatorDescriptor::new("ScalarOperator::map")
                 .dependent_on(&self)
-                .dependent_on(&data)
-                .dependent_on(&Id::hash(&f)),
+                .dependent_on_data(&data)
+                .dependent_on_data(&Id::hash(&f)),
             (self, data, f),
             move |ctx, (s, data, f)| {
                 async move {
@@ -57,7 +57,7 @@ impl<T: Element> ScalarOperator<T> {
         other: ScalarOperator<O>,
     ) -> ScalarOperator<crate::storage::P<T, O>> {
         scalar(
-            OperatorId::new("ScalarOperator::map")
+            OperatorDescriptor::new("ScalarOperator::zip")
                 .dependent_on(&self)
                 .dependent_on(&other),
             (self, other),
@@ -77,7 +77,7 @@ impl<T: Element> ScalarOperator<T> {
 }
 
 pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<T> {
-    let op_id = OperatorId::new(std::any::type_name::<T>()).dependent_on(&val);
+    let op_id = OperatorDescriptor::new(std::any::type_name::<T>()).dependent_on_data(&val);
     scalar(op_id, (), move |ctx, _| {
         async move {
             ctx.write(val);

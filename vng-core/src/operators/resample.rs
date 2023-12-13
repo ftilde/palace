@@ -7,7 +7,7 @@ use crate::{
     coordinate::ChunkCoordinate,
     data::{Matrix, Vector, AABB},
     dim::*,
-    operator::{OpaqueOperator, OperatorId},
+    operator::{OpaqueOperator, OperatorDescriptor},
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -227,10 +227,10 @@ void main() {
 "#;
 
     TensorOperator::with_state(
-        OperatorId::new("resample")
+        OperatorDescriptor::new("resample")
             .dependent_on(&input)
-            .dependent_on(&output_size)
-            .dependent_on(&element_out_to_in),
+            .dependent_on_data(&output_size)
+            .dependent_on_data(&element_out_to_in),
         output_size,
         (input, output_size, element_out_to_in),
         move |ctx, positions, (input, output_size, element_out_to_in)| {
