@@ -544,8 +544,7 @@ pub struct Storage {
     index_index: RefCell<Map<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
-    index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>, //TODO: Simplify after DataId
-    //overhaul
+    index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
