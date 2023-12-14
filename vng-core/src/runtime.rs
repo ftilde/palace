@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    operator::{DataId, OpaqueOperator, OperatorId, TypeErased},
+    operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
     task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
@@ -277,6 +277,7 @@ impl RunTime {
                 waker: dummy_waker(),
                 task_graph: TaskGraph::new(),
                 statistics: Statistics::new(),
+                operator_info: Default::default(),
                 transfer_manager: Default::default(),
                 request_batcher: Default::default(),
                 barrier_batcher: BarrierBatcher::new(),
@@ -332,6 +333,7 @@ struct Executor<'cref, 'inv> {
     task_graph: TaskGraph,
     transfer_manager: crate::vulkan::memory::TransferManager,
     statistics: Statistics,
+    operator_info: Map<OperatorId, OperatorDescriptor>,
     waker: Waker,
     deadline: Instant,
 }
@@ -349,6 +351,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
+            current_op: self.operator_info.get(&current_task.operator()).cloned(),
             current_frame: self.data.frame,
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
             deadline: self.deadline,
@@ -503,7 +506,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn try_make_available(
         &mut self,
-        data: DataId,
+        id: DataId,
         from: DataLocation,
         to: VisibleDataLocation,
     ) -> Option<TaskId> {
@@ -513,7 +516,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 if target == source =>
             {
                 let device = &self.data.device_contexts[target];
-                match device.storage.is_visible(data, dst_info) {
+                match device.storage.is_visible(id, dst_info) {
                     Ok(()) => None,
                     Err(src_info) => {
                         let b_info = BarrierInfo {
@@ -523,7 +526,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         };
                         let task_id = match self
                             .barrier_batcher
-                            .add(b_info, BarrierItem::Data(data.with_visibility(to)))
+                            .add(b_info, BarrierItem::Data(id.with_visibility(to)))
                         {
                             BatchAddResult::New(t) => {
                                 self.task_graph.add_implied(t, PRIORITY_BARRIER);
@@ -540,7 +543,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             (DataLocation::Ram, VisibleDataLocation::VRam(target_id, _)) => {
                 let task_id = self.transfer_manager.next_id();
-                let access = self.data.storage.register_access(data);
+                let access = self.data.storage.register_access(id);
                 let transfer_task = self.transfer_manager.transfer_to_gpu(
                     self.context(task_id),
                     &self.data.device_contexts[target_id],
@@ -553,9 +556,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
-                let access = device
-                    .storage
-                    .register_access(device, self.data.frame, data);
+                let access = device.storage.register_access(device, self.data.frame, id);
                 let transfer_task = self.transfer_manager.transfer_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
@@ -588,6 +589,14 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
             RequestType::Data(data_request) => {
+                let op_id = data_request.source.id();
+                self.operator_info
+                    .entry(op_id)
+                    .or_insert(OperatorDescriptor {
+                        id: op_id,
+                        data_longevity: data_request.source.longevity(),
+                    });
+
                 let data_id = data_request.id;
                 if !already_requested {
                     if let Some(available) = self.find_available_location(data_id) {

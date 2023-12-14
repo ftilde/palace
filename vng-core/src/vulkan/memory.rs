@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    operator::OperatorId,
+    operator::{DataDescriptor, OperatorId},
     storage::gpu::Allocation,
     task::{OpaqueTaskContext, Task},
     task_graph::TaskId,
@@ -224,10 +224,15 @@ impl TransferManager {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
+            let desc = DataDescriptor {
+                id: key,
+                longevity: input_buf.info.data_longevity,
+            };
 
-            let gpu_buf_out = device
-                .storage
-                .alloc_slot_raw(device, ctx.current_frame, key, layout);
+            let gpu_buf_out =
+                device
+                    .storage
+                    .alloc_slot_raw(device, ctx.current_frame, desc, layout);
 
             unsafe {
                 copy_to_gpu(ctx, device, input_buf.info.data, layout, gpu_buf_out.buffer).await
@@ -268,7 +273,11 @@ impl TransferManager {
             };
             let layout = gpu_buf_in.layout;
 
-            let out_buf = storage.alloc_slot_raw(key, layout);
+            let desc = DataDescriptor {
+                id: key,
+                longevity: gpu_buf_in.data_longevity,
+            };
+            let out_buf = storage.alloc_slot_raw(desc, layout);
 
             unsafe { copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await };
 

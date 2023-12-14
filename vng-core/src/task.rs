@@ -9,7 +9,9 @@ use std::task::Poll;
 use std::time::Instant;
 
 use crate::id::Id;
-use crate::operator::{DataId, OpaqueOperator, OperatorId, TypeErased};
+use crate::operator::{
+    DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
+};
 use crate::runtime::{CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{StateCacheResult, WriteHandle};
 use crate::storage::ram::{Storage, WriteHandleUninit};
@@ -124,6 +126,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) device_contexts: &'cref [DeviceContext],
     pub(crate) predicted_preview_tasks: &'cref RefCell<Set<TaskId>>,
     pub(crate) current_task: TaskId,
+    pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
     pub(crate) current_frame: FrameNumber,
     pub(crate) deadline: Instant,
 }
@@ -197,6 +200,10 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
 
     pub fn current_op(&self) -> OperatorId {
         self.current_task.operator()
+    }
+
+    pub fn current_op_desc(&self) -> Option<OperatorDescriptor> {
+        self.current_op
     }
 
     pub fn submit_unordered<'req, V: 'req>(
@@ -554,7 +561,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         item: ItemDescriptor,
         size: usize,
     ) -> WriteHandleUninit<'cref, [MaybeUninit<Output>]> {
-        let id = DataId::new(self.current_op(), &item);
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
         self.inner.storage.alloc_slot(id, size)
     }
 }
@@ -568,7 +575,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         item: ItemDescriptor,
         size: usize,
     ) -> WriteHandle<'a> {
-        let id = DataId::new(self.current_op(), &item);
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
         device
             .storage
             .alloc_slot::<Output>(device, self.current_frame, id, size)
@@ -597,7 +604,7 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
 }
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
     pub fn alloc_scalar_gpu<'a>(&'a self, device: &'a DeviceContext) -> WriteHandle<'a> {
-        let id = DataId::new(self.current_op(), &());
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &());
         device
             .storage
             .alloc_slot::<Output>(device, self.current_frame, id, 1)

@@ -6,13 +6,16 @@ use std::{
     mem::MaybeUninit,
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, Element, LRUIndex, LRUManager};
+use super::{
+    DataLocation, DataLongevity, DataVersion, DataVersionType, Element, LRUIndex, LRUIndexInner,
+    LRUManager, LRUManagerInner,
+};
 
 use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 
 use crate::{
-    operator::{DataId, OperatorId},
+    operator::{DataDescriptor, DataId, OperatorDescriptor, OperatorId},
     runtime::FrameNumber,
     task::OpaqueTaskContext,
     util::Map,
@@ -90,7 +93,7 @@ impl BarrierManager {
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
     Some(usize),
-    None(LRUIndex, CmdBufferEpoch),
+    None(Option<LRUIndex>, CmdBufferEpoch),
 }
 
 #[derive(Debug)]
@@ -106,10 +109,23 @@ enum StorageEntryState {
     Initialized(StorageInfo, Visibility, DataVersion),
 }
 
+impl StorageEntryState {
+    fn storage_info(&self) -> Option<&StorageInfo> {
+        if let StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _, _) =
+            &self
+        {
+            Some(&info)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 struct StorageInfo {
     pub allocation: Allocation,
     pub layout: Layout,
+    data_longevity: DataLongevity,
 }
 
 struct Entry {
@@ -147,6 +163,7 @@ impl Drop for StateCacheAccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.state_cache_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
+        let longevity = vram_entry.storage.data_longevity;
 
         let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
         dec_access(
@@ -154,6 +171,7 @@ impl Drop for StateCacheAccessToken<'_> {
             &mut lru_manager,
             self.device,
             LRUItem::State(self.id),
+            Some(longevity),
         );
     }
 }
@@ -188,7 +206,9 @@ fn inc_access(access: &mut AccessState, storage: &Storage) {
     *access = match *access {
         AccessState::Some(n) => AccessState::Some(n + 1),
         AccessState::None(id, _) => {
-            storage.lru_manager.borrow_mut().remove(id);
+            if let Some(id) = id {
+                storage.lru_manager.borrow_mut().remove(id);
+            }
             AccessState::Some(1)
         }
     };
@@ -198,10 +218,15 @@ fn dec_access<T: Clone>(
     lru_manager: &mut LRUManager<T>,
     device: &DeviceContext,
     id: T,
+    longevity: Option<DataLongevity>,
 ) {
     *access = match *access {
         AccessState::Some(1) => {
-            let lru_id = lru_manager.add(id);
+            let lru_id = if let Some(longevity) = longevity {
+                Some(lru_manager.add(id, longevity))
+            } else {
+                None
+            };
             AccessState::None(lru_id, device.current_epoch())
         }
         AccessState::Some(n) => AccessState::Some(n - 1),
@@ -215,12 +240,15 @@ impl Drop for AccessToken<'_> {
         let mut index = self.storage.data_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
 
+        let longevity = vram_entry.state.storage_info().map(|i| i.data_longevity);
+
         let mut lru_manager = self.storage.lru_manager.borrow_mut();
         dec_access(
             &mut vram_entry.access,
             &mut lru_manager,
             self.device,
             LRUItem::Data(self.id),
+            longevity,
         );
     }
 }
@@ -311,6 +339,7 @@ pub struct ReadHandle<'a> {
     #[allow(unused)]
     access: AccessToken<'a>,
     pub version: DataVersionType,
+    pub data_longevity: DataLongevity,
 }
 
 pub struct StateCacheHandle<'a> {
@@ -360,7 +389,7 @@ impl<'a> InplaceResult<'a> {
 
 struct IndexBrickRef {
     id: DataId,
-    acquire_lru_index: LRUIndex,
+    acquire_lru_index: LRUIndexInner,
 }
 
 pub struct IndexEntry {
@@ -368,6 +397,29 @@ pub struct IndexEntry {
     visibility: Visibility,
     present: Map<u64, IndexBrickRef>,
     access: AccessState,
+}
+
+// Safety: The caller is responsible for removing the reference from the index in gpu memory
+// (i.e. self.storage.allocation.buffer)
+unsafe fn unref_brick_in_index(
+    device: &DeviceContext,
+    brick_index: &mut Map<DataId, Entry>,
+    index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>,
+    brick_lru: &mut LRUManager<LRUItem>,
+    brick_ref: IndexBrickRef,
+) {
+    index_lru.remove(brick_ref.acquire_lru_index);
+
+    let d_entry = brick_index.get_mut(&brick_ref.id).unwrap();
+    let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
+
+    dec_access(
+        &mut d_entry.access,
+        brick_lru,
+        device,
+        LRUItem::Data(brick_ref.id),
+        longevity,
+    );
 }
 
 impl IndexEntry {
@@ -380,46 +432,11 @@ impl IndexEntry {
         }
     }
 
-    // Safety: The caller is responsible for removing the reference from the index in gpu memory
-    // (i.e. self.storage.allocation.buffer)
-    unsafe fn unref(
-        &mut self,
-        device: &DeviceContext,
-        brick_index: &mut Map<DataId, Entry>,
-        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
-        brick_lru: &mut LRUManager<LRUItem>,
-        brick_ref: IndexBrickRef,
-    ) {
-        index_lru.remove(brick_ref.acquire_lru_index);
-
-        let d_entry = brick_index.get_mut(&brick_ref.id).unwrap();
-        dec_access(
-            &mut d_entry.access,
-            brick_lru,
-            device,
-            LRUItem::Data(brick_ref.id),
-        );
-    }
-
-    // Safety: Only use this when the index is destroyed afterwards. This will *NOT* remove the
-    // references from the index.
-    unsafe fn unref_all(
-        &mut self,
-        device: &DeviceContext,
-        brick_index: &mut Map<DataId, Entry>,
-        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
-        brick_lru: &mut LRUManager<LRUItem>,
-    ) {
-        for (_pos, brick_ref) in std::mem::take(&mut self.present) {
-            self.unref(device, brick_index, index_lru, brick_lru, brick_ref);
-        }
-    }
-
     fn release(
         &mut self,
         device: &DeviceContext,
         brick_index: &mut Map<DataId, Entry>,
-        index_lru: &mut LRUManager<(OperatorId, u64, DataId)>,
+        index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>,
         brick_lru: &mut LRUManager<LRUItem>,
         pos: u64,
     ) {
@@ -438,7 +455,7 @@ impl IndexEntry {
         let brick_ref = self.present.remove(&pos).unwrap();
 
         // Safety: We have also just removed the reference from the index
-        unsafe { self.unref(device, brick_index, index_lru, brick_lru, brick_ref) };
+        unsafe { unref_brick_in_index(device, brick_index, index_lru, brick_lru, brick_ref) };
     }
 }
 
@@ -501,12 +518,15 @@ impl<'a> Drop for IndexHandle<'a> {
         let mut index = self.device.storage.index_index.borrow_mut();
         let vram_entry = index.get_mut(&self.op).unwrap();
 
+        let longevity = vram_entry.storage.data_longevity;
+
         let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
         dec_access(
             &mut vram_entry.access,
             &mut lru_manager,
             self.device,
             LRUItem::Index(self.op),
+            Some(longevity),
         );
     }
 }
@@ -524,7 +544,7 @@ pub struct Storage {
     index_index: RefCell<Map<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
-    index_lru: RefCell<super::LRUManager<(OperatorId, u64, DataId)>>, //TODO: Simplify after DataId
+    index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>, //TODO: Simplify after DataId
     //overhaul
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
@@ -594,78 +614,97 @@ impl Storage {
         let mut index = self.data_index.borrow_mut();
         let mut state_cache_index = self.state_cache_index.borrow_mut();
         let mut index_index = self.index_index.borrow_mut();
-        while let Some(key) = lru.get_next() {
-            let info = match key {
-                LRUItem::Data(key) => {
-                    let entry = index.get_mut(&key).unwrap();
-                    let AccessState::None(_, f) = entry.access else {
-                        panic!("Should not be in LRU list");
-                    };
-                    if !device.cmd_buffer_completed(f) {
-                        // All following LRU items will have the same or a later epoch so cannot be deleted
-                        // either
-                        break;
-                    }
 
-                    let entry = index.remove(&key).unwrap();
+        let mut indices_to_unref = Vec::new();
+        for (longevity, inner_lru) in lru.inner_mut() {
+            let mut collected_local = 0;
 
-                    self.new_data.remove(key);
-                    match entry.state {
-                        StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                        StorageEntryState::Initializing(info)
-                        | StorageEntryState::Initialized(info, _, _) => info,
-                    }
-                }
-                LRUItem::State(key) => {
-                    let entry = state_cache_index.get_mut(&key).unwrap();
-                    let AccessState::None(_, f) = entry.access else {
-                        panic!("Should not be in LRU list");
-                    };
-                    if !device.cmd_buffer_completed(f) {
-                        // All following LRU items will have the same or a later epoch so cannot be deleted
-                        // either
-                        break;
-                    }
-
-                    let entry = state_cache_index.remove(&key).unwrap();
-
-                    self.new_data.remove(key);
-                    entry.storage
-                }
-                LRUItem::Index(key) => {
-                    let entry = index_index.get_mut(&key).unwrap();
-                    let AccessState::None(_, f) = entry.access else {
-                        panic!("Should not be in LRU list");
-                    };
-
-                    if !device.cmd_buffer_completed(f) {
-                        // All following LRU items will have the same or a later epoch so cannot be deleted
-                        // either
-                        break;
-                    }
-
-                    let mut entry = index_index.remove(&key).unwrap();
-
-                    unsafe { entry.unref_all(device, &mut index, &mut index_lru, &mut lru) };
-
-                    entry.storage
-                }
-            };
-
-            // Safety: All allocations in the index have been allocated with the allocator.
-            // Deallocation only happens exactly here where the entry is also removed from the
-            // index. The allocation is also not used on the gpu anymore since the last access
-            // epoch has already passed.
-            unsafe { self.allocator.deallocate(info.allocation) };
-
-            lru.pop_next();
-
-            let size = info.layout.size();
-            collected += size;
-            goal_in_bytes = goal_in_bytes.saturating_sub(size);
             if goal_in_bytes == 0 {
                 break;
             };
+
+            while let Some(key) = inner_lru.get_next() {
+                let info = match key {
+                    LRUItem::Data(key) => {
+                        let entry = index.get_mut(&key).unwrap();
+                        let AccessState::None(_, f) = entry.access else {
+                            panic!("Should not be in LRU list");
+                        };
+                        if !device.cmd_buffer_completed(f) {
+                            // All following LRU items will have the same or a later epoch so cannot be deleted
+                            // either
+                            break;
+                        }
+
+                        let entry = index.remove(&key).unwrap();
+
+                        self.new_data.remove(key);
+                        match entry.state {
+                            StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                            StorageEntryState::Initializing(info)
+                            | StorageEntryState::Initialized(info, _, _) => info,
+                        }
+                    }
+                    LRUItem::State(key) => {
+                        let entry = state_cache_index.get_mut(&key).unwrap();
+                        let AccessState::None(_, f) = entry.access else {
+                            panic!("Should not be in LRU list");
+                        };
+                        if !device.cmd_buffer_completed(f) {
+                            // All following LRU items will have the same or a later epoch so cannot be deleted
+                            // either
+                            break;
+                        }
+
+                        let entry = state_cache_index.remove(&key).unwrap();
+
+                        self.new_data.remove(key);
+                        entry.storage
+                    }
+                    LRUItem::Index(key) => {
+                        let entry = index_index.get_mut(&key).unwrap();
+                        let AccessState::None(_, f) = entry.access else {
+                            panic!("Should not be in LRU list");
+                        };
+
+                        if !device.cmd_buffer_completed(f) {
+                            // All following LRU items will have the same or a later epoch so cannot be deleted
+                            // either
+                            break;
+                        }
+
+                        let entry = index_index.remove(&key).unwrap();
+
+                        indices_to_unref.push(entry.present);
+
+                        entry.storage
+                    }
+                };
+
+                // Safety: All allocations in the index have been allocated with the allocator.
+                // Deallocation only happens exactly here where the entry is also removed from the
+                // index. The allocation is also not used on the gpu anymore since the last access
+                // epoch has already passed.
+                unsafe { self.allocator.deallocate(info.allocation) };
+
+                inner_lru.pop_next();
+
+                let size = info.layout.size();
+                collected += size;
+                collected_local += size;
+                goal_in_bytes = goal_in_bytes.saturating_sub(size);
+                if goal_in_bytes == 0 && longevity != DataLongevity::Ephemeral {
+                    break;
+                };
+            }
+            println!("Garbage collect GPU ({:?}): {}", longevity, collected_local);
+        }
+        for brick_map in indices_to_unref {
+            for (_pos, brick_ref) in brick_map {
+                unsafe {
+                    unref_brick_in_index(device, &mut index, &mut index_lru, &mut lru, brick_ref)
+                };
+            }
         }
 
         let mut unindexed = 0;
@@ -739,7 +778,9 @@ impl Storage {
                                 let StorageEntryState::Initialized(info, _, _) = old.state else {
                                     panic!("we just checked that");
                                 };
-                                self.lru_manager.borrow_mut().remove(lru_index);
+                                if let Some(lru_index) = lru_index {
+                                    self.lru_manager.borrow_mut().remove(lru_index);
+                                }
                                 let mut old_unused = self.old_unused.borrow_mut();
                                 old_unused.push_back((info, epoch));
                             }
@@ -833,10 +874,11 @@ impl Storage {
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,
-        key: DataId,
+        desc: DataDescriptor,
         layout: Layout,
     ) -> (ash::vk::Buffer, AccessToken<'b>) {
         let allocation = self.alloc_ssbo(device, layout);
+        let key = desc.id;
 
         let buffer = allocation.buffer;
 
@@ -844,7 +886,11 @@ impl Storage {
             let mut index = self.data_index.borrow_mut();
             let entry = self.ensure_presence(current_frame, index.entry(key));
 
-            let info = StorageInfo { allocation, layout };
+            let info = StorageInfo {
+                allocation,
+                layout,
+                data_longevity: desc.longevity,
+            };
 
             assert!(
                 matches!(entry.state, StorageEntryState::Registered),
@@ -862,11 +908,11 @@ impl Storage {
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,
-        key: DataId,
+        desc: DataDescriptor,
         layout: Layout,
     ) -> WriteHandle<'b> {
         let size = layout.size();
-        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, key, layout);
+        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, desc, layout);
 
         WriteHandle {
             buffer,
@@ -880,11 +926,11 @@ impl Storage {
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,
-        key: DataId,
+        desc: DataDescriptor,
         num: usize,
     ) -> WriteHandle<'b> {
         let layout = Layout::array::<T>(num).unwrap();
-        self.alloc_slot_raw(device, current_frame, key, layout)
+        self.alloc_slot_raw(device, current_frame, desc, layout)
     }
 
     pub fn is_visible(&self, id: DataId, dst_info: DstBarrierInfo) -> Result<(), SrcBarrierInfo> {
@@ -909,17 +955,21 @@ impl Storage {
         &'b self,
         ctx: OpaqueTaskContext<'b, 'inv>,
         device: &'b DeviceContext,
-        op: OperatorId,
+        op: OperatorDescriptor,
         size: usize,
         dst: DstBarrierInfo,
     ) -> IndexHandle<'b> {
         let (src, created, buffer) = {
             let mut index = self.index_index.borrow_mut();
 
-            let entry = index.entry(op).or_insert_with(|| {
+            let entry = index.entry(op.id).or_insert_with(|| {
                 let layout = Layout::array::<ash::vk::DeviceAddress>(size).unwrap();
                 let allocation = self.alloc_ssbo(device, layout);
-                let info = StorageInfo { allocation, layout };
+                let info = StorageInfo {
+                    allocation,
+                    layout,
+                    data_longevity: op.data_longevity,
+                };
                 let buffer = info.allocation.buffer;
 
                 device.with_cmd_buffer(|cmd| unsafe {
@@ -955,7 +1005,7 @@ impl Storage {
 
         IndexHandle {
             buffer,
-            op,
+            op: op.id,
             device,
             num_chunks: size,
         }
@@ -985,6 +1035,7 @@ impl Storage {
             layout: info.layout,
             access,
             version: version.type_(),
+            data_longevity: info.data_longevity,
         })
     }
 
@@ -993,10 +1044,11 @@ impl Storage {
         device: &'b DeviceContext,
         current_frame: FrameNumber,
         old_access: AccessToken<'t>,
-        new_key: DataId,
+        new_desc: DataDescriptor,
         dst_info: DstBarrierInfo,
     ) -> Result<InplaceResult<'b>, AccessToken<'t>> {
         let old_key = old_access.id;
+        let new_key = new_desc.id;
 
         let mut index = self.data_index.borrow_mut();
         let Some(entry) = index.get(&old_access.id) else {
@@ -1053,16 +1105,18 @@ impl Storage {
         } else {
             let layout = info.layout;
             let buffer = info.allocation.buffer;
+            let data_longevity = info.data_longevity;
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = self.alloc_slot_raw(device, current_frame, new_key, layout);
+            let w = self.alloc_slot_raw(device, current_frame, new_desc, layout);
 
             let r = ReadHandle {
                 buffer,
                 layout,
                 access: old_access,
                 version: old_version,
+                data_longevity,
             };
             InplaceResult::New(r, w)
         })
@@ -1086,6 +1140,8 @@ impl Storage {
                 let storage = StorageInfo {
                     allocation: self.alloc_ssbo(device, layout),
                     layout,
+                    //TODO: This is. Actually data_longevity is never used for the state cache.
+                    data_longevity: DataLongevity::Ephemeral,
                 };
 
                 let mut index = self.state_cache_index.borrow_mut();

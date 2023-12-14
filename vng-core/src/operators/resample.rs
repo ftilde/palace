@@ -311,7 +311,13 @@ void main() {
 
                 let chunk_index = device
                     .storage
-                    .get_index(*ctx, device, input.chunks.id(), num_chunks, dst_info)
+                    .get_index(
+                        *ctx,
+                        device,
+                        input.chunks.descriptor(),
+                        num_chunks,
+                        dst_info,
+                    )
                     .await;
 
                 while let Some((intersecting_bricks, (pos, in_brick_positions))) =

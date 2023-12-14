@@ -32,7 +32,7 @@ pub enum VisibleDataLocation {
 
 const GARBAGE_COLLECT_GOAL_FRACTION: u64 = 10;
 
-type LRUIndex = u64;
+type LRUIndexInner = u64;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum DataVersion {
@@ -82,12 +82,89 @@ pub enum DataVersionType {
     Preview,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum DataLongevity {
+    Ephemeral = 0,
+    Unstable = 1,
+    Stable = 2,
+}
+
+impl TryFrom<usize> for DataLongevity {
+    type Error = &'static str;
+
+    fn try_from(raw: usize) -> Result<Self, Self::Error> {
+        match raw {
+            0 => Ok(DataLongevity::Ephemeral),
+            1 => Ok(DataLongevity::Unstable),
+            2 => Ok(DataLongevity::Stable),
+            _ => Err("Invalid DataLongevity value"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+struct LRUIndex(u64);
+const NUM_BITS_FOR_LONGEVITY: u64 = 2;
+const ID_MASK: u64 = u64::MAX >> NUM_BITS_FOR_LONGEVITY;
+//const LONGEVITY_MASK: u64 = !ID_MASK;
+const LONGEVITY_BASE: u64 = ID_MASK + 1;
+
+impl LRUIndex {
+    fn new(inner: LRUIndexInner, longevity: DataLongevity) -> Self {
+        assert_eq!(inner & ID_MASK, inner);
+        Self(inner | (LONGEVITY_BASE * longevity as u64))
+    }
+
+    fn longevity(&self) -> DataLongevity {
+        let raw = self.0 >> (64 - NUM_BITS_FOR_LONGEVITY);
+        DataLongevity::try_from(raw as usize).unwrap()
+    }
+    fn inner_id(&self) -> LRUIndexInner {
+        self.0 & ID_MASK
+    }
+}
+
 struct LRUManager<T> {
-    list: BTreeMap<LRUIndex, T>,
-    current: LRUIndex,
+    inner: [LRUManagerInner<T>; 3],
 }
 
 impl<T> Default for LRUManager<T> {
+    fn default() -> Self {
+        Self {
+            inner: std::array::from_fn(|_| Default::default()),
+        }
+    }
+}
+
+impl<T: Clone> LRUManager<T> {
+    fn remove(&mut self, old: LRUIndex) {
+        let longevity = old.longevity();
+        let raw = old.inner_id();
+        self.inner[longevity as usize].remove(raw);
+    }
+
+    #[must_use]
+    fn add(&mut self, data: T, longevity: DataLongevity) -> LRUIndex {
+        let raw = self.inner[longevity as usize].add(data);
+        LRUIndex::new(raw, longevity)
+    }
+
+    fn inner_mut<'a>(
+        &'a mut self,
+    ) -> impl Iterator<Item = (DataLongevity, &'a mut LRUManagerInner<T>)> + 'a {
+        self.inner
+            .iter_mut()
+            .enumerate()
+            .map(|(i, v)| (DataLongevity::try_from(i).unwrap(), v))
+    }
+}
+
+struct LRUManagerInner<T> {
+    list: BTreeMap<LRUIndexInner, T>,
+    current: LRUIndexInner,
+}
+
+impl<T> Default for LRUManagerInner<T> {
     fn default() -> Self {
         Self {
             list: Default::default(),
@@ -96,36 +173,13 @@ impl<T> Default for LRUManager<T> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub enum DataLongevity {
-    Ephemeral,
-    Unstable,
-    Stable,
-}
-
-//impl Ord for DataLongevity {
-//    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//        match (self, other) {
-//            (DataLongevity::Longer, DataLongevity::Longer) => std::cmp::Ordering::Equal,
-//            (DataLongevity::Ephemeral, DataLongevity::Ephemeral) => std::cmp::Ordering::Equal,
-//            (DataLongevity::Longer, DataLongevity::Ephemeral) => std::cmp::Ordering::Greater,
-//            (DataLongevity::Ephemeral, DataLongevity::Longer) => std::cmp::Ordering::Less,
-//        }
-//    }
-//}
-//impl PartialOrd for DataLongevity {
-//    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//        Some(self.cmp(other))
-//    }
-//}
-
-impl<T: Clone> LRUManager<T> {
-    fn remove(&mut self, old: LRUIndex) {
+impl<T: Clone> LRUManagerInner<T> {
+    fn remove(&mut self, old: LRUIndexInner) {
         self.list.remove(&old).unwrap();
     }
 
     #[must_use]
-    fn add(&mut self, data: T) -> LRUIndex {
+    fn add(&mut self, data: T) -> LRUIndexInner {
         let new = self
             .current
             .checked_add(1)

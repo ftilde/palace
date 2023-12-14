@@ -182,7 +182,7 @@ pub async fn map_values_inplace<
 {
     let requests = positions
         .into_iter()
-        .map(|pos| input.request_inplace(*ctx, pos, ctx.current_op()));
+        .map(|pos| input.request_inplace(*ctx, pos, ctx.current_op_desc().unwrap()));
 
     let stream = ctx
         .submit_unordered(requests)

@@ -1,7 +1,7 @@
 use std::{alloc::Layout, cell::RefCell, mem::MaybeUninit, pin::Pin};
 
 use crate::{
-    operator::DataId,
+    operator::{DataDescriptor, DataId},
     runtime::FrameNumber,
     task::OpaqueTaskContext,
     task_graph::TaskId,
@@ -9,18 +9,19 @@ use crate::{
     Error,
 };
 
-use super::{DataLocation, DataVersion, DataVersionType, Element, LRUIndex};
+use super::{DataLocation, DataLongevity, DataVersion, DataVersionType, Element, LRUIndex};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
     Some(usize),
-    None(LRUIndex),
+    None(Option<LRUIndex>),
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct StorageInfo {
     pub data: *mut MaybeUninit<u8>,
     pub layout: Layout,
+    pub data_longevity: DataLongevity,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -42,7 +43,7 @@ impl Entry {
 
     fn lru_index(&self) -> Option<LRUIndex> {
         if let AccessState::None(id) = self.access {
-            Some(id)
+            id
         } else {
             None
         }
@@ -61,7 +62,9 @@ impl<'a> AccessToken<'a> {
         ram_entry.access = match ram_entry.access {
             AccessState::Some(n) => AccessState::Some(n + 1),
             AccessState::None(id) => {
-                storage.lru_manager.borrow_mut().remove(id);
+                if let Some(id) = id {
+                    storage.lru_manager.borrow_mut().remove(id);
+                }
                 AccessState::Some(1)
             }
         };
@@ -73,10 +76,20 @@ impl Drop for AccessToken<'_> {
     fn drop(&mut self) {
         let mut index = self.storage.index.borrow_mut();
         let ram_entry = index.get_mut(&self.id).unwrap();
-
         ram_entry.access = match ram_entry.access {
             AccessState::Some(1) => {
-                let lru_id = self.storage.lru_manager.borrow_mut().add(self.id);
+                let lru_id = if let StorageEntryState::Initialized(si, _)
+                | StorageEntryState::Initializing(si) = &ram_entry.state
+                {
+                    let lru_id = self
+                        .storage
+                        .lru_manager
+                        .borrow_mut()
+                        .add(self.id, si.data_longevity);
+                    Some(lru_id)
+                } else {
+                    None
+                };
                 AccessState::None(lru_id)
             }
             AccessState::Some(n) => AccessState::Some(n - 1),
@@ -89,12 +102,14 @@ impl Drop for AccessToken<'_> {
 
 pub struct ReadHandle<'a, T: ?Sized> {
     access: AccessToken<'a>,
+    data_longevity: DataLongevity,
     data: &'a T,
 }
 impl<'a, T: ?Sized> ReadHandle<'a, T> {
     pub fn map<O>(self, f: impl FnOnce(&'a T) -> &'a O) -> ReadHandle<'a, O> {
         let ret = ReadHandle {
             access: self.access,
+            data_longevity: self.data_longevity,
             data: f(&self.data),
         };
         ret
@@ -108,6 +123,7 @@ impl<'a, T: ?Sized> ReadHandle<'a, T> {
             id: self.access.id,
             data: self.data,
             panic_handle: Default::default(),
+            data_longevity: self.data_longevity,
         };
         //Avoid running destructor
         std::mem::forget(self.access);
@@ -132,6 +148,7 @@ pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
     id: DataId,
     data: &'a T,
     panic_handle: ThreadHandleDropPanic,
+    data_longevity: DataLongevity,
 }
 impl<T: ?Sized + Send> std::ops::Deref for ThreadReadHandle<'_, T> {
     type Target = T;
@@ -149,6 +166,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
                 id: self.id,
             },
             data: self.data,
+            data_longevity: self.data_longevity,
         }
     }
 }
@@ -470,33 +488,35 @@ impl Storage {
     pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) {
         let mut lru = self.lru_manager.borrow_mut();
         let mut index = self.index.borrow_mut();
-        let mut collected = 0;
-        for key in lru.drain_lru().into_iter() {
-            let entry = index.get_mut(&key).unwrap();
-            let info = match entry.state {
-                StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
-                    info
-                }
-            };
-            assert!(matches!(entry.access, AccessState::None(_)));
 
-            index.remove(&key).unwrap();
+        for (longevity, inner_lru) in lru.inner_mut() {
+            let mut collected = 0;
+            for key in inner_lru.drain_lru().into_iter() {
+                let entry = index.get_mut(&key).unwrap();
+                let info = match entry.state {
+                    StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                    StorageEntryState::Initializing(info)
+                    | StorageEntryState::Initialized(info, _) => info,
+                };
+                assert!(matches!(entry.access, AccessState::None(_)));
 
-            // Safety: all data ptrs in the index have been allocated with the allocator.
-            // Deallocation only happens exactly here where the entry is also removed from the
-            // index.
-            unsafe { self.allocator.dealloc(info.data) };
-            self.new_data.remove(key);
+                index.remove(&key).unwrap();
 
-            let size = info.layout.size();
-            collected += size;
-            let Some(rest) = goal_in_bytes.checked_sub(size) else {
-                break;
-            };
-            goal_in_bytes = rest;
+                // Safety: all data ptrs in the index have been allocated with the allocator.
+                // Deallocation only happens exactly here where the entry is also removed from the
+                // index.
+                unsafe { self.allocator.dealloc(info.data) };
+                self.new_data.remove(key);
+
+                let size = info.layout.size();
+                collected += size;
+                let Some(rest) = goal_in_bytes.checked_sub(size) else {
+                    break;
+                };
+                goal_in_bytes = rest;
+            }
+            println!("Garbage collect RAM ({:?}): {}B", longevity, collected);
         }
-        println!("Garbage collect RAM: {}B", collected);
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {
@@ -554,7 +574,13 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
-    fn alloc(&self, key: DataId, layout: Layout) -> (*mut MaybeUninit<u8>, AccessToken) {
+    fn alloc(
+        &self,
+        descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> (*mut MaybeUninit<u8>, AccessToken) {
+        let key = descriptor.id;
+
         let data = {
             let data = match self.allocator.alloc(layout) {
                 Ok(d) => d,
@@ -578,17 +604,21 @@ impl Storage {
                                               // the RamToken
             });
 
-            let info = StorageInfo { data, layout };
+            let info = StorageInfo {
+                data,
+                layout,
+                data_longevity: descriptor.longevity,
+            };
 
             entry.state = StorageEntryState::Initializing(info);
 
             data
         };
 
-        (data, AccessToken::new(self, key))
+        (data, AccessToken::new(self, descriptor.id))
     }
 
-    pub fn alloc_slot_raw(&self, key: DataId, layout: Layout) -> RawWriteHandleUninit {
+    pub fn alloc_slot_raw(&self, key: DataDescriptor, layout: Layout) -> RawWriteHandleUninit {
         let (ptr, access) = self.alloc(key, layout);
 
         RawWriteHandleUninit {
@@ -600,7 +630,7 @@ impl Storage {
 
     pub fn alloc_slot<T: Element>(
         &self,
-        key: DataId,
+        key: DataDescriptor,
         size: usize,
     ) -> WriteHandleUninit<[MaybeUninit<T>]> {
         let layout = Layout::array::<T>(size).unwrap();
@@ -640,7 +670,7 @@ impl Storage {
         &'b self,
         access: AccessToken<'t>,
     ) -> Result<ReadHandle<'b, [T]>, AccessToken<'t>> {
-        let t_ref = {
+        let (t_ref, data_longevity) = {
             let index = self.index.borrow();
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
@@ -657,11 +687,15 @@ impl Storage {
 
             // Safety: Type matches as per contract upheld by caller. There are also no mutable
             // references to the slot since it has already been initialized.
-            unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
+            (
+                unsafe { std::slice::from_raw_parts(t_ptr, num_elements) },
+                info.data_longevity,
+            )
         };
         Ok(ReadHandle {
             access,
             data: t_ref,
+            data_longevity,
         })
     }
 
@@ -671,9 +705,10 @@ impl Storage {
         &'b self,
         ctx: OpaqueTaskContext<'t, 'inv>,
         old_access: AccessToken<'t>,
-        new_key: DataId,
+        new_desc: DataDescriptor,
     ) -> Result<InplaceResult<'b, T>, AccessToken<'t>> {
         let old_key = old_access.id;
+        let new_key = new_desc.id;
 
         let mut index = self.index.borrow_mut();
         let Some(entry) = index.get(&old_access.id) else {
@@ -732,11 +767,12 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = self.alloc_slot(new_key, num_elements);
+            let w = self.alloc_slot(new_desc, num_elements);
 
             let r = ReadHandle {
                 data: t_ref,
                 access: AccessToken::new(self, old_key),
+                data_longevity: info.data_longevity,
             };
             InplaceResult::New(r, w)
         })

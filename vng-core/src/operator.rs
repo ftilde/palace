@@ -86,6 +86,21 @@ impl DataId {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct DataDescriptor {
+    pub id: DataId,
+    pub longevity: DataLongevity,
+}
+
+impl DataDescriptor {
+    pub fn new(op: OperatorDescriptor, data: &impl std::hash::Hash) -> Self {
+        Self {
+            longevity: op.data_longevity,
+            id: DataId::new(op.id, data),
+        }
+    }
+}
+
 pub struct TypeErased(*mut ());
 impl TypeErased {
     pub fn pack<T>(v: T) -> Self {
@@ -125,6 +140,13 @@ impl<I, O> OperatorNetworkNode for Operator<I, O> {
 
 pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
+    fn longevity(&self) -> DataLongevity;
+    fn descriptor(&self) -> OperatorDescriptor {
+        OperatorDescriptor {
+            id: self.id(),
+            data_longevity: self.longevity(),
+        }
+    }
     fn granularity(&self) -> ItemGranularity;
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
@@ -293,10 +315,10 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         &'inv self,
         o_ctx: OpaqueTaskContext<'req, 'inv>,
         item: ItemDescriptor,
-        write_id: OperatorId,
+        write_id: OperatorDescriptor,
     ) -> Request<'req, 'inv, ram::InplaceResult<'req, Output>> {
         let read_id = DataId::new(self.id(), &item);
-        let write_id = DataId::new(write_id, &item);
+        let write_desc = DataDescriptor::new(write_id, &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
@@ -311,7 +333,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
                     access = match ctx.storage.try_update_inplace(
                         o_ctx,
                         access.take().unwrap(),
-                        write_id,
+                        write_desc,
                     ) {
                         Ok(v) => return Some(v),
                         Err(access) => Some(access),
@@ -365,11 +387,11 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         &'inv self,
         gpu: DeviceId,
         item: ItemDescriptor,
-        write_id: OperatorId,
+        write_id: OperatorDescriptor,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::InplaceResult<'req>> {
+        let write_id = DataDescriptor::new(write_id, &item);
         let read_id = DataId::new(self.id(), &item);
-        let write_id = DataId::new(write_id, &item);
 
         Request {
             type_: RequestType::Data(DataRequest {
@@ -411,6 +433,9 @@ impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
 {
     fn id(&self) -> OperatorId {
         self.descriptor.id
+    }
+    fn longevity(&self) -> DataLongevity {
+        self.descriptor.data_longevity
     }
     fn granularity(&self) -> ItemGranularity {
         self.granularity

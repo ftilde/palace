@@ -100,7 +100,7 @@ void main()
                             input.chunks.request_inplace_gpu(
                                 device.id,
                                 *pos,
-                                ctx.current_op(),
+                                ctx.current_op_desc().unwrap(),
                                 access_info,
                             ),
                             *pos,

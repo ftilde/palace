@@ -741,7 +741,13 @@ void main()
 
                     let brick_index = device
                         .storage
-                        .get_index(*ctx, device, level.chunks.id(), num_bricks, dst_info)
+                        .get_index(
+                            *ctx,
+                            device,
+                            level.chunks.descriptor(),
+                            num_bricks,
+                            dst_info,
+                        )
                         .await;
 
                     let info =
