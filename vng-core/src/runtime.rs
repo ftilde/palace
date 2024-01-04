@@ -11,7 +11,7 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
-    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
+    task::{AllocationId, DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
     task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
@@ -25,9 +25,10 @@ const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
 
-const PRIORITY_TRANSFER: u32 = 2;
-const PRIORITY_GENERAL_TASK: u32 = 1;
-const PRIORITY_BARRIER: u32 = 0;
+const PRIORITY_TRANSFER: u32 = 3;
+const PRIORITY_GENERAL_TASK: u32 = 2;
+const PRIORITY_BARRIER: u32 = 1;
+const PRIORITY_ALLOC: u32 = 0;
 
 struct DataRequestItem {
     id: DataId,
@@ -252,6 +253,7 @@ impl RunTime {
         let hints = TaskHints::default();
         let thread_spawner = ThreadSpawner::new();
         let barrier_completions = Default::default();
+        let allocation_completions = Default::default();
         let predicted_preview_tasks = Default::default();
         let frame = self.frame;
         self.frame = FrameNumber(frame.0.checked_add(1).unwrap());
@@ -260,6 +262,7 @@ impl RunTime {
             request_queue,
             hints,
             barrier_completions,
+            allocation_completions,
             thread_spawner,
             storage: &self.ram,
             device_contexts: self.vulkan.device_contexts(),
@@ -318,6 +321,7 @@ struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
     barrier_completions: CompletedBarrierItems,
+    allocation_completions: CompletedAllocations,
     thread_spawner: ThreadSpawner,
     pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
@@ -348,6 +352,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             storage: &self.data.storage,
             hints: &self.data.hints,
             barrier_completions: &self.data.barrier_completions,
+            allocation_completions: &self.data.allocation_completions,
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
@@ -502,6 +507,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         for item in self.data.barrier_completions.completed.take() {
             self.task_graph.resolved_implied(item.into());
         }
+        if let Some(id) = self.data.allocation_completions.completed.take() {
+            self.task_graph.resolved_implied(RequestId::Allocation(id));
+        }
     }
 
     fn try_make_available(
@@ -649,6 +657,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}
+            RequestType::Allocation(id, alloc) => {
+                let task_id = TaskId::new(OperatorId::new("allocator"), id.inner() as _);
+                let ctx = self.context(task_id);
+                let task = match alloc {
+                    crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
+                        let _ = ctx.storage.alloc(data_descriptor, layout);
+                        println!("Yes we alloced");
+                        ctx.allocation_completions.set(id);
+                        Ok(())
+                    }
+                    .into(),
+                };
+                self.task_manager.add_task(task_id, task);
+                self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
+            }
             RequestType::ThreadPoolJob(job, type_) => {
                 self.task_manager.spawn_job(job, type_).unwrap();
             }
@@ -762,6 +785,8 @@ impl Statistics {
     }
 }
 
+//TODO: refactor these into some "completed requests" thingy. Should be easy enough for these two
+//below, but should (if possible) also include completed data requests
 #[derive(Default)]
 pub(crate) struct CompletedBarrierItems {
     completed: Cell<Set<BarrierItem>>,
@@ -769,6 +794,16 @@ pub(crate) struct CompletedBarrierItems {
 impl CompletedBarrierItems {
     fn set(&self, completed: Set<BarrierItem>) {
         self.completed.set(completed);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct CompletedAllocations {
+    completed: Cell<Option<AllocationId>>,
+}
+impl CompletedAllocations {
+    fn set(&self, completed: AllocationId) {
+        self.completed.set(Some(completed));
     }
 }
 

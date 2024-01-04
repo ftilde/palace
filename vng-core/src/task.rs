@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 use std::time::Instant;
 
@@ -12,9 +13,11 @@ use crate::id::Id;
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
-use crate::runtime::{CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints};
+use crate::runtime::{
+    CompletedAllocations, CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints,
+};
 use crate::storage::gpu::{StateCacheResult, WriteHandle};
-use crate::storage::ram::{Storage, WriteHandleUninit};
+use crate::storage::ram::{RawWriteHandleUninit, Storage, WriteHandleUninit};
 use crate::storage::{Element, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
@@ -66,8 +69,28 @@ pub struct RequestGroup<'inv> {
     pub all: Vec<RequestType<'inv>>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct AllocationId(u64);
+
+impl AllocationId {
+    pub fn inner(&self) -> u64 {
+        self.0
+    }
+}
+
+fn next_allocation_id() -> AllocationId {
+    static ALLOC_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id_raw = ALLOC_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    AllocationId(id_raw)
+}
+
+pub enum AllocationRequest {
+    Ram(Layout, DataDescriptor),
+}
+
 pub enum RequestType<'inv> {
     Data(DataRequest<'inv>),
+    Allocation(AllocationId, AllocationRequest),
     ThreadPoolJob(ThreadPoolJob, JobType),
     CmdBufferCompletion(crate::vulkan::CmdBufferSubmissionId),
     CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
@@ -78,6 +101,7 @@ pub enum RequestType<'inv> {
 impl RequestType<'_> {
     pub fn id(&self) -> RequestId {
         match self {
+            RequestType::Allocation(id, ..) => RequestId::Allocation(*id),
             RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
             RequestType::CmdBufferSubmission(d) => RequestId::CmdBufferSubmission(*d),
             RequestType::Barrier(i) => RequestId::Barrier(*i),
@@ -107,6 +131,17 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
     pub fn id(&self) -> RequestId {
         self.type_.id()
     }
+
+    pub fn map<R: 'req>(self, mut f: impl FnMut(V) -> R + 'req) -> Request<'req, 'inv, R> {
+        Request {
+            type_: self.type_,
+            _marker: self._marker,
+            gen_poll: Box::new(move |ctx| {
+                let mut inner_poll = (self.gen_poll)(ctx);
+                Box::new(move || inner_poll().map(|v| f(v)))
+            }),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -121,6 +156,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) requests: &'cref RequestQueue<'inv>,
     pub(crate) storage: &'cref Storage,
     pub(crate) barrier_completions: &'cref CompletedBarrierItems,
+    pub(crate) allocation_completions: &'cref CompletedAllocations,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
     pub(crate) device_contexts: &'cref [DeviceContext],
@@ -153,7 +189,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
             };
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
@@ -227,6 +263,31 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         RequestStreamSource::unordered(*self, requests)
     }
 
+    pub fn alloc_raw<'req>(
+        &'req self,
+        data_descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> Request<'req, 'inv, RawWriteHandleUninit> {
+        let mut access = Some(self.storage.register_access(data_descriptor.id));
+
+        Request {
+            type_: RequestType::Allocation(
+                next_allocation_id(),
+                AllocationRequest::Ram(layout, data_descriptor),
+            ),
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || {
+                    access = match ctx.storage.access_initializing(access.take().unwrap()) {
+                        Ok(r) => return Some(r),
+                        Err(acc) => Some(acc),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
     pub fn group<'req, V: 'req>(
         &'req self,
         r: impl IntoIterator<Item = Request<'req, 'inv, V>>,
@@ -244,6 +305,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             match r.id() {
                 RequestId::Data(d) => ids.push(Id::hash(&d)),
                 RequestId::Job(i) => ids.push(Id::hash(&i)),
+                RequestId::Allocation(i) => ids.push(Id::hash(&i)),
                 RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&(0, i))),
                 RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
                 RequestId::Barrier(b_info) => ids.push(Id::hash(&b_info)),
@@ -265,7 +327,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, poll));
@@ -459,7 +521,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) => {}
+            RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();
@@ -563,6 +625,16 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
     ) -> WriteHandleUninit<'cref, [MaybeUninit<Output>]> {
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
         self.inner.storage.alloc_slot(id, size)
+    }
+
+    pub fn alloc_slot2<'req>(
+        &'req self,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
+        let layout = Layout::array::<Output>(size).unwrap();
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
+        self.alloc_raw(id, layout).map(move |v| v.transmute(size))
     }
 }
 

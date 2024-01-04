@@ -406,6 +406,20 @@ impl<'a> RawWriteHandleUninit<'a> {
             layout: self.layout,
         }
     }
+
+    pub fn transmute<T: Element>(self, size: usize) -> WriteHandleUninit<'a, [MaybeUninit<T>]> {
+        let layout = Layout::array::<T>(size).unwrap();
+        assert_eq!(layout, self.layout);
+
+        let t_ptr = self.data.cast::<MaybeUninit<T>>();
+
+        // Safety: We constructed the pointer with the required layout
+        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
+        WriteHandleUninit {
+            data: t_ref,
+            drop_handler: self.drop_handler,
+        }
+    }
 }
 
 pub type WriteHandleInit<'a, T> = WriteHandle<'a, T, DropMarkInitialized<'a>>;
@@ -574,7 +588,7 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
-    fn alloc(
+    pub(crate) fn alloc(
         &self,
         descriptor: DataDescriptor,
         layout: Layout,
@@ -616,6 +630,24 @@ impl Storage {
         };
 
         (data, AccessToken::new(self, descriptor.id))
+    }
+
+    pub fn access_initializing<'a>(
+        &self,
+        access: AccessToken<'a>,
+    ) -> Result<RawWriteHandleUninit<'a>, AccessToken<'a>> {
+        let index = self.index.borrow_mut();
+        let entry = index.get(&access.id).unwrap();
+
+        if let StorageEntryState::Initializing(info) = entry.state {
+            Ok(RawWriteHandleUninit {
+                data: info.data,
+                layout: info.layout,
+                drop_handler: DropError { access },
+            })
+        } else {
+            Err(access)
+        }
     }
 
     pub fn alloc_slot_raw(&self, key: DataDescriptor, layout: Layout) -> RawWriteHandleUninit {

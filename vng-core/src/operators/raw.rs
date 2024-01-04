@@ -7,7 +7,7 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     operator::{Operator, OperatorDescriptor},
-    task::TaskContext,
+    task::{RequestStream, TaskContext},
     Error,
 };
 
@@ -87,65 +87,138 @@ impl RawVolumeSourceState {
         let in_: &[f32] = bytemuck::cast_slice(&self.0.mmap[..]);
         let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
             .unwrap();
-        let work = batches.into_iter().map(|positions| {
+
+        let requests = batches.into_iter().map(|positions| {
             let num_voxels = m.chunk_size.hmul();
 
-            let mut brick_handles = positions
-                .into_iter()
-                .map(|pos| (pos, ctx.alloc_slot(pos, num_voxels).into_thread_handle()))
-                .collect::<Vec<_>>();
-            ctx.spawn_io(move || {
-                if brick_handles.is_empty() {
-                    return brick_handles;
-                }
-                for (pos, ref mut brick_handle) in &mut brick_handles {
-                    let chunk_info = m.chunk_info(*pos);
-                    crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
-                }
+            let brick_handles = positions
+                .iter()
+                .map(|pos| ctx.alloc_slot2(*pos, num_voxels));
 
-                let first = brick_handles.first().unwrap();
-                let first_info = m.chunk_info(first.0);
-                let global_begin = first_info.begin;
+            (ctx.group(brick_handles), positions)
+        });
+        let stream = ctx.submit_unordered_with_data(requests).then_req(
+            *ctx,
+            |(brick_handles, positions)| {
+                let mut brick_handles = brick_handles
+                    .into_iter()
+                    .zip(positions)
+                    .map(|(h, pos)| (pos, h.into_thread_handle()))
+                    .collect::<Vec<_>>();
 
-                let last = brick_handles.last().unwrap();
-                let last_info = m.chunk_info(last.0);
-                let global_end = last_info.end();
+                ctx.spawn_io(move || {
+                    if brick_handles.is_empty() {
+                        return brick_handles;
+                    }
+                    for (pos, ref mut brick_handle) in &mut brick_handles {
+                        let chunk_info = m.chunk_info(*pos);
+                        crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
+                    }
 
-                let strip_size_z = first_info.logical_dimensions.z();
-                let strip_size_y = first_info.logical_dimensions.y();
-                for z in 0..strip_size_z.raw {
-                    for y in 0..strip_size_y.raw {
-                        // Note: This assumes that all bricks have the same memory size! This may
-                        // change in the future
-                        let line_begin_brick =
-                            crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
+                    let first = brick_handles.first().unwrap();
+                    let first_info = m.chunk_info(first.0);
+                    let global_begin = first_info.begin;
 
-                        let global_line = in_.slice(ndarray::s!(
-                            (global_begin.z().raw + z) as usize,
-                            (global_begin.y().raw + y) as usize,
-                            global_begin.x().raw as usize..global_end.x().raw as usize,
-                        ));
-                        let global_line = global_line.as_slice().unwrap();
+                    let last = brick_handles.last().unwrap();
+                    let last_info = m.chunk_info(last.0);
+                    let global_end = last_info.end();
 
-                        let bricks = brick_handles
-                            .iter_mut()
-                            .map(|(_, handle)| &mut handle[line_begin_brick..]);
-                        let mut global_brick_begin = 0;
-                        for brick_line in bricks {
-                            let global_line_brick = &global_line[global_brick_begin..];
-                            for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
-                                o.write(*i);
+                    let strip_size_z = first_info.logical_dimensions.z();
+                    let strip_size_y = first_info.logical_dimensions.y();
+                    for z in 0..strip_size_z.raw {
+                        for y in 0..strip_size_y.raw {
+                            // Note: This assumes that all bricks have the same memory size! This may
+                            // change in the future
+                            let line_begin_brick = crate::data::to_linear(
+                                LocalVoxelPosition::from([z, y, 0]),
+                                brick_size,
+                            );
+
+                            let global_line = in_.slice(ndarray::s!(
+                                (global_begin.z().raw + z) as usize,
+                                (global_begin.y().raw + y) as usize,
+                                global_begin.x().raw as usize..global_end.x().raw as usize,
+                            ));
+                            let global_line = global_line.as_slice().unwrap();
+
+                            let bricks = brick_handles
+                                .iter_mut()
+                                .map(|(_, handle)| &mut handle[line_begin_brick..]);
+                            let mut global_brick_begin = 0;
+                            for brick_line in bricks {
+                                let global_line_brick = &global_line[global_brick_begin..];
+                                for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
+                                    o.write(*i);
+                                }
+                                global_brick_begin += brick_size.x().raw as usize;
                             }
-                            global_brick_begin += brick_size.x().raw as usize;
                         }
                     }
-                }
 
-                brick_handles
-            })
-        });
+                    brick_handles
+                })
+            },
+        );
 
-        let stream = ctx.submit_unordered(work);
+        //let work = batches.into_iter().map(|positions| {
+        //    let num_voxels = m.chunk_size.hmul();
+
+        //    let mut brick_handles = positions
+        //        .into_iter()
+        //        .map(|pos| (pos, ctx.alloc_slot(pos, num_voxels).into_thread_handle()))
+        //        .collect::<Vec<_>>();
+        //    ctx.spawn_io(move || {
+        //        if brick_handles.is_empty() {
+        //            return brick_handles;
+        //        }
+        //        for (pos, ref mut brick_handle) in &mut brick_handles {
+        //            let chunk_info = m.chunk_info(*pos);
+        //            crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
+        //        }
+
+        //        let first = brick_handles.first().unwrap();
+        //        let first_info = m.chunk_info(first.0);
+        //        let global_begin = first_info.begin;
+
+        //        let last = brick_handles.last().unwrap();
+        //        let last_info = m.chunk_info(last.0);
+        //        let global_end = last_info.end();
+
+        //        let strip_size_z = first_info.logical_dimensions.z();
+        //        let strip_size_y = first_info.logical_dimensions.y();
+        //        for z in 0..strip_size_z.raw {
+        //            for y in 0..strip_size_y.raw {
+        //                // Note: This assumes that all bricks have the same memory size! This may
+        //                // change in the future
+        //                let line_begin_brick =
+        //                    crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
+
+        //                let global_line = in_.slice(ndarray::s!(
+        //                    (global_begin.z().raw + z) as usize,
+        //                    (global_begin.y().raw + y) as usize,
+        //                    global_begin.x().raw as usize..global_end.x().raw as usize,
+        //                ));
+        //                let global_line = global_line.as_slice().unwrap();
+
+        //                let bricks = brick_handles
+        //                    .iter_mut()
+        //                    .map(|(_, handle)| &mut handle[line_begin_brick..]);
+        //                let mut global_brick_begin = 0;
+        //                for brick_line in bricks {
+        //                    let global_line_brick = &global_line[global_brick_begin..];
+        //                    for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
+        //                        o.write(*i);
+        //                    }
+        //                    global_brick_begin += brick_size.x().raw as usize;
+        //                }
+        //            }
+        //        }
+
+        //        brick_handles
+        //    })
+        //});
+
+        //let stream = ctx.submit_unordered(work);
 
         futures::pin_mut!(stream);
         while let Some(handles) = stream.next().await {

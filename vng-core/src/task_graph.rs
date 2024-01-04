@@ -2,6 +2,7 @@ use crate::{
     id::Id,
     operator::{DataId, OperatorId},
     storage::{DataLocation, VisibleDataLocation},
+    task::AllocationId,
     threadpool::JobId,
     util::{Map, Set},
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
@@ -25,6 +26,7 @@ pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
     CmdBufferSubmission(CmdBufferSubmissionId),
     Barrier(BarrierInfo),
+    Allocation(AllocationId),
     Data(VisibleDataId),
     Job(JobId),
     Group(GroupId),
@@ -53,6 +55,9 @@ impl RequestId {
     pub fn unwrap_data(&self) -> VisibleDataId {
         match self {
             RequestId::Data(d) => *d,
+            RequestId::Allocation(..) => {
+                panic!("Tried to unwrap DataId from RequestId::Allocation")
+            }
             RequestId::Job(_) => panic!("Tried to unwrap DataId from RequestId::Job"),
             RequestId::Group(_) => panic!("Tried to unwrap DataId from RequestId::Group"),
             RequestId::CmdBufferCompletion(_) => {
