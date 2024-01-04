@@ -86,6 +86,7 @@ fn next_allocation_id() -> AllocationId {
 
 pub enum AllocationRequest {
     Ram(Layout, DataDescriptor),
+    VRam(usize, Layout, DataDescriptor),
 }
 
 pub enum RequestType<'inv> {
@@ -278,6 +279,36 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
                     access = match ctx.storage.access_initializing(access.take().unwrap()) {
+                        Ok(r) => return Some(r),
+                        Err(acc) => Some(acc),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
+    pub fn alloc_raw_gpu<'req>(
+        &'req self,
+        device: &'req DeviceContext,
+        data_descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> Request<'req, 'inv, WriteHandle> {
+        let mut access = Some(device.storage.register_access(
+            device,
+            self.current_frame,
+            data_descriptor.id,
+        ));
+
+        Request {
+            type_: RequestType::Allocation(
+                next_allocation_id(),
+                AllocationRequest::VRam(device.id, layout, data_descriptor),
+            ),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    access = match device.storage.access_initializing(access.take().unwrap()) {
                         Ok(r) => return Some(r),
                         Err(acc) => Some(acc),
                     };
@@ -651,6 +682,17 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         device
             .storage
             .alloc_slot::<Output>(device, self.current_frame, id, size)
+    }
+
+    pub fn alloc_slot_gpu2<'a>(
+        &'a self,
+        device: &'a DeviceContext,
+        item: ItemDescriptor,
+        size: usize,
+    ) -> Request<'a, 'inv, WriteHandle<'a>> {
+        let layout = Layout::array::<Output>(size).unwrap();
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
+        self.alloc_raw_gpu(device, id, layout)
     }
 
     pub fn access_state_cache<'a>(

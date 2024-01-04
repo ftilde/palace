@@ -811,6 +811,25 @@ impl Storage {
         AccessToken::new(self, device, id)
     }
 
+    pub fn access_initializing<'a>(
+        &self,
+        access: AccessToken<'a>,
+    ) -> Result<WriteHandle<'a>, AccessToken<'a>> {
+        let index = self.data_index.borrow_mut();
+        let entry = index.get(&access.id).unwrap();
+
+        if let StorageEntryState::Initializing(info) = &entry.state {
+            Ok(WriteHandle {
+                buffer: info.allocation.buffer,
+                size: info.allocation.size,
+                drop_handler: DropError,
+                access,
+            })
+        } else {
+            Err(access)
+        }
+    }
+
     pub fn allocate(
         &self,
         device: &DeviceContext,
@@ -867,9 +886,7 @@ impl Storage {
         self.allocate(device, layout, flags, location)
     }
 
-    //TODO: remove error case since we actually cannot hit it
-    // Allocates a GpuOnly storage buffer
-    fn alloc_and_register_ssbo<'b>(
+    pub(crate) fn alloc_and_register_ssbo<'b>(
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,

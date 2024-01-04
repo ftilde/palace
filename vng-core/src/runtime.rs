@@ -668,6 +668,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         Ok(())
                     }
                     .into(),
+                    crate::task::AllocationRequest::VRam(device_id, layout, data_descriptor) => {
+                        async move {
+                            let device = &ctx.device_contexts[device_id];
+                            let _ = device.storage.alloc_and_register_ssbo(
+                                device,
+                                ctx.current_frame,
+                                data_descriptor,
+                                layout,
+                            );
+                            println!("Yes we alloced gpu");
+                            ctx.allocation_completions.set(id);
+                            Ok(())
+                        }
+                        .into()
+                    }
                 };
                 self.task_manager.add_task(task_id, task);
                 self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
