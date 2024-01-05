@@ -395,14 +395,12 @@ void main()
                         )
                     });
 
-                let state_initialized = ctx
-                    .access_state_cache(
-                        device,
-                        pos,
-                        "initialized",
-                        Layout::array::<u32>(m_out.chunk_size.hmul()).unwrap(),
-                    )
-                    .unwrap();
+                let state_initialized = ctx.access_state_cache(
+                    device,
+                    pos,
+                    "initialized",
+                    Layout::array::<u32>(m_out.chunk_size.hmul()).unwrap(),
+                );
                 let state_initialized = state_initialized.init(|v| {
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_fill_buffer(
@@ -421,7 +419,6 @@ void main()
                         "values",
                         Layout::array::<f32>(m_out.chunk_size.hmul()).unwrap(),
                     )
-                    .unwrap()
                     .unpack();
 
                 let request_table =

@@ -680,11 +680,11 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         item: ItemDescriptor,
         name: &str,
         layout: Layout,
-    ) -> Result<StateCacheResult<'a>, Error> {
+    ) -> StateCacheResult<'a> {
         let base_id = DataId::new(self.current_op(), &item);
         let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
 
-        Ok(device.storage.access_state_cache(device, id, layout))
+        device.storage.access_state_cache(device, id, layout)
     }
 }
 
