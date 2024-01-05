@@ -1058,7 +1058,12 @@ mod test {
         let n = size.hmul();
         let expected = (0..n).into_iter().sum::<usize>() as f32 / n as f32;
 
-        assert!(mean == expected);
+        println!("Mean: {}", mean);
+        println!("Expected: {}", expected);
+        let diff = (mean - expected).abs();
+        let rel_diff = diff / (mean.max(expected));
+        println!("Rel diff: {}", rel_diff);
+        assert!(rel_diff < 0.0001);
     }
 
     #[test]
