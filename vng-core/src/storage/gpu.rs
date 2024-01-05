@@ -17,7 +17,7 @@ use gpu_allocator::vulkan::AllocationScheme;
 use crate::{
     operator::{DataDescriptor, DataId, OperatorDescriptor, OperatorId},
     runtime::FrameNumber,
-    task::OpaqueTaskContext,
+    task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::Map,
     vulkan::{
         state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
@@ -329,17 +329,31 @@ impl<'a> StateCacheResult<'a> {
     }
 }
 
-pub enum InplaceResult<'a> {
+pub enum InplaceResult<'a, 'inv> {
+    Inplace(WriteHandle<'a>, DataVersionType),
+    New(ReadHandle<'a>, Request<'a, 'inv, WriteHandle<'a>>),
+}
+
+impl<'a, 'inv> InplaceResult<'a, 'inv> {
+    pub fn alloc(self) -> Request<'a, 'inv, InplaceHandle<'a>> {
+        match self {
+            InplaceResult::Inplace(a, b) => Request::ready(InplaceHandle::Inplace(a, b)),
+            InplaceResult::New(r, w) => w.map(move |w| InplaceHandle::New(r, w)),
+        }
+    }
+}
+
+pub enum InplaceHandle<'a> {
     Inplace(WriteHandle<'a>, DataVersionType),
     New(ReadHandle<'a>, WriteHandle<'a>),
 }
-impl<'a> InplaceResult<'a> {
+impl<'a> InplaceHandle<'a> {
     /// Safety: The corresponding slot (either rw inplace or separate w) has to have been
     /// completely written to.
     pub unsafe fn initialized<'b, 'c>(self, ctx: OpaqueTaskContext<'b, 'c>, info: SrcBarrierInfo) {
         match self {
-            InplaceResult::Inplace(rw, _v) => unsafe { rw.initialized(ctx, info) },
-            InplaceResult::New(_r, w) => unsafe { w.initialized(ctx, info) },
+            InplaceHandle::Inplace(rw, _v) => unsafe { rw.initialized(ctx, info) },
+            InplaceHandle::New(_r, w) => unsafe { w.initialized(ctx, info) },
         };
     }
 }
@@ -884,6 +898,37 @@ impl Storage {
         (buffer, AccessToken::new(self, device, key))
     }
 
+    pub fn request_alloc_raw<'req, 'inv>(
+        &'req self,
+        device: &'req DeviceContext,
+        current_frame: FrameNumber,
+        data_descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> Request<'req, 'inv, WriteHandle> {
+        let mut access = Some(device.storage.register_access(
+            device,
+            current_frame,
+            data_descriptor.id,
+        ));
+
+        Request {
+            type_: RequestType::Allocation(
+                AllocationId::next(),
+                AllocationRequest::VRam(device.id, layout, data_descriptor),
+            ),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    access = match device.storage.access_initializing(access.take().unwrap()) {
+                        Ok(r) => return Some(r),
+                        Err(acc) => Some(acc),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+
     pub fn alloc_slot_raw<'b>(
         &'b self,
         device: &'b DeviceContext,
@@ -1019,14 +1064,14 @@ impl Storage {
         })
     }
 
-    pub fn try_update_inplace<'b, 't: 'b>(
+    pub fn try_update_inplace<'b, 't: 'b, 'inv>(
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,
         old_access: AccessToken<'t>,
         new_desc: DataDescriptor,
         dst_info: DstBarrierInfo,
-    ) -> Result<InplaceResult<'b>, AccessToken<'t>> {
+    ) -> Result<InplaceResult<'b, 'inv>, AccessToken<'t>> {
         let old_key = old_access.id;
         let new_key = new_desc.id;
 
@@ -1089,7 +1134,7 @@ impl Storage {
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = self.alloc_slot_raw(device, current_frame, new_desc, layout);
+            let w = self.request_alloc_raw(device, current_frame, new_desc, layout);
 
             let r = ReadHandle {
                 buffer,

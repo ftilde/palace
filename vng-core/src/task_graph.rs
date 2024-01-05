@@ -30,6 +30,7 @@ pub enum RequestId {
     Data(VisibleDataId),
     Job(JobId),
     Group(GroupId),
+    Ready,
 }
 
 impl From<VisibleDataId> for RequestId {
@@ -68,6 +69,9 @@ impl RequestId {
             }
             RequestId::Barrier(..) => {
                 panic!("Tried to unwrap DataId from RequestId::Barrier")
+            }
+            RequestId::Ready => {
+                panic!("Tried to unwrap DataId from RequestId::Ready")
             }
         }
     }

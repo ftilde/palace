@@ -596,6 +596,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
+            RequestType::Ready => {
+                panic!("Ready request should never reach the executor");
+            }
             RequestType::Data(data_request) => {
                 let op_id = data_request.source.id();
                 self.operator_info

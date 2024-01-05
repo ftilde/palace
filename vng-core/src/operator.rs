@@ -389,7 +389,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         item: ItemDescriptor,
         write_id: OperatorDescriptor,
         dst_info: DstBarrierInfo,
-    ) -> Request<'req, 'inv, gpu::InplaceResult<'req>> {
+    ) -> Request<'req, 'inv, gpu::InplaceResult<'req, 'inv>> {
         let write_id = DataDescriptor::new(write_id, &item);
         let read_id = DataId::new(self.id(), &item);
 

@@ -76,12 +76,11 @@ impl AllocationId {
     pub fn inner(&self) -> u64 {
         self.0
     }
-}
-
-fn next_allocation_id() -> AllocationId {
-    static ALLOC_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id_raw = ALLOC_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    AllocationId(id_raw)
+    pub fn next() -> AllocationId {
+        static ALLOC_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id_raw = ALLOC_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        AllocationId(id_raw)
+    }
 }
 
 pub enum AllocationRequest {
@@ -97,6 +96,7 @@ pub enum RequestType<'inv> {
     CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
     Barrier(BarrierInfo),
     Group(RequestGroup<'inv>),
+    Ready,
 }
 
 impl RequestType<'_> {
@@ -112,6 +112,7 @@ impl RequestType<'_> {
             }),
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
+            RequestType::Ready => RequestId::Ready,
         }
     }
 }
@@ -129,17 +130,29 @@ pub struct Request<'req, 'inv, V> {
 }
 
 impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
+    pub fn ready(v: V) -> Self {
+        Self {
+            type_: RequestType::Ready,
+            gen_poll: Box::new(move |_ctx| {
+                let mut v = Some(v);
+                Box::new(move || v.take())
+            }),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
     pub fn id(&self) -> RequestId {
         self.type_.id()
     }
 
-    pub fn map<R: 'req>(self, mut f: impl FnMut(V) -> R + 'req) -> Request<'req, 'inv, R> {
+    pub fn map<R: 'req>(self, f: impl FnOnce(V) -> R + 'req) -> Request<'req, 'inv, R> {
         Request {
             type_: self.type_,
             _marker: self._marker,
             gen_poll: Box::new(move |ctx| {
                 let mut inner_poll = (self.gen_poll)(ctx);
-                Box::new(move || inner_poll().map(|v| f(v)))
+                let mut f = Some(f);
+                Box::new(move || inner_poll().map(|v| (f.take().unwrap())(v)))
             }),
         }
     }
@@ -182,6 +195,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             });
             match request.type_ {
                 RequestType::Data(_)
+                | RequestType::Ready
                 | RequestType::Group(_)
                 | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
@@ -274,7 +288,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
 
         Request {
             type_: RequestType::Allocation(
-                next_allocation_id(),
+                AllocationId::next(),
                 AllocationRequest::Ram(layout, data_descriptor),
             ),
             gen_poll: Box::new(move |ctx| {
@@ -296,28 +310,9 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, WriteHandle> {
-        let mut access = Some(device.storage.register_access(
-            device,
-            self.current_frame,
-            data_descriptor.id,
-        ));
-
-        Request {
-            type_: RequestType::Allocation(
-                next_allocation_id(),
-                AllocationRequest::VRam(device.id, layout, data_descriptor),
-            ),
-            gen_poll: Box::new(move |_ctx| {
-                Box::new(move || {
-                    access = match device.storage.access_initializing(access.take().unwrap()) {
-                        Ok(r) => return Some(r),
-                        Err(acc) => Some(acc),
-                    };
-                    None
-                })
-            }),
-            _marker: Default::default(),
-        }
+        device
+            .storage
+            .request_alloc_raw(device, self.current_frame, data_descriptor, layout)
     }
 
     pub fn group<'req, V: 'req>(
@@ -342,6 +337,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
                 RequestId::Barrier(b_info) => ids.push(Id::hash(&b_info)),
                 RequestId::Group(g) => ids.push(g.0),
+                RequestId::Ready => {}
             }
             let mut poll = (r.gen_poll)(PollContext {
                 storage: self.storage,
@@ -351,6 +347,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             match r.type_ {
                 RequestType::Data(_)
                 | RequestType::Group(_)
+                | RequestType::Ready
                 | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
                 | RequestType::CmdBufferSubmission(_)
@@ -546,6 +543,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
         match req.type_ {
             RequestType::Data(_)
             | RequestType::Group(_)
+            | RequestType::Ready
             | RequestType::Barrier(..)
             | RequestType::CmdBufferCompletion(_)
             | RequestType::CmdBufferSubmission(_)
@@ -702,7 +700,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
 
         Request {
             type_: RequestType::Allocation(
-                next_allocation_id(),
+                AllocationId::next(),
                 AllocationRequest::VRam(device.id, layout, data_descriptor),
             ),
             gen_poll: Box::new(move |_ctx| {
