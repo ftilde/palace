@@ -133,60 +133,6 @@ struct Entry {
     access: AccessState,
 }
 
-struct StateCacheEntry {
-    storage: StorageInfo,
-    access: AccessState,
-}
-
-pub struct StateCacheAccessToken<'a> {
-    storage: &'a Storage,
-    device: &'a DeviceContext,
-    pub id: DataId,
-}
-
-//TODO: See if we can deduplicate the code wrt the "normal" AccessToken
-impl<'a> StateCacheAccessToken<'a> {
-    fn new(storage: &'a Storage, device: &'a DeviceContext, id: DataId) -> Self {
-        let mut index = storage.state_cache_index.borrow_mut();
-        let entry = index.get_mut(&id).unwrap();
-
-        // We expect there to ever only be exactly one simulatenous access to a state cache item.
-        // If this is not the case, something has seriously gone wrong.
-        assert!(matches!(
-            entry.access,
-            AccessState::None(..) | AccessState::Some(0)
-        ));
-
-        inc_access(&mut entry.access, storage);
-
-        Self {
-            storage,
-            id,
-            device,
-        }
-    }
-}
-impl Drop for StateCacheAccessToken<'_> {
-    fn drop(&mut self) {
-        let mut index = self.storage.state_cache_index.borrow_mut();
-        let vram_entry = index.get_mut(&self.id).unwrap();
-        let longevity = vram_entry.storage.data_longevity;
-
-        // We expect there to ever only be exactly one simulatenous access to a state cache item.
-        // If this is not the case, something has seriously gone wrong.
-        assert!(matches!(vram_entry.access, AccessState::Some(1)));
-
-        let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
-        dec_access(
-            &mut vram_entry.access,
-            &mut lru_manager,
-            self.device,
-            LRUItem::State(self.id),
-            Some(longevity),
-        );
-    }
-}
-
 pub struct AccessToken<'a> {
     storage: &'a Storage,
     device: &'a DeviceContext,
@@ -357,7 +303,7 @@ pub struct StateCacheHandle<'a> {
     pub buffer: ash::vk::Buffer,
     pub size: u64,
     #[allow(unused)]
-    access: StateCacheAccessToken<'a>,
+    access: AccessToken<'a>,
 }
 
 pub enum StateCacheResult<'a> {
@@ -545,13 +491,11 @@ impl<'a> Drop for IndexHandle<'a> {
 #[derive(Copy, Clone)]
 enum LRUItem {
     Data(DataId),
-    State(DataId),
     Index(OperatorId),
 }
 
 pub struct Storage {
     data_index: RefCell<Map<DataId, Entry>>,
-    state_cache_index: RefCell<Map<DataId, StateCacheEntry>>,
     index_index: RefCell<Map<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
@@ -566,7 +510,6 @@ impl Storage {
     pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
             data_index: Default::default(),
-            state_cache_index: Default::default(),
             index_index: Default::default(),
             old_unused: Default::default(),
             lru_manager: Default::default(),
@@ -583,10 +526,6 @@ impl Storage {
     pub unsafe fn free_vram(&self) {
         for (info, _) in std::mem::take(&mut *self.old_unused.borrow_mut()) {
             self.allocator.deallocate(info.allocation);
-        }
-
-        for (_, entry) in std::mem::take(&mut *self.state_cache_index.borrow_mut()) {
-            self.allocator.deallocate(entry.storage.allocation);
         }
 
         for (_, entry) in std::mem::take(&mut *self.index_index.borrow_mut()) {
@@ -622,7 +561,6 @@ impl Storage {
         let mut lru = self.lru_manager.borrow_mut();
         let mut index_lru = self.index_lru.borrow_mut();
         let mut index = self.data_index.borrow_mut();
-        let mut state_cache_index = self.state_cache_index.borrow_mut();
         let mut index_index = self.index_index.borrow_mut();
 
         let mut indices_to_unref = Vec::new();
@@ -654,22 +592,6 @@ impl Storage {
                             StorageEntryState::Initializing(info)
                             | StorageEntryState::Initialized(info, _, _) => info,
                         }
-                    }
-                    LRUItem::State(key) => {
-                        let entry = state_cache_index.get_mut(&key).unwrap();
-                        let AccessState::None(_, f) = entry.access else {
-                            panic!("Should not be in LRU list");
-                        };
-                        if !device.cmd_buffer_completed(f) {
-                            // All following LRU items will have the same or a later epoch so cannot be deleted
-                            // either
-                            break;
-                        }
-
-                        let entry = state_cache_index.remove(&key).unwrap();
-
-                        self.new_data.remove(key);
-                        entry.storage
                     }
                     LRUItem::Index(key) => {
                         let entry = index_index.get_mut(&key).unwrap();
@@ -829,15 +751,17 @@ impl Storage {
         let index = self.data_index.borrow_mut();
         let entry = index.get(&access.id).unwrap();
 
-        if let StorageEntryState::Initializing(info) = &entry.state {
-            Ok(WriteHandle {
+        match &entry.state {
+            StorageEntryState::Registered => Err(access),
+            StorageEntryState::Initializing(info) => Ok(WriteHandle {
                 buffer: info.allocation.buffer,
                 size: info.allocation.size,
                 drop_handler: DropError,
                 access,
-            })
-        } else {
-            Err(access)
+            }),
+            StorageEntryState::Initialized(_, _, _) => {
+                panic!("Trying to access an initialized value");
+            }
         }
     }
 
@@ -1157,12 +1081,17 @@ impl Storage {
     ) -> StateCacheResult<'b> {
         let mut new = false;
         let buffer = {
-            let index = self.state_cache_index.borrow();
+            let index = self.data_index.borrow();
             if let Some(entry) = index.get(&key) {
-                entry.storage.allocation.buffer
+                if let StorageEntryState::Initializing(info) = &entry.state {
+                    info.allocation.buffer
+                } else {
+                    panic!("Cache state must be in initializing");
+                }
             } else {
                 new = true;
                 std::mem::drop(index);
+
                 // Drop index for allocation which may need to free and then access the index
                 let storage = StorageInfo {
                     allocation: self.alloc_ssbo(device, layout),
@@ -1170,20 +1099,21 @@ impl Storage {
                     data_longevity: DataLongevity::Ephemeral,
                 };
 
-                let mut index = self.state_cache_index.borrow_mut();
+                let mut index = self.data_index.borrow_mut();
                 let buffer = storage.allocation.buffer;
                 index.insert(
                     key,
-                    StateCacheEntry {
+                    Entry {
+                        state: StorageEntryState::Initializing(storage),
                         access: AccessState::Some(0),
-                        storage,
                     },
                 );
+
                 buffer
             }
         };
 
-        let access = StateCacheAccessToken::new(self, device, key);
+        let access = AccessToken::new(self, device, key);
         let handle = StateCacheHandle {
             buffer,
             size: layout.size() as _,
