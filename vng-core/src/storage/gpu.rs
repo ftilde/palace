@@ -150,6 +150,13 @@ impl<'a> StateCacheAccessToken<'a> {
         let mut index = storage.state_cache_index.borrow_mut();
         let entry = index.get_mut(&id).unwrap();
 
+        // We expect there to ever only be exactly one simulatenous access to a state cache item.
+        // If this is not the case, something has seriously gone wrong.
+        assert!(matches!(
+            entry.access,
+            AccessState::None(..) | AccessState::Some(0)
+        ));
+
         inc_access(&mut entry.access, storage);
 
         Self {
@@ -164,6 +171,10 @@ impl Drop for StateCacheAccessToken<'_> {
         let mut index = self.storage.state_cache_index.borrow_mut();
         let vram_entry = index.get_mut(&self.id).unwrap();
         let longevity = vram_entry.storage.data_longevity;
+
+        // We expect there to ever only be exactly one simulatenous access to a state cache item.
+        // If this is not the case, something has seriously gone wrong.
+        assert!(matches!(vram_entry.access, AccessState::Some(1)));
 
         let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
         dec_access(
