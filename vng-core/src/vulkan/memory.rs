@@ -218,9 +218,8 @@ impl TransferManager {
         access: crate::storage::ram::AccessToken<'cref>,
     ) -> Task<'cref> {
         async move {
-            let storage = ctx.storage;
             let key = access.id;
-            let Ok(input_buf) = storage.read_raw(access) else {
+            let Ok(input_buf) = ctx.storage.read_raw(access) else {
                 panic!("Data should already be in ram");
             };
             let layout = input_buf.info.layout;
@@ -229,10 +228,7 @@ impl TransferManager {
                 longevity: input_buf.info.data_longevity,
             };
 
-            let gpu_buf_out =
-                device
-                    .storage
-                    .alloc_slot_raw(device, ctx.current_frame, desc, layout);
+            let gpu_buf_out = ctx.submit(ctx.alloc_raw_gpu(device, desc, layout)).await;
 
             unsafe {
                 copy_to_gpu(ctx, device, input_buf.info.data, layout, gpu_buf_out.buffer).await
@@ -260,7 +256,6 @@ impl TransferManager {
     ) -> Task<'cref> {
         async move {
             let key = access.id;
-            let storage = ctx.storage;
             let dst_info = super::DstBarrierInfo {
                 stage: vk::PipelineStageFlags2::TRANSFER,
                 access: vk::AccessFlags2::TRANSFER_READ,
@@ -277,7 +272,7 @@ impl TransferManager {
                 id: key,
                 longevity: gpu_buf_in.data_longevity,
             };
-            let out_buf = storage.alloc_slot_raw(desc, layout);
+            let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
 
             unsafe { copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await };
 

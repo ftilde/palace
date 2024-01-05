@@ -663,7 +663,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let task = match alloc {
                     crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
                         let _ = ctx.storage.alloc(data_descriptor, layout);
-                        println!("Yes we alloced");
                         ctx.allocation_completions.set(id);
                         Ok(())
                     }
@@ -677,7 +676,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 data_descriptor,
                                 layout,
                             );
-                            println!("Yes we alloced gpu");
                             ctx.allocation_completions.set(id);
                             Ok(())
                         }
