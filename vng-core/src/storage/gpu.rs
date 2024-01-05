@@ -670,6 +670,14 @@ impl Storage {
         );
     }
 
+    pub fn is_initializing(&self, id: DataId) -> bool {
+        self.data_index
+            .borrow()
+            .get(&id)
+            .map(|e| matches!(e.state, StorageEntryState::Initializing(_)))
+            .unwrap_or(false)
+    }
+
     pub fn is_readable(&self, id: DataId) -> bool {
         self.data_index
             .borrow()
@@ -763,6 +771,27 @@ impl Storage {
                 panic!("Trying to access an initialized value");
             }
         }
+    }
+    pub(crate) fn access_initializing_state_cache<'a>(
+        &self,
+        access: AccessToken<'a>,
+    ) -> Result<StateCacheHandle<'a>, AccessToken<'a>> {
+        self.access_initializing(access).map(|r| {
+            let WriteHandle {
+                buffer,
+                size,
+                drop_handler,
+                access,
+            } = r;
+
+            std::mem::forget(drop_handler);
+
+            StateCacheHandle {
+                buffer,
+                size,
+                access,
+            }
+        })
     }
 
     pub fn allocate(
@@ -1071,60 +1100,6 @@ impl Storage {
             };
             InplaceResult::New(r, w)
         })
-    }
-
-    pub fn access_state_cache<'b>(
-        &'b self,
-        device: &'b DeviceContext,
-        key: DataId,
-        layout: Layout,
-    ) -> StateCacheResult<'b> {
-        let mut new = false;
-        let buffer = {
-            let index = self.data_index.borrow();
-            if let Some(entry) = index.get(&key) {
-                if let StorageEntryState::Initializing(info) = &entry.state {
-                    info.allocation.buffer
-                } else {
-                    panic!("Cache state must be in initializing");
-                }
-            } else {
-                new = true;
-                std::mem::drop(index);
-
-                // Drop index for allocation which may need to free and then access the index
-                let storage = StorageInfo {
-                    allocation: self.alloc_ssbo(device, layout),
-                    layout,
-                    data_longevity: DataLongevity::Ephemeral,
-                };
-
-                let mut index = self.data_index.borrow_mut();
-                let buffer = storage.allocation.buffer;
-                index.insert(
-                    key,
-                    Entry {
-                        state: StorageEntryState::Initializing(storage),
-                        access: AccessState::Some(0),
-                    },
-                );
-
-                buffer
-            }
-        };
-
-        let access = AccessToken::new(self, device, key);
-        let handle = StateCacheHandle {
-            buffer,
-            size: layout.size() as _,
-            access,
-        };
-
-        if new {
-            StateCacheResult::New(handle)
-        } else {
-            StateCacheResult::Existing(handle)
-        }
     }
 
     pub fn deinitialize(&mut self) {

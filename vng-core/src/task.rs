@@ -185,12 +185,13 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 | RequestType::Group(_)
                 | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
-                | RequestType::CmdBufferSubmission(_) => {
+                | RequestType::CmdBufferSubmission(_)
+                | RequestType::Allocation(..) => {
                     if let Some(res) = poll() {
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
+                RequestType::ThreadPoolJob(_, _) => {}
             };
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
@@ -352,13 +353,14 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 | RequestType::Group(_)
                 | RequestType::Barrier(..)
                 | RequestType::CmdBufferCompletion(_)
-                | RequestType::CmdBufferSubmission(_) => {
+                | RequestType::CmdBufferSubmission(_)
+                | RequestType::Allocation(..) => {
                     if let Some(v) = poll() {
                         done.push(MaybeUninit::new(v));
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
+                RequestType::ThreadPoolJob(_, _) => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, poll));
@@ -546,13 +548,14 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             | RequestType::Group(_)
             | RequestType::Barrier(..)
             | RequestType::CmdBufferCompletion(_)
-            | RequestType::CmdBufferSubmission(_) => {
+            | RequestType::CmdBufferSubmission(_)
+            | RequestType::Allocation(..) => {
                 if let Some(r) = poll() {
                     self.ready.push_back((r, data));
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) | RequestType::Allocation(..) => {}
+            RequestType::ThreadPoolJob(_, _) => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();
@@ -680,11 +683,48 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         item: ItemDescriptor,
         name: &str,
         layout: Layout,
-    ) -> StateCacheResult<'a> {
+    ) -> Request<'a, 'inv, StateCacheResult<'a>> {
         let base_id = DataId::new(self.current_op(), &item);
         let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
 
-        device.storage.access_state_cache(device, id, layout)
+        let data_descriptor = DataDescriptor {
+            id,
+            longevity: crate::storage::DataLongevity::Ephemeral,
+        };
+
+        let mut access = Some(
+            device
+                .storage
+                .register_access(device, self.current_frame, id),
+        );
+
+        let old = device.storage.is_initializing(id);
+
+        Request {
+            type_: RequestType::Allocation(
+                next_allocation_id(),
+                AllocationRequest::VRam(device.id, layout, data_descriptor),
+            ),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || {
+                    access = match device
+                        .storage
+                        .access_initializing_state_cache(access.take().unwrap())
+                    {
+                        Ok(r) => {
+                            return Some(if old {
+                                StateCacheResult::Existing(r)
+                            } else {
+                                StateCacheResult::New(r)
+                            })
+                        }
+                        Err(acc) => Some(acc),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
     }
 }
 

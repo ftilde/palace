@@ -800,12 +800,14 @@ void main()
                     .await
                 };
 
-                let state_initialized = ctx.access_state_cache(
-                    device,
-                    pos,
-                    "initialized",
-                    Layout::array::<(u32, f32)>(m_out.chunk_size.hmul()).unwrap(),
-                );
+                let state_initialized = ctx
+                    .submit(ctx.access_state_cache(
+                        device,
+                        pos,
+                        "initialized",
+                        Layout::array::<(u32, f32)>(m_out.chunk_size.hmul()).unwrap(),
+                    ))
+                    .await;
                 let state_initialized = state_initialized.init(|v| {
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_fill_buffer(
