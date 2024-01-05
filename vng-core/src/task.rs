@@ -649,16 +649,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
 impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
-    pub fn alloc_slot(
-        &'cref self,
-        item: ItemDescriptor,
-        size: usize,
-    ) -> WriteHandleUninit<'cref, [MaybeUninit<Output>]> {
-        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
-        self.inner.storage.alloc_slot(id, size)
-    }
-
-    pub fn alloc_slot2<'req>(
+    pub fn alloc_slot<'req>(
         &'req self,
         item: ItemDescriptor,
         size: usize,
@@ -710,10 +701,11 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
 }
 
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
-    pub fn write(&self, value: Output) {
-        let mut slot = self.alloc_slot((), 1);
-        slot[0].write(value);
-        unsafe { slot.initialized(**self) };
+    pub fn write(&self, value: Output) -> Request<()> {
+        self.alloc_slot((), 1).map(move |mut slot| {
+            slot[0].write(value);
+            unsafe { slot.initialized(**self) };
+        })
     }
 }
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {

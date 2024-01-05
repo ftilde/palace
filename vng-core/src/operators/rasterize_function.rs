@@ -5,7 +5,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     operator::OperatorDescriptor,
-    task::TaskContext,
+    task::{RequestStream, TaskContext},
     Error,
 };
 
@@ -51,30 +51,32 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
     positions: Vec<BrickPosition>,
 ) -> Result<(), Error> {
-    let work = positions.into_iter().map(|pos| {
-        let chunk = metadata.chunk_info(pos);
-
-        let brick_handle = ctx.alloc_slot(pos, chunk.mem_elements());
-        let mut brick_handle = brick_handle.into_thread_handle();
-        ctx.spawn_compute(move || {
-            crate::data::init_non_full(&mut brick_handle, &chunk, f32::NAN);
-
-            let chunk_info = metadata.chunk_info(pos);
-
-            let mut out_chunk = crate::data::chunk_mut(&mut brick_handle, &chunk_info);
-            let begin = chunk_info.begin();
-
-            for ((z, y, x), v) in out_chunk.indexed_iter_mut() {
-                let pos: LocalVoxelPosition = [z as u32, y as u32, x as u32].into();
-                let pos = begin + pos;
-                v.write(function(pos));
-            }
-
-            brick_handle
-        })
+    let allocs = positions.into_iter().map(|pos| {
+        let brick_handle_req = ctx.alloc_slot(pos, metadata.num_elements());
+        (brick_handle_req, pos)
     });
 
-    let stream = ctx.submit_unordered(work);
+    let stream = ctx
+        .submit_unordered_with_data(allocs)
+        .then_req(*ctx, |(brick_handle, pos)| {
+            let mut brick_handle = brick_handle.into_thread_handle();
+            ctx.spawn_compute(move || {
+                let chunk_info = metadata.chunk_info(pos);
+
+                crate::data::init_non_full(&mut brick_handle, &chunk_info, f32::NAN);
+
+                let mut out_chunk = crate::data::chunk_mut(&mut brick_handle, &chunk_info);
+                let begin = chunk_info.begin();
+
+                for ((z, y, x), v) in out_chunk.indexed_iter_mut() {
+                    let pos: LocalVoxelPosition = [z as u32, y as u32, x as u32].into();
+                    let pos = begin + pos;
+                    v.write(function(pos));
+                }
+
+                brick_handle
+            })
+        });
 
     futures::pin_mut!(stream);
     while let Some(handle) = stream.next().await {

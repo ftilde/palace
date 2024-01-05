@@ -132,7 +132,8 @@ impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
                     for pos in positions {
                         let z = pos.z().raw as usize;
                         let chunk = this.0.metadata.chunk_info(pos);
-                        let mut brick_handle = ctx.alloc_slot(pos, chunk.mem_elements());
+                        let mut brick_handle =
+                            ctx.submit(ctx.alloc_slot(pos, chunk.mem_elements())).await;
 
                         let brick_data = &mut *brick_handle;
                         ctx.submit(ctx.spawn_io(|| {

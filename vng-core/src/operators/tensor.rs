@@ -291,8 +291,11 @@ pub fn from_static<D: Dimension, E: Element + Identify>(
         values,
         move |ctx, _, values| {
             async move {
-                let mut out =
-                    ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len());
+                let mut out = ctx
+                    .submit(
+                        ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len()),
+                    )
+                    .await;
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {
@@ -335,8 +338,11 @@ pub fn from_rc<D: Dimension, E: Element + Identify>(
         values,
         move |ctx, _, values| {
             async move {
-                let mut out =
-                    ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len());
+                let mut out = ctx
+                    .submit(
+                        ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len()),
+                    )
+                    .await;
                 let mut out_data = &mut *out;
                 let values: &[E] = &values;
                 ctx.submit(ctx.spawn_compute(move || {

@@ -91,9 +91,7 @@ impl RawVolumeSourceState {
         let requests = batches.into_iter().map(|positions| {
             let num_voxels = m.chunk_size.hmul();
 
-            let brick_handles = positions
-                .iter()
-                .map(|pos| ctx.alloc_slot2(*pos, num_voxels));
+            let brick_handles = positions.iter().map(|pos| ctx.alloc_slot(*pos, num_voxels));
 
             (ctx.group(brick_handles), positions)
         });

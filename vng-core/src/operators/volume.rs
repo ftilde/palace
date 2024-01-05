@@ -156,57 +156,66 @@ pub fn rechunk<E: Element>(
                     (intersecting_bricks, (pos, in_brick_positions))
                 });
 
-                let mut stream = ctx.submit_unordered_with_data(requests).then_req(
-                    ctx.into(),
-                    |(intersecting_bricks, (pos, in_brick_positions))| {
-                        let out_info = m_out.chunk_info(pos);
-                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements());
-                        let mut brick_handle = brick_handle.into_thread_handle();
-                        let intersecting_bricks = intersecting_bricks
-                            .into_iter()
-                            .map(|v| v.into_thread_handle())
-                            .collect::<Vec<_>>();
+                let mut stream = ctx
+                    .submit_unordered_with_data(requests)
+                    .then_req_with_data(
+                        ctx.into(),
+                        |(intersecting_bricks, (pos, in_brick_positions))| {
+                            let brick_handle = ctx.alloc_slot(pos, m_out.num_elements());
+                            (brick_handle, (intersecting_bricks, pos, in_brick_positions))
+                        },
+                    )
+                    .then_req(
+                        ctx.into(),
+                        |(brick_handle, (intersecting_bricks, pos, in_brick_positions))| {
+                            let out_info = m_out.chunk_info(pos);
+                            let mut brick_handle = brick_handle.into_thread_handle();
+                            let intersecting_bricks = intersecting_bricks
+                                .into_iter()
+                                .map(|v| v.into_thread_handle())
+                                .collect::<Vec<_>>();
 
-                        ctx.spawn_compute(move || {
-                            let out_data = &mut *brick_handle;
-                            let out_begin = out_info.begin();
-                            let out_end = out_info.end();
+                            ctx.spawn_compute(move || {
+                                let out_data = &mut *brick_handle;
+                                let out_begin = out_info.begin();
+                                let out_end = out_info.end();
 
-                            crate::data::init_non_full(out_data, &out_info, E::zeroed());
+                                crate::data::init_non_full(out_data, &out_info, E::zeroed());
 
-                            let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
-                            for (in_data_handle, in_brick_pos) in intersecting_bricks
-                                .iter()
-                                .zip(in_brick_positions.into_iter())
-                            {
-                                let in_data = &*in_data_handle;
-                                let in_info = m_in.chunk_info(in_brick_pos);
-                                let in_chunk = crate::data::chunk(in_data, &in_info);
+                                let mut out_chunk = crate::data::chunk_mut(out_data, &out_info);
+                                for (in_data_handle, in_brick_pos) in intersecting_bricks
+                                    .iter()
+                                    .zip(in_brick_positions.into_iter())
+                                {
+                                    let in_data = &*in_data_handle;
+                                    let in_info = m_in.chunk_info(in_brick_pos);
+                                    let in_chunk = crate::data::chunk(in_data, &in_info);
 
-                                let in_begin = in_info.begin();
-                                let in_end = in_info.end();
+                                    let in_begin = in_info.begin();
+                                    let in_end = in_info.end();
 
-                                let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
-                                let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
-                                let overlap_size = (overlap_end - overlap_begin)
-                                    .map(LocalCoordinate::interpret_as);
+                                    let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
+                                    let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                                    let overlap_size = (overlap_end - overlap_begin)
+                                        .map(LocalCoordinate::interpret_as);
 
-                                let in_chunk_begin = in_info.in_chunk(overlap_begin);
-                                let in_chunk_end = in_chunk_begin + overlap_size;
+                                    let in_chunk_begin = in_info.in_chunk(overlap_begin);
+                                    let in_chunk_end = in_chunk_begin + overlap_size;
 
-                                let out_chunk_begin = out_info.in_chunk(overlap_begin);
-                                let out_chunk_end = out_chunk_begin + overlap_size;
+                                    let out_chunk_begin = out_info.in_chunk(overlap_begin);
+                                    let out_chunk_end = out_chunk_begin + overlap_size;
 
-                                let mut o = out_chunk
-                                    .slice_mut(slice_range(out_chunk_begin, out_chunk_end));
-                                let i = in_chunk.slice(slice_range(in_chunk_begin, in_chunk_end));
+                                    let mut o = out_chunk
+                                        .slice_mut(slice_range(out_chunk_begin, out_chunk_end));
+                                    let i =
+                                        in_chunk.slice(slice_range(in_chunk_begin, in_chunk_end));
 
-                                ndarray::azip!((o in &mut o, i in &i) { o.write(*i); });
-                            }
-                            (brick_handle, intersecting_bricks)
-                        })
-                    },
-                );
+                                    ndarray::azip!((o in &mut o, i in &i) { o.write(*i); });
+                                }
+                                (brick_handle, intersecting_bricks)
+                            })
+                        },
+                    );
 
                 while let Some((brick_handle, intersecting_bricks)) = stream.next().await {
                     let brick_handle = brick_handle.into_main_handle(ctx.storage());
@@ -284,108 +293,120 @@ pub fn convolution_1d<const DIM: usize>(
                     (intersecting_bricks, (pos, in_brick_positions))
                 });
 
-                let mut stream = ctx.submit_unordered_with_data(requests).then_req(
-                    ctx.into(),
-                    |(intersecting_bricks, (pos, in_brick_positions))| {
-                        let out_info = m_out.chunk_info(pos);
-                        let brick_handle = ctx.alloc_slot(pos, out_info.mem_elements());
-                        let mut brick_handle = brick_handle.into_thread_handle();
-                        let intersecting_bricks = intersecting_bricks
-                            .into_iter()
-                            .map(|v| v.into_thread_handle())
-                            .collect::<Vec<_>>();
+                let mut stream = ctx
+                    .submit_unordered_with_data(requests)
+                    .then_req_with_data(
+                        ctx.into(),
+                        |(intersecting_bricks, (pos, in_brick_positions))| {
+                            let brick_handle = ctx.alloc_slot(pos, m_out.num_elements());
+                            (brick_handle, (intersecting_bricks, pos, in_brick_positions))
+                        },
+                    )
+                    .then_req(
+                        ctx.into(),
+                        |(brick_handle, (intersecting_bricks, pos, in_brick_positions))| {
+                            let out_info = m_out.chunk_info(pos);
+                            let intersecting_bricks = intersecting_bricks
+                                .into_iter()
+                                .map(|v| v.into_thread_handle())
+                                .collect::<Vec<_>>();
+                            let mut brick_handle = brick_handle.into_thread_handle();
 
-                        ctx.spawn_compute(move || {
-                            let out_data = &mut *brick_handle;
-                            let out_begin = out_info.begin();
-                            let out_end = out_info.end();
+                            ctx.spawn_compute(move || {
+                                let out_data = &mut *brick_handle;
+                                let out_begin = out_info.begin();
+                                let out_end = out_info.end();
 
-                            let out_data = crate::data::fill_uninit(out_data, 0.0);
-                            let mut out_chunk = chunk_mut(out_data, &out_info);
+                                let out_data = crate::data::fill_uninit(out_data, 0.0);
+                                let mut out_chunk = chunk_mut(out_data, &out_info);
 
-                            for (in_data_handle, in_brick_pos) in intersecting_bricks
-                                .iter()
-                                .zip(in_brick_positions.into_iter())
-                            {
-                                let in_data = &*in_data_handle;
-                                let in_info = m_in.chunk_info(in_brick_pos);
-                                let in_chunk = chunk(in_data, &in_info);
+                                for (in_data_handle, in_brick_pos) in intersecting_bricks
+                                    .iter()
+                                    .zip(in_brick_positions.into_iter())
+                                {
+                                    let in_data = &*in_data_handle;
+                                    let in_info = m_in.chunk_info(in_brick_pos);
+                                    let in_chunk = chunk(in_data, &in_info);
 
-                                // Logical dimensions should be equal except possibly in DIM (if we
-                                // are at the border)
-                                assert!(out_info
-                                    .logical_dimensions
-                                    .zip_enumerate(in_info.logical_dimensions, |i, a, b| {
-                                        i == DIM || a.raw == b.raw
-                                    })
-                                    .fold(true, std::ops::BitAnd::bitand));
-
-                                let in_begin = in_info.begin();
-                                let in_end = in_info.end();
-
-                                let begin_i_global = in_begin[DIM].raw as i32;
-                                let end_i_global = in_end[DIM].raw as i32;
-                                let begin_o_global = out_begin[DIM].raw as i32;
-                                let end_o_global = out_end[DIM].raw as i32;
-                                let extent = extent as i32;
-
-                                let begin_ext = (begin_i_global - end_o_global).max(-extent);
-                                let end_ext = (end_i_global - begin_o_global).min(extent);
-
-                                for offset in begin_ext..=end_ext {
-                                    let kernel_buf_index = (extent - offset) as usize;
-                                    let kernel_val = kernel[kernel_buf_index];
-
-                                    let begin_i_local = (begin_o_global + offset) - begin_i_global;
-                                    let end_i_local = (end_o_global + offset) - begin_i_global;
-
-                                    let iter_i_begin = Vector::<D3, i32>::fill(0)
-                                        .map_element(DIM, |a| a.max(begin_i_local))
-                                        .map(|v| v as usize);
-                                    let iter_i_end = in_info
+                                    // Logical dimensions should be equal except possibly in DIM (if we
+                                    // are at the border)
+                                    assert!(out_info
                                         .logical_dimensions
-                                        .map(|v| v.raw as i32)
-                                        .map_element(DIM, |a| a.min(end_i_local))
-                                        .map(|v| v as usize);
+                                        .zip_enumerate(in_info.logical_dimensions, |i, a, b| {
+                                            i == DIM || a.raw == b.raw
+                                        })
+                                        .fold(true, std::ops::BitAnd::bitand));
 
-                                    let begin_o_local = (begin_i_global - offset) - begin_o_global;
-                                    let end_o_local = (end_i_global - offset) - begin_o_global;
+                                    let in_begin = in_info.begin();
+                                    let in_end = in_info.end();
 
-                                    let iter_o_begin = Vector::<D3, i32>::fill(0)
-                                        .map_element(DIM, |a| a.max(begin_o_local))
-                                        .map(|v| v as usize);
-                                    let iter_o_end = out_info
-                                        .logical_dimensions
-                                        .map(|v| v.raw as i32)
-                                        .map_element(DIM, |a| a.min(end_o_local))
-                                        .map(|v| v as usize);
+                                    let begin_i_global = in_begin[DIM].raw as i32;
+                                    let end_i_global = in_end[DIM].raw as i32;
+                                    let begin_o_global = out_begin[DIM].raw as i32;
+                                    let end_o_global = out_end[DIM].raw as i32;
+                                    let extent = extent as i32;
 
-                                    assert!(iter_i_end - iter_i_begin == iter_o_end - iter_o_begin);
+                                    let begin_ext = (begin_i_global - end_o_global).max(-extent);
+                                    let end_ext = (end_i_global - begin_o_global).min(extent);
 
-                                    let in_chunk_active =
-                                        in_chunk.slice(slice_range(iter_i_begin, iter_i_end));
-                                    let in_lines = in_chunk_active.rows();
+                                    for offset in begin_ext..=end_ext {
+                                        let kernel_buf_index = (extent - offset) as usize;
+                                        let kernel_val = kernel[kernel_buf_index];
 
-                                    let mut out_chunk_active =
-                                        out_chunk.slice_mut(slice_range(iter_o_begin, iter_o_end));
-                                    let out_lines = out_chunk_active.rows_mut();
+                                        let begin_i_local =
+                                            (begin_o_global + offset) - begin_i_global;
+                                        let end_i_local = (end_o_global + offset) - begin_i_global;
 
-                                    for (mut ol, il) in
-                                        out_lines.into_iter().zip(in_lines.into_iter())
-                                    {
-                                        let ol = ol.as_slice_mut().unwrap();
-                                        let il = il.as_slice().unwrap();
-                                        for (o, i) in ol.iter_mut().zip(il.iter()) {
-                                            let v = kernel_val * i;
-                                            *o += v;
+                                        let iter_i_begin = Vector::<D3, i32>::fill(0)
+                                            .map_element(DIM, |a| a.max(begin_i_local))
+                                            .map(|v| v as usize);
+                                        let iter_i_end = in_info
+                                            .logical_dimensions
+                                            .map(|v| v.raw as i32)
+                                            .map_element(DIM, |a| a.min(end_i_local))
+                                            .map(|v| v as usize);
+
+                                        let begin_o_local =
+                                            (begin_i_global - offset) - begin_o_global;
+                                        let end_o_local = (end_i_global - offset) - begin_o_global;
+
+                                        let iter_o_begin = Vector::<D3, i32>::fill(0)
+                                            .map_element(DIM, |a| a.max(begin_o_local))
+                                            .map(|v| v as usize);
+                                        let iter_o_end = out_info
+                                            .logical_dimensions
+                                            .map(|v| v.raw as i32)
+                                            .map_element(DIM, |a| a.min(end_o_local))
+                                            .map(|v| v as usize);
+
+                                        assert!(
+                                            iter_i_end - iter_i_begin == iter_o_end - iter_o_begin
+                                        );
+
+                                        let in_chunk_active =
+                                            in_chunk.slice(slice_range(iter_i_begin, iter_i_end));
+                                        let in_lines = in_chunk_active.rows();
+
+                                        let mut out_chunk_active = out_chunk
+                                            .slice_mut(slice_range(iter_o_begin, iter_o_end));
+                                        let out_lines = out_chunk_active.rows_mut();
+
+                                        for (mut ol, il) in
+                                            out_lines.into_iter().zip(in_lines.into_iter())
+                                        {
+                                            let ol = ol.as_slice_mut().unwrap();
+                                            let il = il.as_slice().unwrap();
+                                            for (o, i) in ol.iter_mut().zip(il.iter()) {
+                                                let v = kernel_val * i;
+                                                *o += v;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            (brick_handle, intersecting_bricks)
-                        })
-                    },
-                );
+                                (brick_handle, intersecting_bricks)
+                            })
+                        },
+                    );
 
                 while let Some((brick_handle, intersecting_bricks)) = stream.next().await {
                     let brick_handle = brick_handle.into_main_handle(ctx.storage());
