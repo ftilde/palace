@@ -1156,7 +1156,6 @@ impl Storage {
                 let storage = StorageInfo {
                     allocation: self.alloc_ssbo(device, layout),
                     layout,
-                    //TODO: This is. Actually data_longevity is never used for the state cache.
                     data_longevity: DataLongevity::Ephemeral,
                 };
 
