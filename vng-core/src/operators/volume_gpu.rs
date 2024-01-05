@@ -801,7 +801,7 @@ void main()
                         )
                     });
 
-                let sum = ctx.alloc_scalar_gpu(device);
+                let sum = ctx.submit(ctx.alloc_scalar_gpu(device)).await;
 
                 let normalization_factor = 1.0 / (m.dimensions.hmul() as f32);
 
@@ -1028,6 +1028,38 @@ mod test {
         operators::volume::VolumeOperatorState,
         test_util::*,
     };
+
+    #[test]
+    fn test_mean_gpu() {
+        let size = VoxelPosition::fill(5.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let input = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            let v = crate::vec::to_linear(v, size);
+            v as f32
+        });
+        let input = input.operate();
+
+        let output = mean(input);
+
+        let mut runtime = crate::runtime::RunTime::new(1 << 30, None, Some(1)).unwrap();
+
+        let output = &output;
+        let mean = runtime
+            .resolve(None, move |ctx, _| {
+                async move {
+                    let m = ctx.submit(output.request_scalar()).await;
+                    Ok(m)
+                }
+                .into()
+            })
+            .unwrap();
+
+        let n = size.hmul();
+        let expected = (0..n).into_iter().sum::<usize>() as f32 / n as f32;
+
+        assert!(mean == expected);
+    }
 
     #[test]
     fn test_rescale_gpu() {

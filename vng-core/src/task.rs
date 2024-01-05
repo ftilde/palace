@@ -697,10 +697,12 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
     }
 }
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
-    pub fn alloc_scalar_gpu<'a>(&'a self, device: &'a DeviceContext) -> WriteHandle<'a> {
+    pub fn alloc_scalar_gpu<'a>(
+        &'a self,
+        device: &'a DeviceContext,
+    ) -> Request<'a, 'inv, WriteHandle<'a>> {
+        let layout = Layout::new::<Output>();
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &());
-        device
-            .storage
-            .alloc_slot::<Output>(device, self.current_frame, id, 1)
+        self.alloc_raw_gpu(device, id, layout)
     }
 }
