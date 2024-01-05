@@ -437,7 +437,7 @@ void main()
                 };
 
                 let gpu_brick_out = ctx
-                    .submit(ctx.alloc_slot_gpu2(device, pos, out_info.mem_elements()))
+                    .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
                     .await;
 
                 let chunk_size = m_out.chunk_size.raw();

@@ -668,18 +668,6 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         device: &'a DeviceContext,
         item: ItemDescriptor,
         size: usize,
-    ) -> WriteHandle<'a> {
-        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
-        device
-            .storage
-            .alloc_slot::<Output>(device, self.current_frame, id, size)
-    }
-
-    pub fn alloc_slot_gpu2<'a>(
-        &'a self,
-        device: &'a DeviceContext,
-        item: ItemDescriptor,
-        size: usize,
     ) -> Request<'a, 'inv, WriteHandle<'a>> {
         let layout = Layout::array::<Output>(size).unwrap();
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);

@@ -325,7 +325,9 @@ void main() {
                 {
                     let out_info = m_out.chunk_info(pos);
 
-                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
+                    let gpu_brick_out = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                        .await;
 
                     for (gpu_brick_in, in_brick_pos) in intersecting_bricks
                         .into_iter()

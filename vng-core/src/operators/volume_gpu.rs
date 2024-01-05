@@ -308,7 +308,9 @@ void main() {
                 {
                     let out_info = m_out.chunk_info(pos);
 
-                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
+                    let gpu_brick_out = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                        .await;
 
                     device.with_cmd_buffer(|cmd| {
                         let out_begin = out_info.begin();
@@ -622,7 +624,9 @@ void main() {
                     stream.next().await
                 {
                     let out_info = m_out.chunk_info(pos);
-                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, out_info.mem_elements());
+                    let gpu_brick_out = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                        .await;
 
                     let out_begin = out_info.begin();
 
@@ -962,7 +966,9 @@ void main()
                 for pos in positions {
                     let brick_info = m.chunk_info(pos);
 
-                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
+                    let gpu_brick_out = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements()))
+                        .await;
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
