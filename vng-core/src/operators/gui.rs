@@ -18,6 +18,7 @@ use crate::{
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::gpu::ImageAllocation,
+    task::OpaqueTaskContext,
     util::Map,
     vulkan::{
         memory::TempRessource,
@@ -45,7 +46,12 @@ pub struct GuiStateInner {
 }
 
 impl GuiStateInner {
-    fn update(&mut self, device: &DeviceContext, size: Vector<D2, u32>) {
+    async fn update(
+        &mut self,
+        ctx: &OpaqueTaskContext<'_, '_>,
+        device: &DeviceContext,
+        size: Vector<D2, u32>,
+    ) {
         self.latest_size.set(size);
 
         let textures_delta = &mut self.textures_delta;
@@ -98,12 +104,13 @@ impl GuiStateInner {
             // TODO: Provide and use some general staging buffer infrastructure
             let staging_buffer = TempRessource::new(
                 device,
-                device.storage.allocate_raw(
+                ctx.submit(device.storage.request_allocate_raw(
                     device,
                     buffer_layout,
                     vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
                     gpu_allocator::MemoryLocation::CpuToGpu,
-                ),
+                ))
+                .await,
             );
 
             // TODO: at least make sure to abstract this away
@@ -903,7 +910,7 @@ void main() {
                         frame_size: out_info.mem_dimensions.try_into_elem().unwrap().into(),
                     };
 
-                    state_i.update(device, size2d);
+                    state_i.update(&ctx, device, size2d).await;
 
                     let textures = &state_i.textures;
                     for primitive in state.clipped_primitives.iter() {
@@ -947,24 +954,22 @@ void main() {
                             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER;
                         let buf_type = gpu_allocator::MemoryLocation::CpuToGpu;
 
-                        let vertex_buffer = TempRessource::new(
-                            device,
-                            device.storage.allocate_raw(
+                        let (vertex_alloc, index_alloc) = futures::join!(
+                            ctx.submit(device.storage.request_allocate_raw(
                                 device,
                                 vertex_buf_layout,
                                 vertex_flags,
                                 buf_type,
-                            ),
-                        );
-                        let index_buffer = TempRessource::new(
-                            device,
-                            device.storage.allocate_raw(
+                            ),),
+                            ctx.submit(device.storage.request_allocate_raw(
                                 device,
                                 index_buf_layout,
                                 index_flags,
                                 buf_type,
-                            ),
+                            ),)
                         );
+                        let vertex_buffer = TempRessource::new(device, vertex_alloc);
+                        let index_buffer = TempRessource::new(device, index_alloc);
 
                         let (_, img_view) = textures.get(&mesh.texture_id).unwrap();
 

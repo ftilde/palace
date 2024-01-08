@@ -808,7 +808,7 @@ impl Storage {
         })
     }
 
-    pub fn allocate_raw(
+    pub(crate) fn allocate_raw(
         &self,
         device: &DeviceContext,
         layout: Layout,
