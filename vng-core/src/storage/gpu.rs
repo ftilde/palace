@@ -1009,6 +1009,8 @@ impl Storage {
         }
     }
 
+    // TODO taking the ctx here and this being a async fn instead of returning a request is not
+    // particularly pretty. We should try to disentangle this.
     pub async fn get_index<'b, 'inv>(
         &'b self,
         ctx: OpaqueTaskContext<'b, 'inv>,
@@ -1020,40 +1022,74 @@ impl Storage {
         let (src, created, buffer) = {
             let mut index = self.index_index.borrow_mut();
 
-            let entry = index.entry(op.id).or_insert_with(|| {
+            if let Some(entry) = index.get_mut(&op.id) {
+                inc_access(&mut entry.access, self);
+                (
+                    entry.visibility.src,
+                    entry.visibility.created,
+                    entry.storage.allocation.buffer,
+                )
+            } else {
+                std::mem::drop(index);
+
                 let layout = Layout::array::<ash::vk::DeviceAddress>(size).unwrap();
-                let allocation = self.alloc_ssbo(device, layout);
-                let info = StorageInfo {
-                    allocation,
-                    layout,
-                    data_longevity: op.data_longevity,
+                let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
+                    | ash::vk::BufferUsageFlags::TRANSFER_DST
+                    | ash::vk::BufferUsageFlags::TRANSFER_SRC;
+                let location = MemoryLocation::GpuOnly;
+                let allocation = ctx
+                    .submit(self.request_allocate_raw(device, layout, flags, location))
+                    .await;
+
+                let mut index = self.index_index.borrow_mut();
+
+                let entry = match index.entry(op.id) {
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                        // Someone else was faster than us in allocating a slot for the index. just
+                        // throw the allocation away.
+                        // TODO: Not particularly pretty. Maybe we should adopt a reservation
+                        // approach like for data slots here, too.
+                        unsafe { self.deallocate(allocation) };
+                        o.into_mut()
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        let info = StorageInfo {
+                            allocation,
+                            layout,
+                            data_longevity: op.data_longevity,
+                        };
+                        let buffer = info.allocation.buffer;
+
+                        device.with_cmd_buffer(|cmd| unsafe {
+                            device.functions().cmd_fill_buffer(
+                                cmd.raw(),
+                                buffer,
+                                0,
+                                vk::WHOLE_SIZE,
+                                0,
+                            );
+                        });
+
+                        let src = SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        };
+
+                        let visibility = Visibility {
+                            src,
+                            created: self.barrier_manager.current_epoch(),
+                        };
+                        slot.insert(IndexEntry::new(info, visibility))
+                    }
                 };
-                let buffer = info.allocation.buffer;
 
-                device.with_cmd_buffer(|cmd| unsafe {
-                    device
-                        .functions()
-                        .cmd_fill_buffer(cmd.raw(), buffer, 0, vk::WHOLE_SIZE, 0);
-                });
-
-                let src = SrcBarrierInfo {
-                    stage: vk::PipelineStageFlags2::TRANSFER,
-                    access: vk::AccessFlags2::TRANSFER_WRITE,
-                };
-
-                let visibility = Visibility {
-                    src,
-                    created: self.barrier_manager.current_epoch(),
-                };
-                IndexEntry::new(info, visibility)
-            });
-
-            inc_access(&mut entry.access, self);
-            (
-                entry.visibility.src,
-                entry.visibility.created,
-                entry.storage.allocation.buffer,
-            )
+                inc_access(&mut entry.access, self);
+                (
+                    entry.visibility.src,
+                    entry.visibility.created,
+                    entry.storage.allocation.buffer,
+                )
+            }
         };
 
         if !self.barrier_manager.is_visible(src, dst, created) {
