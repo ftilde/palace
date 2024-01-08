@@ -316,7 +316,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         o_ctx: OpaqueTaskContext<'req, 'inv>,
         item: ItemDescriptor,
         write_id: OperatorDescriptor,
-    ) -> Request<'req, 'inv, ram::InplaceResult<'req, Output>> {
+    ) -> Request<'req, 'inv, ram::InplaceResult<'req, 'inv, Output>> {
         let read_id = DataId::new(self.id(), &item);
         let write_desc = DataDescriptor::new(write_id, &item);
 

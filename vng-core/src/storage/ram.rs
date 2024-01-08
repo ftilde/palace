@@ -3,7 +3,7 @@ use std::{alloc::Layout, cell::RefCell, mem::MaybeUninit, pin::Pin};
 use crate::{
     operator::{DataDescriptor, DataId},
     runtime::FrameNumber,
-    task::OpaqueTaskContext,
+    task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     task_graph::TaskId,
     util::{num_elms_in_array, Map, Set},
     Error,
@@ -407,7 +407,7 @@ impl<'a> RawWriteHandleUninit<'a> {
         }
     }
 
-    pub fn transmute<T: Element>(self, size: usize) -> WriteHandleUninit<'a, [MaybeUninit<T>]> {
+    fn transmute<T: Element>(self, size: usize) -> WriteHandleUninit<'a, [MaybeUninit<T>]> {
         let layout = Layout::array::<T>(size).unwrap();
         assert_eq!(layout, self.layout);
 
@@ -441,24 +441,40 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T> {
         }
     }
 }
+pub enum InplaceResult<'a, 'inv, T> {
+    Inplace(WriteHandleInit<'a, [T]>),
+    New(
+        ReadHandle<'a, [T]>,
+        Request<'a, 'inv, WriteHandleUninit<'a, [MaybeUninit<T>]>>,
+    ),
+}
 
-pub enum InplaceResult<'a, T> {
+impl<'a, 'inv, T> InplaceResult<'a, 'inv, T> {
+    pub fn alloc(self) -> Request<'a, 'inv, InplaceHandle<'a, T>> {
+        match self {
+            InplaceResult::Inplace(a) => Request::ready(InplaceHandle::Inplace(a)),
+            InplaceResult::New(r, w) => w.map(move |w| InplaceHandle::New(r, w)),
+        }
+    }
+}
+
+pub enum InplaceHandle<'a, T> {
     Inplace(WriteHandleInit<'a, [T]>),
     New(ReadHandle<'a, [T]>, WriteHandleUninit<'a, [MaybeUninit<T>]>),
 }
 
-impl<'a, T: Send> InplaceResult<'a, T> {
-    pub fn into_thread_handle(self) -> ThreadInplaceResult<'a, T> {
+impl<'a, T: Send> InplaceHandle<'a, T> {
+    pub fn into_thread_handle(self) -> ThreadInplaceHandle<'a, T> {
         match self {
-            InplaceResult::Inplace(rw) => ThreadInplaceResult::Inplace(rw.into_thread_handle()),
-            InplaceResult::New(r, w) => {
-                ThreadInplaceResult::New(r.into_thread_handle(), w.into_thread_handle())
+            InplaceHandle::Inplace(rw) => ThreadInplaceHandle::Inplace(rw.into_thread_handle()),
+            InplaceHandle::New(r, w) => {
+                ThreadInplaceHandle::New(r.into_thread_handle(), w.into_thread_handle())
             }
         }
     }
 }
 
-pub enum ThreadInplaceResult<'a, T: Send> {
+pub enum ThreadInplaceHandle<'a, T: Send> {
     Inplace(ThreadWriteHandleInit<'a, [T]>),
     New(
         ThreadReadHandle<'a, [T]>,
@@ -466,11 +482,11 @@ pub enum ThreadInplaceResult<'a, T: Send> {
     ),
 }
 
-impl<'a, T: Send> ThreadInplaceResult<'a, T> {
-    pub fn into_main_handle<'inv>(self, ctx: OpaqueTaskContext<'a, 'inv>) -> InplaceResult<'a, T> {
+impl<'a, T: Send> ThreadInplaceHandle<'a, T> {
+    pub fn into_main_handle<'inv>(self, ctx: OpaqueTaskContext<'a, 'inv>) -> InplaceHandle<'a, T> {
         match self {
-            ThreadInplaceResult::Inplace(rw) => InplaceResult::Inplace(rw.into_main_handle(ctx)),
-            ThreadInplaceResult::New(r, w) => InplaceResult::New(
+            ThreadInplaceHandle::Inplace(rw) => InplaceHandle::Inplace(rw.into_main_handle(ctx)),
+            ThreadInplaceHandle::New(r, w) => InplaceHandle::New(
                 r.into_main_handle(&ctx.storage),
                 w.into_main_handle(&ctx.storage),
             ),
@@ -650,6 +666,40 @@ impl Storage {
         }
     }
 
+    pub fn request_alloc_raw<'req, 'inv>(
+        &'req self,
+        data_descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> Request<'req, 'inv, RawWriteHandleUninit> {
+        let mut access = Some(self.register_access(data_descriptor.id));
+
+        Request {
+            type_: RequestType::Allocation(
+                AllocationId::next(),
+                AllocationRequest::Ram(layout, data_descriptor),
+            ),
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || {
+                    access = match ctx.storage.access_initializing(access.take().unwrap()) {
+                        Ok(r) => return Some(r),
+                        Err(acc) => Some(acc),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
+        }
+    }
+    pub fn request_alloc_slot<'req, 'inv, T: Element>(
+        &'req self,
+        key: DataDescriptor,
+        size: usize,
+    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<T>]>> {
+        let layout = Layout::array::<T>(size).unwrap();
+        self.request_alloc_raw(key, layout)
+            .map(move |v| v.transmute(size))
+    }
+
     pub fn alloc_slot_raw(&self, key: DataDescriptor, layout: Layout) -> RawWriteHandleUninit {
         let (ptr, access) = self.alloc(key, layout);
 
@@ -738,7 +788,7 @@ impl Storage {
         ctx: OpaqueTaskContext<'t, 'inv>,
         old_access: AccessToken<'t>,
         new_desc: DataDescriptor,
-    ) -> Result<InplaceResult<'b, T>, AccessToken<'t>> {
+    ) -> Result<InplaceResult<'b, 'inv, T>, AccessToken<'t>> {
         let old_key = old_access.id;
         let new_key = new_desc.id;
 
@@ -799,7 +849,7 @@ impl Storage {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = self.alloc_slot(new_desc, num_elements);
+            let w = self.request_alloc_slot(new_desc, num_elements);
 
             let r = ReadHandle {
                 data: t_ref,

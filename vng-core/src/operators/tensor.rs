@@ -9,7 +9,7 @@ use crate::{
     id::{Id, Identify},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
-        ram::{InplaceResult, ThreadInplaceResult},
+        ram::{InplaceHandle, ThreadInplaceHandle},
         Element,
     },
     task::{RequestStream, Task, TaskContext},
@@ -186,16 +186,17 @@ pub async fn map_values_inplace<
 
     let stream = ctx
         .submit_unordered(requests)
+        .then_req(ctx.into(), |brick_handle| brick_handle.alloc())
         .then_req(ctx.into(), |brick_handle| {
             let mut brick_handle = brick_handle.into_thread_handle();
             ctx.spawn_compute(move || {
                 match &mut brick_handle {
-                    ThreadInplaceResult::Inplace(ref mut rw) => {
+                    ThreadInplaceHandle::Inplace(ref mut rw) => {
                         for v in rw.iter_mut() {
                             *v = f(*v);
                         }
                     }
-                    ThreadInplaceResult::New(r, ref mut w) => {
+                    ThreadInplaceHandle::New(r, ref mut w) => {
                         for (i, o) in r.iter().zip(w.iter_mut()) {
                             o.write(f(*i));
                         }
@@ -209,7 +210,7 @@ pub async fn map_values_inplace<
     // Drive the stream until completion
     while let Some(brick_handle) = stream.next().await {
         let brick_handle = brick_handle.into_main_handle(*ctx);
-        if let InplaceResult::New(_, w) = brick_handle {
+        if let InplaceHandle::New(_, w) = brick_handle {
             // Safety: We have written all values in the above closure executed on
             // the thread pool.
             unsafe { w.initialized(*ctx) };

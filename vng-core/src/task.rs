@@ -284,24 +284,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, RawWriteHandleUninit> {
-        let mut access = Some(self.storage.register_access(data_descriptor.id));
-
-        Request {
-            type_: RequestType::Allocation(
-                AllocationId::next(),
-                AllocationRequest::Ram(layout, data_descriptor),
-            ),
-            gen_poll: Box::new(move |ctx| {
-                Box::new(move || {
-                    access = match ctx.storage.access_initializing(access.take().unwrap()) {
-                        Ok(r) => return Some(r),
-                        Err(acc) => Some(acc),
-                    };
-                    None
-                })
-            }),
-            _marker: Default::default(),
-        }
+        self.storage.request_alloc_raw(data_descriptor, layout)
     }
 
     pub fn alloc_raw_gpu<'req>(
@@ -655,9 +638,8 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
         item: ItemDescriptor,
         size: usize,
     ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
-        let layout = Layout::array::<Output>(size).unwrap();
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
-        self.alloc_raw(id, layout).map(move |v| v.transmute(size))
+        self.storage.request_alloc_slot(id, size)
     }
 }
 
