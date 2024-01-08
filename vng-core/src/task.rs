@@ -16,7 +16,7 @@ use crate::operator::{
 use crate::runtime::{
     CompletedAllocations, CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints,
 };
-use crate::storage::gpu::{StateCacheResult, WriteHandle};
+use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{RawWriteHandleUninit, Storage, WriteHandleUninit};
 use crate::storage::{Element, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
@@ -86,6 +86,13 @@ impl AllocationId {
 pub enum AllocationRequest {
     Ram(Layout, DataDescriptor),
     VRam(usize, Layout, DataDescriptor),
+    VRamBufRaw(
+        usize,
+        Layout,
+        ash::vk::BufferUsageFlags,
+        MemoryLocation,
+        oneshot::Sender<crate::storage::gpu::Allocation>,
+    ),
 }
 
 pub enum RequestType<'inv> {
@@ -295,7 +302,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
     ) -> Request<'req, 'inv, WriteHandle> {
         device
             .storage
-            .request_alloc_raw(device, self.current_frame, data_descriptor, layout)
+            .request_alloc_slot_raw(device, self.current_frame, data_descriptor, layout)
     }
 
     pub fn group<'req, V: 'req>(

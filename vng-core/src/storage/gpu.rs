@@ -808,7 +808,7 @@ impl Storage {
         })
     }
 
-    pub fn allocate(
+    pub fn allocate_raw(
         &self,
         device: &DeviceContext,
         layout: Layout,
@@ -831,6 +831,39 @@ impl Storage {
     /// Safety: Allocation must come from this storage
     pub unsafe fn deallocate(&self, allocation: Allocation) {
         self.allocator.deallocate(allocation);
+    }
+
+    pub fn request_allocate_raw<'req, 'inv>(
+        &'req self,
+        device: &'req DeviceContext,
+        layout: Layout,
+        use_flags: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> Request<'req, 'inv, Allocation> {
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        Request {
+            type_: RequestType::Allocation(
+                AllocationId::next(),
+                AllocationRequest::VRamBufRaw(
+                    device.id,
+                    layout,
+                    use_flags,
+                    location,
+                    result_sender,
+                ),
+            ),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || match result_receiver.try_recv() {
+                    Ok(res) => Some(res),
+                    Err(oneshot::TryRecvError::Empty) => None,
+                    Err(oneshot::TryRecvError::Disconnected) => {
+                        panic!("Either polled twice or the compute thread was interrupted")
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
     }
 
     pub fn allocate_image(
@@ -861,7 +894,7 @@ impl Storage {
             | ash::vk::BufferUsageFlags::TRANSFER_DST
             | ash::vk::BufferUsageFlags::TRANSFER_SRC;
         let location = MemoryLocation::GpuOnly;
-        self.allocate(device, layout, flags, location)
+        self.allocate_raw(device, layout, flags, location)
     }
 
     pub(crate) fn alloc_and_register_ssbo<'b>(
@@ -898,7 +931,7 @@ impl Storage {
         (buffer, AccessToken::new(self, device, key))
     }
 
-    pub fn request_alloc_raw<'req, 'inv>(
+    pub fn request_alloc_slot_raw<'req, 'inv>(
         &'req self,
         device: &'req DeviceContext,
         current_frame: FrameNumber,
@@ -1134,7 +1167,7 @@ impl Storage {
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = self.request_alloc_raw(device, current_frame, new_desc, layout);
+            let w = self.request_alloc_slot_raw(device, current_frame, new_desc, layout);
 
             let r = ReadHandle {
                 buffer,

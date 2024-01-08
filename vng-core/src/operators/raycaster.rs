@@ -758,7 +758,8 @@ void main()
 
                     let request_table = TempRessource::new(
                         device,
-                        ChunkRequestTable::new(request_table_size, device),
+                        ctx.submit(ChunkRequestTable::new(request_table_size, device))
+                            .await,
                     );
 
                     let info = ash::vk::BufferDeviceAddressInfo::builder()
@@ -784,7 +785,12 @@ void main()
                 let location = crate::storage::gpu::MemoryLocation::GpuOnly;
                 let lod_data_gpu = TempRessource::new(
                     device,
-                    device.storage.allocate(device, layout, flags, location),
+                    ctx.submit(
+                        device
+                            .storage
+                            .request_allocate_raw(device, layout, flags, location),
+                    )
+                    .await,
                 );
 
                 let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());

@@ -424,8 +424,11 @@ void main()
                     .await
                     .unpack();
 
-                let request_table =
-                    TempRessource::new(device, ChunkRequestTable::new(request_table_size, device));
+                let request_table = TempRessource::new(
+                    device,
+                    ctx.submit(ChunkRequestTable::new(request_table_size, device))
+                        .await,
+                );
 
                 let dim_in_bricks = m_in.dimension_in_chunks();
                 let consts = PushConstants {

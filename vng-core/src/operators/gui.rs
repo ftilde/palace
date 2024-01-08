@@ -98,7 +98,7 @@ impl GuiStateInner {
             // TODO: Provide and use some general staging buffer infrastructure
             let staging_buffer = TempRessource::new(
                 device,
-                device.storage.allocate(
+                device.storage.allocate_raw(
                     device,
                     buffer_layout,
                     vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
@@ -949,7 +949,7 @@ void main() {
 
                         let vertex_buffer = TempRessource::new(
                             device,
-                            device.storage.allocate(
+                            device.storage.allocate_raw(
                                 device,
                                 vertex_buf_layout,
                                 vertex_flags,
@@ -958,7 +958,7 @@ void main() {
                         );
                         let index_buffer = TempRessource::new(
                             device,
-                            device.storage.allocate(
+                            device.storage.allocate_raw(
                                 device,
                                 index_buf_layout,
                                 index_flags,

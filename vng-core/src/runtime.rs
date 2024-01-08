@@ -684,6 +684,22 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         }
                         .into()
                     }
+                    crate::task::AllocationRequest::VRamBufRaw(
+                        device_id,
+                        layout,
+                        use_flags,
+                        location,
+                        result_sender,
+                    ) => async move {
+                        let device = &ctx.device_contexts[device_id];
+                        let res = device
+                            .storage
+                            .allocate_raw(device, layout, use_flags, location);
+                        result_sender.send(res).unwrap();
+                        ctx.allocation_completions.set(id);
+                        Ok(())
+                    }
+                    .into(),
                 };
                 self.task_manager.add_task(task_id, task);
                 self.task_graph.add_implied(task_id, PRIORITY_ALLOC);

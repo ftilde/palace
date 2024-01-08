@@ -9,7 +9,7 @@ use std::{
 use crate::{
     operator::{DataDescriptor, OperatorId},
     storage::gpu::Allocation,
-    task::{OpaqueTaskContext, Task},
+    task::{OpaqueTaskContext, Request, Task},
     task_graph::TaskId,
 };
 
@@ -134,18 +134,24 @@ impl BufferStash {
             flags,
         }
     }
-    fn request(&self, device: &DeviceContext, layout: Layout) -> CachedAllocation {
+    fn request<'a, 'inv>(
+        &self,
+        device: &'a DeviceContext,
+        layout: Layout,
+    ) -> Request<'a, 'inv, CachedAllocation> {
         let mut buffers = self.buffers.borrow_mut();
         let buffers = buffers.entry(layout).or_default();
-        let inner = buffers.pop().unwrap_or_else(|| {
+        let inner = if let Some(b) = buffers.pop() {
+            Request::ready(b)
+        } else {
             device
                 .storage
-                .allocate(device, layout, self.flags, self.buf_type)
-        });
-        CachedAllocation {
+                .request_allocate_raw(device, layout, self.flags, self.buf_type)
+        };
+        inner.map(move |inner| CachedAllocation {
             inner,
             requested_layout: layout,
-        }
+        })
     }
     /// Safety: The buffer must have previously been allocated from this stash
     unsafe fn return_buf(&self, allocation: CachedAllocation) {
@@ -295,7 +301,9 @@ pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     layout: Layout,
     buffer_out: ash::vk::Buffer,
 ) {
-    let staging_buf = device.staging_to_gpu.request(&device, layout);
+    let staging_buf = ctx
+        .submit(device.staging_to_gpu.request(&device, layout))
+        .await;
     let out_ptr =
         unsafe { SendPointerMut::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
     let in_ptr = unsafe { SendPointer::pack(in_buf) };
@@ -340,7 +348,9 @@ pub async unsafe fn copy_to_cpu<'cref, 'inv>(
     layout: Layout,
     out_buf: *mut MaybeUninit<u8>,
 ) {
-    let staging_buf = device.staging_to_cpu.request(&device, layout);
+    let staging_buf = ctx
+        .submit(device.staging_to_cpu.request(&device, layout))
+        .await;
 
     device.with_cmd_buffer(|cmd| {
         let copy_info = vk::BufferCopy::builder().size(layout.size() as _);

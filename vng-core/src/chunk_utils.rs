@@ -4,7 +4,7 @@ use ash::vk;
 
 use crate::{
     storage::gpu::Allocation,
-    task::OpaqueTaskContext,
+    task::{OpaqueTaskContext, Request},
     vulkan::{state::VulkanState, CommandBuffer, DeviceContext},
 };
 
@@ -18,26 +18,29 @@ type RTElement = u32;
 
 impl ChunkRequestTable {
     // Note: a barrier is needed after initialization to make values visible
-    pub fn new(num_elements: usize, device: &DeviceContext) -> Self {
+    pub fn new<'a, 'inv>(
+        num_elements: usize,
+        device: &'a DeviceContext,
+    ) -> Request<'a, 'inv, Self> {
         let request_table_buffer_layout = Layout::array::<RTElement>(num_elements).unwrap();
         let flags = vk::BufferUsageFlags::TRANSFER_SRC
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER;
         let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
-        let allocation =
-            device
-                .storage
-                .allocate(device, request_table_buffer_layout, flags, buf_type);
+        device
+            .storage
+            .request_allocate_raw(device, request_table_buffer_layout, flags, buf_type)
+            .map(move |allocation| {
+                let ret = ChunkRequestTable {
+                    num_elements,
+                    allocation,
+                    layout: request_table_buffer_layout,
+                };
 
-        let ret = ChunkRequestTable {
-            num_elements,
-            allocation,
-            layout: request_table_buffer_layout,
-        };
+                device.with_cmd_buffer(|cmd| ret.clear(cmd));
 
-        device.with_cmd_buffer(|cmd| ret.clear(cmd));
-
-        ret
+                ret
+            })
     }
 
     // Note: a barrier is needed after clearing to make values visible
