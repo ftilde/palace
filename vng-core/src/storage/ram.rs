@@ -604,6 +604,10 @@ impl Storage {
         AccessToken::new(self, id)
     }
 
+    pub fn size(&self) -> usize {
+        self.allocator.size()
+    }
+
     pub(crate) fn alloc(
         &self,
         descriptor: DataDescriptor,

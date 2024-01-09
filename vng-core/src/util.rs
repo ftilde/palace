@@ -33,3 +33,30 @@ pub type Map<K, V> = ahash::HashMap<K, V>;
 pub type MapEntry<'a, K, V> = std::collections::hash_map::Entry<'a, K, V>;
 //pub type Set<K> = std::collections::BTreeSet<K>;
 pub type Set<K> = ahash::HashSet<K>;
+
+pub struct IdGenerator<T> {
+    c: std::cell::Cell<u64>,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> Default for IdGenerator<T> {
+    fn default() -> Self {
+        Self {
+            c: std::cell::Cell::new(0),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: From<u64>> IdGenerator<T> {
+    pub fn next(&self) -> T {
+        let n = self.c.get();
+        self.c.set(n + 1);
+        T::from(n)
+    }
+
+    pub fn preview_next(&self) -> T {
+        let n = self.c.get();
+        T::from(n)
+    }
+}

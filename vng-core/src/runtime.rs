@@ -1,6 +1,6 @@
 use ahash::{HashMapExt, HashSetExt};
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::VecDeque,
     num::NonZeroU64,
     sync::mpsc,
@@ -11,7 +11,7 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
-    task::{AllocationId, DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
+    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
     task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
@@ -193,7 +193,9 @@ impl BarrierBatcher {
                         let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
                         //println!("barrier: {:?}, {:?}", t.src, t.dst);
                     });
-                    ctx.barrier_completions.set(items);
+                    for item in items {
+                        ctx.completed_requests.add(item.into());
+                    }
                     Ok(())
                 }
                 .into(),
@@ -252,8 +254,7 @@ impl RunTime {
         let request_queue = RequestQueue::new();
         let hints = TaskHints::default();
         let thread_spawner = ThreadSpawner::new();
-        let barrier_completions = Default::default();
-        let allocation_completions = Default::default();
+        let completed_requests = Default::default();
         let predicted_preview_tasks = Default::default();
         let frame = self.frame;
         self.frame = FrameNumber(frame.0.checked_add(1).unwrap());
@@ -261,8 +262,7 @@ impl RunTime {
         let data = ContextData {
             request_queue,
             hints,
-            barrier_completions,
-            allocation_completions,
+            completed_requests,
             thread_spawner,
             storage: &self.ram,
             device_contexts: self.vulkan.device_contexts(),
@@ -320,8 +320,7 @@ pub struct FrameNumber(NonZeroU64);
 struct ContextData<'cref, 'inv> {
     request_queue: RequestQueue<'inv>,
     hints: TaskHints,
-    barrier_completions: CompletedBarrierItems,
-    allocation_completions: CompletedAllocations,
+    completed_requests: CompletedRequests,
     thread_spawner: ThreadSpawner,
     pub storage: &'cref Storage,
     device_contexts: &'cref [DeviceContext],
@@ -351,8 +350,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             requests: &self.data.request_queue,
             storage: &self.data.storage,
             hints: &self.data.hints,
-            barrier_completions: &self.data.barrier_completions,
-            allocation_completions: &self.data.allocation_completions,
+            completed_requests: &self.data.completed_requests,
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
@@ -504,11 +502,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         for device in self.data.device_contexts {
             self.register_produced_data_from(device.storage.newest_data());
         }
-        for item in self.data.barrier_completions.completed.take() {
+        for item in self.data.completed_requests.take() {
             self.task_graph.resolved_implied(item.into());
-        }
-        if let Some(id) = self.data.allocation_completions.completed.take() {
-            self.task_graph.resolved_implied(RequestId::Allocation(id));
         }
     }
 
@@ -666,20 +661,26 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let task = match alloc {
                     crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
                         let _ = ctx.storage.alloc(data_descriptor, layout);
-                        ctx.allocation_completions.set(id);
+                        ctx.completed_requests.add(id.into());
                         Ok(())
                     }
                     .into(),
                     crate::task::AllocationRequest::VRam(device_id, layout, data_descriptor) => {
                         async move {
                             let device = &ctx.device_contexts[device_id];
-                            let _ = device.storage.alloc_and_register_ssbo(
-                                device,
-                                ctx.current_frame,
-                                data_descriptor,
-                                layout,
-                            );
-                            ctx.allocation_completions.set(id);
+                            loop {
+                                if let Ok(_) = device.storage.alloc_and_register_ssbo(
+                                    device,
+                                    ctx.current_frame,
+                                    data_descriptor,
+                                    layout,
+                                ) {
+                                    break;
+                                } else {
+                                    ctx.submit(device.storage.wait_garbage_collect()).await;
+                                }
+                            }
+                            ctx.completed_requests.add(id.into());
                             Ok(())
                         }
                         .into()
@@ -692,11 +693,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         result_sender,
                     ) => async move {
                         let device = &ctx.device_contexts[device_id];
-                        let res = device
-                            .storage
-                            .allocate_raw(device, layout, use_flags, location);
+                        let res = loop {
+                            if let Ok(res) =
+                                device.storage.allocate_raw(layout, use_flags, location)
+                            {
+                                break res;
+                            } else {
+                                ctx.submit(device.storage.wait_garbage_collect()).await;
+                            }
+                        };
                         result_sender.send(res).unwrap();
-                        ctx.allocation_completions.set(id);
+                        ctx.completed_requests.add(id.into());
                         Ok(())
                     }
                     .into(),
@@ -708,7 +715,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         let device = &ctx.device_contexts[device_id];
                         let res = device.storage.allocate_image(device, create_desc);
                         result_sender.send(res).unwrap();
-                        ctx.allocation_completions.set(id);
+                        ctx.completed_requests.add(id.into());
                         Ok(())
                     }
                     .into(),
@@ -730,6 +737,65 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 crate::task_graph::ProgressIndicator::PartialPossible,
                         },
                     );
+                }
+            }
+            RequestType::GarbageCollect(l) => {
+                if !already_requested {
+                    let task_id = match l {
+                        DataLocation::Ram => TaskId::new(OperatorId::new("garbage_collect_ram"), 0),
+                        DataLocation::VRam(d) => {
+                            TaskId::new(OperatorId::new("garbage_collect_vram"), d)
+                        }
+                    };
+                    let ctx = self.context(task_id);
+
+                    let task = match l {
+                        DataLocation::Ram => {
+                            let garbage_collect_goal = self.data.storage.size()
+                                / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
+                            self.data.storage.try_garbage_collect(garbage_collect_goal);
+                            todo!()
+                        }
+                        DataLocation::VRam(did) => async move {
+                            let device = &ctx.device_contexts[did];
+                            let garbage_collect_goal = device.storage.bytes_allocated()
+                                / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
+
+                            // We try three times:
+                            // 1. Maybe it works
+                            // 2. Maybe after the epoch some buffers are free to clean AND we
+                            //    unindexed stuff previously
+                            // 3. Maybe unindexed stuff in the new epoch is now free to be cleaned
+                            //    up
+                            let n_tries = 3;
+                            let mut i = 0;
+                            loop {
+                                if i == n_tries {
+                                    panic!("Out of gpu memory and there is nothing we can do");
+                                }
+                                if device
+                                    .storage
+                                    .try_garbage_collect(device, garbage_collect_goal)
+                                    > 0
+                                {
+                                    break;
+                                } else {
+                                    ctx.submit(
+                                        device
+                                            .wait_for_cmd_buffer_completion(device.current_epoch()),
+                                    )
+                                    .await;
+                                }
+                                println!("Garbage collect fail nr {}", i);
+                                i += 1;
+                            }
+                            ctx.completed_requests.add(req_id);
+                            Ok(())
+                        }
+                        .into(),
+                    };
+                    self.task_manager.add_task(task_id, task);
+                    self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
                 }
             }
         }
@@ -832,22 +898,21 @@ impl Statistics {
 //TODO: refactor these into some "completed requests" thingy. Should be easy enough for these two
 //below, but should (if possible) also include completed data requests
 #[derive(Default)]
-pub(crate) struct CompletedBarrierItems {
-    completed: Cell<Set<BarrierItem>>,
+pub(crate) struct CompletedRequests {
+    completed: RefCell<Set<RequestId>>,
 }
-impl CompletedBarrierItems {
-    fn set(&self, completed: Set<BarrierItem>) {
-        self.completed.set(completed);
+impl CompletedRequests {
+    //fn set(&self, items: Set<RequestId>) {
+    //    let mut completed = self.completed.borrow_mut();
+    //    std::mem::replace(&mut *completed, items);
+    //}
+    fn add(&self, item: RequestId) {
+        let mut completed = self.completed.borrow_mut();
+        completed.insert(item);
     }
-}
-
-#[derive(Default)]
-pub(crate) struct CompletedAllocations {
-    completed: Cell<Option<AllocationId>>,
-}
-impl CompletedAllocations {
-    fn set(&self, completed: AllocationId) {
-        self.completed.set(Some(completed));
+    fn take(&self) -> Set<RequestId> {
+        let mut completed = self.completed.borrow_mut();
+        std::mem::replace(&mut *completed, Set::new())
     }
 }
 

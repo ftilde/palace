@@ -30,7 +30,7 @@ pub enum VisibleDataLocation {
     VRam(DeviceId, DstBarrierInfo),
 }
 
-const GARBAGE_COLLECT_GOAL_FRACTION: u64 = 10;
+pub const GARBAGE_COLLECT_GOAL_FRACTION: u64 = 10;
 
 type LRUIndexInner = u64;
 
@@ -223,6 +223,9 @@ impl NewDataManager {
         ret.into_iter()
     }
 }
+
+#[derive(Copy, Clone, derive_more::From, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GarbageCollectId(u64);
 
 #[cfg(test)]
 mod test {

@@ -13,12 +13,10 @@ use crate::id::Id;
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
-use crate::runtime::{
-    CompletedAllocations, CompletedBarrierItems, FrameNumber, RequestQueue, TaskHints,
-};
+use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{RawWriteHandleUninit, Storage, WriteHandleUninit};
-use crate::storage::{Element, VisibleDataLocation};
+use crate::storage::{DataLocation, Element, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
@@ -108,6 +106,7 @@ pub enum RequestType<'inv> {
     CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
     Barrier(BarrierInfo),
     Group(RequestGroup<'inv>),
+    GarbageCollect(DataLocation),
     Ready,
 }
 
@@ -125,6 +124,7 @@ impl RequestType<'_> {
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
             RequestType::Ready => RequestId::Ready,
+            RequestType::GarbageCollect(l) => RequestId::GarbageCollect(*l),
         }
     }
 }
@@ -170,6 +170,30 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
     }
 }
 
+impl<'req, 'inv> Request<'req, 'inv, ()> {
+    pub fn garbage_collect(
+        location: DataLocation,
+        gid: GarbageCollectId,
+    ) -> Request<'req, 'inv, ()> {
+        Self {
+            type_: RequestType::GarbageCollect(location),
+            gen_poll: Box::new(move |ctx| {
+                Box::new(move || match location {
+                    DataLocation::Ram => todo!(),
+                    DataLocation::VRam(id) => {
+                        if ctx.device_contexts[id].storage.next_garbage_collect() > gid {
+                            Some(())
+                        } else {
+                            None
+                        }
+                    }
+                })
+            }),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
     pub storage: &'cref Storage,
@@ -181,8 +205,7 @@ pub struct PollContext<'cref> {
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) requests: &'cref RequestQueue<'inv>,
     pub(crate) storage: &'cref Storage,
-    pub(crate) barrier_completions: &'cref CompletedBarrierItems,
-    pub(crate) allocation_completions: &'cref CompletedAllocations,
+    pub(crate) completed_requests: &'cref CompletedRequests,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
     pub(crate) device_contexts: &'cref [DeviceContext],
@@ -217,7 +240,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
             };
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
@@ -332,6 +355,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
                 RequestId::Barrier(b_info) => ids.push(Id::hash(&b_info)),
                 RequestId::Group(g) => ids.push(g.0),
+                RequestId::GarbageCollect(g) => ids.push(Id::hash(&g)),
                 RequestId::Ready => {}
             }
             let mut poll = (r.gen_poll)(PollContext {
@@ -352,7 +376,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) => {}
+                RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, poll));
@@ -548,7 +572,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) => {}
+            RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();

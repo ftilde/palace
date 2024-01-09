@@ -30,6 +30,7 @@ pub enum RequestId {
     Data(VisibleDataId),
     Job(JobId),
     Group(GroupId),
+    GarbageCollect(DataLocation),
     Ready,
 }
 
@@ -46,6 +47,11 @@ impl From<JobId> for RequestId {
 impl From<GroupId> for RequestId {
     fn from(value: GroupId) -> Self {
         RequestId::Group(value)
+    }
+}
+impl From<AllocationId> for RequestId {
+    fn from(value: AllocationId) -> Self {
+        RequestId::Allocation(value)
     }
 }
 
@@ -72,6 +78,9 @@ impl RequestId {
             }
             RequestId::Ready => {
                 panic!("Tried to unwrap DataId from RequestId::Ready")
+            }
+            RequestId::GarbageCollect(_) => {
+                panic!("Tried to unwrap DataId from RequestId::GarbageCollect")
             }
         }
     }

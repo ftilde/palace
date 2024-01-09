@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    DataLocation, DataLongevity, DataVersion, DataVersionType, Element, LRUIndex, LRUIndexInner,
-    LRUManager, LRUManagerInner,
+    DataLocation, DataLongevity, DataVersion, DataVersionType, GarbageCollectId, LRUIndex,
+    LRUIndexInner, LRUManager, LRUManagerInner,
 };
 
 use ash::vk;
@@ -18,7 +18,7 @@ use crate::{
     operator::{DataDescriptor, DataId, OperatorDescriptor, OperatorId},
     runtime::FrameNumber,
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
-    util::Map,
+    util::{IdGenerator, Map},
     vulkan::{
         state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
         SrcBarrierInfo,
@@ -518,6 +518,7 @@ pub struct Storage {
     allocator: Allocator,
     new_data: super::NewDataManager,
     id: DeviceId,
+    garbage_collect_id_gen: IdGenerator<GarbageCollectId>,
 }
 
 impl Storage {
@@ -532,6 +533,7 @@ impl Storage {
             allocator,
             new_data: Default::default(),
             id: device,
+            garbage_collect_id_gen: Default::default(),
         }
     }
 
@@ -557,7 +559,18 @@ impl Storage {
         }
     }
 
-    pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) {
+    pub fn next_garbage_collect(&self) -> GarbageCollectId {
+        self.garbage_collect_id_gen.preview_next()
+    }
+
+    pub fn wait_garbage_collect<'a, 'inv>(&self) -> Request<'a, 'inv, ()> {
+        Request::garbage_collect(DataLocation::VRam(self.id), self.next_garbage_collect())
+    }
+
+    pub fn bytes_allocated(&self) -> usize {
+        self.allocator.allocated() as _
+    }
+    pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) -> usize {
         let mut collected = 0;
 
         let mut unused = self.old_unused.borrow_mut();
@@ -682,6 +695,11 @@ impl Storage {
             "Garbage collect GPU: {}B | Unindexed: {}B",
             collected, unindexed
         );
+
+        if collected > 0 {
+            let _ = self.garbage_collect_id_gen.next();
+        }
+        collected
     }
 
     pub fn is_initializing(&self, id: DataId) -> bool {
@@ -810,22 +828,13 @@ impl Storage {
 
     pub(crate) fn allocate_raw(
         &self,
-        device: &DeviceContext,
         layout: Layout,
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
-    ) -> Allocation {
-        match self.allocator.allocate(layout, use_flags, location) {
-            Ok(a) => a,
-            Err(_e) => {
-                let garbage_collect_goal =
-                    self.allocator.allocated() / super::GARBAGE_COLLECT_GOAL_FRACTION;
-                self.try_garbage_collect(device, garbage_collect_goal as _);
-                self.allocator
-                    .allocate(layout, use_flags, location)
-                    .expect("Out of memory and nothing we can do about it.")
-            }
-        }
+    ) -> Result<Allocation, ()> {
+        self.allocator
+            .allocate(layout, use_flags, location)
+            .map_err(|_| ())
     }
 
     /// Safety: Allocation must come from this storage
@@ -914,12 +923,12 @@ impl Storage {
         }
     }
 
-    fn alloc_ssbo<'b>(&'b self, device: &'b DeviceContext, layout: Layout) -> Allocation {
+    fn alloc_ssbo<'b>(&'b self, layout: Layout) -> Result<Allocation, ()> {
         let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
             | ash::vk::BufferUsageFlags::TRANSFER_DST
             | ash::vk::BufferUsageFlags::TRANSFER_SRC;
         let location = MemoryLocation::GpuOnly;
-        self.allocate_raw(device, layout, flags, location)
+        self.allocate_raw(layout, flags, location)
     }
 
     pub(crate) fn alloc_and_register_ssbo<'b>(
@@ -928,8 +937,8 @@ impl Storage {
         current_frame: FrameNumber,
         desc: DataDescriptor,
         layout: Layout,
-    ) -> (ash::vk::Buffer, AccessToken<'b>) {
-        let allocation = self.alloc_ssbo(device, layout);
+    ) -> Result<(ash::vk::Buffer, AccessToken<'b>), ()> {
+        let allocation = self.alloc_ssbo(layout)?;
         let key = desc.id;
 
         let buffer = allocation.buffer;
@@ -953,7 +962,7 @@ impl Storage {
             entry.state = StorageEntryState::Initializing(info);
         }
 
-        (buffer, AccessToken::new(self, device, key))
+        Ok((buffer, AccessToken::new(self, device, key)))
     }
 
     pub fn request_alloc_slot_raw<'req, 'inv>(
@@ -985,35 +994,6 @@ impl Storage {
             }),
             _marker: Default::default(),
         }
-    }
-
-    pub fn alloc_slot_raw<'b>(
-        &'b self,
-        device: &'b DeviceContext,
-        current_frame: FrameNumber,
-        desc: DataDescriptor,
-        layout: Layout,
-    ) -> WriteHandle<'b> {
-        let size = layout.size();
-        let (buffer, access) = self.alloc_and_register_ssbo(device, current_frame, desc, layout);
-
-        WriteHandle {
-            buffer,
-            size: size as u64,
-            access,
-            drop_handler: DropError,
-        }
-    }
-
-    pub fn alloc_slot<'b, T: Element>(
-        &'b self,
-        device: &'b DeviceContext,
-        current_frame: FrameNumber,
-        desc: DataDescriptor,
-        num: usize,
-    ) -> WriteHandle<'b> {
-        let layout = Layout::array::<T>(num).unwrap();
-        self.alloc_slot_raw(device, current_frame, desc, layout)
     }
 
     pub fn is_visible(&self, id: DataId, dst_info: DstBarrierInfo) -> Result<(), SrcBarrierInfo> {
