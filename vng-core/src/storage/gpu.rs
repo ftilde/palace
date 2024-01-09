@@ -866,7 +866,7 @@ impl Storage {
         }
     }
 
-    pub fn allocate_image(
+    pub(crate) fn allocate_image(
         &self,
         device: &DeviceContext,
         create_desc: vk::ImageCreateInfo,
@@ -887,6 +887,31 @@ impl Storage {
     /// Safety: Allocation must come from this storage
     pub unsafe fn deallocate_image(&self, allocation: ImageAllocation) {
         self.allocator.deallocate_image(allocation);
+    }
+
+    pub fn request_allocate_image<'a, 'inv>(
+        &self,
+        device: &DeviceContext,
+        create_desc: vk::ImageCreateInfo,
+    ) -> Request<'a, 'inv, ImageAllocation> {
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        Request {
+            type_: RequestType::Allocation(
+                AllocationId::next(),
+                AllocationRequest::VRamImageRaw(device.id, create_desc, result_sender),
+            ),
+            gen_poll: Box::new(move |_ctx| {
+                Box::new(move || match result_receiver.try_recv() {
+                    Ok(res) => Some(res),
+                    Err(oneshot::TryRecvError::Empty) => None,
+                    Err(oneshot::TryRecvError::Disconnected) => {
+                        panic!("Either polled twice or the compute thread was interrupted")
+                    }
+                })
+            }),
+            _marker: Default::default(),
+        }
     }
 
     fn alloc_ssbo<'b>(&'b self, device: &'b DeviceContext, layout: Layout) -> Allocation {

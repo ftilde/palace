@@ -93,6 +93,11 @@ pub enum AllocationRequest {
         MemoryLocation,
         oneshot::Sender<crate::storage::gpu::Allocation>,
     ),
+    VRamImageRaw(
+        usize,
+        ash::vk::ImageCreateInfo,
+        oneshot::Sender<crate::storage::gpu::ImageAllocation>,
+    ),
 }
 
 pub enum RequestType<'inv> {

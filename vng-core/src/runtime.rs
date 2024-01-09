@@ -700,6 +700,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         Ok(())
                     }
                     .into(),
+                    crate::task::AllocationRequest::VRamImageRaw(
+                        device_id,
+                        create_desc,
+                        result_sender,
+                    ) => async move {
+                        let device = &ctx.device_contexts[device_id];
+                        let res = device.storage.allocate_image(device, create_desc);
+                        result_sender.send(res).unwrap();
+                        ctx.allocation_completions.set(id);
+                        Ok(())
+                    }
+                    .into(),
                 };
                 self.task_manager.add_task(task_id, task);
                 self.task_graph.add_implied(task_id, PRIORITY_ALLOC);

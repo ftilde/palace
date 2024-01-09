@@ -122,7 +122,9 @@ impl GuiStateInner {
                 )
             }
 
-            let img = device.storage.allocate_image(device, create_info);
+            let img = ctx
+                .submit(device.storage.request_allocate_image(device, create_info))
+                .await;
             let region = vk::BufferImageCopy::builder()
                 .buffer_offset(0)
                 .buffer_row_length(delta.image.width() as u32)
@@ -792,8 +794,11 @@ void main() {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .build();
 
-                    let output_texture =
-                        TempRessource::new(device, device.storage.allocate_image(device, img_info));
+                    let output_texture = TempRessource::new(
+                        device,
+                        ctx.submit(device.storage.request_allocate_image(device, img_info))
+                            .await,
+                    );
 
                     let info = vk::ImageViewCreateInfo::builder()
                         .image(output_texture.image)
