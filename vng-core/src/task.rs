@@ -108,6 +108,7 @@ pub enum RequestType<'inv> {
     Group(RequestGroup<'inv>),
     GarbageCollect(DataLocation),
     Ready,
+    YieldOnce,
 }
 
 impl RequestType<'_> {
@@ -124,6 +125,7 @@ impl RequestType<'_> {
             RequestType::ThreadPoolJob(j, _) => RequestId::Job(j.id),
             RequestType::Group(g) => RequestId::Group(g.id),
             RequestType::Ready => RequestId::Ready,
+            RequestType::YieldOnce => RequestId::YieldOnce,
             RequestType::GarbageCollect(l) => RequestId::GarbageCollect(*l),
         }
     }
@@ -171,6 +173,13 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
 }
 
 impl<'req, 'inv> Request<'req, 'inv, ()> {
+    pub fn yield_once() -> Request<'req, 'inv, ()> {
+        Self {
+            type_: RequestType::YieldOnce,
+            gen_poll: Box::new(move |_ctx| Box::new(move || Some(()))),
+            _marker: std::marker::PhantomData,
+        }
+    }
     pub fn garbage_collect(
         location: DataLocation,
         gid: GarbageCollectId,
@@ -179,7 +188,13 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
             type_: RequestType::GarbageCollect(location),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || match location {
-                    DataLocation::Ram => todo!(),
+                    DataLocation::Ram => {
+                        if ctx.storage.next_garbage_collect() > gid {
+                            Some(())
+                        } else {
+                            None
+                        }
+                    }
                     DataLocation::VRam(id) => {
                         if ctx.device_contexts[id].storage.next_garbage_collect() > gid {
                             Some(())
@@ -240,7 +255,9 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         return std::future::ready(res).await;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
+                RequestType::ThreadPoolJob(_, _)
+                | RequestType::GarbageCollect(_)
+                | RequestType::YieldOnce => {}
             };
 
             let progress_indicator = if let RequestType::Group(_) = request.type_ {
@@ -357,6 +374,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::Group(g) => ids.push(g.0),
                 RequestId::GarbageCollect(g) => ids.push(Id::hash(&g)),
                 RequestId::Ready => {}
+                RequestId::YieldOnce => {}
             }
             let mut poll = (r.gen_poll)(PollContext {
                 storage: self.storage,
@@ -376,7 +394,9 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                         continue;
                     }
                 }
-                RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
+                RequestType::ThreadPoolJob(_, _)
+                | RequestType::GarbageCollect(_)
+                | RequestType::YieldOnce => {}
             }
             done.push(MaybeUninit::uninit());
             polls.push((i, poll));
@@ -572,7 +592,9 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
                     return;
                 }
             }
-            RequestType::ThreadPoolJob(_, _) | RequestType::GarbageCollect(_) => {}
+            RequestType::ThreadPoolJob(_, _)
+            | RequestType::GarbageCollect(_)
+            | RequestType::YieldOnce => {}
         }
         let id = req.type_.id();
         let entry = self.task_map.entry(id).or_default();

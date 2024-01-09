@@ -5,11 +5,13 @@ use crate::{
     runtime::FrameNumber,
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     task_graph::TaskId,
-    util::{num_elms_in_array, Map, Set},
+    util::{num_elms_in_array, IdGenerator, Map, Set},
     Error,
 };
 
-use super::{DataLocation, DataLongevity, DataVersion, DataVersionType, Element, LRUIndex};
+use super::{
+    DataLocation, DataLongevity, DataVersion, DataVersionType, Element, GarbageCollectId, LRUIndex,
+};
 
 #[derive(Debug, Eq, PartialEq)]
 enum AccessState {
@@ -499,6 +501,7 @@ pub struct Storage {
     lru_manager: RefCell<super::LRUManager<DataId>>,
     allocator: Allocator,
     new_data: super::NewDataManager,
+    garbage_collect_id_gen: IdGenerator<GarbageCollectId>,
 }
 
 impl Storage {
@@ -512,13 +515,23 @@ impl Storage {
             lru_manager: Default::default(),
             new_data: Default::default(),
             allocator,
+            garbage_collect_id_gen: Default::default(),
         })
     }
 
-    pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) {
+    pub fn next_garbage_collect(&self) -> GarbageCollectId {
+        self.garbage_collect_id_gen.preview_next()
+    }
+
+    pub fn wait_garbage_collect<'a, 'inv>(&self) -> Request<'a, 'inv, ()> {
+        Request::garbage_collect(DataLocation::Ram, self.next_garbage_collect())
+    }
+
+    pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) -> usize {
         let mut lru = self.lru_manager.borrow_mut();
         let mut index = self.index.borrow_mut();
 
+        let mut collected_total = 0;
         for (longevity, inner_lru) in lru.inner_mut() {
             let mut collected = 0;
             for key in inner_lru.drain_lru().into_iter() {
@@ -546,7 +559,14 @@ impl Storage {
                 goal_in_bytes = rest;
             }
             println!("Garbage collect RAM ({:?}): {}B", longevity, collected);
+            collected_total += collected;
         }
+
+        if collected_total > 0 {
+            let _ = self.garbage_collect_id_gen.next();
+        }
+
+        collected_total
     }
 
     pub fn is_readable(&self, id: DataId) -> bool {
@@ -612,24 +632,11 @@ impl Storage {
         &self,
         descriptor: DataDescriptor,
         layout: Layout,
-    ) -> (*mut MaybeUninit<u8>, AccessToken) {
+    ) -> Result<(*mut MaybeUninit<u8>, AccessToken), ()> {
         let key = descriptor.id;
 
         let data = {
-            let data = match self.allocator.alloc(layout) {
-                Ok(d) => d,
-                Err(_e) => {
-                    // Always try to free half of available ram
-                    // TODO: Other solutions may be better.
-                    let garbage_collect_goal =
-                        self.allocator.size() / super::GARBAGE_COLLECT_GOAL_FRACTION as usize;
-                    self.try_garbage_collect(garbage_collect_goal);
-                    self.allocator
-                        .alloc(layout)
-                        .expect("Out of memory and nothing we can do about it.")
-                }
-            };
-
+            let data = self.allocator.alloc(layout).map_err(|_| ())?;
             let mut index = self.index.borrow_mut();
 
             let entry = index.entry(key).or_insert_with(|| Entry {
@@ -649,7 +656,7 @@ impl Storage {
             data
         };
 
-        (data, AccessToken::new(self, descriptor.id))
+        Ok((data, AccessToken::new(self, descriptor.id)))
     }
 
     pub fn access_initializing<'a>(
@@ -704,32 +711,36 @@ impl Storage {
             .map(move |v| v.transmute(size))
     }
 
-    pub fn alloc_slot_raw(&self, key: DataDescriptor, layout: Layout) -> RawWriteHandleUninit {
-        let (ptr, access) = self.alloc(key, layout);
+    pub fn alloc_slot_raw(
+        &self,
+        key: DataDescriptor,
+        layout: Layout,
+    ) -> Result<RawWriteHandleUninit, ()> {
+        let (ptr, access) = self.alloc(key, layout)?;
 
-        RawWriteHandleUninit {
+        Ok(RawWriteHandleUninit {
             data: ptr,
             layout,
             drop_handler: DropError { access },
-        }
+        })
     }
 
     pub fn alloc_slot<T: Element>(
         &self,
         key: DataDescriptor,
         size: usize,
-    ) -> WriteHandleUninit<[MaybeUninit<T>]> {
+    ) -> Result<WriteHandleUninit<[MaybeUninit<T>]>, ()> {
         let layout = Layout::array::<T>(size).unwrap();
-        let (ptr, access) = self.alloc(key, layout);
+        let (ptr, access) = self.alloc(key, layout)?;
 
         let t_ptr = ptr.cast::<MaybeUninit<T>>();
 
         // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        WriteHandleUninit {
+        Ok(WriteHandleUninit {
             data: t_ref,
             drop_handler: DropError { access },
-        }
+        })
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type

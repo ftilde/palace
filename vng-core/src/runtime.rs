@@ -11,7 +11,7 @@ use std::{
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
-    task::{DataRequest, OpaqueTaskContext, RequestInfo, RequestType, Task},
+    task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
@@ -591,6 +591,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
+            RequestType::YieldOnce => {
+                self.task_graph.resolved_implied(req_id);
+            }
             RequestType::Ready => {
                 panic!("Ready request should never reach the executor");
             }
@@ -661,7 +664,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let ctx = self.context(task_id);
                 let task = match alloc {
                     crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
-                        let _ = ctx.storage.alloc(data_descriptor, layout);
+                        loop {
+                            if let Ok(_) = ctx.storage.alloc(data_descriptor, layout) {
+                                break;
+                            } else {
+                                ctx.submit(ctx.storage.wait_garbage_collect()).await;
+                            }
+                        }
                         ctx.completed_requests.add(id.into());
                         Ok(())
                     }
@@ -752,12 +761,30 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     let ctx = self.context(task_id);
 
                     let task = match l {
-                        DataLocation::Ram => {
-                            let garbage_collect_goal = self.data.storage.size()
+                        DataLocation::Ram => async move {
+                            let garbage_collect_goal = ctx.storage.size()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
-                            self.data.storage.try_garbage_collect(garbage_collect_goal);
-                            todo!()
+
+                            let n_tries = 3;
+                            let mut i = 0;
+                            loop {
+                                if i == n_tries {
+                                    panic!("Out of gpu memory and there is nothing we can do");
+                                }
+
+                                if ctx.storage.try_garbage_collect(garbage_collect_goal) > 0 {
+                                    break;
+                                } else {
+                                    ctx.submit(Request::yield_once()).await;
+                                }
+                                println!("Garbage collect fail nr {}", i);
+                                i += 1;
+                            }
+
+                            ctx.completed_requests.add(req_id);
+                            Ok(())
                         }
+                        .into(),
                         DataLocation::VRam(did) => async move {
                             let device = &ctx.device_contexts[did];
                             let garbage_collect_goal = device.storage.bytes_allocated()

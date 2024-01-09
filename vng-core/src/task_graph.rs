@@ -32,6 +32,7 @@ pub enum RequestId {
     Group(GroupId),
     GarbageCollect(DataLocation),
     Ready,
+    YieldOnce,
 }
 
 impl From<VisibleDataId> for RequestId {
@@ -78,6 +79,9 @@ impl RequestId {
             }
             RequestId::Ready => {
                 panic!("Tried to unwrap DataId from RequestId::Ready")
+            }
+            RequestId::YieldOnce => {
+                panic!("Tried to unwrap DataId from RequestId::YieldOnce")
             }
             RequestId::GarbageCollect(_) => {
                 panic!("Tried to unwrap DataId from RequestId::GarbageCollect")
