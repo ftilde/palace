@@ -300,7 +300,7 @@ impl TaskGraph {
     }
 }
 
-pub fn export(graph: &TaskGraph) {
+pub fn export_full_detail(graph: &TaskGraph) {
     use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
@@ -431,6 +431,162 @@ pub fn export(graph: &TaskGraph) {
                     Vertex::N(request_nodes.get(&r_id).unwrap().clone()),
                     Vertex::N(data_nodes.get(d).unwrap().clone()),
                 ),
+                attributes,
+            };
+            stmts.push(Stmt::Edge(edge))
+        }
+    }
+
+    let graph = Graph::DiGraph {
+        id: Id::Plain(format!("TaskGraph")),
+        strict: true,
+        stmts,
+    };
+
+    let filename = "taskgraph.svg";
+
+    let mut ctx = PrinterContext::default();
+    ctx.always_inline();
+    let _empty = exec(
+        graph,
+        &mut ctx,
+        vec![
+            CommandArg::Format(Format::Svg),
+            CommandArg::Layout(Layout::Dot),
+            CommandArg::Output(filename.to_string()),
+        ],
+    )
+    .unwrap();
+    println!("Finished writing dependency graph to file: {}", filename);
+}
+
+pub fn export(graph: &TaskGraph) {
+    use graphviz_rust::attributes::EdgeAttributes;
+    use graphviz_rust::cmd::*;
+    use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
+    use graphviz_rust::dot_structures::{EdgeTy, Vertex};
+    use graphviz_rust::exec;
+    use graphviz_rust::printer::*;
+    use graphviz_rust::{
+        attributes::{self, color, NodeAttributes},
+        into_attr::IntoAttribute,
+    };
+
+    let mut stmts = Vec::new();
+    let mut id_counter = 0;
+    let task_nodes = graph
+        .waits_on
+        .keys()
+        .map(|k| {
+            let label = format!("\"{}{}\"", k.op.1, k.num);
+            id_counter += 1;
+            let id = id_counter.to_string();
+            let node_id = NodeId(Id::Plain(id), None);
+            let mut attributes = Vec::new();
+            attributes.push(NodeAttributes::label(label));
+            attributes.push(NodeAttributes::shape(attributes::shape::rectangle));
+            let node = Node {
+                id: node_id.clone(),
+                attributes,
+            };
+            stmts.push(Stmt::Node(node));
+            (*k, node_id)
+        })
+        .collect::<Map<_, _>>();
+
+    let request_nodes = graph
+        .required_by
+        .keys()
+        .filter_map(|k| {
+            if !matches!(k, RequestId::Data(_) | RequestId::Group(_)) {
+                let label = format!("\"{:?}\"", k);
+                id_counter += 1;
+                let id = id_counter.to_string();
+                let node_id = NodeId(Id::Plain(id), None);
+                let mut attributes = Vec::new();
+                attributes.push(color::default().into_attr());
+                attributes.push(NodeAttributes::label(label));
+                attributes.push(NodeAttributes::shape(attributes::shape::ellipse));
+                let node = Node {
+                    id: node_id.clone(),
+                    attributes,
+                };
+                stmts.push(Stmt::Node(node));
+                Some((*k, node_id))
+            } else {
+                None
+            }
+        })
+        .collect::<Map<_, _>>();
+
+    for (source, data_ids) in &graph.will_provide_data {
+        for (target, request_ids) in &graph.waits_on {
+            let mut count = 0;
+            for req in request_ids {
+                if let RequestId::Data(d) = req.0 {
+                    if data_ids.contains(&d.id) {
+                        count += 1;
+                    }
+                }
+            }
+            if count > 0 {
+                let mut attributes = Vec::new();
+                attributes.push(color::default().into_attr());
+                attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+                let edge = Edge {
+                    ty: EdgeTy::Chain(vec![
+                        Vertex::N(task_nodes.get(&target).unwrap().clone()),
+                        Vertex::N({
+                            id_counter += 1;
+                            let id = id_counter.to_string();
+                            let node_id = NodeId(Id::Plain(id), None);
+                            let mut attributes = Vec::new();
+                            let label = format!("\"{:?}\"", count);
+                            attributes.push(color::default().into_attr());
+                            attributes.push(NodeAttributes::label(label));
+                            attributes.push(NodeAttributes::shape(attributes::shape::ellipse));
+
+                            stmts.push(Stmt::Node(Node {
+                                id: node_id.clone(),
+                                attributes,
+                            }));
+                            node_id
+                        }),
+                        Vertex::N(task_nodes.get(&source).unwrap().clone()),
+                    ]),
+                    attributes,
+                };
+                stmts.push(Stmt::Edge(edge))
+            }
+        }
+    }
+
+    for (t, r) in &graph.waits_on {
+        for (r, _dep_type) in r {
+            if !matches!(r, RequestId::Data(_) | RequestId::Group(_)) {
+                let mut attributes = Vec::new();
+                attributes.push(color::default().into_attr());
+                attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+                let edge = Edge {
+                    ty: EdgeTy::Pair(
+                        Vertex::N(task_nodes.get(t).unwrap().clone()),
+                        Vertex::N(request_nodes.get(r).unwrap().clone()),
+                    ),
+                    attributes,
+                };
+                stmts.push(Stmt::Edge(edge))
+            }
+        }
+    }
+
+    for (t, r) in &graph.will_fullfil_req {
+        for r in r {
+            let r = request_nodes.get(r).cloned().unwrap();
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+            let edge = Edge {
+                ty: EdgeTy::Pair(Vertex::N(r), Vertex::N(task_nodes.get(t).unwrap().clone())),
                 attributes,
             };
             stmts.push(Stmt::Edge(edge))
