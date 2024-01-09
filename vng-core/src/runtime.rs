@@ -490,7 +490,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 }
                 if let Some(task_id) = self.try_make_available(id, produced_loc, requested) {
-                    self.task_graph.will_provide(task_id, id);
+                    self.task_graph.will_provide_data(task_id, id);
                 } else {
                     self.task_graph.resolved_implied(r_id);
                 }
@@ -610,7 +610,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         let task_id = self
                             .try_make_available(data_id, available, data_request.location)
                             .unwrap();
-                        self.task_graph.will_provide(task_id, data_id);
+                        self.task_graph.will_provide_data(task_id, data_id);
                     } else {
                         let task_id = match data_request.source.granularity() {
                             crate::operator::ItemGranularity::Single => {
@@ -637,12 +637,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 }
                             }
                         };
-                        self.task_graph.will_provide(task_id, data_id);
+                        self.task_graph.will_provide_data(task_id, data_id);
                     }
                 }
             }
             RequestType::Barrier(b_info) => {
-                let _task_id = match self
+                let task_id = match self
                     .barrier_batcher
                     .add(b_info, BarrierItem::Barrier(b_info))
                 {
@@ -652,6 +652,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     BatchAddResult::Existing(id) => id,
                 };
+                self.task_graph.will_fullfil_req(task_id, req_id);
             }
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}
@@ -722,6 +723,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 };
                 self.task_manager.add_task(task_id, task);
                 self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
+                self.task_graph.will_fullfil_req(task_id, req_id);
             }
             RequestType::ThreadPoolJob(job, type_) => {
                 self.task_manager.spawn_job(job, type_).unwrap();
@@ -796,6 +798,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     };
                     self.task_manager.add_task(task_id, task);
                     self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
+                    self.task_graph.will_fullfil_req(task_id, req_id);
                 }
             }
         }

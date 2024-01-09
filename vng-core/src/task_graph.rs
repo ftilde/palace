@@ -162,7 +162,8 @@ pub struct TaskGraph {
     implied_tasks: Map<TaskId, TaskMetadata>,
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
     required_by: Map<RequestId, Set<TaskId>>,
-    will_provide: Map<TaskId, Set<DataId>>,
+    will_provide_data: Map<TaskId, Set<DataId>>,
+    will_fullfil_req: Map<TaskId, Set<RequestId>>,
     implied_ready: ReadyQueue,
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
@@ -206,9 +207,14 @@ impl TaskGraph {
         entry.insert(in_);
     }
 
-    pub fn will_provide(&mut self, task: TaskId, data: DataId) {
-        let entries = self.will_provide.entry(task).or_default();
+    pub fn will_provide_data(&mut self, task: TaskId, data: DataId) {
+        let entries = self.will_provide_data.entry(task).or_default();
         entries.insert(data);
+    }
+
+    pub fn will_fullfil_req(&mut self, task: TaskId, req: RequestId) {
+        let entries = self.will_fullfil_req.entry(task).or_default();
+        entries.insert(req);
     }
 
     pub fn add_implied(&mut self, id: TaskId, priority: u32) {
@@ -269,7 +275,8 @@ impl TaskGraph {
         self.implied_ready.remove(id);
         self.resolved_deps.remove(&id);
 
-        self.will_provide.remove(&id);
+        self.will_provide_data.remove(&id);
+        self.will_fullfil_req.remove(&id);
 
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
@@ -381,7 +388,7 @@ pub fn export(graph: &TaskGraph) {
         }
     }
 
-    for (t, r) in &graph.will_provide {
+    for (t, r) in &graph.will_provide_data {
         for r in r {
             if let Some(r) = data_nodes.get(r).cloned() {
                 let mut attributes = Vec::new();
@@ -393,6 +400,20 @@ pub fn export(graph: &TaskGraph) {
                 };
                 stmts.push(Stmt::Edge(edge))
             }
+        }
+    }
+
+    for (t, r) in &graph.will_fullfil_req {
+        for r in r {
+            let r = request_nodes.get(r).cloned().unwrap();
+            let mut attributes = Vec::new();
+            attributes.push(color::default().into_attr());
+            attributes.push(EdgeAttributes::arrowhead(attributes::arrowhead::vee));
+            let edge = Edge {
+                ty: EdgeTy::Pair(Vertex::N(r), Vertex::N(task_nodes.get(t).unwrap().clone())),
+                attributes,
+            };
+            stmts.push(Stmt::Edge(edge))
         }
     }
 
