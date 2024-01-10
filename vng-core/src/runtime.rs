@@ -604,6 +604,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::YieldOnce => {
                 self.task_graph.resolved_implied(req_id);
             }
+            RequestType::ExternalProgress => {}
             RequestType::Ready => {
                 panic!("Ready request should never reach the executor");
             }
@@ -779,23 +780,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let garbage_collect_goal = ctx.storage.size()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
-                            let n_tries = 3;
-                            let mut i = 0;
                             loop {
-                                if i == n_tries {
-                                    return Err(
-                                        "Out of main memory and there is nothing we can do".into(),
-                                    );
-                                    //panic!("Out of main memory and there is nothing we can do");
-                                }
-
                                 if ctx.storage.try_garbage_collect(garbage_collect_goal) > 0 {
                                     break;
                                 } else {
-                                    ctx.submit(Request::yield_once()).await;
+                                    ctx.submit(Request::external_progress()).await;
                                 }
-                                println!("Garbage collect fail nr {}", i);
-                                i += 1;
                             }
 
                             ctx.completed_requests.add(req_id);
@@ -807,21 +797,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let garbage_collect_goal = device.storage.bytes_allocated()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
-                            // We try three times:
-                            // 1. Maybe it works
-                            // 2. Maybe after the epoch some buffers are free to clean AND we
-                            //    unindexed stuff previously
-                            // 3. Maybe unindexed stuff in the new epoch is now free to be cleaned
-                            //    up
-                            let n_tries = 3;
-                            let mut i = 0;
                             loop {
-                                if i == n_tries {
-                                    //panic!("Out of gpu memory and there is nothing we can do");
-                                    return Err(
-                                        "Out of gpu memory and there is nothing we can do".into()
-                                    );
-                                }
                                 if device
                                     .storage
                                     .try_garbage_collect(device, garbage_collect_goal)
@@ -829,14 +805,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 {
                                     break;
                                 } else {
-                                    ctx.submit(
-                                        device
-                                            .wait_for_cmd_buffer_completion(device.current_epoch()),
-                                    )
-                                    .await;
+                                    ctx.submit(Request::external_progress()).await;
                                 }
-                                println!("Garbage collect fail nr {}", i);
-                                i += 1;
                             }
                             ctx.completed_requests.add(req_id);
                             Ok(())
@@ -872,9 +842,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn wait_for_async_results(&mut self) {
         self.cycle_cmd_buffers(Duration::from_secs(0));
 
+        let mut external_progress = false;
+
         let mut gpu_work_done = false;
         for device in self.data.device_contexts {
-            for done in device.wait_for_cmd_buffers(WAIT_TIMEOUT_GPU) {
+            let done_cmd_buffers = device.wait_for_cmd_buffers(WAIT_TIMEOUT_GPU);
+            external_progress |= !done_cmd_buffers.is_empty();
+            for done in done_cmd_buffers {
                 self.task_graph
                     .resolved_implied(RequestId::CmdBufferCompletion(done.into()));
                 gpu_work_done = true;
@@ -887,8 +861,14 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             WAIT_TIMEOUT_CPU
         };
         let jobs = self.task_manager.wait_for_jobs(cpu_wait_timeout);
+        external_progress |= !jobs.is_empty();
         for job_id in jobs {
             self.task_graph.resolved_implied(job_id.into());
+        }
+
+        if external_progress {
+            self.task_graph
+                .resolved_implied(RequestId::ExternalProgress);
         }
     }
 

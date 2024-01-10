@@ -33,6 +33,7 @@ pub enum RequestId {
     GarbageCollect(DataLocation),
     Ready,
     YieldOnce,
+    ExternalProgress,
 }
 
 impl From<VisibleDataId> for RequestId {
@@ -82,6 +83,9 @@ impl RequestId {
             }
             RequestId::YieldOnce => {
                 panic!("Tried to unwrap DataId from RequestId::YieldOnce")
+            }
+            RequestId::ExternalProgress => {
+                panic!("Tried to unwrap DataId from RequestId::ExternalProgress")
             }
             RequestId::GarbageCollect(_) => {
                 panic!("Tried to unwrap DataId from RequestId::GarbageCollect")

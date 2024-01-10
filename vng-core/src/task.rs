@@ -109,6 +109,7 @@ pub enum RequestType<'inv> {
     GarbageCollect(DataLocation),
     Ready,
     YieldOnce,
+    ExternalProgress,
 }
 
 impl RequestType<'_> {
@@ -126,6 +127,7 @@ impl RequestType<'_> {
             RequestType::Group(g) => RequestId::Group(g.id),
             RequestType::Ready => RequestId::Ready,
             RequestType::YieldOnce => RequestId::YieldOnce,
+            RequestType::ExternalProgress => RequestId::ExternalProgress,
             RequestType::GarbageCollect(l) => RequestId::GarbageCollect(*l),
         }
     }
@@ -176,6 +178,13 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
     pub fn yield_once() -> Request<'req, 'inv, ()> {
         Self {
             type_: RequestType::YieldOnce,
+            gen_poll: Box::new(move |_ctx| Box::new(move || Some(()))),
+            _marker: std::marker::PhantomData,
+        }
+    }
+    pub fn external_progress() -> Request<'req, 'inv, ()> {
+        Self {
+            type_: RequestType::ExternalProgress,
             gen_poll: Box::new(move |_ctx| Box::new(move || Some(()))),
             _marker: std::marker::PhantomData,
         }
@@ -257,6 +266,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 }
                 RequestType::ThreadPoolJob(_, _)
                 | RequestType::GarbageCollect(_)
+                | RequestType::ExternalProgress
                 | RequestType::YieldOnce => {}
             };
 
@@ -375,6 +385,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::GarbageCollect(g) => ids.push(Id::hash(&g)),
                 RequestId::Ready => {}
                 RequestId::YieldOnce => {}
+                RequestId::ExternalProgress => {}
             }
             let mut poll = (r.gen_poll)(PollContext {
                 storage: self.storage,
@@ -396,6 +407,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 }
                 RequestType::ThreadPoolJob(_, _)
                 | RequestType::GarbageCollect(_)
+                | RequestType::ExternalProgress
                 | RequestType::YieldOnce => {}
             }
             done.push(MaybeUninit::uninit());
@@ -594,6 +606,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             }
             RequestType::ThreadPoolJob(_, _)
             | RequestType::GarbageCollect(_)
+            | RequestType::ExternalProgress
             | RequestType::YieldOnce => {}
         }
         let id = req.type_.id();
