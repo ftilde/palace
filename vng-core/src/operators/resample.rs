@@ -320,20 +320,23 @@ void main() {
                     },
                 );
 
-                let chunk_index = device
-                    .storage
-                    .get_index(
-                        *ctx,
-                        device,
-                        input.chunks.descriptor(),
-                        num_chunks,
-                        dst_info,
-                    )
-                    .await;
-
                 while let Some((intersecting_bricks, (gpu_brick_out, pos, in_brick_positions))) =
                     stream.next().await
                 {
+                    // TODO: It would be nice to share the chunk_index between requests, but then
+                    // we never free any chunks and run out of memory. Maybe when/if we have a
+                    // better approach for indices this can be revisited.
+                    let chunk_index = device
+                        .storage
+                        .get_index(
+                            *ctx,
+                            device,
+                            input.chunks.descriptor(),
+                            num_chunks,
+                            dst_info,
+                        )
+                        .await;
+
                     let out_info = m_out.chunk_info(pos);
 
                     for (gpu_brick_in, in_brick_pos) in intersecting_bricks
