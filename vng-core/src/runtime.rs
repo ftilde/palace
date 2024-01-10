@@ -421,6 +421,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Ready(e) => {
+                        println!("Execution errored, exporting task graph.");
+                        crate::task_graph::export(&self.task_graph);
                         return e;
                     }
                     Poll::Pending => {
@@ -781,7 +783,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let mut i = 0;
                             loop {
                                 if i == n_tries {
-                                    panic!("Out of gpu memory and there is nothing we can do");
+                                    return Err(
+                                        "Out of main memory and there is nothing we can do".into(),
+                                    );
+                                    //panic!("Out of main memory and there is nothing we can do");
                                 }
 
                                 if ctx.storage.try_garbage_collect(garbage_collect_goal) > 0 {
@@ -812,7 +817,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let mut i = 0;
                             loop {
                                 if i == n_tries {
-                                    panic!("Out of gpu memory and there is nothing we can do");
+                                    //panic!("Out of gpu memory and there is nothing we can do");
+                                    return Err(
+                                        "Out of gpu memory and there is nothing we can do".into()
+                                    );
                                 }
                                 if device
                                     .storage
