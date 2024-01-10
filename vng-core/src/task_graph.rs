@@ -117,10 +117,10 @@ struct TaskMetadata {
 #[repr(u8)]
 pub enum TaskClass {
     Alloc = 0,
-    Barrier = 1,
-    Data = 2,
-    Transfer = 3,
-    GarbageCollect = 4,
+    GarbageCollect = 1,
+    Barrier = 2,
+    Data = 3,
+    Transfer = 4,
 }
 
 const ROOT_PRIO: Priority = Priority { level: 0, prio: 0 };
@@ -148,10 +148,10 @@ impl Priority {
         Priority {
             level: self.level + 1,
             prio: {
-                if let TaskClass::Alloc = class {
-                    self.level
-                } else {
-                    self.prio.max(((class as u8 as u32) << 16) + self.level)
+                match class {
+                    TaskClass::Alloc => self.level,
+                    TaskClass::GarbageCollect => 1 << 16,
+                    _ => self.prio.max(((class as u8 as u32) << 16) + self.level),
                 }
             },
         }
