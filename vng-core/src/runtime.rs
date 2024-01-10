@@ -674,7 +674,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}
             RequestType::Allocation(id, alloc) => {
-                let task_id = TaskId::new(OperatorId::new("allocator"), id.inner() as _);
+                let op_name = match alloc {
+                    crate::task::AllocationRequest::Ram(_, _) => "allocator_ram",
+                    crate::task::AllocationRequest::VRam(_, _, _) => "allocator_vram",
+                    crate::task::AllocationRequest::VRamBufRaw(_, _, _, _, _) => {
+                        "allocator_vram_raw"
+                    }
+                    crate::task::AllocationRequest::VRamImageRaw(_, _, _) => "allocator_vram_image",
+                };
+                let task_id = TaskId::new(OperatorId::new(op_name), id.inner() as _);
                 let ctx = self.context(task_id);
                 let task = match alloc {
                     crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
