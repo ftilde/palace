@@ -114,8 +114,49 @@ struct TaskMetadata {
     priority: Priority,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Priority(pub u32);
+#[repr(u8)]
+pub enum TaskClass {
+    Alloc = 0,
+    Barrier = 1,
+    Data = 2,
+    Transfer = 3,
+    GarbageCollect = 4,
+}
+
+const ROOT_PRIO: Priority = Priority { level: 0, prio: 0 };
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct Priority {
+    level: u32,
+    prio: u32,
+}
+
+impl Ord for Priority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.prio.cmp(&other.prio)
+    }
+}
+
+impl PartialOrd for Priority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Priority {
+    pub fn downstream(&self, class: TaskClass) -> Priority {
+        Priority {
+            level: self.level + 1,
+            prio: {
+                if let TaskClass::Alloc = class {
+                    self.level
+                } else {
+                    self.prio.max(((class as u8 as u32) << 16) + self.level)
+                }
+            },
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct TaskGraph {
@@ -128,7 +169,7 @@ pub struct TaskGraph {
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
-    requested_locations: Map<DataId, Set<VisibleDataLocation>>,
+    requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
 }
 
 impl TaskGraph {
@@ -152,11 +193,13 @@ impl TaskGraph {
 
         if let RequestId::Data(d) = wanted {
             let entry = self.requested_locations.entry(d.id).or_default();
-            entry.insert(d.location);
+            let loc = entry.entry(d.location).or_default();
+            loc.insert(wants);
         }
     }
 
-    pub fn requested_locations(&self, id: DataId) -> Set<VisibleDataLocation> {
+    //TODO: Try to avoid clone
+    pub fn requested_locations(&self, id: DataId) -> Map<VisibleDataLocation, Set<TaskId>> {
         self.requested_locations.get(&id).unwrap().clone()
     }
 
@@ -182,6 +225,23 @@ impl TaskGraph {
         self.waits_on.insert(id, Map::new());
         assert!(inserted.is_none(), "Tried to insert task twice");
         self.implied_ready.push(id, priority);
+    }
+    pub fn try_increase_priority(&mut self, id: TaskId, priority: Priority) {
+        // Note that this does not change the priority of downstream tasks recursively! This is
+        // fine, however, and in practice only meant for batched tasks (barriers and operator
+        // tasks) whose priority is only updated as long as they are not started (and thus have no
+        // downstream tasks).
+
+        let task_md = self.implied_tasks.get_mut(&id).unwrap();
+        task_md.priority = task_md.priority.max(priority);
+
+        self.implied_ready.change_priority(&id, task_md.priority);
+    }
+    pub fn get_priority(&mut self, id: TaskId) -> Priority {
+        self.implied_tasks
+            .get_mut(&id)
+            .map(|m| m.priority)
+            .unwrap_or(ROOT_PRIO)
     }
 
     pub fn already_requested(&self, rid: RequestId) -> bool {
@@ -378,7 +438,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
     }
 
     for (d, l) in &graph.requested_locations {
-        for l in l {
+        for l in l.keys() {
             let mut attributes = Vec::new();
             attributes.push(color::default().into_attr());
             let r_id = d.with_visibility(*l).into();

@@ -12,7 +12,7 @@ use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
-    task_graph::{Priority, RequestId, TaskGraph, TaskId, VisibleDataId},
+    task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     util::{Map, Set},
@@ -24,11 +24,6 @@ const CMD_BUF_EAGER_CYCLE_TIME: Duration = Duration::from_millis(10);
 const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
-
-const PRIORITY_TRANSFER: Priority = Priority(3);
-const PRIORITY_GENERAL_TASK: Priority = Priority(2);
-const PRIORITY_BARRIER: Priority = Priority(1);
-const PRIORITY_ALLOC: Priority = Priority(0);
 
 struct DataRequestItem {
     id: DataId,
@@ -480,7 +475,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             for requested in self.task_graph.requested_locations(id) {
                 let r_id = VisibleDataId {
                     id,
-                    location: requested,
+                    location: requested.0,
                 }
                 .into();
                 if let DataVersionType::Preview = produced_ver {
@@ -489,7 +484,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         m.insert(*dependent);
                     }
                 }
-                if let Some(task_id) = self.try_make_available(id, produced_loc, requested) {
+                let req_prio = requested
+                    .1
+                    .iter()
+                    .map(|tid| self.task_graph.get_priority(*tid))
+                    .max()
+                    .unwrap();
+                if let Some(task_id) =
+                    self.try_make_available(id, produced_loc, requested.0, req_prio)
+                {
                     self.task_graph.will_provide_data(task_id, id);
                 } else {
                     self.task_graph.resolved_implied(r_id);
@@ -512,6 +515,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         id: DataId,
         from: DataLocation,
         to: VisibleDataLocation,
+        req_prio: Priority,
     ) -> Option<TaskId> {
         match (from, to) {
             (DataLocation::Ram, VisibleDataLocation::Ram) => None,
@@ -532,7 +536,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             .add(b_info, BarrierItem::Data(id.with_visibility(to)))
                         {
                             BatchAddResult::New(t) => {
-                                self.task_graph.add_implied(t, PRIORITY_BARRIER);
+                                self.task_graph
+                                    .add_implied(t, req_prio.downstream(TaskClass::Barrier));
                                 t
                             }
                             BatchAddResult::Existing(t) => t,
@@ -553,7 +558,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                 );
                 self.task_manager.add_task(task_id, transfer_task);
-                self.task_graph.add_implied(task_id, PRIORITY_TRANSFER);
+                self.task_graph
+                    .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
             }
             (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
@@ -566,7 +572,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                 );
                 self.task_manager.add_task(task_id, transfer_task);
-                self.task_graph.add_implied(task_id, PRIORITY_TRANSFER);
+                self.task_graph
+                    .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
             }
         }
@@ -588,6 +595,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn enqueue(&mut self, from: TaskId, req: RequestInfo<'inv>) {
         let req_id = req.id();
         let already_requested = self.task_graph.already_requested(req_id);
+        let req_prio = self.task_graph.get_priority(from);
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
@@ -611,7 +619,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     if let Some(available) = self.find_available_location(data_id) {
                         // Data should not already be present => unwrap
                         let task_id = self
-                            .try_make_available(data_id, available, data_request.location)
+                            .try_make_available(data_id, available, data_request.location, req_prio)
                             .unwrap();
                         self.task_graph.will_provide_data(task_id, data_id);
                     } else {
@@ -625,7 +633,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 let items = vec![data_request.item];
                                 //Safety: The item is precisely for the returned operator, and thus of the right type.
                                 let task = unsafe { data_request.source.compute(context, items) };
-                                self.task_graph.add_implied(task_id, PRIORITY_GENERAL_TASK);
+                                self.task_graph
+                                    .add_implied(task_id, req_prio.downstream(TaskClass::Data));
                                 self.task_manager.add_task(task_id, task);
                                 task_id
                             }
@@ -633,7 +642,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 // Add item to batcher to spawn later
                                 match self.request_batcher.add(data_request) {
                                     BatchAddResult::New(id) => {
-                                        self.task_graph.add_implied(id, PRIORITY_GENERAL_TASK);
+                                        self.task_graph
+                                            .add_implied(id, req_prio.downstream(TaskClass::Data));
                                         id
                                     }
                                     BatchAddResult::Existing(id) => id,
@@ -650,7 +660,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .add(b_info, BarrierItem::Barrier(b_info))
                 {
                     BatchAddResult::New(id) => {
-                        self.task_graph.add_implied(id, PRIORITY_BARRIER);
+                        self.task_graph
+                            .add_implied(id, req_prio.downstream(TaskClass::Barrier));
                         id
                     }
                     BatchAddResult::Existing(id) => id,
@@ -731,7 +742,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .into(),
                 };
                 self.task_manager.add_task(task_id, task);
-                self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
+                self.task_graph
+                    .add_implied(task_id, req_prio.downstream(TaskClass::Alloc));
                 self.task_graph.will_fullfil_req(task_id, req_id);
             }
             RequestType::ThreadPoolJob(job, type_) => {
@@ -824,7 +836,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         .into(),
                     };
                     self.task_manager.add_task(task_id, task);
-                    self.task_graph.add_implied(task_id, PRIORITY_ALLOC);
+                    self.task_graph
+                        .add_implied(task_id, req_prio.downstream(TaskClass::GarbageCollect));
                     self.task_graph.will_fullfil_req(task_id, req_id);
                 }
             }

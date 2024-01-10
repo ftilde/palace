@@ -260,7 +260,8 @@ fn eval_network(
         //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
         //let after_kernel =
         //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
-        let after_kernel = operators::vesselness::vesselness(vol, *stddev);
+        //let after_kernel = operators::vesselness::vesselness(vol, *stddev);
+        let after_kernel = vol;
 
         let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
         scaled
