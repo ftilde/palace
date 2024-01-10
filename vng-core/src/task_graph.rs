@@ -110,56 +110,12 @@ impl TaskId {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-struct ReadyQueueItem {
-    priority: u32,
-    id: TaskId,
-}
-
-impl PartialOrd for ReadyQueueItem {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.priority.partial_cmp(&other.priority)
-    }
-}
-
-impl Ord for ReadyQueueItem {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority.cmp(&other.priority)
-    }
-}
-
-#[derive(Default)]
-struct ReadyQueue {
-    actually_ready: Set<TaskId>,
-    queue: std::collections::BinaryHeap<ReadyQueueItem>,
-}
-
-impl ReadyQueue {
-    fn add(&mut self, id: TaskId, priority: u32) {
-        if self.actually_ready.insert(id) {
-            self.queue.push(ReadyQueueItem { priority, id });
-        }
-    }
-
-    fn remove(&mut self, id: TaskId) {
-        // TODO: It would be nice to be able to remove the item from queue, but I don't have a good
-        // idea on how to do that efficiently at the moment...
-        self.actually_ready.remove(&id);
-    }
-
-    fn pop(&mut self) -> Option<TaskId> {
-        while let Some(candidate) = self.queue.pop() {
-            if self.actually_ready.remove(&candidate.id) {
-                return Some(candidate.id);
-            }
-        }
-        None
-    }
-}
-
 struct TaskMetadata {
-    priority: u32,
+    priority: Priority,
 }
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Priority(pub u32);
 
 #[derive(Default)]
 pub struct TaskGraph {
@@ -168,7 +124,7 @@ pub struct TaskGraph {
     required_by: Map<RequestId, Set<TaskId>>,
     will_provide_data: Map<TaskId, Set<DataId>>,
     will_fullfil_req: Map<TaskId, Set<RequestId>>,
-    implied_ready: ReadyQueue,
+    implied_ready: priority_queue::PriorityQueue<TaskId, Priority>,
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
@@ -192,7 +148,7 @@ impl TaskGraph {
             .entry(wants)
             .or_default()
             .insert(wanted, progress_indicator);
-        self.implied_ready.remove(wants);
+        self.implied_ready.remove(&wants);
 
         if let RequestId::Data(d) = wanted {
             let entry = self.requested_locations.entry(d.id).or_default();
@@ -221,11 +177,11 @@ impl TaskGraph {
         entries.insert(req);
     }
 
-    pub fn add_implied(&mut self, id: TaskId, priority: u32) {
+    pub fn add_implied(&mut self, id: TaskId, priority: Priority) {
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
         self.waits_on.insert(id, Map::new());
         assert!(inserted.is_none(), "Tried to insert task twice");
-        self.implied_ready.add(id, priority);
+        self.implied_ready.push(id, priority);
     }
 
     pub fn already_requested(&self, rid: RequestId) -> bool {
@@ -253,7 +209,7 @@ impl TaskGraph {
                 || matches!(progress_indicator, ProgressIndicator::PartialPossible)
             {
                 if let Some(m) = self.implied_tasks.get_mut(rev_dep) {
-                    self.implied_ready.add(*rev_dep, m.priority);
+                    self.implied_ready.push(*rev_dep, m.priority);
                 }
             }
         }
@@ -276,7 +232,7 @@ impl TaskGraph {
 
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
-        self.implied_ready.remove(id);
+        self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
 
         self.will_provide_data.remove(&id);
@@ -288,7 +244,7 @@ impl TaskGraph {
     }
 
     pub fn next_implied_ready(&mut self) -> Option<TaskId> {
-        self.implied_ready.pop()
+        self.implied_ready.pop().map(|(k, _v)| k)
     }
 
     pub fn has_open_tasks(&self) -> bool {

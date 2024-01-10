@@ -12,7 +12,7 @@ use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
     storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
-    task_graph::{RequestId, TaskGraph, TaskId, VisibleDataId},
+    task_graph::{Priority, RequestId, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     util::{Map, Set},
@@ -25,10 +25,10 @@ const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
 
-const PRIORITY_TRANSFER: u32 = 3;
-const PRIORITY_GENERAL_TASK: u32 = 2;
-const PRIORITY_BARRIER: u32 = 1;
-const PRIORITY_ALLOC: u32 = 0;
+const PRIORITY_TRANSFER: Priority = Priority(3);
+const PRIORITY_GENERAL_TASK: Priority = Priority(2);
+const PRIORITY_BARRIER: Priority = Priority(1);
+const PRIORITY_ALLOC: Priority = Priority(0);
 
 struct DataRequestItem {
     id: DataId,
