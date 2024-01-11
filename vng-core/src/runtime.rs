@@ -596,6 +596,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn enqueue(&mut self, from: TaskId, req: RequestInfo<'inv>) {
         let req_id = req.id();
+        //TODO: We also want to increase the priority of a task if it was already requested...
         let already_requested = self.task_graph.already_requested(req_id);
         let req_prio = self.task_graph.get_priority(from);
         self.task_graph
@@ -649,7 +650,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                             .add_implied(id, req_prio.downstream(TaskClass::Data));
                                         id
                                     }
-                                    BatchAddResult::Existing(id) => id,
+                                    BatchAddResult::Existing(id) => {
+                                        self.task_graph.try_increase_priority(
+                                            id,
+                                            req_prio.downstream(TaskClass::Data),
+                                        );
+                                        id
+                                    }
                                 }
                             }
                         };
@@ -667,7 +674,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             .add_implied(id, req_prio.downstream(TaskClass::Barrier));
                         id
                     }
-                    BatchAddResult::Existing(id) => id,
+                    BatchAddResult::Existing(id) => {
+                        self.task_graph
+                            .try_increase_priority(id, req_prio.downstream(TaskClass::Data));
+                        id
+                    }
                 };
                 self.task_graph.will_fullfil_req(task_id, req_id);
             }
