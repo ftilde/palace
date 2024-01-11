@@ -267,60 +267,60 @@ void main() {
                     },
                 );
 
-                let allocs = positions.into_iter().map(|pos| {
-                    let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, m_out.num_elements());
+                let requests = positions.into_iter().map(|pos| {
+                    let out_info = m_out.chunk_info(pos);
+                    let out_begin = out_info.begin();
+                    let out_end = out_info.end();
 
-                    (gpu_brick_out, pos)
+                    let aabb = AABB::new(
+                        out_begin.map(|v| v.raw as f32),
+                        out_end.map(|v| (v.raw - 1) as f32),
+                    );
+                    let aabb = aabb.transform(&element_out_to_in);
+
+                    let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
+                    let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
+
+                    let in_begin_brick = m_in.chunk_pos(out_begin);
+                    let in_end_brick = m_in
+                        .chunk_pos(out_end)
+                        .zip(m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
+
+                    let in_brick_positions = (0..D::N)
+                        .into_iter()
+                        .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                        .multi_cartesian_product()
+                        .map(|coordinates| {
+                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                        })
+                        .collect::<Vec<_>>();
+
+                    let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
+                        input.chunks.request_gpu(
+                            device.id,
+                            *pos,
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        )
+                    }));
+
+                    (intersecting_bricks, (pos, in_brick_positions))
                 });
-                let mut stream = ctx.submit_unordered_with_data(allocs).then_req_with_data(
+                let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
                     *ctx,
-                    |(gpu_brick_out, pos)| {
-                        let out_info = m_out.chunk_info(pos);
-                        let out_begin = out_info.begin();
-                        let out_end = out_info.end();
-
-                        let aabb = AABB::new(
-                            out_begin.map(|v| v.raw as f32),
-                            out_end.map(|v| (v.raw - 1) as f32),
-                        );
-                        let aabb = aabb.transform(&element_out_to_in);
-
-                        let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
-                        let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
-
-                        let in_begin_brick = m_in.chunk_pos(out_begin);
-                        let in_end_brick = m_in
-                            .chunk_pos(out_end)
-                            .zip(m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
-
-                        let in_brick_positions = (0..D::N)
-                            .into_iter()
-                            .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
-                            .multi_cartesian_product()
-                            .map(|coordinates| {
-                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
-                            })
-                            .collect::<Vec<_>>();
-
-                        let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                            input.chunks.request_gpu(
-                                device.id,
-                                *pos,
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            )
-                        }));
+                    |(intersecting_bricks, (pos, in_brick_positions))| {
+                        let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, m_out.num_elements());
 
                         (
-                            intersecting_bricks,
-                            (gpu_brick_out, pos, in_brick_positions),
+                            gpu_brick_out,
+                            (intersecting_bricks, pos, in_brick_positions),
                         )
                     },
                 );
 
-                while let Some((intersecting_bricks, (gpu_brick_out, pos, in_brick_positions))) =
+                while let Some((gpu_brick_out, (intersecting_bricks, pos, in_brick_positions))) =
                     stream.next().await
                 {
                     // TODO: It would be nice to share the chunk_index between requests, but then
