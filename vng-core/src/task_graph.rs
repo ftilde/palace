@@ -119,25 +119,31 @@ struct TaskMetadata {
 }
 
 #[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TaskClass {
-    Alloc = 0,
     GarbageCollect = 1,
     Barrier = 2,
     Data = 3,
-    Transfer = 4,
+    Alloc = 4,
+    Transfer = 5,
 }
 
-const ROOT_PRIO: Priority = Priority { level: 0, prio: 0 };
+const ROOT_PRIO: Priority = Priority {
+    level: 0,
+    progress: 0,
+    class: TaskClass::Data,
+};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Priority {
     level: u32,
-    prio: u32,
+    progress: u32,
+    class: TaskClass,
 }
 
 impl Ord for Priority {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.prio.cmp(&other.prio)
+        self.prio().cmp(&other.prio())
     }
 }
 
@@ -151,14 +157,12 @@ impl Priority {
     pub fn downstream(&self, class: TaskClass) -> Priority {
         Priority {
             level: self.level + 1,
-            prio: {
-                match class {
-                    TaskClass::Alloc => self.level,
-                    TaskClass::GarbageCollect => 1 << 16,
-                    _ => self.prio.max(((class as u8 as u32) << 16) + self.level),
-                }
-            },
+            progress: 0,
+            class,
         }
+    }
+    fn prio(&self) -> u32 {
+        self.progress << 16 + self.level
     }
 }
 
@@ -243,7 +247,7 @@ impl TaskGraph {
     }
     pub fn get_priority(&mut self, id: TaskId) -> Priority {
         self.implied_tasks
-            .get_mut(&id)
+            .get(&id)
             .map(|m| m.priority)
             .unwrap_or(ROOT_PRIO)
     }
@@ -269,11 +273,16 @@ impl TaskGraph {
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
             let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
             resolved_deps.insert(id);
-            if deps_of_rev_dep.is_empty()
-                || matches!(progress_indicator, ProgressIndicator::PartialPossible)
-            {
-                if let Some(m) = self.implied_tasks.get_mut(rev_dep) {
-                    self.implied_ready.push(*rev_dep, m.priority);
+
+            if let Some(md) = self.implied_tasks.get_mut(&rev_dep) {
+                if let RequestId::Data(_) = id {
+                    md.priority.progress += 1;
+                }
+
+                if deps_of_rev_dep.is_empty()
+                    || matches!(progress_indicator, ProgressIndicator::PartialPossible)
+                {
+                    self.implied_ready.push(*rev_dep, md.priority);
                 }
             }
         }
