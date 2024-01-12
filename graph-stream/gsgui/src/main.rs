@@ -130,9 +130,14 @@ impl layout::core::format::RenderBackend for Render {
         _look: &layout::core::style::StyleAttr,
         _text: &str,
     ) {
-        for l in path.windows(2) {
-            let s = l[0].0;
-            let e = l[1].0;
+        // First the first point, position and control point are swapped:
+        let s = path[0].0;
+        let e = path[1].1;
+        draw_line(s.x as _, s.y as _, e.x as _, e.y as _, 2.0, BLACK);
+
+        for l in path[1..].windows(2) {
+            let s = l[0].1;
+            let e = l[1].1;
             draw_line(s.x as _, s.y as _, e.x as _, e.y as _, 2.0, BLACK);
         }
     }
