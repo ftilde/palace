@@ -1,9 +1,13 @@
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use clap::Parser;
 use layout::{
     core::{base::Orientation, geometry::Point, style::StyleAttr},
     std_shapes::shapes::{Arrow, Element, ShapeKind},
+    topo::layout::VisualGraph,
 };
 use macroquad::prelude::*;
 
@@ -56,9 +60,10 @@ impl layout::core::format::RenderBackend for Render {
         _look: &layout::core::style::StyleAttr,
         _clip: Option<layout::core::format::ClipHandle>,
     ) {
-        let size = to_mq(size);
+        let mut size = to_mq(size);
         let mut xy = to_mq(xy);
         xy -= size * 0.5;
+        size *= 2.0;
 
         draw_rectangle_lines(xy.x, xy.y, size.x, size.y, 2.0, BLACK);
         //draw_rectangle(xy.x as _, xy.y as _, size.x as _, size.y as _, BLACK);
@@ -152,6 +157,135 @@ impl layout::core::format::RenderBackend for Render {
     }
 }
 
+#[derive(Clone)]
+struct Node {
+    id: u64,
+    label: String,
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct Edge {
+    from: u64,
+    to: u64,
+}
+
+#[derive(Clone)]
+enum Event {
+    AddNode(Node),
+    RemoveNode(Node),
+    AddEdge(Edge),
+    RemoveEdge(Edge),
+}
+
+impl Event {
+    fn inverse(self) -> Event {
+        match self {
+            Event::AddNode(n) => Event::RemoveNode(n),
+            Event::RemoveNode(n) => Event::AddNode(n),
+            Event::AddEdge(e) => Event::RemoveEdge(e),
+            Event::RemoveEdge(e) => Event::AddEdge(e),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Graph {
+    nodes: HashMap<u64, String>,
+    edges: HashSet<Edge>,
+}
+
+impl Graph {
+    fn apply(&mut self, e: Event) {
+        match e {
+            Event::AddNode(n) => assert_eq!(self.nodes.insert(n.id, n.label), None),
+            Event::RemoveNode(n) => assert!(self.nodes.remove(&n.id).is_some()),
+            Event::AddEdge(e) => assert_eq!(self.edges.insert(e), true),
+            Event::RemoveEdge(e) => assert_eq!(self.edges.remove(&e), true),
+        }
+    }
+
+    fn to_vg(&self) -> Option<VisualGraph> {
+        if self.nodes.is_empty() {
+            None
+        } else {
+            let mut out = VisualGraph::new(Orientation::TopToBottom);
+            let look = StyleAttr::simple();
+            let mut node_map = HashMap::new();
+            for n in &self.nodes {
+                let sp0 = ShapeKind::new_box(n.1);
+
+                let size = measure_text(n.1, None, 10, 1.0);
+                let sz = Point::new(size.width as _, size.height as _);
+
+                let elm = Element::create(sp0, look.clone(), Orientation::LeftToRight, sz);
+                let handle = out.add_node(elm);
+                node_map.insert(n.0, handle);
+            }
+
+            for e in &self.edges {
+                let arrow = Arrow::simple("");
+                out.add_edge(arrow, node_map[&e.from], node_map[&e.to]);
+            }
+
+            Some(out)
+        }
+    }
+}
+
+struct GraphTimeline {
+    current_graph: Graph,
+    current_step: usize,
+    events: Vec<Event>,
+}
+
+impl GraphTimeline {
+    fn new(events: Vec<Event>) -> Self {
+        let s = Self {
+            current_graph: Default::default(),
+            current_step: 0,
+            events,
+        };
+        s
+    }
+
+    fn next(&mut self) {
+        if self.current_step >= self.events.len() {
+            return;
+        }
+
+        let e = &self.events[self.current_step];
+        self.current_step += 1;
+        self.current_graph.apply(e.clone());
+    }
+
+    fn prev(&mut self) {
+        if self.current_step == 0 {
+            return;
+        }
+
+        self.current_step -= 1;
+        let e = &self.events[self.current_step];
+        self.current_graph.apply(e.clone().inverse());
+    }
+
+    fn go_to(&mut self, i: usize) {
+        assert!(i <= self.events.len());
+        match i.cmp(&self.current_step) {
+            std::cmp::Ordering::Less => {
+                while self.current_step != i {
+                    self.prev()
+                }
+            }
+            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Greater => {
+                while self.current_step != i {
+                    self.next()
+                }
+            }
+        }
+    }
+}
+
 #[macroquad::main("BasicShapes")]
 async fn main() {
     let options = CliArgs::parse();
@@ -167,26 +301,25 @@ async fn main() {
         }
     };
 
-    //let mut vg =
-    //    layout::topo::layout::VisualGraph::new(layout::core::base::Orientation::TopToBottom);
+    let events = vec![
+        Event::AddNode(Node {
+            id: 0,
+            label: "hello".to_owned(),
+        }),
+        Event::AddNode(Node {
+            id: 1,
+            label: "world".to_owned(),
+        }),
+        Event::AddEdge(Edge { from: 0, to: 1 }),
+        Event::AddNode(Node {
+            id: 2,
+            label: "!".to_owned(),
+        }),
+        Event::AddEdge(Edge { from: 1, to: 2 }),
+        Event::AddEdge(Edge { from: 0, to: 2 }),
+    ];
 
-    //// Define the node styles:
-    //let sp0 = ShapeKind::new_box("one");
-    //let sp1 = ShapeKind::new_box("two");
-    //let look0 = StyleAttr::simple();
-    //let look1 = StyleAttr::simple();
-    //let sz = Point::new(100., 100.);
-    //// Create the nodes:
-    //let node0 = Element::create(sp0, look0, Orientation::LeftToRight, sz);
-    //let node1 = Element::create(sp1, look1, Orientation::LeftToRight, sz);
-
-    //// Add the nodes to the graph, and save a handle to each node.
-    //let handle0 = vg.add_node(node0);
-    //let handle1 = vg.add_node(node1);
-
-    //// Add an edge between the nodes.
-    //let arrow = Arrow::simple("123");
-    //vg.add_edge(arrow, handle0, handle1);
+    let mut timeline = GraphTimeline::new(events);
 
     let sh = screen_height();
     let sw = screen_width();
@@ -206,13 +339,26 @@ async fn main() {
         camera.zoom *= zoom_factor;
         actual_zoom *= zoom_factor;
 
-        set_camera(&camera);
+        if is_key_pressed(KeyCode::N) {
+            timeline.next();
+        }
+        if is_key_pressed(KeyCode::P) {
+            timeline.prev();
+        }
+        if is_key_pressed(KeyCode::Key0) {
+            timeline.go_to(0)
+        }
+        if is_key_pressed(KeyCode::G) {
+            timeline.go_to(timeline.events.len())
+        }
 
-        let mut vg = gb.get();
+        set_camera(&camera);
 
         clear_background(WHITE);
 
-        vg.do_it(false, false, false, &mut Render);
+        if let Some(mut vg) = timeline.current_graph.to_vg() {
+            vg.do_it(false, false, false, &mut Render);
+        }
 
         next_frame().await
     }
