@@ -192,16 +192,19 @@ async fn main() {
     let sw = screen_width();
     let ssize = Vec2::new(sw, sh);
     let mut camera = Camera2D::from_display_rect(Rect::new(0.0, sh, sw, -sh));
+    let mut actual_zoom = 1.0;
 
     let mut gb = layout::gv::GraphBuilder::new();
     gb.visit_graph(&g);
 
     loop {
-        let md = mouse_delta_position() * ssize * 0.5;
+        let md = mouse_delta_position() * ssize * 0.5 / actual_zoom;
         if is_mouse_button_down(MouseButton::Left) {
             camera.target += md;
         }
-        camera.zoom *= (mouse_wheel().1 * 0.05).exp();
+        let zoom_factor = (mouse_wheel().1 * 0.05).exp();
+        camera.zoom *= zoom_factor;
+        actual_zoom *= zoom_factor;
 
         set_camera(&camera);
 
