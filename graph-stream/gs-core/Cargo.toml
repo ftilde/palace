@@ -1,12 +1,10 @@
 [package]
-name = "gsgui"
+name = "gs-core"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.4.16", features = ['derive'] }
-layout-rs = "0.1.1"
-macroquad = "0.4.4"
-gs-core = { path = "../gs-core" }
+serde = { version = "1.0.195", features = ["serde_derive"] }
+serde_json = "1.0.111"

@@ -4,41 +4,13 @@ use std::{
 };
 
 use clap::Parser;
+use gs_core::*;
 use layout::{
     core::{base::Orientation, geometry::Point, style::StyleAttr},
     std_shapes::shapes::{Arrow, Element, ShapeKind},
     topo::layout::VisualGraph,
 };
 use macroquad::prelude::*;
-
-fn draw_node(mut pos_x: f32, mut pos_y: f32, content: &str) {
-    let font_size = 100;
-    let font_scale = 1.0;
-    let font = None;
-
-    let center = get_text_center(content, font, font_size, font_scale, 0.0);
-    pos_x -= center.x;
-    pos_y -= center.y;
-    let size = measure_text(content, font, font_size, font_scale);
-
-    draw_rectangle_lines(
-        pos_x,
-        pos_y - size.offset_y,
-        size.width,
-        size.height,
-        2.0,
-        BLACK,
-    );
-    let params = TextParams {
-        font,
-        font_size,
-        font_scale,
-        font_scale_aspect: 1.0,
-        rotation: 0.0,
-        color: BLACK,
-    };
-    draw_text_ex(content, pos_x, pos_y, params);
-}
 
 #[derive(Parser)]
 struct CliArgs {
@@ -157,37 +129,6 @@ impl layout::core::format::RenderBackend for Render {
     }
 }
 
-#[derive(Clone)]
-struct Node {
-    id: u64,
-    label: String,
-}
-
-#[derive(Clone, Eq, PartialEq, Hash)]
-struct Edge {
-    from: u64,
-    to: u64,
-}
-
-#[derive(Clone)]
-enum Event {
-    AddNode(Node),
-    RemoveNode(Node),
-    AddEdge(Edge),
-    RemoveEdge(Edge),
-}
-
-impl Event {
-    fn inverse(self) -> Event {
-        match self {
-            Event::AddNode(n) => Event::RemoveNode(n),
-            Event::RemoveNode(n) => Event::AddNode(n),
-            Event::AddEdge(e) => Event::RemoveEdge(e),
-            Event::RemoveEdge(e) => Event::AddEdge(e),
-        }
-    }
-}
-
 #[derive(Default)]
 struct Graph {
     nodes: HashMap<u64, String>,
@@ -239,11 +180,11 @@ struct GraphTimeline {
 }
 
 impl GraphTimeline {
-    fn new(events: Vec<Event>) -> Self {
+    fn new(events: EventStream) -> Self {
         let s = Self {
             current_graph: Default::default(),
             current_step: 0,
-            events,
+            events: events.0,
         };
         s
     }
@@ -290,34 +231,26 @@ impl GraphTimeline {
 async fn main() {
     let options = CliArgs::parse();
 
-    let contents = std::fs::read_to_string(&options.input).unwrap();
-    let mut parser = layout::gv::DotParser::new(&contents);
+    let mut events = EventStream::new();
+    events.add(Event::AddNode(Node {
+        id: 0,
+        label: "hello".to_owned(),
+    }));
+    events.add(Event::AddNode(Node {
+        id: 1,
+        label: "world".to_owned(),
+    }));
+    events.add(Event::AddEdge(Edge { from: 0, to: 1 }));
+    events.add(Event::AddNode(Node {
+        id: 2,
+        label: "!".to_owned(),
+    }));
+    events.add(Event::AddEdge(Edge { from: 1, to: 2 }));
+    events.add(Event::AddEdge(Edge { from: 0, to: 2 }));
 
-    let g = match parser.process() {
-        Ok(g) => g,
-        Err(_err) => {
-            parser.print_error();
-            panic!("oi no");
-        }
-    };
+    events.save(&options.input);
 
-    let events = vec![
-        Event::AddNode(Node {
-            id: 0,
-            label: "hello".to_owned(),
-        }),
-        Event::AddNode(Node {
-            id: 1,
-            label: "world".to_owned(),
-        }),
-        Event::AddEdge(Edge { from: 0, to: 1 }),
-        Event::AddNode(Node {
-            id: 2,
-            label: "!".to_owned(),
-        }),
-        Event::AddEdge(Edge { from: 1, to: 2 }),
-        Event::AddEdge(Edge { from: 0, to: 2 }),
-    ];
+    let events = EventStream::load(&options.input);
 
     let mut timeline = GraphTimeline::new(events);
 
@@ -326,9 +259,6 @@ async fn main() {
     let ssize = Vec2::new(sw, sh);
     let mut camera = Camera2D::from_display_rect(Rect::new(0.0, sh, sw, -sh));
     let mut actual_zoom = 1.0;
-
-    let mut gb = layout::gv::GraphBuilder::new();
-    gb.visit_graph(&g);
 
     loop {
         let md = mouse_delta_position() * ssize * 0.5 / actual_zoom;
