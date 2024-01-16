@@ -2620,6 +2620,7 @@ dependencies = [
  "good_memory_allocator",
  "gpu-allocator",
  "graphviz-rust",
+ "gs-core",
  "im-rc",
  "itertools",
  "memmap",

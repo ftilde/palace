@@ -1,3 +1,5 @@
+use std::hash::Hash;
+
 use crate::{
     id::Id,
     operator::{DataId, OperatorId},
@@ -8,6 +10,7 @@ use crate::{
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
 use ahash::HashMapExt;
+use gs_core::EventStream;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct LocatedDataId {
@@ -167,6 +170,48 @@ impl Priority {
 }
 
 #[derive(Default)]
+struct GraphEventStream(EventStream);
+impl GraphEventStream {
+    // Eventstream stuff:
+    fn emit_node(&mut self, action: StreamAction, item: impl EventStreamNode) {
+        let node = gs_core::Node {
+            id: item.to_eventstream_id(),
+            label: item.label(),
+        };
+        let e = match action {
+            StreamAction::Add => gs_core::Event::AddNode(node),
+            StreamAction::Remove => gs_core::Event::RemoveNode(node),
+        };
+        self.0.add(e);
+    }
+
+    fn node_add(&mut self, item: impl EventStreamNode) {
+        self.emit_node(StreamAction::Add, item);
+    }
+    fn node_remove(&mut self, item: impl EventStreamNode) {
+        self.emit_node(StreamAction::Remove, item);
+    }
+
+    fn edge(&mut self, action: StreamAction, from: impl EventStreamNode, to: impl EventStreamNode) {
+        let edge = gs_core::Edge {
+            from: from.to_eventstream_id(),
+            to: to.to_eventstream_id(),
+        };
+        let e = match action {
+            StreamAction::Add => gs_core::Event::AddEdge(edge),
+            StreamAction::Remove => gs_core::Event::RemoveEdge(edge),
+        };
+        self.0.add(e);
+    }
+    fn edge_add(&mut self, from: impl EventStreamNode, to: impl EventStreamNode) {
+        self.edge(StreamAction::Add, from, to)
+    }
+    fn edge_remove(&mut self, from: impl EventStreamNode, to: impl EventStreamNode) {
+        self.edge(StreamAction::Remove, from, to)
+    }
+}
+
+#[derive(Default)]
 pub struct TaskGraph {
     implied_tasks: Map<TaskId, TaskMetadata>,
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
@@ -178,6 +223,45 @@ pub struct TaskGraph {
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
     requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
+    event_stream: GraphEventStream,
+}
+
+trait EventStreamNode {
+    fn to_eventstream_id(&self) -> u64;
+    fn label(&self) -> String;
+}
+
+impl EventStreamNode for TaskId {
+    fn to_eventstream_id(&self) -> u64 {
+        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(0).build();
+        self.hash(&mut hasher);
+        hasher.digest()
+    }
+    fn label(&self) -> String {
+        format!("{}{}", self.op.1, self.num)
+    }
+}
+
+impl EventStreamNode for RequestId {
+    fn to_eventstream_id(&self) -> u64 {
+        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(1).build();
+        self.hash(&mut hasher);
+        hasher.digest()
+    }
+    fn label(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+impl EventStreamNode for DataId {
+    fn to_eventstream_id(&self) -> u64 {
+        let mut hasher = xxhash_rust::xxh3::Xxh3Builder::new().with_seed(2).build();
+        self.hash(&mut hasher);
+        hasher.digest()
+    }
+    fn label(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 
 impl TaskGraph {
@@ -191,6 +275,15 @@ impl TaskGraph {
         wanted: RequestId,
         progress_indicator: ProgressIndicator,
     ) {
+        // Hm, only relevant for the root task, i think. Could be moved somewhere else possibly
+        if !self.waits_on.contains_key(&wants) {
+            self.event_stream.node_add(wants);
+        }
+        if !self.required_by.contains_key(&wanted) {
+            self.event_stream.node_add(wanted);
+        }
+        self.event_stream.edge_add(wants, wanted);
+
         self.required_by.entry(wanted).or_default().insert(wants);
 
         self.waits_on
@@ -201,7 +294,14 @@ impl TaskGraph {
 
         if let RequestId::Data(d) = wanted {
             let entry = self.requested_locations.entry(d.id).or_default();
-            let loc = entry.entry(d.location).or_default();
+            let e = entry.entry(d.location);
+
+            if matches!(e, crate::util::MapEntry::Vacant(_)) {
+                self.event_stream.node_add(d.id);
+                self.event_stream.edge_add(wanted, d.id);
+            }
+
+            let loc = e.or_default();
             loc.insert(wants);
         }
     }
@@ -221,16 +321,21 @@ impl TaskGraph {
     pub fn will_provide_data(&mut self, task: TaskId, data: DataId) {
         let entries = self.will_provide_data.entry(task).or_default();
         entries.insert(data);
+        self.event_stream.edge_add(data, task);
     }
 
     pub fn will_fullfil_req(&mut self, task: TaskId, req: RequestId) {
         let entries = self.will_fullfil_req.entry(task).or_default();
         entries.insert(req);
+        self.event_stream.edge_add(req, task);
     }
 
     pub fn add_implied(&mut self, id: TaskId, priority: Priority) {
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
         self.waits_on.insert(id, Map::new());
+
+        self.event_stream.node_add(id);
+
         assert!(inserted.is_none(), "Tried to insert task twice");
         self.implied_ready.push(id, priority);
     }
@@ -264,11 +369,20 @@ impl TaskGraph {
         if let RequestId::Data(d) = id {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
             entry.remove(&d.location);
+            self.event_stream.edge_remove(id, d.id);
+
             if entry.is_empty() {
                 self.requested_locations.remove(&d.id);
+                self.event_stream.node_remove(d.id);
             }
         }
-        for rev_dep in self.required_by.remove(&id).iter().flatten() {
+
+        let required_by = self.required_by.remove(&id);
+        let was_requested = required_by.is_some();
+
+        for rev_dep in required_by.iter().flatten() {
+            self.event_stream.edge_remove(*rev_dep, id);
+
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
             let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
@@ -301,6 +415,11 @@ impl TaskGraph {
         for group in resolved_groups {
             self.resolved_implied(group.into());
         }
+
+        // E.g. cmdbuffer completions are marked as resolved even if no one requested them
+        if was_requested {
+            self.event_stream.node_remove(id);
+        }
     }
 
     pub fn task_done(&mut self, id: TaskId) {
@@ -308,12 +427,20 @@ impl TaskGraph {
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
 
-        self.will_provide_data.remove(&id);
-        self.will_fullfil_req.remove(&id);
+        let wpd = self.will_provide_data.remove(&id);
+        for did in wpd.into_iter().flatten() {
+            self.event_stream.edge_remove(did, id);
+        }
+        let wfr = self.will_fullfil_req.remove(&id);
+        for rid in wfr.into_iter().flatten() {
+            self.event_stream.edge_remove(rid, id);
+        }
 
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
         //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
+
+        self.event_stream.node_remove(id);
     }
 
     pub fn next_implied_ready(&mut self) -> Option<TaskId> {
@@ -327,6 +454,11 @@ impl TaskGraph {
     pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut Set<RequestId>> {
         self.resolved_deps.get_mut(&task)
     }
+}
+
+enum StreamAction {
+    Add,
+    Remove,
 }
 
 pub fn export_full_detail(graph: &TaskGraph) {
@@ -489,7 +621,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
     println!("Finished writing dependency graph to file: {}", filename);
 }
 
-pub fn export(graph: &TaskGraph) {
+pub fn export(task_graph: &TaskGraph) {
     use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
@@ -503,7 +635,7 @@ pub fn export(graph: &TaskGraph) {
 
     let mut stmts = Vec::new();
     let mut id_counter = 0;
-    let task_nodes = graph
+    let task_nodes = task_graph
         .waits_on
         .keys()
         .map(|k| {
@@ -523,7 +655,7 @@ pub fn export(graph: &TaskGraph) {
         })
         .collect::<Map<_, _>>();
 
-    let request_nodes = graph
+    let request_nodes = task_graph
         .required_by
         .keys()
         .filter_map(|k| {
@@ -548,8 +680,8 @@ pub fn export(graph: &TaskGraph) {
         })
         .collect::<Map<_, _>>();
 
-    for (source, data_ids) in &graph.will_provide_data {
-        for (target, request_ids) in &graph.waits_on {
+    for (source, data_ids) in &task_graph.will_provide_data {
+        for (target, request_ids) in &task_graph.waits_on {
             let mut count = 0;
             for req in request_ids {
                 if let RequestId::Data(d) = req.0 {
@@ -590,7 +722,7 @@ pub fn export(graph: &TaskGraph) {
         }
     }
 
-    for (t, r) in &graph.waits_on {
+    for (t, r) in &task_graph.waits_on {
         for (r, _dep_type) in r {
             if !matches!(r, RequestId::Data(_) | RequestId::Group(_)) {
                 let mut attributes = Vec::new();
@@ -608,7 +740,7 @@ pub fn export(graph: &TaskGraph) {
         }
     }
 
-    for (t, r) in &graph.will_fullfil_req {
+    for (t, r) in &task_graph.will_fullfil_req {
         for r in r {
             let r = request_nodes.get(r).cloned().unwrap();
             let mut attributes = Vec::new();
@@ -643,4 +775,11 @@ pub fn export(graph: &TaskGraph) {
     )
     .unwrap();
     println!("Finished writing dependency graph to file: {}", filename);
+
+    let filename = "taskeventstream.json";
+    task_graph
+        .event_stream
+        .0
+        .save(std::path::Path::new(filename));
+    println!("Finished writing event stream to file: {}", filename);
 }

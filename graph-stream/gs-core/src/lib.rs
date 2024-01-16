@@ -2,13 +2,13 @@ use std::{io::Write, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub id: u64,
     pub label: String,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Edge {
     pub from: u64,
     pub to: u64,
@@ -58,7 +58,7 @@ impl EventStream {
             .open(path)
             .unwrap();
         let mut writer = std::io::BufWriter::new(writer);
-        serde_json::to_writer(&mut writer, self).unwrap();
+        serde_json::to_writer_pretty(&mut writer, self).unwrap();
         writer.flush().unwrap();
     }
 }

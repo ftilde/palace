@@ -138,10 +138,22 @@ struct Graph {
 impl Graph {
     fn apply(&mut self, e: Event) {
         match e {
-            Event::AddNode(n) => assert_eq!(self.nodes.insert(n.id, n.label), None),
-            Event::RemoveNode(n) => assert!(self.nodes.remove(&n.id).is_some()),
-            Event::AddEdge(e) => assert_eq!(self.edges.insert(e), true),
-            Event::RemoveEdge(e) => assert_eq!(self.edges.remove(&e), true),
+            Event::AddNode(n) => assert!(
+                self.nodes.insert(n.id, n.label.clone()).is_none(),
+                "Add {:?}",
+                n
+            ),
+            Event::RemoveNode(n) => assert!(self.nodes.remove(&n.id).is_some(), "Remove {:?}", n),
+            Event::AddEdge(e) => {
+                assert!(self.nodes.contains_key(&e.from), "Add {:?}", e);
+                assert!(self.nodes.contains_key(&e.to), "Add {:?}", e);
+                assert!(self.edges.insert(e.clone()), "Add {:?}", e);
+            }
+            Event::RemoveEdge(e) => {
+                assert!(self.nodes.contains_key(&e.from), "Remove {:?}", e);
+                assert!(self.nodes.contains_key(&e.to), "Remove {:?}", e);
+                assert!(self.edges.remove(&e), "Remove {:?}", e)
+            }
         }
     }
 
@@ -152,6 +164,7 @@ impl Graph {
             let mut out = VisualGraph::new(Orientation::TopToBottom);
             let look = StyleAttr::simple();
             let mut node_map = HashMap::new();
+            println!("{:?}", self.nodes);
             for n in &self.nodes {
                 let sp0 = ShapeKind::new_box(n.1);
 
@@ -231,24 +244,24 @@ impl GraphTimeline {
 async fn main() {
     let options = CliArgs::parse();
 
-    let mut events = EventStream::new();
-    events.add(Event::AddNode(Node {
-        id: 0,
-        label: "hello".to_owned(),
-    }));
-    events.add(Event::AddNode(Node {
-        id: 1,
-        label: "world".to_owned(),
-    }));
-    events.add(Event::AddEdge(Edge { from: 0, to: 1 }));
-    events.add(Event::AddNode(Node {
-        id: 2,
-        label: "!".to_owned(),
-    }));
-    events.add(Event::AddEdge(Edge { from: 1, to: 2 }));
-    events.add(Event::AddEdge(Edge { from: 0, to: 2 }));
+    //let mut events = EventStream::new();
+    //events.add(Event::AddNode(Node {
+    //    id: 0,
+    //    label: "hello".to_owned(),
+    //}));
+    //events.add(Event::AddNode(Node {
+    //    id: 1,
+    //    label: "world".to_owned(),
+    //}));
+    //events.add(Event::AddEdge(Edge { from: 0, to: 1 }));
+    //events.add(Event::AddNode(Node {
+    //    id: 2,
+    //    label: "!".to_owned(),
+    //}));
+    //events.add(Event::AddEdge(Edge { from: 1, to: 2 }));
+    //events.add(Event::AddEdge(Edge { from: 0, to: 2 }));
 
-    events.save(&options.input);
+    //events.save(&options.input);
 
     let events = EventStream::load(&options.input);
 
