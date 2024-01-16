@@ -326,7 +326,7 @@ impl TaskGraph {
 
     pub fn will_fullfil_req(&mut self, task: TaskId, req: RequestId) {
         let entries = self.will_fullfil_req.entry(task).or_default();
-        entries.insert(req);
+        assert!(entries.insert(req));
         self.event_stream.edge_add(req, task);
     }
 

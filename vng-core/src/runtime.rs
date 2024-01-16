@@ -665,22 +665,20 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 }
             }
             RequestType::Barrier(b_info) => {
-                let task_id = match self
+                match self
                     .barrier_batcher
                     .add(b_info, BarrierItem::Barrier(b_info))
                 {
                     BatchAddResult::New(id) => {
                         self.task_graph
                             .add_implied(id, req_prio.downstream(TaskClass::Barrier));
-                        id
+                        self.task_graph.will_fullfil_req(id, req_id);
                     }
                     BatchAddResult::Existing(id) => {
                         self.task_graph
                             .try_increase_priority(id, req_prio.downstream(TaskClass::Data));
-                        id
                     }
                 };
-                self.task_graph.will_fullfil_req(task_id, req_id);
             }
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}
