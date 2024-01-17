@@ -353,8 +353,13 @@ impl GameLoop for MyGame {
 
     fn update(&mut self, _c: &mut EngineContext) {
         let mut time_step = self.timeline.current_step;
+        egui().set_style({
+            let mut style = egui::Style::default();
+            style.spacing.slider_width = _c.renderer.width() - 100.0;
+            style
+        });
         egui::Window::new("Timeline")
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, 0.0))
             .show(egui(), |ui| {
                 ui.add(
                     egui::Slider::new(&mut time_step, 0..=self.timeline.events.len())
