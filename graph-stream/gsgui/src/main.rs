@@ -28,6 +28,8 @@ struct RenderStuff {
     circles: Vec<RenderCircle>,
     texts: Vec<RenderText>,
     arrows: Vec<RenderArrow>,
+    ll: Vec2,
+    ur: Vec2,
 }
 
 impl RenderStuff {
@@ -39,6 +41,19 @@ impl RenderStuff {
             circles: Default::default(),
             texts: Default::default(),
             arrows: Default::default(),
+            ll: Vec2::splat(f32::INFINITY),
+            ur: Vec2::splat(-f32::INFINITY),
+        }
+    }
+    fn update_bounds(&mut self, p: Vec2) {
+        self.ll = self.ll.min(p);
+        self.ur = self.ur.max(p);
+    }
+    fn region_center_and_size(&self) -> Option<(Vec2, Vec2)> {
+        if self.ll.is_finite() {
+            Some(((self.ll + self.ur) * 0.5, self.ur - self.ll))
+        } else {
+            None
         }
     }
     fn draw(&self, zoom: f32) {
@@ -117,6 +132,8 @@ impl layout::core::format::RenderBackend for RenderStuff {
         size *= 2.0;
 
         self.rects.push(RenderRect { size, xy });
+        self.update_bounds(xy);
+        self.update_bounds(xy + size);
     }
 
     fn draw_line(
@@ -397,13 +414,22 @@ impl GameLoop for MyGame {
             self.timeline.go_to(self.timeline.events.len())
         }
 
+        let re = self.timeline.get_render();
+
+        if is_key_pressed(KeyCode::Space) {
+            if let Some((center, size)) = re.region_center_and_size() {
+                println!("Center: {}", center);
+                let mut camera = main_camera_mut();
+                camera.center = center;
+                camera.zoom = size.max_element();
+            }
+        }
+
         draw_rect(Vec2 { x: 0.0, y: 0.0 }, Vec2 { x: 10.0, y: 5.0 }, GREEN, -1);
 
         //set_camera(&camera);
 
         clear_background(WHITE);
-
-        let re = self.timeline.get_render();
 
         re.draw(zoom);
     }
