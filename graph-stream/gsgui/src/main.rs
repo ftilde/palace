@@ -21,17 +21,89 @@ fn to_mq(p: layout::core::geometry::Point) -> Vec2 {
     Vec2::new(p.x as f32, -p.y as f32)
 }
 
-struct Render {
-    zoom: f32,
+struct RenderStuff {
+    timestep: usize,
+    rects: Vec<RenderRect>,
+    lines: Vec<RenderLine>,
+    circles: Vec<RenderCircle>,
+    texts: Vec<RenderText>,
+    arrows: Vec<RenderArrow>,
 }
 
-impl Render {
-    fn line_size(&self) -> f32 {
-        self.zoom / 512.0
+impl RenderStuff {
+    fn empty_for_ts(timestep: usize) -> Self {
+        Self {
+            timestep,
+            rects: Default::default(),
+            lines: Default::default(),
+            circles: Default::default(),
+            texts: Default::default(),
+            arrows: Default::default(),
+        }
+    }
+    fn draw(&self, zoom: f32) {
+        let line_size = zoom / 512.0;
+
+        for rect in &self.rects {
+            draw_rect_outline(rect.xy, rect.size, line_size, BLACK, 0);
+        }
+
+        for line in &self.lines {
+            draw_line(line.start, line.stop, line_size, BLACK, 0);
+        }
+
+        for circle in &self.circles {
+            draw_rect_outline(circle.xy, circle.size, line_size, BLACK, 0);
+        }
+
+        for text in &self.texts {
+            let text_size = text.font_size as f32 / zoom * 512.0;
+            if text_size > 8.0 {
+                let text_params = TextParams {
+                    font: epaint::FontId {
+                        size: text_size,
+                        family: epaint::FontFamily::Proportional,
+                    },
+                    rotation: 0.0,
+                    color: BLACK,
+                };
+                draw_text_ex(&text.text, text.xy, TextAlign::Center, text_params);
+            }
+        }
+
+        for arrow in &self.arrows {
+            for line in arrow.points.windows(2) {
+                draw_line(line[0], line[1], line_size, BLACK, 0);
+            }
+        }
     }
 }
 
-impl layout::core::format::RenderBackend for Render {
+struct RenderRect {
+    xy: Vec2,
+    size: Vec2,
+}
+
+struct RenderLine {
+    start: Vec2,
+    stop: Vec2,
+}
+
+struct RenderCircle {
+    xy: Vec2,
+    size: Vec2,
+}
+
+struct RenderText {
+    xy: Vec2,
+    text: String,
+    font_size: f32,
+}
+struct RenderArrow {
+    points: Vec<Vec2>,
+}
+
+impl layout::core::format::RenderBackend for RenderStuff {
     fn draw_rect(
         &mut self,
         xy: layout::core::geometry::Point,
@@ -44,8 +116,7 @@ impl layout::core::format::RenderBackend for Render {
         xy -= size * 0.5;
         size *= 2.0;
 
-        draw_rect_outline(xy, size, self.line_size(), BLACK, 0);
-        //draw_rectangle(xy.x as _, xy.y as _, size.x as _, size.y as _, BLACK);
+        self.rects.push(RenderRect { size, xy });
     }
 
     fn draw_line(
@@ -54,7 +125,10 @@ impl layout::core::format::RenderBackend for Render {
         stop: layout::core::geometry::Point,
         _look: &layout::core::style::StyleAttr,
     ) {
-        draw_line(to_mq(start), to_mq(stop), self.line_size(), BLACK, 0);
+        self.lines.push(RenderLine {
+            start: to_mq(start),
+            stop: to_mq(stop),
+        });
     }
 
     fn draw_circle(
@@ -67,8 +141,7 @@ impl layout::core::format::RenderBackend for Render {
         let mut xy = to_mq(xy);
         xy -= size * 0.5;
 
-        draw_rect_outline(xy, size, self.line_size(), BLACK, 0);
-        //draw_circle_lines(xy.x as _, xy.y as _, size.x as _, self.line_size(), BLACK);
+        self.circles.push(RenderCircle { size, xy });
     }
 
     fn draw_text(
@@ -77,38 +150,11 @@ impl layout::core::format::RenderBackend for Render {
         text: &str,
         look: &layout::core::style::StyleAttr,
     ) {
-        let size = look.font_size as f32 / self.zoom * 512.0;
-        if size > 8.0 {
-            let xy = to_mq(xy);
-            let text_params = TextParams {
-                font: epaint::FontId {
-                    size,
-                    family: epaint::FontFamily::Proportional,
-                },
-                rotation: 0.0,
-                color: BLACK,
-            };
-            draw_text_ex(text, xy, TextAlign::Center, text_params);
-        }
-        //let font_size = look.font_size as _;
-        //let font_scale = 1.0;
-        //let font = None;
-
-        //let params = TextParams {
-        //    font,
-        //    font_size,
-        //    font_scale,
-        //    font_scale_aspect: 1.0,
-        //    rotation: 0.0,
-        //    color: BLACK,
-        //};
-        //let size = measure_text(text, font, font_size, font_scale);
-        //draw_text_ex(
-        //    text,
-        //    xy.x as f32 - size.width * 0.5,
-        //    xy.y as f32 - size.height * 0.5 + size.offset_y,
-        //    params,
-        //);
+        self.texts.push(RenderText {
+            xy: to_mq(xy),
+            text: text.to_owned(),
+            font_size: look.font_size as _,
+        });
     }
 
     fn draw_arrow(
@@ -121,14 +167,22 @@ impl layout::core::format::RenderBackend for Render {
     ) {
         // First the first point, position and control point are swapped:
         let s = path[0].0;
-        let e = path[1].1;
-        draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
-
-        for l in path[1..].windows(2) {
-            let s = l[0].1;
-            let e = l[1].1;
-            draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
+        //let e = path[1].1;
+        let mut points = Vec::new();
+        points.push(to_mq(s));
+        for l in &path[1..] {
+            let p = l.1;
+            points.push(to_mq(p));
         }
+        self.arrows.push(RenderArrow { points });
+
+        //draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
+
+        //for l in path[1..].windows(2) {
+        //    let s = l[0].1;
+        //    let e = l[1].1;
+        //    draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
+        //}
     }
 
     fn create_clip(
@@ -205,6 +259,7 @@ struct GraphTimeline {
     current_graph: Graph,
     current_step: usize,
     events: Vec<gs_core::Event>,
+    render_elements: RenderStuff,
 }
 
 impl GraphTimeline {
@@ -213,8 +268,27 @@ impl GraphTimeline {
             current_graph: Default::default(),
             current_step: 0,
             events: events.0,
+            render_elements: RenderStuff::empty_for_ts(0),
         };
         s
+    }
+
+    fn get_render(&mut self) -> &RenderStuff {
+        if self.current_step != self.render_elements.timestep {
+            let mut new_render = RenderStuff::empty_for_ts(self.current_step);
+
+            if let Some(mut vg) = self.current_graph.to_vg() {
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    vg.do_it(false, false, false, &mut new_render)
+                }));
+                if let Err(err) = res {
+                    println!("Error in layout: {:?}", err);
+                }
+            }
+            self.render_elements = new_render;
+        }
+
+        &self.render_elements
     }
 
     fn next(&mut self) {
@@ -290,7 +364,7 @@ impl GameLoop for MyGame {
 
         self.timeline.go_to(time_step);
 
-        {
+        let zoom = {
             let mut camera = main_camera_mut();
             let m = mouse_screen();
 
@@ -302,7 +376,8 @@ impl GameLoop for MyGame {
             camera.zoom *= zoom_factor;
             //camera.zoom *= zoom_factor;
             self.prev_mouse = m;
-        }
+            camera.zoom
+        };
 
         if is_key_pressed(KeyCode::N) {
             self.timeline.next();
@@ -323,19 +398,9 @@ impl GameLoop for MyGame {
 
         clear_background(WHITE);
 
-        if let Some(mut vg) = self.timeline.current_graph.to_vg() {
-            let mut r = Render {
-                zoom: main_camera().zoom,
-            };
+        let re = self.timeline.get_render();
 
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                vg.do_it(false, true, false, &mut r)
-            }));
-
-            if let Err(err) = res {
-                println!("Error in layout: {:?}", err);
-            }
-        }
+        re.draw(zoom);
     }
 }
 
@@ -355,6 +420,7 @@ pub async fn run() {
     let events = gs_core::EventStream::load(&options.input);
 
     let mut timeline = GraphTimeline::new(events);
+    println!("Loaded timeline with {} steps", timeline.events.len());
     timeline.go_to(100);
 
     let game = MyGame::make(timeline);
