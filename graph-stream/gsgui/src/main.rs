@@ -4,13 +4,12 @@ use std::{
 };
 
 use clap::Parser;
-use gs_core::*;
+use comfy::*;
 use layout::{
     core::{base::Orientation, geometry::Point, style::StyleAttr},
     std_shapes::shapes::{Arrow, Element, ShapeKind},
     topo::layout::VisualGraph,
 };
-use macroquad::prelude::*;
 
 #[derive(Parser)]
 struct CliArgs {
@@ -19,10 +18,18 @@ struct CliArgs {
 }
 
 fn to_mq(p: layout::core::geometry::Point) -> Vec2 {
-    Vec2::new(p.x as f32, p.y as f32)
+    Vec2::new(p.x as f32, -p.y as f32)
 }
 
-struct Render;
+struct Render {
+    zoom: f32,
+}
+
+impl Render {
+    fn line_size(&self) -> f32 {
+        self.zoom / 512.0
+    }
+}
 
 impl layout::core::format::RenderBackend for Render {
     fn draw_rect(
@@ -37,7 +44,7 @@ impl layout::core::format::RenderBackend for Render {
         xy -= size * 0.5;
         size *= 2.0;
 
-        draw_rectangle_lines(xy.x, xy.y, size.x, size.y, 2.0, BLACK);
+        draw_rect_outline(xy, size, self.line_size(), BLACK, 0);
         //draw_rectangle(xy.x as _, xy.y as _, size.x as _, size.y as _, BLACK);
     }
 
@@ -47,14 +54,7 @@ impl layout::core::format::RenderBackend for Render {
         stop: layout::core::geometry::Point,
         _look: &layout::core::style::StyleAttr,
     ) {
-        draw_line(
-            start.x as _,
-            start.y as _,
-            stop.x as _,
-            stop.y as _,
-            2.0,
-            BLACK,
-        );
+        draw_line(to_mq(start), to_mq(stop), self.line_size(), BLACK, 0);
     }
 
     fn draw_circle(
@@ -67,8 +67,8 @@ impl layout::core::format::RenderBackend for Render {
         let mut xy = to_mq(xy);
         xy -= size * 0.5;
 
-        draw_rectangle_lines(xy.x, xy.y, size.x, size.y, 2.0, BLACK);
-        //draw_circle_lines(xy.x as _, xy.y as _, size.x as _, 2.0, BLACK);
+        draw_rect_outline(xy, size, self.line_size(), BLACK, 0);
+        //draw_circle_lines(xy.x as _, xy.y as _, size.x as _, self.line_size(), BLACK);
     }
 
     fn draw_text(
@@ -77,26 +77,38 @@ impl layout::core::format::RenderBackend for Render {
         text: &str,
         look: &layout::core::style::StyleAttr,
     ) {
-        let xy = to_mq(xy);
-        let font_size = look.font_size as _;
-        let font_scale = 1.0;
-        let font = None;
+        let size = look.font_size as f32 / self.zoom * 512.0;
+        if size > 8.0 {
+            let xy = to_mq(xy);
+            let text_params = TextParams {
+                font: epaint::FontId {
+                    size,
+                    family: epaint::FontFamily::Proportional,
+                },
+                rotation: 0.0,
+                color: BLACK,
+            };
+            draw_text_ex(text, xy, TextAlign::Center, text_params);
+        }
+        //let font_size = look.font_size as _;
+        //let font_scale = 1.0;
+        //let font = None;
 
-        let params = TextParams {
-            font,
-            font_size,
-            font_scale,
-            font_scale_aspect: 1.0,
-            rotation: 0.0,
-            color: BLACK,
-        };
-        let size = measure_text(text, font, font_size, font_scale);
-        draw_text_ex(
-            text,
-            xy.x as f32 - size.width * 0.5,
-            xy.y as f32 - size.height * 0.5 + size.offset_y,
-            params,
-        );
+        //let params = TextParams {
+        //    font,
+        //    font_size,
+        //    font_scale,
+        //    font_scale_aspect: 1.0,
+        //    rotation: 0.0,
+        //    color: BLACK,
+        //};
+        //let size = measure_text(text, font, font_size, font_scale);
+        //draw_text_ex(
+        //    text,
+        //    xy.x as f32 - size.width * 0.5,
+        //    xy.y as f32 - size.height * 0.5 + size.offset_y,
+        //    params,
+        //);
     }
 
     fn draw_arrow(
@@ -110,12 +122,12 @@ impl layout::core::format::RenderBackend for Render {
         // First the first point, position and control point are swapped:
         let s = path[0].0;
         let e = path[1].1;
-        draw_line(s.x as _, s.y as _, e.x as _, e.y as _, 2.0, BLACK);
+        draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
 
         for l in path[1..].windows(2) {
             let s = l[0].1;
             let e = l[1].1;
-            draw_line(s.x as _, s.y as _, e.x as _, e.y as _, 2.0, BLACK);
+            draw_line(to_mq(s), to_mq(e), self.line_size(), BLACK, 0);
         }
     }
 
@@ -132,24 +144,26 @@ impl layout::core::format::RenderBackend for Render {
 #[derive(Default)]
 struct Graph {
     nodes: HashMap<u64, String>,
-    edges: HashSet<Edge>,
+    edges: HashSet<gs_core::Edge>,
 }
 
 impl Graph {
-    fn apply(&mut self, e: Event) {
+    fn apply(&mut self, e: gs_core::Event) {
         match e {
-            Event::AddNode(n) => assert!(
+            gs_core::Event::AddNode(n) => assert!(
                 self.nodes.insert(n.id, n.label.clone()).is_none(),
                 "Add {:?}",
                 n
             ),
-            Event::RemoveNode(n) => assert!(self.nodes.remove(&n.id).is_some(), "Remove {:?}", n),
-            Event::AddEdge(e) => {
+            gs_core::Event::RemoveNode(n) => {
+                assert!(self.nodes.remove(&n.id).is_some(), "Remove {:?}", n)
+            }
+            gs_core::Event::AddEdge(e) => {
                 assert!(self.nodes.contains_key(&e.from), "Add {:?}", e);
                 assert!(self.nodes.contains_key(&e.to), "Add {:?}", e);
                 assert!(self.edges.insert(e.clone()), "Add {:?}", e);
             }
-            Event::RemoveEdge(e) => {
+            gs_core::Event::RemoveEdge(e) => {
                 assert!(self.nodes.contains_key(&e.from), "Remove {:?}", e);
                 assert!(self.nodes.contains_key(&e.to), "Remove {:?}", e);
                 assert!(self.edges.remove(&e), "Remove {:?}", e)
@@ -164,12 +178,13 @@ impl Graph {
             let mut out = VisualGraph::new(Orientation::TopToBottom);
             let look = StyleAttr::simple();
             let mut node_map = HashMap::new();
-            println!("{:?}", self.nodes);
+            //println!("{:?}", self.nodes);
             for n in &self.nodes {
                 let sp0 = ShapeKind::new_box(n.1);
 
-                let size = measure_text(n.1, None, 10, 1.0);
-                let sz = Point::new(size.width as _, size.height as _);
+                //let size = measure_text(n.1, None, 10, 1.0);
+                //let sz = Point::new(size.width as _, size.height as _);
+                let sz = Point::new(5.0, 1.0);
 
                 let elm = Element::create(sp0, look.clone(), Orientation::LeftToRight, sz);
                 let handle = out.add_node(elm);
@@ -189,11 +204,11 @@ impl Graph {
 struct GraphTimeline {
     current_graph: Graph,
     current_step: usize,
-    events: Vec<Event>,
+    events: Vec<gs_core::Event>,
 }
 
 impl GraphTimeline {
-    fn new(events: EventStream) -> Self {
+    fn new(events: gs_core::EventStream) -> Self {
         let s = Self {
             current_graph: Default::default(),
             current_step: 0,
@@ -240,69 +255,113 @@ impl GraphTimeline {
     }
 }
 
-#[macroquad::main("BasicShapes")]
-async fn main() {
-    let options = CliArgs::parse();
+// As in other state-based example we define a global state object
+// for our game.
+pub struct MyGame {
+    timeline: GraphTimeline,
+    prev_mouse: Vec2,
+}
 
-    //let mut events = EventStream::new();
-    //events.add(Event::AddNode(Node {
-    //    id: 0,
-    //    label: "hello".to_owned(),
-    //}));
-    //events.add(Event::AddNode(Node {
-    //    id: 1,
-    //    label: "world".to_owned(),
-    //}));
-    //events.add(Event::AddEdge(Edge { from: 0, to: 1 }));
-    //events.add(Event::AddNode(Node {
-    //    id: 2,
-    //    label: "!".to_owned(),
-    //}));
-    //events.add(Event::AddEdge(Edge { from: 1, to: 2 }));
-    //events.add(Event::AddEdge(Edge { from: 0, to: 2 }));
-
-    //events.save(&options.input);
-
-    let events = EventStream::load(&options.input);
-
-    let mut timeline = GraphTimeline::new(events);
-
-    let sh = screen_height();
-    let sw = screen_width();
-    let ssize = Vec2::new(sw, sh);
-    let mut camera = Camera2D::from_display_rect(Rect::new(0.0, sh, sw, -sh));
-    let mut actual_zoom = 1.0;
-
-    loop {
-        let md = mouse_delta_position() * ssize * 0.5 / actual_zoom;
-        if is_mouse_button_down(MouseButton::Left) {
-            camera.target += md;
+impl MyGame {
+    fn make(timeline: GraphTimeline) -> Self {
+        Self {
+            timeline,
+            prev_mouse: Vec2::new(0.0, 0.0),
         }
-        let zoom_factor = (mouse_wheel().1 * 0.05).exp();
-        camera.zoom *= zoom_factor;
-        actual_zoom *= zoom_factor;
+    }
+}
+
+// Everything interesting happens here.
+impl GameLoop for MyGame {
+    fn new(_c: &mut EngineState) -> Self {
+        todo!()
+    }
+
+    fn update(&mut self, _c: &mut EngineContext) {
+        let mut time_step = self.timeline.current_step;
+        egui::Window::new("Timeline")
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(egui(), |ui| {
+                ui.add(
+                    egui::Slider::new(&mut time_step, 0..=self.timeline.events.len())
+                        .text("Time step"),
+                );
+            });
+
+        self.timeline.go_to(time_step);
+
+        {
+            let mut camera = main_camera_mut();
+            let m = mouse_screen();
+
+            if is_mouse_button_down(MouseButton::Left) {
+                let d = camera.screen_to_world(self.prev_mouse) - camera.screen_to_world(m);
+                camera.center += d;
+            }
+            let zoom_factor = (-mouse_wheel().1 * 0.05).exp();
+            camera.zoom *= zoom_factor;
+            //camera.zoom *= zoom_factor;
+            self.prev_mouse = m;
+        }
 
         if is_key_pressed(KeyCode::N) {
-            timeline.next();
+            self.timeline.next();
         }
         if is_key_pressed(KeyCode::P) {
-            timeline.prev();
+            self.timeline.prev();
         }
-        if is_key_pressed(KeyCode::Key0) {
-            timeline.go_to(0)
+        if is_key_pressed(KeyCode::R) {
+            self.timeline.go_to(0)
         }
         if is_key_pressed(KeyCode::G) {
-            timeline.go_to(timeline.events.len())
+            self.timeline.go_to(self.timeline.events.len())
         }
 
-        set_camera(&camera);
+        draw_rect(Vec2 { x: 0.0, y: 0.0 }, Vec2 { x: 10.0, y: 5.0 }, GREEN, -1);
+
+        //set_camera(&camera);
 
         clear_background(WHITE);
 
-        if let Some(mut vg) = timeline.current_graph.to_vg() {
-            vg.do_it(false, false, false, &mut Render);
-        }
+        if let Some(mut vg) = self.timeline.current_graph.to_vg() {
+            let mut r = Render {
+                zoom: main_camera().zoom,
+            };
 
-        next_frame().await
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                vg.do_it(false, true, false, &mut r)
+            }));
+
+            if let Err(err) = res {
+                println!("Error in layout: {:?}", err);
+            }
+        }
     }
+}
+
+pub fn _comfy_default_config(config: GameConfig) -> GameConfig {
+    config
+}
+
+pub async fn run() {
+    // comfy includes a `define_versions!()` macro that creates a `version_str()`
+    // function that returns a version from cargo & git.
+    init_game_config("Graph Viewer".to_string(), "v0.0.1", _comfy_default_config);
+
+    let engine = EngineState::new();
+
+    let options = CliArgs::parse();
+
+    let events = gs_core::EventStream::load(&options.input);
+
+    let mut timeline = GraphTimeline::new(events);
+    timeline.go_to(100);
+
+    let game = MyGame::make(timeline);
+
+    run_comfy_main_async(game, engine).await;
+}
+
+fn main() {
+    pollster::block_on(run());
 }

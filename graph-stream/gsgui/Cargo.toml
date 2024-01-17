@@ -8,5 +8,14 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.4.16", features = ['derive'] }
 layout-rs = "0.1.1"
-macroquad = "0.4.4"
+#macroquad = "0.4.4"
 gs-core = { path = "../gs-core" }
+comfy = "0.3.1"
+
+[workspace]
+
+[profile.release]
+debug = true
+#lto = true
+#codegen-units = 1
+panic = "unwind"

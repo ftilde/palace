@@ -12,8 +12,6 @@ members = [
     "state-link",
     "state-link-derive",
     "py-vng",
-    "graph-stream/gsgui",
-    "graph-stream/gs-core",
 ]
 
 resolver = "2"
