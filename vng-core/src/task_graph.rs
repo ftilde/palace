@@ -282,14 +282,19 @@ impl TaskGraph {
         if !self.required_by.contains_key(&wanted) {
             self.event_stream.node_add(wanted);
         }
-        self.event_stream.edge_add(wants, wanted);
 
-        self.required_by.entry(wanted).or_default().insert(wants);
-
-        self.waits_on
+        if self
+            .waits_on
             .entry(wants)
             .or_default()
-            .insert(wanted, progress_indicator);
+            .insert(wanted, progress_indicator)
+            .is_none()
+        {
+            self.event_stream.edge_add(wants, wanted);
+        } else {
+            //println!("Already waiting {:?}", wants);
+        }
+        self.required_by.entry(wanted).or_default().insert(wants);
         self.implied_ready.remove(&wants);
 
         if let RequestId::Data(d) = wanted {
