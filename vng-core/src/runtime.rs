@@ -416,11 +416,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         assert!(self.data.request_queue.is_empty());
                         // Drain hints
                         self.data.hints.completed.replace(Set::new());
+                        self.register_produced_data();
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Ready(e) => {
+                        self.register_produced_data();
                         println!("Execution errored, exporting task graph.");
                         crate::task_graph::export(&self.task_graph);
                         return e;
@@ -431,10 +433,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
                             *resolved_deps = old_hints;
                         }
+                        self.register_produced_data();
                         self.enqueue_requested(task_id);
                     }
                 };
-                self.register_produced_data();
             } else {
                 if self.task_graph.has_open_tasks() {
                     let stuck_time = match stuck_state {
@@ -665,20 +667,22 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 }
             }
             RequestType::Barrier(b_info) => {
-                match self
+                let id = match self
                     .barrier_batcher
                     .add(b_info, BarrierItem::Barrier(b_info))
                 {
                     BatchAddResult::New(id) => {
                         self.task_graph
                             .add_implied(id, req_prio.downstream(TaskClass::Barrier));
-                        self.task_graph.will_fullfil_req(id, req_id);
+                        id
                     }
                     BatchAddResult::Existing(id) => {
                         self.task_graph
                             .try_increase_priority(id, req_prio.downstream(TaskClass::Data));
+                        id
                     }
                 };
+                self.task_graph.will_fullfil_req(id, req_id);
             }
             RequestType::CmdBufferCompletion(_id) => {}
             RequestType::CmdBufferSubmission(_id) => {}

@@ -287,7 +287,15 @@ impl Graph {
 
             for (e, c) in &self.edges {
                 let arrow = Arrow::simple(&c.to_string());
-                out.add_edge(arrow, node_map[&e.from], node_map[&e.to]);
+                let from = node_map.get(&e.from);
+                let to = node_map.get(&e.to);
+                if from.is_none() {
+                    panic!("No node for {:?}, {:?}->{:?}", e.from, e.from, e.to);
+                }
+                if to.is_none() {
+                    panic!("No node for {:?}, {:?}->{:?}", e.to, e.from, e.to);
+                }
+                out.add_edge(arrow, *from.unwrap(), *to.unwrap());
             }
 
             Some(out)

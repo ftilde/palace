@@ -236,14 +236,14 @@ impl GraphEventStream {
 #[derive(Default)]
 struct HighLevelGraph {
     depends_on: Map<TaskId, Map<TaskId, usize>>,
-    provides_for: Map<TaskId, Map<TaskId, usize>>,
+    //provides_for: Map<TaskId, Map<TaskId, usize>>,
     event_stream: GraphEventStream,
 }
 
 impl HighLevelGraph {
     fn add_task(&mut self, t: TaskId) {
         assert!(self.depends_on.insert(t, Default::default()).is_none());
-        assert!(self.provides_for.insert(t, Default::default()).is_none());
+        //assert!(self.provides_for.insert(t, Default::default()).is_none());
         self.event_stream.node_add(t);
     }
     fn add_dependency(&mut self, from: TaskId, to: TaskId) {
@@ -261,33 +261,52 @@ impl HighLevelGraph {
         }
         *edge_entry += 1;
 
-        let edge_entry = self
-            .provides_for
-            .entry(to)
-            .or_default()
-            .entry(from)
-            .or_default();
-        *edge_entry += 1;
+        //let edge_entry = self
+        //    .provides_for
+        //    .entry(to)
+        //    .or_default()
+        //    .entry(from)
+        //    .or_default();
+        //*edge_entry += 1;
+    }
+    fn remove_dependency(&mut self, from: TaskId, to: TaskId) {
+        let edge_entry = self.depends_on.get_mut(&from).unwrap().get_mut(&to);
+        assert!(edge_entry.is_some(), "F {:?} T {:?}", from, to);
+        let edge_entry = edge_entry.unwrap();
+        *edge_entry -= 1;
+        if *edge_entry == 0 {
+            self.event_stream.edge_remove(from, to, 1);
+            //TODO: Do we need to remove from set?
+        } else {
+            self.event_stream
+                .edge_update(from, to, *edge_entry + 1, *edge_entry);
+        }
+
+        //let edge_entry = self
+        //    .provides_for
+        //    .entry(to)
+        //    .or_default()
+        //    .get_mut(&from)
+        //    .unwrap();
+        //*edge_entry -= 1;
     }
     fn remove_task(&mut self, t: TaskId) {
-        let depends_on = self.depends_on.remove(&t);
-        assert!(depends_on.is_some());
-        for v in depends_on.unwrap() {
-            panic!(
-                "{:?} should not depend on anything anymore, but does: {:?}",
-                t, v
-            );
+        let depends_on = self.depends_on.remove(&t).unwrap();
+        //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
+        for (dep, n) in depends_on {
+            assert_eq!(n, 0, "{:?} deps on {:?}", t, dep);
         }
-        let provided = self.provides_for.remove(&t).unwrap();
-        for provided in provided.into_iter() {
-            assert!(self
-                .depends_on
-                .get_mut(&provided.0)
-                .unwrap()
-                .remove(&t)
-                .is_some());
-            self.event_stream.edge_remove(provided.0, t, provided.1);
-        }
+        //let _provided = self.provides_for.remove(&t).unwrap();
+        //for provided in provided.into_iter() {
+        //    let e = self
+        //        .depends_on
+        //        .get_mut(&provided.0)
+        //        .unwrap()
+        //        .remove(&t)
+        //        .unwrap();
+        //    assert_eq!(e, 0, "for {:?}", t);
+        //    //self.event_stream.edge_remove(provided.0, t, provided.1);
+        //}
         self.event_stream.node_remove(t);
     }
 }
@@ -298,7 +317,9 @@ pub struct TaskGraph {
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
     required_by: Map<RequestId, Set<TaskId>>,
     will_provide_data: Map<TaskId, Set<DataId>>,
+    data_provided_by: Map<DataId, Set<TaskId>>,
     will_fullfil_req: Map<TaskId, Set<RequestId>>,
+    req_fullfil_by: Map<RequestId, TaskId>,
     implied_ready: priority_queue::PriorityQueue<TaskId, Priority>,
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
@@ -410,6 +431,8 @@ impl TaskGraph {
         let entries = self.will_provide_data.entry(task).or_default();
         entries.insert(data);
         self.event_stream.edge_add(data, task, 1);
+        let entry = self.data_provided_by.entry(data).or_default();
+        assert!(entry.insert(task));
 
         for locations in self.requested_locations[&data].values() {
             for requestor in locations {
@@ -420,10 +443,14 @@ impl TaskGraph {
 
     pub fn will_fullfil_req(&mut self, task: TaskId, req: RequestId) {
         let entries = self.will_fullfil_req.entry(task).or_default();
-        assert!(entries.insert(req));
-        self.event_stream.edge_add(req, task, 1);
-        for requestor in &self.required_by[&req] {
-            self.high_level.add_dependency(*requestor, task);
+        let newly_inserted = entries.insert(req);
+        if !newly_inserted {
+            assert!(self.req_fullfil_by.insert(req, task).is_none());
+            self.event_stream.edge_add(req, task, 1);
+
+            for requestor in &self.required_by[&req] {
+                self.high_level.add_dependency(*requestor, task);
+            }
         }
     }
 
@@ -466,9 +493,15 @@ impl TaskGraph {
     pub fn resolved_implied(&mut self, id: RequestId) {
         if let RequestId::Data(d) = id {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
-            entry.remove(&d.location);
+            let fulfilled_locs = entry.remove(&d.location).unwrap();
             self.event_stream.edge_remove(id, d.id, 1);
 
+            let by = self.data_provided_by.remove(&d.id).unwrap();
+            for from in fulfilled_locs {
+                for by in &by {
+                    self.high_level.remove_dependency(from, *by);
+                }
+            }
             if entry.is_empty() {
                 self.requested_locations.remove(&d.id);
                 self.event_stream.node_remove(d.id);
@@ -477,6 +510,12 @@ impl TaskGraph {
 
         let required_by = self.required_by.remove(&id);
         let was_requested = required_by.is_some();
+
+        if let Some(by) = self.req_fullfil_by.remove(&id) {
+            for rev_dep in required_by.iter().flatten() {
+                self.high_level.remove_dependency(*rev_dep, by);
+            }
+        }
 
         for rev_dep in required_by.iter().flatten() {
             self.event_stream.edge_remove(*rev_dep, id, 1);
@@ -528,6 +567,18 @@ impl TaskGraph {
         let wpd = self.will_provide_data.remove(&id);
         for did in wpd.into_iter().flatten() {
             self.event_stream.edge_remove(did, id, 1);
+
+            self.data_provided_by
+                .get_mut(&did)
+                .and_then(|v| Some(v.remove(&id)));
+
+            if let Some(locations) = self.requested_locations.get_mut(&did) {
+                for (_loc, tids) in locations {
+                    for tid in tids.iter() {
+                        self.high_level.remove_dependency(*tid, id);
+                    }
+                }
+            }
         }
         let wfr = self.will_fullfil_req.remove(&id);
         for rid in wfr.into_iter().flatten() {
