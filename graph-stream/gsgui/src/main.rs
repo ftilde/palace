@@ -290,8 +290,8 @@ impl GraphTimeline {
         s
     }
 
-    fn get_render(&mut self) -> &RenderStuff {
-        if self.current_step != self.render_elements.timestep {
+    fn get_render(&mut self) -> (&RenderStuff, bool) {
+        let new = if self.current_step != self.render_elements.timestep {
             let mut new_render = RenderStuff::empty_for_ts(self.current_step);
 
             if let Some(mut vg) = self.current_graph.to_vg() {
@@ -303,9 +303,12 @@ impl GraphTimeline {
                 }
             }
             self.render_elements = new_render;
-        }
+            true
+        } else {
+            false
+        };
 
-        &self.render_elements
+        (&self.render_elements, new)
     }
 
     fn next(&mut self) {
@@ -351,6 +354,7 @@ impl GraphTimeline {
 pub struct MyGame {
     timeline: GraphTimeline,
     prev_mouse: Vec2,
+    auto_focus: bool,
 }
 
 impl MyGame {
@@ -358,6 +362,7 @@ impl MyGame {
         Self {
             timeline,
             prev_mouse: Vec2::new(0.0, 0.0),
+            auto_focus: true,
         }
     }
 }
@@ -368,11 +373,11 @@ impl GameLoop for MyGame {
         todo!()
     }
 
-    fn update(&mut self, _c: &mut EngineContext) {
+    fn update(&mut self, c: &mut EngineContext) {
         let mut time_step = self.timeline.current_step;
         egui().set_style({
             let mut style = egui::Style::default();
-            style.spacing.slider_width = _c.renderer.width() - 100.0;
+            style.spacing.slider_width = c.renderer.width() - 100.0;
             style
         });
         egui::Window::new("Timeline")
@@ -413,15 +418,18 @@ impl GameLoop for MyGame {
         if is_key_pressed(KeyCode::G) {
             self.timeline.go_to(self.timeline.events.len())
         }
+        if is_key_pressed(KeyCode::F) {
+            self.auto_focus = !self.auto_focus;
+        }
 
-        let re = self.timeline.get_render();
+        let (re, new) = self.timeline.get_render();
 
-        if is_key_pressed(KeyCode::Space) {
-            if let Some((center, size)) = re.region_center_and_size() {
-                println!("Center: {}", center);
+        if is_key_pressed(KeyCode::A) || (self.auto_focus && new) {
+            if let Some((center, mut size)) = re.region_center_and_size() {
                 let mut camera = main_camera_mut();
                 camera.center = center;
-                camera.zoom = size.max_element();
+                size.y *= c.renderer.width() / c.renderer.height();
+                camera.zoom = size.max_element() * 1.05;
             }
         }
 
