@@ -12,6 +12,7 @@ pub struct Node {
 pub struct Edge {
     pub from: u64,
     pub to: u64,
+    pub label: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -20,6 +21,7 @@ pub enum Event {
     RemoveNode(Node),
     AddEdge(Edge),
     RemoveEdge(Edge),
+    UpdateEdgeLabel(Edge, String),
 }
 
 impl Event {
@@ -29,6 +31,14 @@ impl Event {
             Event::RemoveNode(n) => Event::AddNode(n),
             Event::AddEdge(e) => Event::RemoveEdge(e),
             Event::RemoveEdge(e) => Event::AddEdge(e),
+            Event::UpdateEdgeLabel(e, label) => Event::UpdateEdgeLabel(
+                Edge {
+                    from: e.from,
+                    to: e.to,
+                    label,
+                },
+                e.label,
+            ),
         }
     }
 }

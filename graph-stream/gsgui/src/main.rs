@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
 use comfy::*;
@@ -215,7 +212,22 @@ impl layout::core::format::RenderBackend for RenderStuff {
 #[derive(Default)]
 struct Graph {
     nodes: HashMap<u64, String>,
-    edges: HashSet<gs_core::Edge>,
+    edges: HashMap<EdgeConnection, String>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct EdgeConnection {
+    from: u64,
+    to: u64,
+}
+
+impl From<&gs_core::Edge> for EdgeConnection {
+    fn from(value: &gs_core::Edge) -> Self {
+        Self {
+            from: value.from,
+            to: value.to,
+        }
+    }
 }
 
 impl Graph {
@@ -232,12 +244,23 @@ impl Graph {
             gs_core::Event::AddEdge(e) => {
                 assert!(self.nodes.contains_key(&e.from), "Add {:?}", e);
                 assert!(self.nodes.contains_key(&e.to), "Add {:?}", e);
-                assert!(self.edges.insert(e.clone()), "Add {:?}", e);
+                assert!(
+                    self.edges.insert((&e).into(), e.label.clone()).is_none(),
+                    "Add {:?}",
+                    e
+                );
             }
             gs_core::Event::RemoveEdge(e) => {
                 assert!(self.nodes.contains_key(&e.from), "Remove {:?}", e);
                 assert!(self.nodes.contains_key(&e.to), "Remove {:?}", e);
-                assert!(self.edges.remove(&e), "Remove {:?}", e)
+                assert!(
+                    self.edges.remove(&((&e).into())).is_some(),
+                    "Remove {:?}",
+                    e
+                )
+            }
+            gs_core::Event::UpdateEdgeLabel(e, l) => {
+                *self.edges.get_mut(&((&e).into())).unwrap() = l;
             }
         }
     }
@@ -262,8 +285,8 @@ impl Graph {
                 node_map.insert(n.0, handle);
             }
 
-            for e in &self.edges {
-                let arrow = Arrow::simple("");
+            for (e, c) in &self.edges {
+                let arrow = Arrow::simple(&c.to_string());
                 out.add_edge(arrow, node_map[&e.from], node_map[&e.to]);
             }
 

@@ -2,6 +2,7 @@
 perf.data*
 flamegraph*.svg
 taskgraph.svg
+*taskeventstream.json
 foo.png
 validator_output.txt
 screenshot.png
