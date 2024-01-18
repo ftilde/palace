@@ -212,6 +212,35 @@ impl GraphEventStream {
 }
 
 #[derive(Default)]
+struct HighLevelGraph {
+    depends_on: Map<TaskId, Set<TaskId>>,
+    provides_for: Map<TaskId, Set<TaskId>>,
+    event_stream: GraphEventStream,
+}
+
+impl HighLevelGraph {
+    fn add_task(&mut self, t: TaskId) {
+        assert!(self.depends_on.insert(t, Default::default()).is_none());
+        assert!(self.provides_for.insert(t, Default::default()).is_none());
+        self.event_stream.node_add(t);
+    }
+    fn add_dependency(&mut self, from: TaskId, to: TaskId) {
+        if self.depends_on.entry(from).or_default().insert(to) {
+            self.event_stream.edge_add(from, to);
+        }
+        self.provides_for.entry(to).or_default().insert(from);
+    }
+    fn remove_task(&mut self, t: TaskId) {
+        assert!(self.depends_on.remove(&t).is_some());
+        let provided = self.provides_for.remove(&t).unwrap();
+        for provided in provided.into_iter() {
+            self.event_stream.edge_remove(provided, t);
+        }
+        self.event_stream.node_remove(t);
+    }
+}
+
+#[derive(Default)]
 pub struct TaskGraph {
     implied_tasks: Map<TaskId, TaskMetadata>,
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
@@ -224,6 +253,7 @@ pub struct TaskGraph {
     groups: Map<GroupId, Set<RequestId>>,
     requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
     event_stream: GraphEventStream,
+    high_level: HighLevelGraph,
 }
 
 trait EventStreamNode {
@@ -278,6 +308,7 @@ impl TaskGraph {
         // Hm, only relevant for the root task, i think. Could be moved somewhere else possibly
         if !self.waits_on.contains_key(&wants) {
             self.event_stream.node_add(wants);
+            self.high_level.add_task(wants);
         }
         if !self.required_by.contains_key(&wanted) {
             self.event_stream.node_add(wanted);
@@ -327,18 +358,28 @@ impl TaskGraph {
         let entries = self.will_provide_data.entry(task).or_default();
         entries.insert(data);
         self.event_stream.edge_add(data, task);
+
+        for locations in self.requested_locations[&data].values() {
+            for requestor in locations {
+                self.high_level.add_dependency(*requestor, task);
+            }
+        }
     }
 
     pub fn will_fullfil_req(&mut self, task: TaskId, req: RequestId) {
         let entries = self.will_fullfil_req.entry(task).or_default();
         assert!(entries.insert(req));
         self.event_stream.edge_add(req, task);
+        for requestor in &self.required_by[&req] {
+            self.high_level.add_dependency(*requestor, task);
+        }
     }
 
     pub fn add_implied(&mut self, id: TaskId, priority: Priority) {
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
         self.waits_on.insert(id, Map::new());
 
+        self.high_level.add_task(id);
         self.event_stream.node_add(id);
 
         assert!(inserted.is_none(), "Tried to insert task twice");
@@ -446,6 +487,7 @@ impl TaskGraph {
         //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
 
         self.event_stream.node_remove(id);
+        self.high_level.remove_task(id);
     }
 
     pub fn next_implied_ready(&mut self) -> Option<TaskId> {
@@ -780,6 +822,17 @@ pub fn export(task_graph: &TaskGraph) {
     )
     .unwrap();
     println!("Finished writing dependency graph to file: {}", filename);
+
+    let filename = "hltaskeventstream.json";
+    task_graph
+        .high_level
+        .event_stream
+        .0
+        .save(std::path::Path::new(filename));
+    println!(
+        "Finished writing high level event stream to file: {}",
+        filename
+    );
 
     let filename = "taskeventstream.json";
     task_graph
