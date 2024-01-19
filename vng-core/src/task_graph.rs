@@ -10,7 +10,7 @@ use crate::{
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
 use ahash::HashMapExt;
-use gs_core::EventStream;
+use gs_core::EventStreamBuilder;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct LocatedDataId {
@@ -170,7 +170,8 @@ impl Priority {
 }
 
 #[derive(Default)]
-struct GraphEventStream(EventStream);
+struct GraphEventStream(EventStreamBuilder);
+
 impl GraphEventStream {
     // Eventstream stuff:
     fn emit_node(&mut self, action: StreamAction, item: impl EventStreamNode) {
@@ -979,6 +980,7 @@ pub fn export(task_graph: &TaskGraph) {
         .high_level
         .event_stream
         .0
+        .stream
         .save(std::path::Path::new(filename));
     println!(
         "Finished writing high level event stream to file: {}",
@@ -989,6 +991,7 @@ pub fn export(task_graph: &TaskGraph) {
     task_graph
         .event_stream
         .0
+        .stream
         .save(std::path::Path::new(filename));
     println!("Finished writing event stream to file: {}", filename);
 }

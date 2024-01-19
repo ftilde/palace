@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
 use comfy::*;
+use gs_core::Timestamp;
 use layout::{
     core::{base::Orientation, geometry::Point, style::StyleAttr},
     std_shapes::shapes::{Arrow, Element, ShapeKind},
@@ -19,7 +20,7 @@ fn to_mq(p: layout::core::geometry::Point) -> Vec2 {
 }
 
 struct RenderStuff {
-    timestep: usize,
+    event_index: usize,
     rects: Vec<RenderRect>,
     lines: Vec<RenderLine>,
     circles: Vec<RenderCircle>,
@@ -32,7 +33,7 @@ struct RenderStuff {
 impl RenderStuff {
     fn empty_for_ts(timestep: usize) -> Self {
         Self {
-            timestep,
+            event_index: timestep,
             rects: Default::default(),
             lines: Default::default(),
             circles: Default::default(),
@@ -305,8 +306,11 @@ impl Graph {
 
 struct GraphTimeline {
     current_graph: Graph,
-    current_step: usize,
-    events: Vec<gs_core::Event>,
+    current_event_index: usize,
+    current_timestep: Timestamp,
+    begin_timestep: Timestamp,
+    end_timestep: Timestamp,
+    events: Vec<(Timestamp, gs_core::Event)>,
     render_elements: RenderStuff,
 }
 
@@ -314,7 +318,10 @@ impl GraphTimeline {
     fn new(events: gs_core::EventStream) -> Self {
         let s = Self {
             current_graph: Default::default(),
-            current_step: 0,
+            current_event_index: 0,
+            current_timestep: events.begin_ts(),
+            begin_timestep: events.begin_ts(),
+            end_timestep: events.end_ts(),
             events: events.0,
             render_elements: RenderStuff::empty_for_ts(0),
         };
@@ -322,8 +329,8 @@ impl GraphTimeline {
     }
 
     fn get_render(&mut self) -> (&RenderStuff, bool) {
-        let new = if self.current_step != self.render_elements.timestep {
-            let mut new_render = RenderStuff::empty_for_ts(self.current_step);
+        let new = if self.current_event_index != self.render_elements.event_index {
+            let mut new_render = RenderStuff::empty_for_ts(self.current_event_index);
 
             if let Some(mut vg) = self.current_graph.to_vg() {
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -343,36 +350,58 @@ impl GraphTimeline {
     }
 
     fn next(&mut self) {
-        if self.current_step >= self.events.len() {
+        if self.current_event_index >= self.events.len() {
             return;
         }
 
-        let e = &self.events[self.current_step];
-        self.current_step += 1;
+        let (t, e) = &self.events[self.current_event_index];
+        self.current_event_index += 1;
+        self.current_timestep = *t;
         self.current_graph.apply(e.clone());
     }
 
     fn prev(&mut self) {
-        if self.current_step == 0 {
+        if self.current_event_index == 0 {
             return;
         }
 
-        self.current_step -= 1;
-        let e = &self.events[self.current_step];
+        self.current_event_index -= 1;
+        let (t, e) = &self.events[self.current_event_index];
+        self.current_timestep = *t;
         self.current_graph.apply(e.clone().inverse());
     }
 
-    fn go_to(&mut self, i: usize) {
+    fn go_to_index(&mut self, i: usize) {
         assert!(i <= self.events.len());
-        match i.cmp(&self.current_step) {
+        match i.cmp(&self.current_event_index) {
             std::cmp::Ordering::Less => {
-                while self.current_step != i {
+                while self.current_event_index != i {
                     self.prev()
                 }
             }
             std::cmp::Ordering::Equal => {}
             std::cmp::Ordering::Greater => {
-                while self.current_step != i {
+                while self.current_event_index != i {
+                    self.next()
+                }
+            }
+        }
+    }
+    fn go_to_timestep(&mut self, i: Timestamp) {
+        assert!(i >= self.begin_timestep);
+        assert!(i <= self.end_timestep, "{:?} <= {:?}", i, self.end_timestep);
+
+        match i.cmp(&self.current_timestep) {
+            std::cmp::Ordering::Less => {
+                while self.current_timestep > i {
+                    //println!("Prev: {:?} <= {:?}", self.current_timestep, i);
+                    self.prev()
+                }
+            }
+            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Greater => {
+                while self.current_timestep < i {
+                    //println!("Next: {:?} >= {:?}", self.current_timestep, i);
                     self.next()
                 }
             }
@@ -405,7 +434,8 @@ impl GameLoop for MyGame {
     }
 
     fn update(&mut self, c: &mut EngineContext) {
-        let mut time_step = self.timeline.current_step;
+        let mut event_index = self.timeline.current_event_index;
+        let mut time_step = self.timeline.current_timestep.ms();
         egui().set_style({
             let mut style = egui::Style::default();
             style.spacing.slider_width = c.renderer.width() - 100.0;
@@ -415,12 +445,20 @@ impl GameLoop for MyGame {
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, 0.0))
             .show(egui(), |ui| {
                 ui.add(
-                    egui::Slider::new(&mut time_step, 0..=self.timeline.events.len())
+                    egui::Slider::new(&mut event_index, 0..=self.timeline.events.len())
                         .text("Time step"),
+                );
+                ui.add(
+                    egui::Slider::new(
+                        &mut time_step,
+                        self.timeline.begin_timestep.ms()..=self.timeline.end_timestep.ms(),
+                    )
+                    .text("Time step"),
                 );
             });
 
-        self.timeline.go_to(time_step);
+        self.timeline.go_to_index(event_index);
+        self.timeline.go_to_timestep(Timestamp::from_ms(time_step));
 
         let zoom = {
             let mut camera = main_camera_mut();
@@ -444,10 +482,10 @@ impl GameLoop for MyGame {
             self.timeline.prev();
         }
         if is_key_pressed(KeyCode::R) {
-            self.timeline.go_to(0)
+            self.timeline.go_to_index(0)
         }
         if is_key_pressed(KeyCode::G) {
-            self.timeline.go_to(self.timeline.events.len())
+            self.timeline.go_to_index(self.timeline.events.len())
         }
         if is_key_pressed(KeyCode::F) {
             self.auto_focus = !self.auto_focus;
@@ -491,7 +529,7 @@ pub async fn run() {
 
     let mut timeline = GraphTimeline::new(events);
     println!("Loaded timeline with {} steps", timeline.events.len());
-    timeline.go_to(100);
+    timeline.go_to_index(100);
 
     let game = MyGame::make(timeline);
 

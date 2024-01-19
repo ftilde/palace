@@ -1,3 +1,4 @@
+use std::time::Instant;
 use std::{io::Write, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -43,15 +44,47 @@ impl Event {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct EventStream(pub Vec<Event>);
+#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Timestamp(u64);
+impl Timestamp {
+    pub fn ms(&self) -> u64 {
+        self.0
+    }
+    pub fn from_ms(ms: u64) -> Self {
+        Timestamp(ms)
+    }
+}
+
+pub struct EventStreamBuilder {
+    pub stream: EventStream,
+    begin_ts: Instant,
+}
+
+impl Default for EventStreamBuilder {
+    fn default() -> Self {
+        Self {
+            stream: EventStream(Vec::new()),
+            begin_ts: Instant::now(),
+        }
+    }
+}
+impl EventStreamBuilder {
+    pub fn add(&mut self, e: Event) {
+        self.stream
+            .0
+            .push((Timestamp(self.begin_ts.elapsed().as_millis() as _), e));
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EventStream(pub Vec<(Timestamp, Event)>);
 
 impl EventStream {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn begin_ts(&self) -> Timestamp {
+        self.0.first().map(|v| v.0).unwrap()
     }
-    pub fn add(&mut self, e: Event) {
-        self.0.push(e);
+    pub fn end_ts(&self) -> Timestamp {
+        self.0.last().map(|v| v.0).unwrap()
     }
 
     pub fn load(path: &Path) -> Self {
