@@ -311,7 +311,8 @@ void main() {
                 let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
                     *ctx,
                     |(intersecting_bricks, (pos, in_brick_positions))| {
-                        let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, m_out.num_elements());
+                        let gpu_brick_out =
+                            ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements());
 
                         (
                             gpu_brick_out,

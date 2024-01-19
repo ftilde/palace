@@ -163,8 +163,11 @@ mod py {
 }
 
 impl<D: Dimension> TensorMetaData<D> {
-    pub fn num_elements(&self) -> usize {
+    pub fn num_tensor_elements(&self) -> usize {
         self.dimensions.hmul()
+    }
+    pub fn num_chunk_elements(&self) -> usize {
+        self.chunk_size.hmul()
     }
     pub fn dimension_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
         self.dimensions.zip(self.chunk_size, |a, b| {

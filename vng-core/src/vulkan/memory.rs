@@ -156,10 +156,8 @@ impl BufferStash {
     /// Safety: The buffer must have previously been allocated from this stash
     unsafe fn return_buf(&self, allocation: CachedAllocation) {
         let mut buffers = self.buffers.borrow_mut();
-        buffers
-            .get_mut(&allocation.requested_layout)
-            .unwrap()
-            .push(allocation.inner);
+        let entry = buffers.get_mut(&allocation.requested_layout).unwrap();
+        entry.push(allocation.inner);
     }
 
     /// Safety: The device must be the same that was used for all `request`s.

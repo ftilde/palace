@@ -78,7 +78,7 @@ pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
                     }
                 }
 
-                let v = sum / vol.num_elements() as f32;
+                let v = sum / vol.num_tensor_elements() as f32;
 
                 ctx.write(v);
                 Ok(())
@@ -161,7 +161,7 @@ pub fn rechunk<E: Element>(
                     .then_req_with_data(
                         ctx.into(),
                         |(intersecting_bricks, (pos, in_brick_positions))| {
-                            let brick_handle = ctx.alloc_slot(pos, m_out.num_elements());
+                            let brick_handle = ctx.alloc_slot(pos, m_out.num_chunk_elements());
                             (brick_handle, (intersecting_bricks, pos, in_brick_positions))
                         },
                     )
@@ -298,7 +298,7 @@ pub fn convolution_1d<const DIM: usize>(
                     .then_req_with_data(
                         ctx.into(),
                         |(intersecting_bricks, (pos, in_brick_positions))| {
-                            let brick_handle = ctx.alloc_slot(pos, m_out.num_elements());
+                            let brick_handle = ctx.alloc_slot(pos, m_out.num_chunk_elements());
                             (brick_handle, (intersecting_bricks, pos, in_brick_positions))
                         },
                     )
