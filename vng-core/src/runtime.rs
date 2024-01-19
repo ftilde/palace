@@ -621,15 +621,16 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     });
 
                 let data_id = data_request.id;
+                let data_req_loc = data_request.location;
                 if !already_requested {
-                    if let Some(available) = self.find_available_location(data_id) {
+                    let fulfiller_task_id = if let Some(available) =
+                        self.find_available_location(data_id)
+                    {
                         // Data should not already be present => unwrap
-                        let task_id = self
-                            .try_make_available(data_id, available, data_request.location, req_prio)
-                            .unwrap();
-                        self.task_graph.will_provide_data(task_id, data_id);
+                        self.try_make_available(data_id, available, data_req_loc, req_prio)
+                            .unwrap()
                     } else {
-                        let task_id = match data_request.source.granularity() {
+                        match data_request.source.granularity() {
                             crate::operator::ItemGranularity::Single => {
                                 // Spawn task immediately since we have all information we need
                                 let task_id = self
@@ -661,10 +662,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                     }
                                 }
                             }
-                        };
-                        self.task_graph.will_provide_data(task_id, data_id);
+                        }
+                    };
+                    self.task_graph
+                        .will_provide_data(fulfiller_task_id, data_id);
+                } else {
+                    let s = self.task_graph.who_will_provide_data(data_id).clone();
+                    for fulfiller_task_id in s {
+                        self.task_graph
+                            .will_provide_data(fulfiller_task_id, data_id);
                     }
-                }
+                };
             }
             RequestType::Barrier(b_info) => {
                 let id = match self
@@ -787,13 +795,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 }
             }
             RequestType::GarbageCollect(l) => {
+                let task_id = match l {
+                    DataLocation::Ram => TaskId::new(OperatorId::new("garbage_collect_ram"), 0),
+                    DataLocation::VRam(d) => {
+                        TaskId::new(OperatorId::new("garbage_collect_vram"), d)
+                    }
+                };
                 if !already_requested {
-                    let task_id = match l {
-                        DataLocation::Ram => TaskId::new(OperatorId::new("garbage_collect_ram"), 0),
-                        DataLocation::VRam(d) => {
-                            TaskId::new(OperatorId::new("garbage_collect_vram"), d)
-                        }
-                    };
                     let ctx = self.context(task_id);
 
                     let task = match l {
@@ -837,8 +845,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     self.task_manager.add_task(task_id, task);
                     self.task_graph
                         .add_implied(task_id, req_prio.downstream(TaskClass::GarbageCollect));
-                    self.task_graph.will_fullfil_req(task_id, req_id);
                 }
+                self.task_graph.will_fullfil_req(task_id, req_id);
             }
         }
     }
