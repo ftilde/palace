@@ -58,7 +58,7 @@ impl RenderStuff {
         let line_size = zoom / 512.0;
 
         for rect in &self.rects {
-            draw_rect_outline(rect.xy, rect.size, line_size, BLACK, 0);
+            draw_rect_outline(rect.xy, rect.size, 2.0 * line_size, rect.color, 0);
         }
 
         for line in &self.lines {
@@ -95,6 +95,7 @@ impl RenderStuff {
 struct RenderRect {
     xy: Vec2,
     size: Vec2,
+    color: comfy::Color,
 }
 
 struct RenderLine {
@@ -121,15 +122,19 @@ impl layout::core::format::RenderBackend for RenderStuff {
         &mut self,
         xy: layout::core::geometry::Point,
         size: layout::core::geometry::Point,
-        _look: &layout::core::style::StyleAttr,
+        look: &layout::core::style::StyleAttr,
         _clip: Option<layout::core::format::ClipHandle>,
     ) {
         let mut size = to_mq(size);
         let mut xy = to_mq(xy);
         xy -= size * 0.5;
         size *= 2.0;
+        let color = look.line_color.to_web_color();
+        let color = u32::from_str_radix(&color[1..], 16).unwrap();
+        let color = u32::to_be_bytes(color);
+        let color = comfy::Color::rgba8(color[0], color[1], color[2], color[3]);
 
-        self.rects.push(RenderRect { size, xy });
+        self.rects.push(RenderRect { size, xy, color });
         self.update_bounds(xy);
         self.update_bounds(xy + size);
     }
@@ -271,15 +276,27 @@ impl Graph {
             None
         } else {
             let mut out = VisualGraph::new(Orientation::TopToBottom);
-            let look = StyleAttr::simple();
             let mut node_map = HashMap::new();
             //println!("{:?}", self.nodes);
             for n in &self.nodes {
                 let sp0 = ShapeKind::new_box(n.1);
+                let mut look = StyleAttr::simple();
+                let short_name = n.1.as_str().split('0').next().unwrap();
+                let col_hex = match short_name {
+                    "allocator_ram" => 0xff0000ff,
+                    "allocator_vram" => 0xffff00ff,
+                    "allocator_vram_raw" => 0xffff00ff,
+                    "allocator_vram_image" => 0xffff00ff,
+                    "builtin::TransferManager" => 0x00ff00ff,
+                    "garbage_collect_ram" => 0x0000ffff,
+                    "garbage_collect_vram" => 0x0000ffff,
+                    _ => 0x000000ff,
+                };
 
+                look.line_color = layout::core::color::Color::new(col_hex);
                 //let size = measure_text(n.1, None, 10, 1.0);
                 //let sz = Point::new(size.width as _, size.height as _);
-                let sz = Point::new(5.0, 1.0);
+                let sz = Point::new(20.0, 5.0);
 
                 let elm = Element::create(sp0, look.clone(), Orientation::LeftToRight, sz);
                 let handle = out.add_node(elm);
@@ -508,10 +525,6 @@ impl GameLoop for MyGame {
                 camera.zoom = size.max_element() * 1.05;
             }
         }
-
-        draw_rect(Vec2 { x: 0.0, y: 0.0 }, Vec2 { x: 10.0, y: 5.0 }, GREEN, -1);
-
-        //set_camera(&camera);
 
         clear_background(WHITE);
 
