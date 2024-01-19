@@ -70,7 +70,7 @@ impl RenderStuff {
         }
 
         for text in &self.texts {
-            let text_size = text.font_size as f32 / zoom * 512.0;
+            let text_size = text.font_size as f32 / zoom * 2000.0;
             if text_size > 8.0 {
                 let text_params = TextParams {
                     font: epaint::FontId {
