@@ -459,7 +459,7 @@ impl GameLoop for MyGame {
             if let Some((center, mut size)) = re.region_center_and_size() {
                 let mut camera = main_camera_mut();
                 camera.center = center;
-                size.y *= c.renderer.width() / c.renderer.height();
+                size.y *= c.renderer.width() / (c.renderer.height() - 150.0);
                 camera.zoom = size.max_element() * 1.05;
             }
         }
