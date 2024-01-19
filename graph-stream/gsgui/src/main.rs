@@ -436,6 +436,9 @@ impl GameLoop for MyGame {
     fn update(&mut self, c: &mut EngineContext) {
         let mut event_index = self.timeline.current_event_index;
         let mut time_step = self.timeline.current_timestep.ms();
+        let prev_index = event_index;
+        let prev_time = time_step;
+
         egui().set_style({
             let mut style = egui::Style::default();
             style.spacing.slider_width = c.renderer.width() - 100.0;
@@ -457,8 +460,12 @@ impl GameLoop for MyGame {
                 );
             });
 
-        self.timeline.go_to_index(event_index);
-        self.timeline.go_to_timestep(Timestamp::from_ms(time_step));
+        if event_index != prev_index {
+            self.timeline.go_to_index(event_index);
+        }
+        if time_step != prev_time {
+            self.timeline.go_to_timestep(Timestamp::from_ms(time_step));
+        }
 
         let zoom = {
             let mut camera = main_camera_mut();
