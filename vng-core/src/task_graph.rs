@@ -240,13 +240,34 @@ struct HighLevelGraph {
     event_stream: GraphEventStream,
 }
 
+fn pseudo_tid(t: TaskId) -> (bool, TaskId) {
+    match t.op.1 {
+        "allocator_ram"
+        | "allocator_vram"
+        | "allocator_vram_raw"
+        | "allocator_vram_image"
+        | "builtin::TransferManager" => (true, TaskId::new(t.op, 0)),
+        _ => (false, t),
+    }
+}
+
 impl HighLevelGraph {
     fn add_task(&mut self, t: TaskId) {
-        assert!(self.depends_on.insert(t, Default::default()).is_none());
+        let (pseudo, t) = pseudo_tid(t);
+
+        let e = self.depends_on.entry(t);
+        if matches!(e, crate::util::MapEntry::Vacant(_)) {
+            self.event_stream.node_add(t);
+        } else {
+            assert!(pseudo);
+        }
+        e.or_default();
         //assert!(self.provides_for.insert(t, Default::default()).is_none());
-        self.event_stream.node_add(t);
     }
     fn add_dependency(&mut self, from: TaskId, to: TaskId, req: RequestId) {
+        let (_pseudo, from) = pseudo_tid(from);
+        let (_pseudo, to) = pseudo_tid(to);
+
         let edge_entry = self
             .depends_on
             .entry(from)
@@ -271,16 +292,20 @@ impl HighLevelGraph {
         //*edge_entry += 1;
     }
     fn remove_dependency(&mut self, from: TaskId, to: TaskId, req: RequestId) {
+        let (_pseudo, from) = pseudo_tid(from);
+        let (_pseudo, to) = pseudo_tid(to);
+
         let edge_entry = self.depends_on.get_mut(&from).unwrap().get_mut(&to);
         assert!(edge_entry.is_some(), "F {:?} T {:?}", from, to);
         let edge_entry = edge_entry.unwrap();
-        assert!(edge_entry.remove(&req));
-        let len = edge_entry.len();
-        if len == 0 {
-            self.event_stream.edge_remove(from, to, 1);
-            //TODO: Do we need to remove from set?
-        } else {
-            self.event_stream.edge_update(from, to, len + 1, len);
+        if edge_entry.remove(&req) {
+            let len = edge_entry.len();
+            if len == 0 {
+                self.event_stream.edge_remove(from, to, 1);
+                //TODO: Do we need to remove from set?
+            } else {
+                self.event_stream.edge_update(from, to, len + 1, len);
+            }
         }
 
         //let edge_entry = self
@@ -292,23 +317,27 @@ impl HighLevelGraph {
         //*edge_entry -= 1;
     }
     fn remove_task(&mut self, t: TaskId) {
-        let depends_on = self.depends_on.remove(&t).unwrap();
-        //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
-        for (dep, n) in depends_on {
-            assert!(n.is_empty(), "{:?} deps on {:?}", t, dep);
+        let (pseudo, t) = pseudo_tid(t);
+
+        if !pseudo {
+            let depends_on = self.depends_on.remove(&t).unwrap();
+            //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
+            for (dep, n) in depends_on {
+                assert!(n.is_empty(), "{:?} deps on {:?}", t, dep);
+            }
+            //let _provided = self.provides_for.remove(&t).unwrap();
+            //for provided in provided.into_iter() {
+            //    let e = self
+            //        .depends_on
+            //        .get_mut(&provided.0)
+            //        .unwrap()
+            //        .remove(&t)
+            //        .unwrap();
+            //    assert_eq!(e, 0, "for {:?}", t);
+            //    //self.event_stream.edge_remove(provided.0, t, provided.1);
+            //}
+            self.event_stream.node_remove(t);
         }
-        //let _provided = self.provides_for.remove(&t).unwrap();
-        //for provided in provided.into_iter() {
-        //    let e = self
-        //        .depends_on
-        //        .get_mut(&provided.0)
-        //        .unwrap()
-        //        .remove(&t)
-        //        .unwrap();
-        //    assert_eq!(e, 0, "for {:?}", t);
-        //    //self.event_stream.edge_remove(provided.0, t, provided.1);
-        //}
-        self.event_stream.node_remove(t);
     }
 }
 
