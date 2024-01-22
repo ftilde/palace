@@ -519,6 +519,7 @@ pub struct Storage {
     new_data: super::NewDataManager,
     id: DeviceId,
     garbage_collect_id_gen: IdGenerator<GarbageCollectId>,
+    manual_garbage_returns: Cell<u64>,
 }
 
 impl Storage {
@@ -534,6 +535,7 @@ impl Storage {
             new_data: Default::default(),
             id: device,
             garbage_collect_id_gen: Default::default(),
+            manual_garbage_returns: 0.into(),
         }
     }
 
@@ -571,7 +573,8 @@ impl Storage {
         self.allocator.allocated() as _
     }
     pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) -> usize {
-        let mut collected = 0;
+        let mut collected = self.manual_garbage_returns.get() as usize;
+        self.manual_garbage_returns.set(0);
 
         let mut unused = self.old_unused.borrow_mut();
         while unused
@@ -880,6 +883,14 @@ impl Storage {
             }),
             _marker: Default::default(),
         }
+    }
+
+    pub fn allocated(&self) -> u64 {
+        self.allocator.allocated()
+    }
+
+    pub fn capacity(&self) -> Option<u64> {
+        self.allocator.capacity
     }
 
     pub(crate) fn allocate_image(
@@ -1254,12 +1265,17 @@ impl VulkanState for Allocation {
             size: self.size,
             buffer: self.buffer,
         };
+        context
+            .storage
+            .manual_garbage_returns
+            .set(context.storage.manual_garbage_returns.get() + self.size);
         context.storage.deallocate(alloc)
     }
 }
 
 pub struct ImageAllocation {
     allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
+    pub size: u64,
     pub image: vk::Image,
 }
 
@@ -1267,8 +1283,13 @@ impl VulkanState for ImageAllocation {
     unsafe fn deinitialize(&mut self, context: &DeviceContext) {
         let alloc = ImageAllocation {
             allocation: std::mem::replace(&mut self.allocation, MaybeUninit::uninit()),
+            size: self.size,
             image: self.image,
         };
+        context
+            .storage
+            .manual_garbage_returns
+            .set(context.storage.manual_garbage_returns.get() + self.size);
         context.storage.deallocate_image(alloc)
     }
 }
@@ -1420,6 +1441,7 @@ impl Allocator {
 
         Ok(ImageAllocation {
             allocation: MaybeUninit::new(allocation),
+            size,
             image,
         })
     }
