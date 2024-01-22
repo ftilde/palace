@@ -656,7 +656,13 @@ impl Storage {
                     break;
                 };
             }
-            println!("Garbage collect GPU ({:?}): {}", longevity, collected_local);
+            if collected_local > 0 {
+                println!(
+                    "Garbage collect GPU ({:?}): {}",
+                    longevity,
+                    bytesize::to_string(collected_local as _, true)
+                );
+            }
         }
         for brick_map in indices_to_unref {
             for (_pos, brick_ref) in brick_map {
@@ -692,8 +698,9 @@ impl Storage {
         }
 
         println!(
-            "Garbage collect GPU: {}B | Unindexed: {}B",
-            collected, unindexed
+            "Garbage collect GPU: {} | Unindexed: {}",
+            bytesize::to_string(collected as _, true),
+            bytesize::to_string(unindexed as _, true),
         );
 
         if collected > 0 {

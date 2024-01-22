@@ -558,7 +558,13 @@ impl Storage {
                 };
                 goal_in_bytes = rest;
             }
-            println!("Garbage collect RAM ({:?}): {}B", longevity, collected);
+            if collected > 0 {
+                println!(
+                    "Garbage collect RAM ({:?}): {}",
+                    longevity,
+                    bytesize::to_string(collected as _, true)
+                );
+            }
             collected_total += collected;
         }
 
