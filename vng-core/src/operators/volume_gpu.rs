@@ -10,6 +10,7 @@ use crate::{
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::{gpu, Element},
+    task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -94,8 +95,8 @@ void main()
                         )
                     });
 
-                let mut brick_stream =
-                    ctx.submit_unordered_with_data(positions.iter().map(|pos| {
+                let mut brick_stream = ctx
+                    .submit_unordered_with_data(positions.iter().map(|pos| {
                         (
                             input.chunks.request_inplace_gpu(
                                 device.id,
@@ -105,12 +106,11 @@ void main()
                             ),
                             *pos,
                         )
-                    }));
+                    }))
+                    .then_req_with_data(*ctx, |(inplace, pos)| (inplace.alloc(), pos));
 
                 while let Some((inplace, pos)) = brick_stream.next().await {
                     let brick_info = m.chunk_info(pos);
-
-                    let inplace = ctx.submit(inplace.alloc()).await;
 
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
