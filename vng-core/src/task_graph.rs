@@ -122,7 +122,7 @@ struct TaskMetadata {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskClass {
     GarbageCollect = 1,
     Barrier = 2,
@@ -161,11 +161,11 @@ impl Priority {
         Priority {
             level: self.level + 1,
             progress: 0,
-            class,
+            class: class.max(self.class),
         }
     }
     fn prio(&self) -> u32 {
-        self.progress << 16 + self.level
+        ((self.class as u32) << 24) + (self.progress << 12) + self.level
     }
 }
 

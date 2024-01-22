@@ -52,30 +52,41 @@ impl std::hash::Hash for DataRequestItem {
     }
 }
 
-#[derive(Default)]
-struct TaskIdManager {
-    counts: Map<OperatorId, usize>,
-}
-
-impl TaskIdManager {
-    fn gen_id(&mut self, op: OperatorId) -> TaskId {
-        let v = self.counts.entry(op).or_insert(0);
-        let ret = *v;
-        *v = *v + 1;
-        TaskId::new(op, ret)
-    }
-}
-
-struct RequestBatch<'inv> {
-    items: Set<DataRequestItem>,
+struct OperatorBatches<'inv> {
+    unfinished: Set<DataRequestItem>,
+    unfinished_batch_id: TaskId,
+    finished: Map<TaskId, Set<DataRequestItem>>,
     op: &'inv dyn OpaqueOperator,
-    batch_id: TaskId,
+    task_counter: crate::util::IdGenerator<u64>,
+}
+
+impl<'inv> OperatorBatches<'inv> {
+    fn new(source: &'inv dyn OpaqueOperator) -> Self {
+        let task_counter: crate::util::IdGenerator<u64> = Default::default();
+        let first_batch_id = TaskId::new(source.id(), task_counter.next() as _);
+        OperatorBatches {
+            unfinished: Set::new(),
+            unfinished_batch_id: first_batch_id,
+            finished: Map::new(),
+            op: source,
+            task_counter,
+        }
+    }
+    fn finish_current(&mut self) -> (TaskId, Set<DataRequestItem>) {
+        let items = Set::new();
+        let old_batch = std::mem::replace(&mut self.unfinished, items);
+        let ret = (self.unfinished_batch_id, old_batch);
+
+        let new_batch_id = TaskId::new(self.op.id(), self.task_counter.next() as _);
+        self.unfinished_batch_id = new_batch_id;
+
+        ret
+    }
 }
 
 #[derive(Default)]
 struct RequestBatcher<'inv> {
-    pending_batches: Map<OperatorId, RequestBatch<'inv>>,
-    task_id_manager: TaskIdManager,
+    pending_batches: Map<OperatorId, OperatorBatches<'inv>>,
 }
 
 enum BatchAddResult {
@@ -84,41 +95,48 @@ enum BatchAddResult {
 }
 
 impl<'inv> RequestBatcher<'inv> {
-    fn add(&mut self, request: DataRequest<'inv>) -> BatchAddResult {
+    fn add(&mut self, request: DataRequest<'inv>, max_batch_size: usize) -> BatchAddResult {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
             id: request.id,
             item: request.item,
         };
-        match self.pending_batches.entry(op_id) {
-            crate::util::MapEntry::Vacant(o) => {
-                let mut items = Set::new();
-                items.insert(req_item);
-                let batch_id = self.task_id_manager.gen_id(op_id);
-                o.insert(RequestBatch {
-                    items,
-                    op: source,
-                    batch_id,
-                });
-                BatchAddResult::New(batch_id)
-            }
-            crate::util::MapEntry::Occupied(mut o) => {
-                let entry = o.get_mut();
-                entry.items.insert(req_item);
-                BatchAddResult::Existing(entry.batch_id)
-            }
+
+        let batches = self
+            .pending_batches
+            .entry(op_id)
+            .or_insert_with(|| OperatorBatches::new(source));
+        let overly_full = batches.unfinished.len() >= max_batch_size;
+
+        if overly_full {
+            let (finished_tid, finished_batch) = batches.finish_current();
+            batches.finished.insert(finished_tid, finished_batch);
+        }
+
+        let new_batch = batches.unfinished.is_empty();
+        batches.unfinished.insert(req_item);
+
+        if new_batch {
+            BatchAddResult::New(batches.unfinished_batch_id)
+        } else {
+            BatchAddResult::Existing(batches.unfinished_batch_id)
         }
     }
 
-    fn gen_single_task_id(&mut self, op_id: OperatorId) -> TaskId {
-        self.task_id_manager.gen_id(op_id)
-    }
+    fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, Vec<TypeErased>) {
+        let batches = self.pending_batches.get_mut(&tid.operator()).unwrap();
+        let items = if batches.unfinished_batch_id == tid {
+            let (n_tid, finished_batch) = batches.finish_current();
+            assert_eq!(tid, n_tid);
+            finished_batch
+        } else {
+            batches.finished.remove(&tid).unwrap()
+        };
 
-    fn get(&mut self, op: OperatorId) -> (&'inv dyn OpaqueOperator, Vec<TypeErased>) {
-        let batch = self.pending_batches.remove(&op).unwrap();
-        let items = batch.items.into_iter().map(|i| i.item).collect::<Vec<_>>();
-        (batch.op, items)
+        let items = items.into_iter().map(|i| i.item).collect::<Vec<_>>();
+
+        (batches.op, items)
     }
 }
 
@@ -360,7 +378,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         if let Some(t) = self.barrier_batcher.get(self.context(id), id) {
             t
         } else {
-            let (op, batch) = self.request_batcher.get(id.operator());
+            let (op, batch) = self.request_batcher.get(id);
             let context = self.context(id);
             //Safety: The argument batch is precisely for the returned operator, and thus of the right
             //type.
@@ -623,47 +641,33 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let data_id = data_request.id;
                 let data_req_loc = data_request.location;
                 if !already_requested {
-                    let fulfiller_task_id = if let Some(available) =
-                        self.find_available_location(data_id)
-                    {
-                        // Data should not already be present => unwrap
-                        self.try_make_available(data_id, available, data_req_loc, req_prio)
-                            .unwrap()
-                    } else {
-                        match data_request.source.granularity() {
-                            crate::operator::ItemGranularity::Single => {
-                                // Spawn task immediately since we have all information we need
-                                let task_id = self
-                                    .request_batcher
-                                    .gen_single_task_id(data_request.source.id());
-                                let context = self.context(task_id);
-                                let items = vec![data_request.item];
-                                //Safety: The item is precisely for the returned operator, and thus of the right type.
-                                let task = unsafe { data_request.source.compute(context, items) };
-                                self.task_graph
-                                    .add_implied(task_id, req_prio.downstream(TaskClass::Data));
-                                self.task_manager.add_task(task_id, task);
-                                task_id
-                            }
-                            crate::operator::ItemGranularity::Batched => {
-                                // Add item to batcher to spawn later
-                                match self.request_batcher.add(data_request) {
-                                    BatchAddResult::New(id) => {
-                                        self.task_graph
-                                            .add_implied(id, req_prio.downstream(TaskClass::Data));
-                                        id
-                                    }
-                                    BatchAddResult::Existing(id) => {
-                                        self.task_graph.try_increase_priority(
-                                            id,
-                                            req_prio.downstream(TaskClass::Data),
-                                        );
-                                        id
-                                    }
+                    let fulfiller_task_id =
+                        if let Some(available) = self.find_available_location(data_id) {
+                            // Data should not already be present => unwrap
+                            self.try_make_available(data_id, available, data_req_loc, req_prio)
+                                .unwrap()
+                        } else {
+                            let batch_size = match data_request.source.granularity() {
+                                crate::operator::ItemGranularity::Single => 1,
+                                crate::operator::ItemGranularity::Batched => 128,
+                            };
+                            // Add item to batcher to spawn later
+                            match self.request_batcher.add(data_request, batch_size) {
+                                BatchAddResult::New(id) => {
+                                    self.task_graph
+                                        .add_implied(id, req_prio.downstream(TaskClass::Data));
+                                    id
+                                }
+                                BatchAddResult::Existing(id) => {
+                                    assert_ne!(batch_size, 1);
+                                    self.task_graph.try_increase_priority(
+                                        id,
+                                        req_prio.downstream(TaskClass::Data),
+                                    );
+                                    id
                                 }
                             }
-                        }
-                    };
+                        };
                     self.task_graph
                         .will_provide_data(fulfiller_task_id, data_id);
                 } else {
@@ -909,7 +913,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         // generated by the associated task. This is ensured by specifying an output type of
         // `Never`.
         let op_id = OperatorId::new("RunTime::resolve");
-        let task_id = self.request_batcher.task_id_manager.gen_id(op_id);
+        let task_id = TaskId::new(op_id, 0);
         let mut task = task(self.context(task_id));
 
         loop {
