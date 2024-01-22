@@ -11,3 +11,4 @@ vng-nifti = { path = "../vng-nifti" }
 winit = "0.28"
 clap = { version = "4.0", features = ["derive"] }
 cgmath = { version="0.18.0" }
+bytesize = "1.3.0"
