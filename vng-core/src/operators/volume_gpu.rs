@@ -621,14 +621,21 @@ void main() {
                     },
                 );
 
-                let mut stream = ctx.submit_unordered_with_data(requests);
-                while let Some((intersecting_bricks, (pos, in_brick_positions))) =
+                let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
+                    *ctx,
+                    |(intersecting_bricks, (pos, in_brick_positions))| {
+                        let gpu_brick_out =
+                            ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements());
+                        (
+                            gpu_brick_out,
+                            (intersecting_bricks, pos, in_brick_positions),
+                        )
+                    },
+                );
+                while let Some((gpu_brick_out, (intersecting_bricks, pos, in_brick_positions))) =
                     stream.next().await
                 {
                     let out_info = m_out.chunk_info(pos);
-                    let gpu_brick_out = ctx
-                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
-                        .await;
 
                     let out_begin = out_info.begin();
 
