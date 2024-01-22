@@ -2,7 +2,7 @@ use ash::vk;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     mem::MaybeUninit,
 };
 
@@ -35,7 +35,7 @@ const _: () = _scalar_align_check::<f64>();
 
 pub struct CachedAllocation {
     inner: Allocation,
-    requested_layout: Layout, //May differ from layout of the allocation, at least in size
+    //requested_layout: Layout, //May differ from layout of the allocation, at least in size
 }
 
 impl std::ops::Deref for CachedAllocation {
@@ -121,7 +121,7 @@ impl TempStates {
 }
 
 pub struct BufferStash {
-    buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
+    //buffers: RefCell<HashMap<Layout, Vec<Allocation>>>,
     buf_type: gpu_allocator::MemoryLocation,
     flags: vk::BufferUsageFlags,
 }
@@ -129,7 +129,7 @@ pub struct BufferStash {
 impl BufferStash {
     pub fn new(buf_type: gpu_allocator::MemoryLocation, flags: vk::BufferUsageFlags) -> Self {
         Self {
-            buffers: Default::default(),
+            //buffers: Default::default(),
             buf_type,
             flags,
         }
@@ -139,35 +139,39 @@ impl BufferStash {
         device: &'a DeviceContext,
         layout: Layout,
     ) -> Request<'a, 'inv, CachedAllocation> {
-        let mut buffers = self.buffers.borrow_mut();
-        let buffers = buffers.entry(layout).or_default();
-        let inner = if let Some(b) = buffers.pop() {
-            Request::ready(b)
-        } else {
-            device
-                .storage
-                .request_allocate_raw(device, layout, self.flags, self.buf_type)
-        };
+        //let mut buffers = self.buffers.borrow_mut();
+        //let buffers = buffers.entry(layout).or_default();
+        //let inner = if let Some(b) = buffers.pop() {
+        //    Request::ready(b)
+        //} else {
+        //    device
+        //        .storage
+        //        .request_allocate_raw(device, layout, self.flags, self.buf_type)
+        //};
+        let inner = device
+            .storage
+            .request_allocate_raw(device, layout, self.flags, self.buf_type);
         inner.map(move |inner| CachedAllocation {
             inner,
-            requested_layout: layout,
+            //requested_layout: layout,
         })
     }
     /// Safety: The buffer must have previously been allocated from this stash
-    unsafe fn return_buf(&self, allocation: CachedAllocation) {
-        let mut buffers = self.buffers.borrow_mut();
-        let entry = buffers.get_mut(&allocation.requested_layout).unwrap();
-        entry.push(allocation.inner);
+    unsafe fn return_buf(&self, device: &DeviceContext, allocation: CachedAllocation) {
+        //let mut buffers = self.buffers.borrow_mut();
+        //let entry = buffers.get_mut(&allocation.requested_layout).unwrap();
+        //entry.push(allocation.inner);
+        let _ = TempRessource::new(device, allocation.inner);
     }
 
     /// Safety: The device must be the same that was used for all `request`s.
-    pub unsafe fn deinitialize(&self, device: &DeviceContext) {
-        let mut buffers = self.buffers.borrow_mut();
-        for (_, b) in buffers.drain() {
-            for b in b {
-                device.storage.deallocate(b);
-            }
-        }
+    pub unsafe fn deinitialize(&self, _device: &DeviceContext) {
+        //let mut buffers = self.buffers.borrow_mut();
+        //for (_, b) in buffers.drain() {
+        //    for b in b {
+        //        device.storage.deallocate(b);
+        //    }
+        //}
     }
 }
 
@@ -302,6 +306,7 @@ pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     let staging_buf = ctx
         .submit(device.staging_to_gpu.request(&device, layout))
         .await;
+
     let out_ptr =
         unsafe { SendPointerMut::pack(staging_buf.mapped_ptr().unwrap().as_ptr().cast()) };
     let in_ptr = unsafe { SendPointer::pack(in_buf) };
@@ -327,13 +332,13 @@ pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     //TODO: We might be able to speed this up by returning the buf with an cmdbuf epoch after which
     //it can be used again (similar to tmpressources). This may a actually provide a benefit for
     //automatic GPU<->CPU transfers
-    ctx.submit(device.wait_for_current_cmd_buffer_completion())
-        .await;
+    //ctx.submit(device.wait_for_current_cmd_buffer_completion())
+    //    .await;
 
     // Safety: We have waited for cmd_buffer completion. Thus the staging_buf is not used
     // in copying anymore and can be freed.
     unsafe {
-        device.staging_to_gpu.return_buf(staging_buf);
+        device.staging_to_gpu.return_buf(device, staging_buf);
     }
 }
 
@@ -379,6 +384,6 @@ pub async unsafe fn copy_to_cpu<'cref, 'inv>(
     // Safety: This is exactly the buffer that we requested above and it is no longer used
     // in the compute pipeline since we have waited for the command buffer to finish.
     unsafe {
-        device.staging_to_cpu.return_buf(staging_buf);
+        device.staging_to_cpu.return_buf(device, staging_buf);
     }
 }
