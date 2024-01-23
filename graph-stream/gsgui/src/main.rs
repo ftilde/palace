@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use clap::Parser;
 use comfy::*;
@@ -70,7 +70,7 @@ impl RenderStuff {
         }
 
         for text in &self.texts {
-            let text_size = text.font_size as f32 / zoom * 2000.0;
+            let text_size = text.font_size as f32 / zoom * 1000.0;
             if text_size > 8.0 {
                 let text_params = TextParams {
                     font: epaint::FontId {
@@ -217,11 +217,11 @@ impl layout::core::format::RenderBackend for RenderStuff {
 
 #[derive(Default)]
 struct Graph {
-    nodes: HashMap<u64, String>,
-    edges: HashMap<EdgeConnection, String>,
+    nodes: BTreeMap<u64, String>,
+    edges: BTreeMap<EdgeConnection, String>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct EdgeConnection {
     from: u64,
     to: u64,
@@ -277,7 +277,6 @@ impl Graph {
         } else {
             let mut out = VisualGraph::new(Orientation::TopToBottom);
             let mut node_map = HashMap::new();
-            //println!("{:?}", self.nodes);
             for n in &self.nodes {
                 let sp0 = ShapeKind::new_box(n.1);
                 let mut look = StyleAttr::simple();
@@ -351,7 +350,7 @@ impl GraphTimeline {
 
             if let Some(mut vg) = self.current_graph.to_vg() {
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    vg.do_it(false, false, false, &mut new_render)
+                    vg.do_it(false, true, true, &mut new_render)
                 }));
                 if let Err(err) = res {
                     println!("Error in layout: {:?}", err);
