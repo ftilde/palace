@@ -21,6 +21,7 @@ fn to_mq(p: layout::core::geometry::Point) -> Vec2 {
 
 struct RenderStuff {
     event_index: usize,
+    layout_config: LayoutConfig,
     rects: Vec<RenderRect>,
     lines: Vec<RenderLine>,
     circles: Vec<RenderCircle>,
@@ -30,10 +31,17 @@ struct RenderStuff {
     ur: Vec2,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct LayoutConfig {
+    layout_arrange: bool,
+    layout_opt: bool,
+}
+
 impl RenderStuff {
-    fn empty_for_ts(timestep: usize) -> Self {
+    fn empty_for_ts(event_index: usize, layout_config: LayoutConfig) -> Self {
         Self {
-            event_index: timestep,
+            event_index,
+            layout_config,
             rects: Default::default(),
             lines: Default::default(),
             circles: Default::default(),
@@ -70,7 +78,7 @@ impl RenderStuff {
         }
 
         for text in &self.texts {
-            let text_size = text.font_size as f32 / zoom * 1000.0;
+            let text_size = text.font_size as f32 / zoom * 500.0;
             if text_size > 8.0 {
                 let text_params = TextParams {
                     font: epaint::FontId {
@@ -127,8 +135,8 @@ impl layout::core::format::RenderBackend for RenderStuff {
     ) {
         let mut size = to_mq(size);
         let mut xy = to_mq(xy);
-        xy -= size * 0.5;
-        size *= 2.0;
+        xy += size * 0.5;
+        //size *= 2.0;
         let color = look.line_color.to_web_color();
         let color = u32::from_str_radix(&color[1..], 16).unwrap();
         let color = u32::to_be_bytes(color);
@@ -331,7 +339,7 @@ struct GraphTimeline {
 }
 
 impl GraphTimeline {
-    fn new(events: gs_core::EventStream) -> Self {
+    fn new(events: gs_core::EventStream, layout_config: LayoutConfig) -> Self {
         let s = Self {
             current_graph: Default::default(),
             current_event_index: 0,
@@ -339,18 +347,25 @@ impl GraphTimeline {
             begin_timestep: events.begin_ts(),
             end_timestep: events.end_ts(),
             events: events.0,
-            render_elements: RenderStuff::empty_for_ts(0),
+            render_elements: RenderStuff::empty_for_ts(0, layout_config),
         };
         s
     }
 
-    fn get_render(&mut self) -> (&RenderStuff, bool) {
-        let new = if self.current_event_index != self.render_elements.event_index {
-            let mut new_render = RenderStuff::empty_for_ts(self.current_event_index);
+    fn get_render(&mut self, layout_config: LayoutConfig) -> (&RenderStuff, bool) {
+        let new = if self.current_event_index != self.render_elements.event_index
+            || layout_config != self.render_elements.layout_config
+        {
+            let mut new_render = RenderStuff::empty_for_ts(self.current_event_index, layout_config);
 
             if let Some(mut vg) = self.current_graph.to_vg() {
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    vg.do_it(false, true, true, &mut new_render)
+                    vg.do_it(
+                        false,
+                        !layout_config.layout_opt,
+                        !layout_config.layout_arrange,
+                        &mut new_render,
+                    )
                 }));
                 if let Err(err) = res {
                     println!("Error in layout: {:?}", err);
@@ -431,14 +446,16 @@ pub struct MyGame {
     timeline: GraphTimeline,
     prev_mouse: Vec2,
     auto_focus: bool,
+    layout_config: LayoutConfig,
 }
 
 impl MyGame {
-    fn make(timeline: GraphTimeline) -> Self {
+    fn make(timeline: GraphTimeline, layout_config: LayoutConfig) -> Self {
         Self {
             timeline,
             prev_mouse: Vec2::new(0.0, 0.0),
             auto_focus: true,
+            layout_config,
         }
     }
 }
@@ -457,7 +474,7 @@ impl GameLoop for MyGame {
 
         egui().set_style({
             let mut style = egui::Style::default();
-            style.spacing.slider_width = c.renderer.width() - 100.0;
+            style.spacing.slider_width = c.renderer.width() / 2.0;
             style
         });
         egui::Window::new("Timeline")
@@ -513,8 +530,14 @@ impl GameLoop for MyGame {
         if is_key_pressed(KeyCode::F) {
             self.auto_focus = !self.auto_focus;
         }
+        if is_key_pressed(KeyCode::O) {
+            self.layout_config.layout_opt = !self.layout_config.layout_opt;
+        }
+        if is_key_pressed(KeyCode::L) {
+            self.layout_config.layout_arrange = !self.layout_config.layout_arrange;
+        }
 
-        let (re, new) = self.timeline.get_render();
+        let (re, new) = self.timeline.get_render(self.layout_config);
 
         if is_key_pressed(KeyCode::A) || (self.auto_focus && new) {
             if let Some((center, mut size)) = re.region_center_and_size() {
@@ -544,13 +567,17 @@ pub async fn run() {
 
     let options = CliArgs::parse();
 
+    let layout_config = LayoutConfig {
+        layout_arrange: false,
+        layout_opt: false,
+    };
     let events = gs_core::EventStream::load(&options.input);
 
-    let mut timeline = GraphTimeline::new(events);
+    let mut timeline = GraphTimeline::new(events, layout_config);
     println!("Loaded timeline with {} steps", timeline.events.len());
     timeline.go_to_index(100);
 
-    let game = MyGame::make(timeline);
+    let game = MyGame::make(timeline, layout_config);
 
     run_comfy_main_async(game, engine).await;
 }
