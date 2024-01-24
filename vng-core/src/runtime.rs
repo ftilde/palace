@@ -704,7 +704,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     BatchAddResult::Existing(id) => {
                         self.task_graph
-                            .try_increase_priority(id, req_prio.downstream(TaskClass::Data));
+                            .try_increase_priority(id, req_prio.downstream(TaskClass::Barrier));
                         id
                     }
                 };
