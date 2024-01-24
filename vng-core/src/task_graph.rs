@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{collections::VecDeque, hash::Hash};
 
 use crate::{
     id::Id,
@@ -6,7 +6,7 @@ use crate::{
     storage::{DataLocation, VisibleDataLocation},
     task::AllocationId,
     threadpool::JobId,
-    util::{Map, Set},
+    util::{Map, MapEntry, Set},
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
 use ahash::HashMapExt;
@@ -391,6 +391,7 @@ pub struct TaskGraph {
     event_stream: GraphEventStream,
     high_level: HighLevelGraph,
     ts_counter: u32,
+    postponed_data_operator_tasks: Map<OperatorId, VecDeque<(TaskId, Priority)>>,
 }
 
 trait EventStreamNode {
@@ -538,13 +539,31 @@ impl TaskGraph {
             ts: next_ts,
         };
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
+        assert!(inserted.is_none(), "Tried to insert task twice");
+
         self.waits_on.insert(id, Map::new());
 
         self.high_level.add_task(id);
         self.event_stream.node_add(id);
 
-        assert!(inserted.is_none(), "Tried to insert task twice");
-        self.implied_ready.push(id, priority);
+        let run_now = if origin.class == TaskClass::Data {
+            match self.postponed_data_operator_tasks.entry(id.operator()) {
+                MapEntry::Occupied(mut v) => {
+                    v.get_mut().push_back((id, priority));
+                    false
+                }
+                MapEntry::Vacant(v) => {
+                    v.insert(VecDeque::new());
+                    true
+                }
+            }
+        } else {
+            true
+        };
+
+        if run_now {
+            self.implied_ready.push(id, priority);
+        }
     }
     pub fn try_increase_priority(&mut self, id: TaskId, origin: TaskOrigin) {
         // Note that this does not change the priority of downstream tasks recursively! This is
@@ -680,6 +699,14 @@ impl TaskGraph {
 
         self.event_stream.node_remove(id);
         self.high_level.remove_task(id);
+
+        if let Some(postponed) = self.postponed_data_operator_tasks.get_mut(&id.operator()) {
+            if let Some((next_id, priority)) = postponed.pop_front() {
+                self.implied_ready.push(next_id, priority);
+            } else {
+                self.postponed_data_operator_tasks.remove(&id.operator());
+            }
+        }
     }
 
     pub fn next_implied_ready(&mut self) -> Option<TaskId> {

@@ -663,7 +663,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         } else {
                             let batch_size = match data_request.source.granularity() {
                                 crate::operator::ItemGranularity::Single => 1,
-                                crate::operator::ItemGranularity::Batched => 32,
+                                crate::operator::ItemGranularity::Batched => 64,
                             };
                             // Add item to batcher to spawn later
                             match self.request_batcher.add(data_request, batch_size, from) {
