@@ -122,7 +122,7 @@ struct TaskMetadata {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum TaskClass {
     GarbageCollect = 1,
     Barrier = 2,
@@ -132,16 +132,40 @@ pub enum TaskClass {
 }
 
 const ROOT_PRIO: Priority = Priority {
-    level: 0,
+    origin: TaskOrigin {
+        level: 0,
+        class: TaskClass::Data,
+        progress: 0,
+    },
     progress: 0,
-    class: TaskClass::Data,
+    ts: 0,
 };
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct Priority {
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TaskOrigin {
     level: u32,
-    progress: u32,
     class: TaskClass,
+    progress: u32,
+}
+
+impl TaskOrigin {
+    pub fn merge(&self, other: TaskOrigin) -> Self {
+        //NO_PUSH_main what the hell is going on here
+        let progress = self.progress.max(other.progress);
+        assert!(progress < 0xffff);
+        Self {
+            level: self.level.max(other.level),
+            class: self.class.max(other.class),
+            progress,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Priority {
+    pub origin: TaskOrigin,
+    progress: u32,
+    ts: u32,
 }
 
 impl Ord for Priority {
@@ -157,15 +181,23 @@ impl PartialOrd for Priority {
 }
 
 impl Priority {
-    pub fn downstream(&self, class: TaskClass) -> Priority {
-        Priority {
-            level: self.level + 1,
-            progress: 0,
-            class: class.max(self.class),
-        }
+    fn prio(&self) -> u64 {
+        let progress = self.total_progress();
+        ((progress as u64) << 40) + ((self.origin.level as u64) << 32) + (1 << 32)
+            - (self.ts as u64)
     }
-    fn prio(&self) -> u32 {
-        ((self.class as u32) << 24) + (self.progress << 12) + self.level
+
+    fn total_progress(&self) -> u32 {
+        assert!(self.progress < 0xffff);
+        self.progress + self.origin.progress
+    }
+
+    pub fn downstream(&self, class: TaskClass) -> TaskOrigin {
+        TaskOrigin {
+            level: self.origin.level + 1,
+            class: class.max(self.origin.class),
+            progress: self.total_progress(),
+        }
     }
 }
 
@@ -358,6 +390,7 @@ pub struct TaskGraph {
     requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
     event_stream: GraphEventStream,
     high_level: HighLevelGraph,
+    ts_counter: u32,
 }
 
 trait EventStreamNode {
@@ -496,7 +529,14 @@ impl TaskGraph {
         }
     }
 
-    pub fn add_implied(&mut self, id: TaskId, priority: Priority) {
+    pub fn add_implied(&mut self, id: TaskId, origin: TaskOrigin) {
+        let next_ts = self.ts_counter + 1;
+        self.ts_counter = next_ts;
+        let priority = Priority {
+            origin,
+            progress: 0,
+            ts: next_ts,
+        };
         let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
         self.waits_on.insert(id, Map::new());
 
@@ -506,14 +546,14 @@ impl TaskGraph {
         assert!(inserted.is_none(), "Tried to insert task twice");
         self.implied_ready.push(id, priority);
     }
-    pub fn try_increase_priority(&mut self, id: TaskId, priority: Priority) {
+    pub fn try_increase_priority(&mut self, id: TaskId, origin: TaskOrigin) {
         // Note that this does not change the priority of downstream tasks recursively! This is
         // fine, however, and in practice only meant for batched tasks (barriers and operator
         // tasks) whose priority is only updated as long as they are not started (and thus have no
         // downstream tasks).
 
         let task_md = self.implied_tasks.get_mut(&id).unwrap();
-        task_md.priority = task_md.priority.max(priority);
+        task_md.priority.origin = task_md.priority.origin.merge(origin);
 
         self.implied_ready.change_priority(&id, task_md.priority);
     }
@@ -643,7 +683,10 @@ impl TaskGraph {
     }
 
     pub fn next_implied_ready(&mut self) -> Option<TaskId> {
-        self.implied_ready.pop().map(|(k, _v)| k)
+        self.implied_ready.pop().map(|(k, _v)| {
+            //println!("Scheduling {:?} with prio {:?}", k, _v);
+            k
+        })
     }
 
     pub fn has_open_tasks(&self) -> bool {

@@ -56,6 +56,7 @@ struct OperatorBatches<'inv> {
     unfinished: Set<DataRequestItem>,
     unfinished_batch_id: TaskId,
     finished: Map<TaskId, Set<DataRequestItem>>,
+    requestor: Option<TaskId>,
     op: &'inv dyn OpaqueOperator,
     task_counter: crate::util::IdGenerator<u64>,
 }
@@ -68,6 +69,7 @@ impl<'inv> OperatorBatches<'inv> {
             unfinished: Set::new(),
             unfinished_batch_id: first_batch_id,
             finished: Map::new(),
+            requestor: None,
             op: source,
             task_counter,
         }
@@ -95,7 +97,12 @@ enum BatchAddResult {
 }
 
 impl<'inv> RequestBatcher<'inv> {
-    fn add(&mut self, request: DataRequest<'inv>, max_batch_size: usize) -> BatchAddResult {
+    fn add(
+        &mut self,
+        request: DataRequest<'inv>,
+        max_batch_size: usize,
+        from: TaskId,
+    ) -> BatchAddResult {
         let source = &*request.source;
         let op_id = source.id();
         let req_item = DataRequestItem {
@@ -107,7 +114,8 @@ impl<'inv> RequestBatcher<'inv> {
             .pending_batches
             .entry(op_id)
             .or_insert_with(|| OperatorBatches::new(source));
-        let overly_full = batches.unfinished.len() >= max_batch_size;
+        let overly_full = batches.unfinished.len() >= max_batch_size
+            || batches.requestor.map(|t| t != from).unwrap_or(false);
 
         if overly_full {
             let (finished_tid, finished_batch) = batches.finish_current();
@@ -118,6 +126,7 @@ impl<'inv> RequestBatcher<'inv> {
         batches.unfinished.insert(req_item);
 
         if new_batch {
+            batches.requestor = Some(from);
             BatchAddResult::New(batches.unfinished_batch_id)
         } else {
             BatchAddResult::Existing(batches.unfinished_batch_id)
@@ -465,6 +474,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     if let Some(stuck_time) = stuck_time {
                         if stuck_time.elapsed() > STUCK_TIMEOUT {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
+                            for d in self.data.device_contexts {
+                                let c = d.storage.capacity().map(|c| bytesize::to_string(c, true));
+                                let a = bytesize::to_string(d.storage.allocated(), true);
+                                eprintln!("VRam utilization: {}/{:?}", a, c);
+                            }
                             crate::task_graph::export(&self.task_graph);
                             //eprintln!("Device states:");
                             //for device in self.data.device_contexts {
@@ -649,10 +663,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         } else {
                             let batch_size = match data_request.source.granularity() {
                                 crate::operator::ItemGranularity::Single => 1,
-                                crate::operator::ItemGranularity::Batched => 128,
+                                crate::operator::ItemGranularity::Batched => 32,
                             };
                             // Add item to batcher to spawn later
-                            match self.request_batcher.add(data_request, batch_size) {
+                            match self.request_batcher.add(data_request, batch_size, from) {
                                 BatchAddResult::New(id) => {
                                     self.task_graph
                                         .add_implied(id, req_prio.downstream(TaskClass::Data));
@@ -831,6 +845,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
                             loop {
+                                let c = device
+                                    .storage
+                                    .capacity()
+                                    .map(|c| bytesize::to_string(c, true));
+                                let a = bytesize::to_string(device.storage.allocated(), true);
+                                eprintln!("VRam utilization: {}/{:?}", a, c);
                                 if device
                                     .storage
                                     .try_garbage_collect(device, garbage_collect_goal)
