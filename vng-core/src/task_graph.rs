@@ -150,7 +150,7 @@ pub struct TaskOrigin {
 
 impl TaskOrigin {
     pub fn merge(&self, other: TaskOrigin) -> Self {
-        //NO_PUSH_main what the hell is going on here
+        //TODO: Maybe revisit this
         let progress = self.progress.max(other.progress);
         assert!(progress < 0xffff);
         Self {
