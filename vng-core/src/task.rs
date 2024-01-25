@@ -205,6 +205,13 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
                             None
                         }
                     }
+                    DataLocation::Disk => {
+                        if ctx.disk_cache.next_garbage_collect() > gid {
+                            Some(())
+                        } else {
+                            None
+                        }
+                    }
                     DataLocation::VRam(id) => {
                         if ctx.device_contexts[id].storage.next_garbage_collect() > gid {
                             Some(())
@@ -222,6 +229,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
     pub storage: &'cref ram::Storage,
+    pub disk_cache: &'cref disk::Storage,
     pub device_contexts: &'cref [DeviceContext],
     pub current_frame: FrameNumber,
 }
@@ -251,6 +259,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             let request_id = request.id();
             let mut poll = (request.gen_poll)(PollContext {
                 storage: self.storage,
+                disk_cache: self.disk_cache,
                 device_contexts: self.device_contexts,
                 current_frame: self.current_frame,
             });
@@ -391,6 +400,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             }
             let mut poll = (r.gen_poll)(PollContext {
                 storage: self.storage,
+                disk_cache: self.disk_cache,
                 device_contexts: self.device_contexts,
                 current_frame: self.current_frame,
             });
@@ -590,6 +600,7 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
     pub fn push_request(&mut self, (req, data): (Request<'req, 'inv, V>, D)) {
         let mut poll = (req.gen_poll)(PollContext {
             storage: self.task_context.storage,
+            disk_cache: self.task_context.disk_cache,
             device_contexts: self.task_context.device_contexts,
             current_frame: self.task_context.current_frame,
         });

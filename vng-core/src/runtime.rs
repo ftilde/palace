@@ -566,6 +566,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     ) -> Option<TaskId> {
         match (from, to) {
             (DataLocation::Ram, VisibleDataLocation::Ram) => None,
+            (DataLocation::Disk, VisibleDataLocation::Disk) => None,
             (DataLocation::VRam(source), VisibleDataLocation::VRam(target, dst_info))
                 if target == source =>
             {
@@ -609,6 +610,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
             }
+            (DataLocation::Disk, VisibleDataLocation::VRam(_target_id, _)) => {
+                todo!() //NO_PUSH_main
+            }
             (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
@@ -622,6 +626,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 self.task_graph
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
+            }
+            (DataLocation::VRam(_source_id), VisibleDataLocation::Disk) => {
+                todo!() //NO_PUSH_main
+            }
+            (DataLocation::Ram, VisibleDataLocation::Disk) => {
+                todo!() //NO_PUSH_main
+            }
+            (DataLocation::Disk, VisibleDataLocation::Ram) => {
+                todo!() //NO_PUSH_main
             }
         }
     }
@@ -826,6 +839,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::GarbageCollect(l) => {
                 let task_id = match l {
                     DataLocation::Ram => TaskId::new(OperatorId::new("garbage_collect_ram"), 0),
+                    DataLocation::Disk => TaskId::new(OperatorId::new("garbage_collect_disk"), 0),
                     DataLocation::VRam(d) => {
                         TaskId::new(OperatorId::new("garbage_collect_vram"), d)
                     }
@@ -843,6 +857,22 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                     break;
                                 } else {
                                     ctx.submit(Request::external_progress()).await;
+                                }
+                            }
+
+                            ctx.completed_requests.add(req_id);
+                            Ok(())
+                        }
+                        .into(),
+                        DataLocation::Disk => async move {
+                            let garbage_collect_goal = ctx.disk_cache.size()
+                                / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
+
+                            loop {
+                                if ctx.disk_cache.try_garbage_collect(garbage_collect_goal) > 0 {
+                                    break;
+                                } else {
+                                    panic!("Progress on disk cache should always be possible");
                                 }
                             }
 

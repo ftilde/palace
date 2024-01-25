@@ -23,12 +23,14 @@ pub struct P<L, R>(pub L, pub R);
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum DataLocation {
     Ram,
+    Disk,
     VRam(DeviceId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum VisibleDataLocation {
     Ram,
+    Disk,
     VRam(DeviceId, DstBarrierInfo),
 }
 
