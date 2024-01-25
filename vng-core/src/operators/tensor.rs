@@ -89,6 +89,13 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
             embedding_data: data,
         }
     }
+
+    pub fn cache(self) -> Self {
+        Self {
+            metadata: self.metadata,
+            chunks: crate::operator::cache(self.chunks),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -125,18 +132,20 @@ impl<D: Dimension, E> Into<TensorOperator<D, E>> for EmbeddedTensorOperator<D, E
     }
 }
 
-impl<D: Dimension, E> EmbeddedTensorOperator<D, E> {
+impl<D: Dimension, E: Element> EmbeddedTensorOperator<D, E> {
     pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
-}
 
-impl<D: Dimension, E> EmbeddedTensorOperator<D, E> {
     pub fn map_inner(self, f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, E>) -> Self {
         EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,
         }
+    }
+
+    pub fn cache(self) -> Self {
+        self.map_inner(|t| t.cache())
     }
 }
 
