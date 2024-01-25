@@ -183,7 +183,7 @@ impl PartialOrd for Priority {
 impl Priority {
     fn prio(&self) -> u64 {
         let progress = self.total_progress();
-        ((progress as u64) << 40) + ((self.origin.level as u64) << 32) + (1 << 32)
+        (((1 << 8) - (self.origin.level as u64)) << 56) + ((progress as u64) << 32) + (1 << 32)
             - (self.ts as u64)
     }
 
