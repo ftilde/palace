@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
-    storage::{ram::Storage, DataLocation, DataVersionType, VisibleDataLocation},
+    storage::{disk, ram, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -230,6 +230,7 @@ impl BarrierBatcher {
 
 pub struct RunTime {
     pub ram: crate::storage::ram::Storage,
+    pub disk: crate::storage::disk::Storage,
     pub vulkan: VulkanContext,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
@@ -248,9 +249,15 @@ impl RunTime {
         let vulkan = VulkanContext::new(gpu_storage_size)?;
         let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
         let ram = crate::storage::cpu::Storage::new(ram);
+        let disk = crate::storage::disk::MmapAllocator::new(
+            std::path::Path::new("./disk.cache"),
+            storage_size,
+        )?;
+        let disk = crate::storage::cpu::Storage::new(disk);
         let frame = FrameNumber(1.try_into().unwrap());
         Ok(RunTime {
             ram,
+            disk,
             compute_thread_pool: ComputeThreadPool::new(
                 async_result_sender.clone(),
                 num_compute_threads,
@@ -288,6 +295,7 @@ impl RunTime {
             completed_requests,
             thread_spawner,
             storage: &self.ram,
+            disk_cache: &self.disk,
             device_contexts: self.vulkan.device_contexts(),
             frame: self.frame,
             predicted_preview_tasks,
@@ -345,7 +353,8 @@ struct ContextData<'cref, 'inv> {
     hints: TaskHints,
     completed_requests: CompletedRequests,
     thread_spawner: ThreadSpawner,
-    pub storage: &'cref Storage,
+    pub storage: &'cref ram::Storage,
+    pub disk_cache: &'cref disk::Storage,
     device_contexts: &'cref [DeviceContext],
     frame: FrameNumber,
     predicted_preview_tasks: RefCell<Set<TaskId>>,
@@ -372,6 +381,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         OpaqueTaskContext {
             requests: &self.data.request_queue,
             storage: &self.data.storage,
+            disk_cache: &self.data.disk_cache,
             hints: &self.data.hints,
             completed_requests: &self.data.completed_requests,
             thread_pool: &self.data.thread_spawner,

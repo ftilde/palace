@@ -14,8 +14,9 @@ use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
+use crate::storage::disk;
 use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
-use crate::storage::ram::{RawWriteHandleUninit, Storage, WriteHandleUninit};
+use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{DataLocation, Element, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
@@ -220,7 +221,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
 
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
-    pub storage: &'cref Storage,
+    pub storage: &'cref ram::Storage,
     pub device_contexts: &'cref [DeviceContext],
     pub current_frame: FrameNumber,
 }
@@ -228,7 +229,8 @@ pub struct PollContext<'cref> {
 #[derive(Copy, Clone)]
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) requests: &'cref RequestQueue<'inv>,
-    pub(crate) storage: &'cref Storage,
+    pub(crate) storage: &'cref ram::Storage,
+    pub(crate) disk_cache: &'cref disk::Storage,
     pub(crate) completed_requests: &'cref CompletedRequests,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
@@ -451,7 +453,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
     // TODO: We may not want to expose the storage directly in the future. Currently this is used
     // for the into_main_handle methods of Thread*Handle (see storage.rs), but we could change them
     // to take a context argument instead.
-    pub fn storage(&self) -> &Storage {
+    pub fn storage(&self) -> &ram::Storage {
         &self.storage
     }
 
