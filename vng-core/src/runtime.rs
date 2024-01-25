@@ -641,15 +641,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn find_available_location(&self, datum: DataId) -> Option<DataLocation> {
         if self.data.storage.is_readable(datum) {
-            Some(DataLocation::Ram)
-        } else {
-            for device in self.data.device_contexts {
-                if device.storage.is_readable(datum) {
-                    return Some(DataLocation::VRam(device.id));
-                }
-            }
-            None
+            return Some(DataLocation::Ram);
         }
+        for device in self.data.device_contexts {
+            if device.storage.is_readable(datum) {
+                return Some(DataLocation::VRam(device.id));
+            }
+        }
+        if self.data.disk_cache.is_readable(datum) {
+            return Some(DataLocation::Disk);
+        }
+
+        None
     }
 
     fn enqueue(&mut self, from: TaskId, req: RequestInfo<'inv>) {
