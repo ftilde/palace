@@ -246,7 +246,8 @@ impl RunTime {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size)?;
-        let ram = crate::storage::ram::Storage::new(storage_size)?;
+        let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
+        let ram = crate::storage::cpu::Storage::new(ram);
         let frame = FrameNumber(1.try_into().unwrap());
         Ok(RunTime {
             ram,

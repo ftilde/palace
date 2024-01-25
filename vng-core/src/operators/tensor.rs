@@ -9,7 +9,7 @@ use crate::{
     id::{Id, Identify},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
-        ram::{InplaceHandle, ThreadInplaceHandle},
+        cpu::{InplaceHandle, ThreadInplaceHandle},
         Element,
     },
     task::{RequestStream, Task, TaskContext},
