@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use crate::{
     id::{Id, Identify},
-    storage::{disk, gpu, ram, DataLocation, DataLongevity, Element, VisibleDataLocation},
+    storage::{
+        disk, gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
+    },
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
     vulkan::{DeviceId, DstBarrierInfo},
@@ -182,7 +184,7 @@ impl<Output: Element> Operator<(), Output> {
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                location: VisibleDataLocation::Ram,
+                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -293,7 +295,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                location: VisibleDataLocation::Ram,
+                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -324,7 +326,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         Request {
             type_: RequestType::Data(DataRequest {
                 id: read_id,
-                location: VisibleDataLocation::Ram,
+                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -356,7 +358,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                location: VisibleDataLocation::Disk,
+                location: VisibleDataLocation::CPU(CpuDataLocation::Disk),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -386,7 +388,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         Request {
             type_: RequestType::Data(DataRequest {
                 id,
-                location: VisibleDataLocation::VRam(gpu, dst_info),
+                location: VisibleDataLocation::GPU(gpu, dst_info),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -425,7 +427,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         Request {
             type_: RequestType::Data(DataRequest {
                 id: read_id,
-                location: VisibleDataLocation::VRam(gpu, dst_info),
+                location: VisibleDataLocation::GPU(gpu, dst_info),
                 source: self,
                 item: TypeErased::pack(item),
             }),
@@ -492,7 +494,9 @@ pub fn cache<'op, D: std::hash::Hash + 'static, Output: Element>(
             let reqs = d.into_iter().map(|d| input.request_disk(d));
             let mut stream = ctx.submit_unordered(reqs);
             while let Some(_s) = stream.next().await {
-                //println!("Yo, we got something on disk, i think");
+                //NO_PUSH_main TODO: This does not work, because the result of this operator is
+                //available in disk_cache/ram/vram under a different dataId than this one. hmm...
+                todo!();
             }
             Ok(())
         }

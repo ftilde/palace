@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
-    storage::{disk, ram, DataLocation, DataVersionType, VisibleDataLocation},
+    storage::{disk, ram, CpuDataLocation, DataLocation, DataVersionType, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -549,6 +549,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
     fn register_produced_data(&mut self) {
         self.register_produced_data_from(self.data.storage.newest_data());
+        self.register_produced_data_from(self.data.disk_cache.newest_data());
         for device in self.data.device_contexts {
             self.register_produced_data_from(device.storage.newest_data());
         }
@@ -565,9 +566,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         req_prio: Priority,
     ) -> Option<TaskId> {
         match (from, to) {
-            (DataLocation::Ram, VisibleDataLocation::Ram) => None,
-            (DataLocation::Disk, VisibleDataLocation::Disk) => None,
-            (DataLocation::VRam(source), VisibleDataLocation::VRam(target, dst_info))
+            (
+                DataLocation::CPU(CpuDataLocation::Ram),
+                VisibleDataLocation::CPU(CpuDataLocation::Ram),
+            ) => None,
+            (
+                DataLocation::CPU(CpuDataLocation::Disk),
+                VisibleDataLocation::CPU(CpuDataLocation::Disk),
+            ) => None,
+            (DataLocation::GPU(source), VisibleDataLocation::GPU(target, dst_info))
                 if target == source =>
             {
                 let device = &self.data.device_contexts[target];
@@ -594,26 +601,45 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 }
             }
-            (DataLocation::VRam(_source), VisibleDataLocation::VRam(_target, _)) => {
+            (DataLocation::GPU(_source), VisibleDataLocation::GPU(_target, _)) => {
                 panic!("VRam to VRam transfer not implemented, yet")
             }
-            (DataLocation::Ram, VisibleDataLocation::VRam(target_id, _)) => {
+            (DataLocation::CPU(source), VisibleDataLocation::GPU(target_id, _)) => {
                 let task_id = self.transfer_manager.next_id();
-                let access = self.data.storage.register_access(id);
-                let transfer_task = self.transfer_manager.transfer_to_gpu(
-                    self.context(task_id),
-                    &self.data.device_contexts[target_id],
-                    access,
-                );
+
+                let ctx = self.context(task_id);
+                let transfer_task = match source {
+                    CpuDataLocation::Ram => {
+                        let s = self.data.storage;
+                        let access = s.register_access(id);
+                        let Ok(source) = s.read_raw(access) else {
+                            panic!("Data should already be in ram");
+                        };
+                        self.transfer_manager.transfer_to_gpu(
+                            ctx,
+                            &self.data.device_contexts[target_id],
+                            source,
+                        )
+                    }
+                    CpuDataLocation::Disk => {
+                        let s = self.data.disk_cache;
+                        let access = s.register_access(id);
+                        let Ok(source) = s.read_raw(access) else {
+                            panic!("Data should already be in disk cache");
+                        };
+                        self.transfer_manager.transfer_to_gpu(
+                            ctx,
+                            &self.data.device_contexts[target_id],
+                            source,
+                        )
+                    }
+                };
                 self.task_manager.add_task(task_id, transfer_task);
                 self.task_graph
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
             }
-            (DataLocation::Disk, VisibleDataLocation::VRam(_target_id, _)) => {
-                todo!() //NO_PUSH_main
-            }
-            (DataLocation::VRam(source_id), VisibleDataLocation::Ram) => {
+            (DataLocation::GPU(source_id), VisibleDataLocation::CPU(target)) => {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
                 let access = device.storage.register_access(device, self.data.frame, id);
@@ -621,35 +647,31 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
                     access,
+                    target,
                 );
                 self.task_manager.add_task(task_id, transfer_task);
                 self.task_graph
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
             }
-            (DataLocation::VRam(_source_id), VisibleDataLocation::Disk) => {
-                todo!() //NO_PUSH_main
-            }
-            (DataLocation::Ram, VisibleDataLocation::Disk) => {
-                todo!() //NO_PUSH_main
-            }
-            (DataLocation::Disk, VisibleDataLocation::Ram) => {
+            (DataLocation::CPU(_source), VisibleDataLocation::CPU(_target)) => {
                 todo!() //NO_PUSH_main
             }
         }
     }
 
+    //TODO: We need a "best case" argument here in order to avoid useless transfers
     fn find_available_location(&self, datum: DataId) -> Option<DataLocation> {
         if self.data.storage.is_readable(datum) {
-            return Some(DataLocation::Ram);
+            return Some(DataLocation::CPU(CpuDataLocation::Ram));
         }
         for device in self.data.device_contexts {
             if device.storage.is_readable(datum) {
-                return Some(DataLocation::VRam(device.id));
+                return Some(DataLocation::GPU(device.id));
             }
         }
         if self.data.disk_cache.is_readable(datum) {
-            return Some(DataLocation::Disk);
+            return Some(DataLocation::CPU(CpuDataLocation::Disk));
         }
 
         None
@@ -741,7 +763,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::CmdBufferSubmission(_id) => {}
             RequestType::Allocation(id, alloc) => {
                 let op_name = match alloc {
-                    crate::task::AllocationRequest::Ram(_, _) => "allocator_ram",
+                    crate::task::AllocationRequest::Ram(_, _, CpuDataLocation::Ram) => {
+                        "allocator_ram"
+                    }
+                    crate::task::AllocationRequest::Ram(_, _, CpuDataLocation::Disk) => {
+                        "allocator_disk"
+                    }
                     crate::task::AllocationRequest::VRam(_, _, _) => "allocator_vram",
                     crate::task::AllocationRequest::VRamBufRaw(_, _, _, _, _) => {
                         "allocator_vram_raw"
@@ -751,12 +778,32 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let task_id = TaskId::new(OperatorId::new(op_name), id.inner() as _);
                 let ctx = self.context(task_id);
                 let task = match alloc {
-                    crate::task::AllocationRequest::Ram(layout, data_descriptor) => async move {
+                    crate::task::AllocationRequest::Ram(
+                        layout,
+                        data_descriptor,
+                        CpuDataLocation::Ram,
+                    ) => async move {
                         loop {
                             if let Ok(_) = ctx.storage.alloc(data_descriptor, layout) {
                                 break;
                             } else {
                                 ctx.submit(ctx.storage.wait_garbage_collect()).await;
+                            }
+                        }
+                        ctx.completed_requests.add(id.into());
+                        Ok(())
+                    }
+                    .into(),
+                    crate::task::AllocationRequest::Ram(
+                        layout,
+                        data_descriptor,
+                        CpuDataLocation::Disk,
+                    ) => async move {
+                        loop {
+                            if let Ok(_) = ctx.disk_cache.alloc(data_descriptor, layout) {
+                                break;
+                            } else {
+                                ctx.submit(ctx.disk_cache.wait_garbage_collect()).await;
                             }
                         }
                         ctx.completed_requests.add(id.into());
@@ -841,17 +888,19 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
             RequestType::GarbageCollect(l) => {
                 let task_id = match l {
-                    DataLocation::Ram => TaskId::new(OperatorId::new("garbage_collect_ram"), 0),
-                    DataLocation::Disk => TaskId::new(OperatorId::new("garbage_collect_disk"), 0),
-                    DataLocation::VRam(d) => {
-                        TaskId::new(OperatorId::new("garbage_collect_vram"), d)
+                    DataLocation::CPU(CpuDataLocation::Ram) => {
+                        TaskId::new(OperatorId::new("garbage_collect_ram"), 0)
                     }
+                    DataLocation::CPU(CpuDataLocation::Disk) => {
+                        TaskId::new(OperatorId::new("garbage_collect_disk"), 0)
+                    }
+                    DataLocation::GPU(d) => TaskId::new(OperatorId::new("garbage_collect_vram"), d),
                 };
                 if !already_requested {
                     let ctx = self.context(task_id);
 
                     let task = match l {
-                        DataLocation::Ram => async move {
+                        DataLocation::CPU(CpuDataLocation::Ram) => async move {
                             let garbage_collect_goal = ctx.storage.size()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
@@ -867,7 +916,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             Ok(())
                         }
                         .into(),
-                        DataLocation::Disk => async move {
+                        DataLocation::CPU(CpuDataLocation::Disk) => async move {
                             let garbage_collect_goal = ctx.disk_cache.size()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
@@ -883,7 +932,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             Ok(())
                         }
                         .into(),
-                        DataLocation::VRam(did) => async move {
+                        DataLocation::GPU(did) => async move {
                             let device = &ctx.device_contexts[did];
                             let garbage_collect_goal = device.storage.bytes_allocated()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;

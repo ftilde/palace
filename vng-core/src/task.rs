@@ -14,9 +14,9 @@ use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
-use crate::storage::disk;
 use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
+use crate::storage::{disk, CpuDataLocation};
 use crate::storage::{DataLocation, Element, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
@@ -83,7 +83,7 @@ impl AllocationId {
 }
 
 pub enum AllocationRequest {
-    Ram(Layout, DataDescriptor),
+    Ram(Layout, DataDescriptor, CpuDataLocation),
     VRam(usize, Layout, DataDescriptor),
     VRamBufRaw(
         usize,
@@ -198,21 +198,21 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
             type_: RequestType::GarbageCollect(location),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || match location {
-                    DataLocation::Ram => {
+                    DataLocation::CPU(CpuDataLocation::Ram) => {
                         if ctx.storage.next_garbage_collect() > gid {
                             Some(())
                         } else {
                             None
                         }
                     }
-                    DataLocation::Disk => {
+                    DataLocation::CPU(CpuDataLocation::Disk) => {
                         if ctx.disk_cache.next_garbage_collect() > gid {
                             Some(())
                         } else {
                             None
                         }
                     }
-                    DataLocation::VRam(id) => {
+                    DataLocation::GPU(id) => {
                         if ctx.device_contexts[id].storage.next_garbage_collect() > gid {
                             Some(())
                         } else {
@@ -358,6 +358,14 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         layout: Layout,
     ) -> Request<'req, 'inv, RawWriteHandleUninit> {
         self.storage.request_alloc_raw(data_descriptor, layout)
+    }
+
+    pub fn alloc_raw_disk<'req>(
+        &'req self,
+        data_descriptor: DataDescriptor,
+        layout: Layout,
+    ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit> {
+        self.disk_cache.request_alloc_raw(data_descriptor, layout)
     }
 
     pub fn alloc_raw_gpu<'req>(

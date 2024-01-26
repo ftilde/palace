@@ -147,6 +147,12 @@ pub struct RawReadHandle<'a, Allocator> {
     access: AccessToken<'a, Allocator>,
 }
 
+impl<'a, Allocator> RawReadHandle<'a, Allocator> {
+    pub fn id(&self) -> DataId {
+        self.access.id
+    }
+}
+
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
     id: DataId,
     data: &'a T,
@@ -542,7 +548,10 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
     }
 
     pub fn wait_garbage_collect<'a, 'inv>(&self) -> Request<'a, 'inv, ()> {
-        Request::garbage_collect(DataLocation::Ram, self.next_garbage_collect())
+        Request::garbage_collect(
+            DataLocation::CPU(Allocator::LOCATION),
+            self.next_garbage_collect(),
+        )
     }
 
     pub fn try_garbage_collect(&self, mut goal_in_bytes: usize) -> usize {
@@ -633,7 +642,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
     ) -> impl Iterator<Item = (DataId, DataLocation, DataVersionType)> {
         self.new_data
             .drain()
-            .map(|(d, v)| (d, DataLocation::Ram, v))
+            .map(|(d, v)| (d, DataLocation::CPU(Allocator::LOCATION), v))
     }
 
     pub fn register_access(&self, id: DataId) -> AccessToken<Allocator> {
@@ -796,7 +805,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         Request {
             type_: RequestType::Allocation(
                 AllocationId::next(),
-                AllocationRequest::Ram(layout, data_descriptor),
+                AllocationRequest::Ram(layout, data_descriptor, Allocator::LOCATION),
             ),
             gen_poll: Box::new(move |_ctx| {
                 Box::new(move || {
@@ -912,6 +921,8 @@ pub struct OOMError {
 }
 
 pub trait CpuAllocator {
+    const LOCATION: super::CpuDataLocation;
+
     fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, OOMError>;
 
     /// Safety: `ptr` must have been allocated with this allocator and must not have been

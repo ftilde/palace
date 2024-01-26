@@ -566,7 +566,7 @@ impl Storage {
     }
 
     pub fn wait_garbage_collect<'a, 'inv>(&self) -> Request<'a, 'inv, ()> {
-        Request::garbage_collect(DataLocation::VRam(self.id), self.next_garbage_collect())
+        Request::garbage_collect(DataLocation::GPU(self.id), self.next_garbage_collect())
     }
 
     pub fn bytes_allocated(&self) -> usize {
@@ -734,7 +734,7 @@ impl Storage {
         let id = self.id;
         self.new_data
             .drain()
-            .map(move |(d, v)| (d, DataLocation::VRam(id), v))
+            .map(move |(d, v)| (d, DataLocation::GPU(id), v))
     }
 
     fn ensure_presence<'a>(

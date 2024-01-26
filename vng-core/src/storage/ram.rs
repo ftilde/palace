@@ -50,6 +50,8 @@ impl RamAllocator {
 }
 
 impl CpuAllocator for RamAllocator {
+    const LOCATION: super::CpuDataLocation = super::CpuDataLocation::Ram;
+
     fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, OOMError> {
         let mut alloc = self.alloc.borrow_mut();
 

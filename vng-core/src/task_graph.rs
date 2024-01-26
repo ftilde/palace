@@ -730,7 +730,7 @@ enum StreamAction {
     Remove,
 }
 
-pub fn export_full_detail(graph: &TaskGraph) {
+pub fn export_full_detail(task_graph: &TaskGraph) {
     use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
@@ -744,7 +744,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
 
     let mut stmts = Vec::new();
     let mut id_counter = 0;
-    let task_nodes = graph
+    let task_nodes = task_graph
         .waits_on
         .keys()
         .map(|k| {
@@ -764,7 +764,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         })
         .collect::<Map<_, _>>();
 
-    let request_nodes = graph
+    let request_nodes = task_graph
         .required_by
         .keys()
         .map(|k| {
@@ -785,7 +785,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         })
         .collect::<Map<_, _>>();
 
-    let data_nodes = graph
+    let data_nodes = task_graph
         .requested_locations
         .keys()
         .map(|k| {
@@ -806,7 +806,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         })
         .collect::<Map<_, _>>();
 
-    for (t, r) in &graph.waits_on {
+    for (t, r) in &task_graph.waits_on {
         for (r, _dep_type) in r {
             let mut attributes = Vec::new();
             attributes.push(color::default().into_attr());
@@ -822,7 +822,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         }
     }
 
-    for (t, r) in &graph.will_provide_data {
+    for (t, r) in &task_graph.will_provide_data {
         for r in r {
             if let Some(r) = data_nodes.get(r).cloned() {
                 let mut attributes = Vec::new();
@@ -837,7 +837,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         }
     }
 
-    for (t, r) in &graph.will_fullfil_req {
+    for (t, r) in &task_graph.will_fullfil_req {
         for r in r {
             let r = request_nodes.get(r).cloned().unwrap();
             let mut attributes = Vec::new();
@@ -851,7 +851,7 @@ pub fn export_full_detail(graph: &TaskGraph) {
         }
     }
 
-    for (d, l) in &graph.requested_locations {
+    for (d, l) in &task_graph.requested_locations {
         for l in l.keys() {
             let mut attributes = Vec::new();
             attributes.push(color::default().into_attr());
@@ -888,6 +888,26 @@ pub fn export_full_detail(graph: &TaskGraph) {
     )
     .unwrap();
     println!("Finished writing dependency graph to file: {}", filename);
+
+    let filename = "hltaskeventstream.json";
+    task_graph
+        .high_level
+        .event_stream
+        .0
+        .stream
+        .save(std::path::Path::new(filename));
+    println!(
+        "Finished writing high level event stream to file: {}",
+        filename
+    );
+
+    let filename = "taskeventstream.json";
+    task_graph
+        .event_stream
+        .0
+        .stream
+        .save(std::path::Path::new(filename));
+    println!("Finished writing event stream to file: {}", filename);
 }
 
 pub fn export(task_graph: &TaskGraph) {

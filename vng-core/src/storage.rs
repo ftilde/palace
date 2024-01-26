@@ -22,16 +22,20 @@ pub struct P<L, R>(pub L, pub R);
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum DataLocation {
+    CPU(CpuDataLocation),
+    GPU(DeviceId),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum CpuDataLocation {
     Ram,
     Disk,
-    VRam(DeviceId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum VisibleDataLocation {
-    Ram,
-    Disk,
-    VRam(DeviceId, DstBarrierInfo),
+    CPU(CpuDataLocation),
+    GPU(DeviceId, DstBarrierInfo),
 }
 
 pub const GARBAGE_COLLECT_GOAL_FRACTION: u64 = 10;

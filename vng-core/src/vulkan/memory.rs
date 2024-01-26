@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     operator::{DataDescriptor, OperatorId},
-    storage::gpu::Allocation,
+    storage::{cpu::CpuAllocator, gpu::Allocation, CpuDataLocation},
     task::{OpaqueTaskContext, Request, Task},
     task_graph::TaskId,
 };
@@ -219,28 +219,24 @@ impl TransferManager {
         self.transfer_count.set(count + 1);
         TaskId::new(self.op_id, count)
     }
-    pub fn transfer_to_gpu<'cref, 'inv>(
+    pub fn transfer_to_gpu<'cref, 'inv, A: CpuAllocator>(
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        access: crate::storage::ram::AccessToken<'cref>,
+        source: crate::storage::cpu::RawReadHandle<'cref, A>,
     ) -> Task<'cref> {
         async move {
-            let key = access.id;
-            let Ok(input_buf) = ctx.storage.read_raw(access) else {
-                panic!("Data should already be in ram");
-            };
-            let layout = input_buf.info.layout;
+            let key = source.id();
+
+            let layout = source.info.layout;
             let desc = DataDescriptor {
                 id: key,
-                longevity: input_buf.info.data_longevity,
+                longevity: source.info.data_longevity,
             };
 
             let gpu_buf_out = ctx.submit(ctx.alloc_raw_gpu(device, desc, layout)).await;
 
-            unsafe {
-                copy_to_gpu(ctx, device, input_buf.info.data, layout, gpu_buf_out.buffer).await
-            };
+            unsafe { copy_to_gpu(ctx, device, source.info.data, layout, gpu_buf_out.buffer).await };
 
             unsafe {
                 gpu_buf_out.initialized(
@@ -261,6 +257,7 @@ impl TransferManager {
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
         access: crate::storage::gpu::AccessToken<'cref>,
+        dst: CpuDataLocation,
     ) -> Task<'cref> {
         async move {
             let key = access.id;
@@ -280,14 +277,32 @@ impl TransferManager {
                 id: key,
                 longevity: gpu_buf_in.data_longevity,
             };
-            let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
+            match dst {
+                CpuDataLocation::Ram => {
+                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
 
-            unsafe { copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await };
+                    unsafe {
+                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
+                    };
 
-            // Safety: We have just written the complete buffer using a memcpy
-            unsafe {
-                out_buf.initialized(ctx);
-            }
+                    // Safety: We have just written the complete buffer using a memcpy
+                    unsafe {
+                        out_buf.initialized(ctx);
+                    }
+                }
+                CpuDataLocation::Disk => {
+                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
+
+                    unsafe {
+                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
+                    };
+
+                    // Safety: We have just written the complete buffer using a memcpy
+                    unsafe {
+                        out_buf.initialized(ctx);
+                    }
+                }
+            };
 
             Ok(())
         }

@@ -57,6 +57,8 @@ impl MmapAllocator {
 }
 
 impl CpuAllocator for MmapAllocator {
+    const LOCATION: super::CpuDataLocation = super::CpuDataLocation::Disk;
+
     fn alloc(&self, layout: Layout) -> Result<*mut MaybeUninit<u8>, OOMError> {
         let mut alloc = self.alloc.borrow_mut();
 
