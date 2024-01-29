@@ -175,7 +175,7 @@ fn dec_access<T: Clone>(
     lru_manager: &mut LRUManager<T>,
     device: &DeviceContext,
     id: T,
-    longevity: Option<DataLongevity>,
+    longevity: Option<DataLongevity>, // May be None if entry is only in Registered state
 ) {
     *access = match *access {
         AccessState::Some(1) => {
@@ -512,7 +512,10 @@ pub struct Storage {
     data_index: RefCell<Map<DataId, Entry>>,
     index_index: RefCell<Map<OperatorId, IndexEntry>>,
     old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
+    // Manage (unreferenced) items (brick as well as index) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
+    // Purpose: Keep track of when bricks in index were requested and possibly remove them from the
+    // corresponding brick index (thus (possibly) adding them to "nromal" lru_manager)
     index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
