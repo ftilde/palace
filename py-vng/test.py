@@ -5,8 +5,9 @@ import math
 
 ram_size = 8 << 30
 vram_size = 10 << 30
+disk_cache_size = 20 << 30
 
-rt = vng.RunTime(ram_size, vram_size)
+rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 

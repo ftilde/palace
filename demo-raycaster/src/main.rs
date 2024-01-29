@@ -53,6 +53,10 @@ struct CliArgs {
     #[arg(short, long, default_value = "8G")]
     gpu_mem_size: bytesize::ByteSize,
 
+    /// Size of the disk cache that will be allocated
+    #[arg(short, long)]
+    disk_cache_size: Option<bytesize::ByteSize>,
+
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
@@ -87,8 +91,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_size = args.mem_size.0 as _;
     let gpu_storage_size = args.gpu_mem_size.0 as _;
+    let disk_cache_size = args.disk_cache_size.map(|v| v.0 as _);
 
-    let mut runtime = RunTime::new(storage_size, gpu_storage_size, args.compute_pool_size)?;
+    let mut runtime = RunTime::new(
+        storage_size,
+        gpu_storage_size,
+        args.compute_pool_size,
+        disk_cache_size,
+        None,
+    )?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 

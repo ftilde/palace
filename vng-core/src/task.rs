@@ -206,7 +206,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
                         }
                     }
                     DataLocation::CPU(CpuDataLocation::Disk) => {
-                        if ctx.disk_cache.next_garbage_collect() > gid {
+                        if ctx.disk_cache.unwrap().next_garbage_collect() > gid {
                             Some(())
                         } else {
                             None
@@ -229,7 +229,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
 #[derive(Copy, Clone)]
 pub struct PollContext<'cref> {
     pub storage: &'cref ram::Storage,
-    pub disk_cache: &'cref disk::Storage,
+    pub disk_cache: Option<&'cref disk::Storage>,
     pub device_contexts: &'cref [DeviceContext],
     pub current_frame: FrameNumber,
 }
@@ -238,7 +238,7 @@ pub struct PollContext<'cref> {
 pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) requests: &'cref RequestQueue<'inv>,
     pub(crate) storage: &'cref ram::Storage,
-    pub(crate) disk_cache: &'cref disk::Storage,
+    pub(crate) disk_cache: Option<&'cref disk::Storage>,
     pub(crate) completed_requests: &'cref CompletedRequests,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
@@ -365,7 +365,9 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit> {
-        self.disk_cache.request_alloc_raw(data_descriptor, layout)
+        self.disk_cache
+            .unwrap()
+            .request_alloc_raw(data_descriptor, layout)
     }
 
     pub fn alloc_raw_gpu<'req>(

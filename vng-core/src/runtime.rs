@@ -3,6 +3,7 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     num::NonZeroU64,
+    path::Path,
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     time::{Duration, Instant},
@@ -230,7 +231,7 @@ impl BarrierBatcher {
 
 pub struct RunTime {
     pub ram: crate::storage::ram::Storage,
-    pub disk: crate::storage::disk::Storage,
+    pub disk: Option<crate::storage::disk::Storage>,
     pub vulkan: VulkanContext,
     pub compute_thread_pool: ComputeThreadPool,
     pub io_thread_pool: IoThreadPool,
@@ -243,17 +244,23 @@ impl RunTime {
         storage_size: usize,
         gpu_storage_size: u64,
         num_compute_threads: Option<usize>,
+        disk_cache_size: Option<usize>,
+        disk_cache_path: Option<&Path>,
     ) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size)?;
         let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
         let ram = crate::storage::cpu::Storage::new(ram);
-        let disk = crate::storage::disk::MmapAllocator::new(
-            std::path::Path::new("./disk.cache"),
-            storage_size,
-        )?;
-        let disk = crate::storage::cpu::Storage::new(disk);
+        let disk = if let Some(size) = disk_cache_size {
+            let disk = crate::storage::disk::MmapAllocator::new(
+                disk_cache_path.unwrap_or(&Path::new("./disk.cache")),
+                size,
+            )?;
+            Some(crate::storage::cpu::Storage::new(disk))
+        } else {
+            None
+        };
         let frame = FrameNumber(1.try_into().unwrap());
         Ok(RunTime {
             ram,
@@ -295,7 +302,7 @@ impl RunTime {
             completed_requests,
             thread_spawner,
             storage: &self.ram,
-            disk_cache: &self.disk,
+            disk_cache: self.disk.as_ref(),
             device_contexts: self.vulkan.device_contexts(),
             frame: self.frame,
             predicted_preview_tasks,
@@ -360,7 +367,7 @@ struct ContextData<'cref, 'inv> {
     completed_requests: CompletedRequests,
     thread_spawner: ThreadSpawner,
     pub storage: &'cref ram::Storage,
-    pub disk_cache: &'cref disk::Storage,
+    pub disk_cache: Option<&'cref disk::Storage>,
     device_contexts: &'cref [DeviceContext],
     frame: FrameNumber,
     predicted_preview_tasks: RefCell<Set<TaskId>>,
@@ -387,7 +394,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         OpaqueTaskContext {
             requests: &self.data.request_queue,
             storage: &self.data.storage,
-            disk_cache: &self.data.disk_cache,
+            disk_cache: self.data.disk_cache,
             hints: &self.data.hints,
             completed_requests: &self.data.completed_requests,
             thread_pool: &self.data.thread_spawner,
@@ -455,11 +462,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 // the generated requests.
                 assert!(self.data.request_queue.is_empty());
 
-                let cache_results = self
-                    .operator_info
-                    .get(&task_id.operator())
-                    .map(|o| o.cache_results)
-                    .unwrap_or(false);
+                let cache_results = self.data.disk_cache.is_some()
+                    && self
+                        .operator_info
+                        .get(&task_id.operator())
+                        .map(|o| o.cache_results)
+                        .unwrap_or(false);
 
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
@@ -570,7 +578,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
     fn register_produced_data(&mut self, and_cache: bool) {
         self.register_produced_data_from(self.data.storage.newest_data(), and_cache);
-        self.register_produced_data_from(self.data.disk_cache.newest_data(), false);
+        if let Some(disk) = self.data.disk_cache {
+            self.register_produced_data_from(disk.newest_data(), false);
+        }
         for device in self.data.device_contexts {
             self.register_produced_data_from(device.storage.newest_data(), and_cache);
         }
@@ -643,7 +653,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         )
                     }
                     CpuDataLocation::Disk => {
-                        let s = self.data.disk_cache;
+                        let s = self.data.disk_cache.unwrap();
                         let access = s.register_access(id);
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in disk cache");
@@ -691,8 +701,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 return Some(DataLocation::GPU(device.id));
             }
         }
-        if self.data.disk_cache.is_readable(datum) {
-            return Some(DataLocation::CPU(CpuDataLocation::Disk));
+        if let Some(disk) = self.data.disk_cache {
+            if disk.is_readable(datum) {
+                return Some(DataLocation::CPU(CpuDataLocation::Disk));
+            }
         }
 
         None
@@ -817,11 +829,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         data_descriptor,
                         CpuDataLocation::Disk,
                     ) => async move {
+                        let disk = ctx.disk_cache.unwrap();
                         loop {
-                            if let Ok(_) = ctx.disk_cache.alloc(data_descriptor, layout) {
+                            if let Ok(_) = disk.alloc(data_descriptor, layout) {
                                 break;
                             } else {
-                                ctx.submit(ctx.disk_cache.wait_garbage_collect()).await;
+                                ctx.submit(disk.wait_garbage_collect()).await;
                             }
                         }
                         ctx.completed_requests.add(id.into());
@@ -941,11 +954,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         }
                         .into(),
                         DataLocation::CPU(CpuDataLocation::Disk) => async move {
-                            let garbage_collect_goal = ctx.disk_cache.size()
+                            let disk = ctx.disk_cache.unwrap();
+                            let garbage_collect_goal = disk.size()
                                 / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
                             loop {
-                                if ctx.disk_cache.try_garbage_collect(garbage_collect_goal) > 0 {
+                                if disk.try_garbage_collect(garbage_collect_goal) > 0 {
                                     break;
                                 } else {
                                     panic!("Progress on disk cache should always be possible");

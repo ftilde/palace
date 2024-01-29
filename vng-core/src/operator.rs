@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::{
     id::{Id, Identify},
     storage::{
-        disk, gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
+        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
     },
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
@@ -357,33 +357,35 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         }
     }
 
-    #[must_use]
-    pub fn request_disk<'req, 'inv: 'req>(
-        &'inv self,
-        item: ItemDescriptor,
-    ) -> Request<'req, 'inv, disk::ReadHandle<'req, [Output]>> {
-        let id = DataId::new(self.id(), &item);
+    // I don't think we actually want to expose this, since it is not guaranteed that we have a
+    // disk cache
+    //#[must_use]
+    //pub fn request_disk<'req, 'inv: 'req>(
+    //    &'inv self,
+    //    item: ItemDescriptor,
+    //) -> Request<'req, 'inv, disk::ReadHandle<'req, [Output]>> {
+    //    let id = DataId::new(self.id(), &item);
 
-        Request {
-            type_: RequestType::Data(DataRequest {
-                id,
-                location: VisibleDataLocation::CPU(CpuDataLocation::Disk),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
-            gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.disk_cache.register_access(id));
-                Box::new(move || unsafe {
-                    access = match ctx.disk_cache.read(access.take().unwrap()) {
-                        Ok(v) => return Some(v),
-                        Err(access) => Some(access),
-                    };
-                    None
-                })
-            }),
-            _marker: Default::default(),
-        }
-    }
+    //    Request {
+    //        type_: RequestType::Data(DataRequest {
+    //            id,
+    //            location: VisibleDataLocation::CPU(CpuDataLocation::Disk),
+    //            source: self,
+    //            item: TypeErased::pack(item),
+    //        }),
+    //        gen_poll: Box::new(move |ctx| {
+    //            let mut access = Some(ctx.disk_cache.unwrap().register_access(id));
+    //            Box::new(move || unsafe {
+    //                access = match ctx.disk_cache.unwrap().read(access.take().unwrap()) {
+    //                    Ok(v) => return Some(v),
+    //                    Err(access) => Some(access),
+    //                };
+    //                None
+    //            })
+    //        }),
+    //        _marker: Default::default(),
+    //    }
+    //}
 
     #[must_use]
     pub fn request_gpu<'req, 'inv: 'req>(
