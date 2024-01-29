@@ -106,15 +106,14 @@ struct State {
     rendering: RenderingState,
     vesselness: VesselnessState,
     raycasting: CameraState,
-    sliceview: SliceviewState,
-    rotslice: RotSliceState,
+    sliceview: SliceState,
     smoothing_std: f32,
     downsample_state: DownSampleState,
 }
 
-struct RotSliceState {
+struct SliceState {
+    inner: SliceviewState,
     gui: GuiState,
-    angle: f32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -157,14 +156,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 up: [1.0, 1.0, 0.0].into(),
             },
         },
-        sliceview: SliceviewState {
-            selected: 0,
-            offset: [0.0, 0.0].into(),
-            zoom_level: 1.0,
-        },
-        rotslice: RotSliceState {
+        sliceview: SliceState {
+            inner: SliceviewState {
+                selected: 0,
+                offset: [0.0, 0.0].into(),
+                zoom_level: 1.0,
+            },
             gui: GuiState::default(),
-            angle: 0.0,
         },
         smoothing_std: 1.0,
         downsample_state: DownSampleState {
@@ -237,7 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //investigate how to fix that.
     unsafe {
         state
-            .rotslice
+            .sliceview
             .gui
             .deinitialize(&runtime.vulkan.device_contexts()[0])
     };
@@ -250,70 +248,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
+    runtime: &mut RunTime,
     vol: LODVolumeOperator<f32>,
-    md: ImageMetaData,
-    state: &mut SliceviewState,
+    size: Vector<D2, GlobalCoordinate>,
+    state: &mut SliceState,
     events: &mut EventStream,
 ) -> FrameOperator {
     events.act(|c| {
-        c.chain(state.offset.drag(MouseButton::Left))
+        c.chain(state.inner.offset.drag(MouseButton::Left))
             .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-                state.scroll(delta.y());
+                state.inner.scroll(delta.y());
             }))
             .chain(OnWheelMove(|delta, e_state| {
                 if let Some(m_state) = &e_state.mouse_state {
                     let pos = m_state.pos.map(|v| v as f32);
-                    state.zoom(delta, pos);
+                    state.inner.zoom(delta, pos);
                 }
             }))
     });
 
     let md = ImageMetaData {
-        dimensions: md.dimensions,
+        dimensions: size,
         chunk_size: Vector::fill(512.into()),
     };
 
-    let slice_proj_z = state.projection_mat(
-        0,
-        vol.fine_metadata(),
-        vol.fine_embedding_data(),
-        md.dimensions,
-    );
-    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z);
-    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice_proj_z =
+        state
+            .inner
+            .projection_mat(0, vol.fine_metadata(), vol.fine_embedding_data(), size);
 
-    slice
-}
-
-fn slice_viewer_rot(
-    runtime: &mut RunTime,
-    vol: LODVolumeOperator<f32>,
-    md: ImageMetaData,
-    state: &mut RotSliceState,
-    mut events: EventStream,
-) -> FrameOperator {
-    events.act(|c| {
-        c.chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-            state.angle += delta.x() as f32 * 0.01;
-        }))
-        .chain(OnWheelMove(|delta, _| state.angle += delta * 0.05))
-    });
-
-    let md = ImageMetaData {
-        dimensions: md.dimensions,
-        chunk_size: Vector::fill(512.into()),
-    };
-
-    let slice_proj_rot = crate::operators::sliceviewer::slice_projection_mat_centered_rotate(
-        vol.fine_metadata(),
-        vol.fine_embedding_data(),
-        md.into(),
-        state.angle.into(),
-    );
-
-    let mat_ref = &slice_proj_rot;
+    let mat_ref = &slice_proj_z;
     let vol_ref = &vol;
-
     let info = if let Some(mouse_state) = &events.latest_state().mouse_state {
         let mouse_pos = mouse_state.pos;
         let md = vol.fine_metadata();
@@ -365,7 +330,7 @@ fn slice_viewer_rot(
         None
     };
 
-    let gui = state.gui.setup(&mut events, |ctx| {
+    let gui = state.gui.setup(events, |ctx| {
         egui::Window::new("Info").show(ctx, |ui| {
             let s = if let Some((val, pos)) = info {
                 format!(
@@ -381,9 +346,11 @@ fn slice_viewer_rot(
             ui.label(s);
         });
     });
-    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot);
-    let frame = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
-    let frame = gui.render(frame);
+
+    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z);
+    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let frame = gui.render(slice);
+
     frame
 }
 
@@ -554,24 +521,17 @@ fn eval_network(
                         ui.horizontal(|ui| {
                             ui.label("Slice (z): ");
                             if ui.button("-").clicked() {
-                                app_state.sliceview.selected =
-                                    app_state.sliceview.selected.saturating_sub(1);
+                                app_state.sliceview.inner.selected =
+                                    app_state.sliceview.inner.selected.saturating_sub(1);
                             }
                             ui.add(egui::Slider::new(
-                                &mut app_state.sliceview.selected,
+                                &mut app_state.sliceview.inner.selected,
                                 0..=max_slice,
                             ));
                             if ui.button("+").clicked() {
-                                app_state.sliceview.selected =
-                                    (app_state.sliceview.selected + 1).min(max_slice);
+                                app_state.sliceview.inner.selected =
+                                    (app_state.sliceview.inner.selected + 1).min(max_slice);
                             }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Angle: ");
-                            ui.add(egui::Slider::new(
-                                &mut app_state.rotslice.angle,
-                                0.0..=std::f32::consts::TAU,
-                            ));
                         });
                     }
                     RenderingState::Raycasting => {
@@ -590,32 +550,13 @@ fn eval_network(
     });
 
     let frame = match app_state.rendering {
-        RenderingState::Slice => {
-            let mut splitter = operators::splitter::Splitter::new(
-                window.size(),
-                0.5,
-                operators::splitter::SplitDirection::Horizontal,
-            );
-
-            let (mut events_l, events_r) = splitter.split_events(&mut events);
-
-            let left = slice_viewer_z(
-                processed.clone(),
-                splitter.metadata_first(),
-                &mut app_state.sliceview,
-                &mut events_l,
-            );
-
-            let right = slice_viewer_rot(
-                runtime,
-                processed,
-                splitter.metadata_last(),
-                &mut app_state.rotslice,
-                events_r,
-            );
-
-            splitter.render(left, right)
-        }
+        RenderingState::Slice => slice_viewer_z(
+            runtime,
+            processed.clone(),
+            window.size(),
+            &mut app_state.sliceview,
+            &mut events,
+        ),
         RenderingState::Raycasting => raycaster(
             processed.into(),
             window.size(),
