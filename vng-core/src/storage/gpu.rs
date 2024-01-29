@@ -302,13 +302,33 @@ pub struct ReadHandle<'a> {
 pub struct StateCacheHandle<'a> {
     pub buffer: ash::vk::Buffer,
     pub size: u64,
-    #[allow(unused)]
-    access: AccessToken<'a>,
+    storage: &'a Storage,
+    device: &'a DeviceContext,
+    id: DataId,
+    frame: FrameNumber,
 }
 
 pub enum StateCacheResult<'a> {
     New(StateCacheHandle<'a>),
     Existing(StateCacheHandle<'a>),
+}
+
+impl Drop for StateCacheHandle<'_> {
+    fn drop(&mut self) {
+        let mut index = self.storage.data_index.borrow_mut();
+        let vram_entry = index.get_mut(&self.id).unwrap();
+
+        let longevity = vram_entry.state.storage_info().map(|i| i.data_longevity);
+
+        let mut lru_manager = self.storage.lru_manager.borrow_mut();
+        dec_access(
+            &mut vram_entry.access,
+            &mut lru_manager,
+            self.device,
+            LRUItem::Cache(self.id, self.frame),
+            longevity,
+        );
+    }
 }
 
 impl<'a> StateCacheResult<'a> {
@@ -505,6 +525,7 @@ impl<'a> Drop for IndexHandle<'a> {
 #[derive(Copy, Clone)]
 enum LRUItem {
     Data(DataId),
+    Cache(DataId, FrameNumber),
     Index(OperatorId),
 }
 
@@ -575,7 +596,12 @@ impl Storage {
     pub fn bytes_allocated(&self) -> usize {
         self.allocator.allocated() as _
     }
-    pub fn try_garbage_collect(&self, device: &DeviceContext, mut goal_in_bytes: usize) -> usize {
+    pub fn try_garbage_collect(
+        &self,
+        device: &DeviceContext,
+        mut goal_in_bytes: usize,
+        current_frame: FrameNumber,
+    ) -> usize {
         let mut collected = self.manual_garbage_returns.get() as usize;
         self.manual_garbage_returns.set(0);
 
@@ -613,6 +639,26 @@ impl Storage {
                         };
                         if !device.cmd_buffer_completed(f) {
                             // All following LRU items will have the same or a later epoch so cannot be deleted
+                            // either
+                            break;
+                        }
+
+                        let entry = index.remove(&key).unwrap();
+
+                        self.new_data.remove(key);
+                        match entry.state {
+                            StorageEntryState::Registered => panic!("Should not be in LRU list"),
+                            StorageEntryState::Initializing(info)
+                            | StorageEntryState::Initialized(info, _, _) => info,
+                        }
+                    }
+                    LRUItem::Cache(key, frame_number) => {
+                        let entry = index.get_mut(&key).unwrap();
+                        let AccessState::None(_, f) = entry.access else {
+                            panic!("Should not be in LRU list");
+                        };
+                        if !device.cmd_buffer_completed(f) || current_frame.diff(frame_number) < 2 {
+                            // All following LRU items will have the same or a later epoch and/or frame_number so cannot be deleted
                             // either
                             break;
                         }
@@ -820,6 +866,7 @@ impl Storage {
     pub(crate) fn access_initializing_state_cache<'a>(
         &self,
         access: AccessToken<'a>,
+        current_frame: FrameNumber,
     ) -> Result<StateCacheHandle<'a>, AccessToken<'a>> {
         self.access_initializing(access).map(|r| {
             let WriteHandle {
@@ -831,11 +878,16 @@ impl Storage {
 
             std::mem::forget(drop_handler);
 
-            StateCacheHandle {
+            let res = StateCacheHandle {
                 buffer,
                 size,
-                access,
-            }
+                storage: access.storage,
+                device: access.device,
+                id: access.id,
+                frame: current_frame,
+            };
+            std::mem::forget(access);
+            res
         })
     }
 
@@ -898,20 +950,9 @@ impl Storage {
 
     pub(crate) fn allocate_image(
         &self,
-        device: &DeviceContext,
         create_desc: vk::ImageCreateInfo,
-    ) -> ImageAllocation {
-        match self.allocator.allocate_image(create_desc) {
-            Ok(a) => a,
-            Err(_e) => {
-                let garbage_collect_goal =
-                    self.allocator.allocated() / super::GARBAGE_COLLECT_GOAL_FRACTION;
-                self.try_garbage_collect(device, garbage_collect_goal as _);
-                self.allocator
-                    .allocate_image(create_desc)
-                    .expect("Out of memory and nothing we can do about it.")
-            }
-        }
+    ) -> Result<ImageAllocation, ()> {
+        self.allocator.allocate_image(create_desc).map_err(|_| ())
     }
 
     /// Safety: Allocation must come from this storage

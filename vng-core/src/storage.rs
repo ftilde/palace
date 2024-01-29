@@ -95,6 +95,7 @@ pub enum DataLongevity {
     Ephemeral = 0,
     Unstable = 1,
     Stable = 2,
+    Cache = 3,
 }
 
 impl TryFrom<usize> for DataLongevity {
@@ -105,6 +106,7 @@ impl TryFrom<usize> for DataLongevity {
             0 => Ok(DataLongevity::Ephemeral),
             1 => Ok(DataLongevity::Unstable),
             2 => Ok(DataLongevity::Stable),
+            3 => Ok(DataLongevity::Cache),
             _ => Err("Invalid DataLongevity value"),
         }
     }
@@ -133,7 +135,7 @@ impl LRUIndex {
 }
 
 struct LRUManager<T> {
-    inner: [LRUManagerInner<T>; 3],
+    inner: [LRUManagerInner<T>; 4],
 }
 
 impl<T> Default for LRUManager<T> {

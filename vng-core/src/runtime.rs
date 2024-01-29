@@ -339,6 +339,12 @@ impl Drop for RunTime {
 #[repr(transparent)]
 pub struct FrameNumber(NonZeroU64);
 
+impl FrameNumber {
+    pub fn diff(self, other: Self) -> u64 {
+        self.0.get() - other.0.get()
+    }
+}
+
 /// An object that contains all data that will be later lent out to `TaskContexts` via `Executor`.
 ///
 /// A note on lifetime names:
@@ -869,7 +875,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         result_sender,
                     ) => async move {
                         let device = &ctx.device_contexts[device_id];
-                        let res = device.storage.allocate_image(device, create_desc);
+                        let res = loop {
+                            if let Ok(res) = device.storage.allocate_image(create_desc) {
+                                break res;
+                            } else {
+                                ctx.submit(device.storage.wait_garbage_collect()).await;
+                            }
+                        };
                         result_sender.send(res).unwrap();
                         ctx.completed_requests.add(id.into());
                         Ok(())
@@ -943,30 +955,34 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             Ok(())
                         }
                         .into(),
-                        DataLocation::GPU(did) => async move {
-                            let device = &ctx.device_contexts[did];
-                            let garbage_collect_goal = device.storage.bytes_allocated()
-                                / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
+                        DataLocation::GPU(did) => {
+                            let frame = self.data.frame;
+                            async move {
+                                let device = &ctx.device_contexts[did];
+                                let garbage_collect_goal = device.storage.bytes_allocated()
+                                    / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
-                            loop {
-                                let c = device
-                                    .storage
-                                    .capacity()
-                                    .map(|c| bytesize::to_string(c, true));
-                                let a = bytesize::to_string(device.storage.allocated(), true);
-                                eprintln!("VRam utilization: {}/{:?}", a, c);
-                                if device
-                                    .storage
-                                    .try_garbage_collect(device, garbage_collect_goal)
-                                    > 0
-                                {
-                                    break;
-                                } else {
-                                    ctx.submit(Request::external_progress()).await;
+                                loop {
+                                    let c = device
+                                        .storage
+                                        .capacity()
+                                        .map(|c| bytesize::to_string(c, true));
+                                    let a = bytesize::to_string(device.storage.allocated(), true);
+                                    eprintln!("VRam utilization: {}/{:?}", a, c);
+                                    if device.storage.try_garbage_collect(
+                                        device,
+                                        garbage_collect_goal,
+                                        frame,
+                                    ) > 0
+                                    {
+                                        break;
+                                    } else {
+                                        ctx.submit(Request::external_progress()).await;
+                                    }
                                 }
+                                ctx.completed_requests.add(req_id);
+                                Ok(())
                             }
-                            ctx.completed_requests.add(req_id);
-                            Ok(())
                         }
                         .into(),
                     };

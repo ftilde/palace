@@ -761,7 +761,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
 
         let data_descriptor = DataDescriptor {
             id,
-            longevity: crate::storage::DataLongevity::Stable,
+            longevity: crate::storage::DataLongevity::Cache,
         };
 
         let mut access = Some(
@@ -781,7 +781,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
                 Box::new(move || {
                     access = match device
                         .storage
-                        .access_initializing_state_cache(access.take().unwrap())
+                        .access_initializing_state_cache(access.take().unwrap(), self.current_frame)
                     {
                         Ok(r) => {
                             return Some(if old {
