@@ -241,7 +241,7 @@ pub struct RunTime {
 impl RunTime {
     pub fn new(
         storage_size: usize,
-        gpu_storage_size: Option<u64>,
+        gpu_storage_size: u64,
         num_compute_threads: Option<usize>,
     ) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
@@ -498,7 +498,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if stuck_time.elapsed() > STUCK_TIMEOUT {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
                             for d in self.data.device_contexts {
-                                let c = d.storage.capacity().map(|c| bytesize::to_string(c, true));
+                                let c = d.storage.capacity();
+                                let c = bytesize::to_string(c, true);
                                 let a = bytesize::to_string(d.storage.allocated(), true);
                                 eprintln!("VRam utilization: {}/{:?}", a, c);
                             }
@@ -963,10 +964,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                     / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
                                 loop {
-                                    let c = device
-                                        .storage
-                                        .capacity()
-                                        .map(|c| bytesize::to_string(c, true));
+                                    let c = device.storage.capacity();
+                                    let c = bytesize::to_string(c, true);
                                     let a = bytesize::to_string(device.storage.allocated(), true);
                                     eprintln!("VRam utilization: {}/{:?}", a, c);
                                     if device.storage.try_garbage_collect(

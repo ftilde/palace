@@ -944,7 +944,7 @@ impl Storage {
         self.allocator.allocated()
     }
 
-    pub fn capacity(&self) -> Option<u64> {
+    pub fn capacity(&self) -> u64 {
         self.allocator.capacity
     }
 
@@ -1342,7 +1342,7 @@ pub struct Allocator {
     allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
     device: ash::Device,
     num_alloced: Cell<u64>,
-    capacity: Option<u64>,
+    capacity: u64,
 }
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
@@ -1352,7 +1352,7 @@ impl Allocator {
         instance: ash::Instance,
         device: ash::Device,
         physical_device: vk::PhysicalDevice,
-        capacity: Option<u64>,
+        capacity: u64,
     ) -> Self {
         let allocator = RefCell::new(Some(
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
@@ -1378,10 +1378,8 @@ impl Allocator {
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
     ) -> gpu_allocator::Result<Allocation> {
-        if let Some(capacity) = self.capacity {
-            if self.num_alloced.get() + layout.size() as u64 > capacity {
-                return Err(gpu_allocator::AllocationError::OutOfMemory);
-            }
+        if self.num_alloced.get() + layout.size() as u64 > self.capacity {
+            return Err(gpu_allocator::AllocationError::OutOfMemory);
         }
 
         let size = layout.size() as u64;
@@ -1451,11 +1449,9 @@ impl Allocator {
 
         let size = requirements.size;
 
-        if let Some(capacity) = self.capacity {
-            if self.num_alloced.get() + size > capacity {
-                unsafe { self.device.destroy_image(image, None) };
-                return Err(gpu_allocator::AllocationError::OutOfMemory);
-            }
+        if self.num_alloced.get() + size > self.capacity {
+            unsafe { self.device.destroy_image(image, None) };
+            return Err(gpu_allocator::AllocationError::OutOfMemory);
         }
         self.num_alloced.set(self.num_alloced.get() + size);
 

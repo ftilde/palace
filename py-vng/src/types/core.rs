@@ -46,7 +46,7 @@ impl RunTime {
     #[new]
     pub fn new(
         storage_size: usize,
-        gpu_storage_size: Option<u64>,
+        gpu_storage_size: u64,
         num_compute_threads: Option<usize>,
     ) -> PyResult<Self> {
         Ok(Self {

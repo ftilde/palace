@@ -46,12 +46,12 @@ struct CliArgs {
     input: Input,
 
     /// Size of the memory pool that will be allocated
-    #[arg(short, long, default_value = "8")]
+    #[arg(short, long, default_value = "8G")]
     mem_size: bytesize::ByteSize,
 
     /// Size of the gpu memory pool that will be allocated
-    #[arg(short, long)]
-    gpu_mem_size: Option<bytesize::ByteSize>,
+    #[arg(short, long, default_value = "8G")]
+    gpu_mem_size: bytesize::ByteSize,
 
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
     let storage_size = args.mem_size.0 as _;
-    let gpu_storage_size = args.gpu_mem_size.map(|s| s.0); // also in gigabyte
+    let gpu_storage_size = args.gpu_mem_size.0 as _;
 
     let mut runtime = RunTime::new(storage_size, gpu_storage_size, args.compute_pool_size)?;
 

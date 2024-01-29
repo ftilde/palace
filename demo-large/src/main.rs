@@ -34,13 +34,13 @@ struct CliArgs {
     #[arg()]
     vol: PathBuf,
 
-    /// Size of the memory pool that will be allocated in gigabytes.
-    #[arg(short, long, default_value = "8")]
-    mem_size: usize,
+    /// Size of the memory pool that will be allocated
+    #[arg(short, long, default_value = "8G")]
+    mem_size: bytesize::ByteSize,
 
-    /// Size of the gpu memory pool that will be allocated in gigabytes.
-    #[arg(short, long)]
-    gpu_mem_size: Option<u64>,
+    /// Size of the gpu memory pool that will be allocated
+    #[arg(short, long, default_value = "8G")]
+    gpu_mem_size: bytesize::ByteSize,
 
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
@@ -116,8 +116,8 @@ struct RotSliceState {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
-    let storage_size = args.mem_size << 30; //in gigabyte
-    let gpu_storage_size = args.gpu_mem_size.map(|s| s << 30); // also in gigabyte
+    let storage_size = args.mem_size.0 as _;
+    let gpu_storage_size = args.gpu_mem_size.0 as _;
 
     let mut runtime = RunTime::new(storage_size, gpu_storage_size, args.compute_pool_size)?;
 

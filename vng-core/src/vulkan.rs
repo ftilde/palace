@@ -100,7 +100,7 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    pub fn new(gpu_mem_capacity: Option<u64>) -> Result<Self, Error> {
+    pub fn new(gpu_mem_capacity: u64) -> Result<Self, Error> {
         unsafe {
             let entry = ash::Entry::load()?;
 
@@ -356,7 +356,7 @@ impl DeviceContext {
         physical_device: vk::PhysicalDevice,
         queue_family_index: u32,
         queue_count: u32,
-        mem_capacity: Option<u64>,
+        mem_capacity: u64,
     ) -> Result<Self, Error> {
         unsafe {
             let device_extension_props = instance

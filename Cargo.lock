@@ -522,6 +522,7 @@ dependencies = [
 name = "demo-large"
 version = "0.1.0"
 dependencies = [
+ "bytesize",
  "clap",
  "vng-core",
  "vng-nifti",
@@ -533,6 +534,7 @@ dependencies = [
 name = "demo-mean"
 version = "0.1.0"
 dependencies = [
+ "bytesize",
  "clap",
  "vng-core",
  "vng-nifti",
@@ -556,6 +558,7 @@ dependencies = [
 name = "demo-sliceviewer"
 version = "0.1.0"
 dependencies = [
+ "bytesize",
  "clap",
  "vng-core",
  "vng-nifti",
