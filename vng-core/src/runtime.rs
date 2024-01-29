@@ -449,18 +449,24 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 // the generated requests.
                 assert!(self.data.request_queue.is_empty());
 
+                let cache_results = self
+                    .operator_info
+                    .get(&task_id.operator())
+                    .map(|o| o.cache_results)
+                    .unwrap_or(false);
+
                 match task.as_mut().poll(&mut ctx) {
                     Poll::Ready(Ok(_)) => {
                         assert!(self.data.request_queue.is_empty());
                         // Drain hints
                         self.data.hints.completed.replace(Set::new());
-                        self.register_produced_data();
+                        self.register_produced_data(cache_results);
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Ready(e) => {
-                        self.register_produced_data();
+                        self.register_produced_data(cache_results);
                         println!("Execution errored, exporting task graph.");
                         crate::task_graph::export(&self.task_graph);
                         return e;
@@ -471,7 +477,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
                             *resolved_deps = old_hints;
                         }
-                        self.register_produced_data();
+                        self.register_produced_data(cache_results);
                         self.enqueue_requested(task_id);
                     }
                 };
@@ -517,9 +523,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn register_produced_data_from(
         &mut self,
         items: impl Iterator<Item = (DataId, DataLocation, DataVersionType)>,
+        and_cache: bool,
     ) {
         for (id, produced_loc, produced_ver) in items {
-            for requested in self.task_graph.requested_locations(id) {
+            let mut requested_locations = self.task_graph.requested_locations(id);
+            if and_cache {
+                let e = requested_locations
+                    .entry(VisibleDataLocation::CPU(CpuDataLocation::Disk))
+                    .or_default();
+                e.insert(TaskId::new(OperatorId::new("builtin::cacher"), 0));
+            }
+            for requested in requested_locations {
                 let r_id = VisibleDataId {
                     id,
                     location: requested.0,
@@ -547,11 +561,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             }
         }
     }
-    fn register_produced_data(&mut self) {
-        self.register_produced_data_from(self.data.storage.newest_data());
-        self.register_produced_data_from(self.data.disk_cache.newest_data());
+    fn register_produced_data(&mut self, and_cache: bool) {
+        self.register_produced_data_from(self.data.storage.newest_data(), and_cache);
+        self.register_produced_data_from(self.data.disk_cache.newest_data(), false);
         for device in self.data.device_contexts {
-            self.register_produced_data_from(device.storage.newest_data());
+            self.register_produced_data_from(device.storage.newest_data(), and_cache);
         }
         for item in self.data.completed_requests.take() {
             self.task_graph.resolved_implied(item.into());
@@ -696,10 +710,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let op_id = data_request.source.id();
                 self.operator_info
                     .entry(op_id)
-                    .or_insert(OperatorDescriptor {
-                        id: op_id,
-                        data_longevity: data_request.source.longevity(),
-                    });
+                    .or_insert(data_request.source.descriptor());
 
                 let data_id = data_request.id;
                 let data_req_loc = data_request.location;

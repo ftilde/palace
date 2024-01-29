@@ -1,4 +1,3 @@
-use futures::StreamExt;
 use std::rc::Rc;
 
 use crate::{
@@ -36,6 +35,7 @@ impl Into<Id> for OperatorId {
 pub struct OperatorDescriptor {
     pub id: OperatorId,
     pub data_longevity: DataLongevity,
+    pub cache_results: bool,
 }
 
 impl OperatorDescriptor {
@@ -44,6 +44,7 @@ impl OperatorDescriptor {
         Self {
             id,
             data_longevity: DataLongevity::Stable,
+            cache_results: false,
         }
     }
     pub fn dependent_on(self, v: &dyn OperatorNetworkNode) -> Self {
@@ -51,16 +52,22 @@ impl OperatorDescriptor {
         Self {
             id: self.id.dependent_on(d.id.into()),
             data_longevity: self.data_longevity.min(d.data_longevity),
+            cache_results: self.cache_results,
         }
     }
     pub fn dependent_on_data(self, v: &(impl Identify + ?Sized)) -> Self {
         Self {
             id: self.id.dependent_on(v.id()),
             data_longevity: self.data_longevity,
+            cache_results: self.cache_results,
         }
     }
     pub fn data_longevity(mut self, data_longevity: DataLongevity) -> Self {
         self.data_longevity = data_longevity;
+        self
+    }
+    pub fn cache_results(mut self, cache_results: bool) -> Self {
+        self.cache_results = cache_results;
         self
     }
     pub fn ephemeral(self) -> Self {
@@ -144,10 +151,12 @@ impl<I, O> OperatorNetworkNode for Operator<I, O> {
 pub trait OpaqueOperator {
     fn id(&self) -> OperatorId;
     fn longevity(&self) -> DataLongevity;
+    fn cache_results(&self) -> bool;
     fn descriptor(&self) -> OperatorDescriptor {
         OperatorDescriptor {
             id: self.id(),
             data_longevity: self.longevity(),
+            cache_results: self.cache_results(),
         }
     }
     fn granularity(&self) -> ItemGranularity;
@@ -471,6 +480,9 @@ impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
     fn granularity(&self) -> ItemGranularity {
         self.granularity
     }
+    fn cache_results(&self) -> bool {
+        self.descriptor.cache_results
+    }
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
@@ -486,20 +498,8 @@ impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
 }
 
 pub fn cache<'op, D: std::hash::Hash + 'static, Output: Element>(
-    input: Operator<D, Output>,
+    mut input: Operator<D, Output>,
 ) -> Operator<D, Output> {
-    let descriptor = OperatorDescriptor::new("cache").dependent_on(&input);
-    Operator::with_state(descriptor, input, move |ctx, d, input| {
-        async move {
-            let reqs = d.into_iter().map(|d| input.request_disk(d));
-            let mut stream = ctx.submit_unordered(reqs);
-            while let Some(_s) = stream.next().await {
-                //NO_PUSH_main TODO: This does not work, because the result of this operator is
-                //available in disk_cache/ram/vram under a different dataId than this one. hmm...
-                todo!();
-            }
-            Ok(())
-        }
-        .into()
-    })
+    input.descriptor.cache_results = true;
+    input
 }

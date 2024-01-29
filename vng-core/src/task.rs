@@ -761,7 +761,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
 
         let data_descriptor = DataDescriptor {
             id,
-            longevity: crate::storage::DataLongevity::Ephemeral,
+            longevity: crate::storage::DataLongevity::Stable,
         };
 
         let mut access = Some(
@@ -788,7 +788,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
                                 StateCacheResult::Existing(r)
                             } else {
                                 StateCacheResult::New(r)
-                            })
+                            });
                         }
                         Err(acc) => Some(acc),
                     };

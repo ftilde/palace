@@ -482,7 +482,10 @@ impl TaskGraph {
 
     //TODO: Try to avoid clone
     pub fn requested_locations(&self, id: DataId) -> Map<VisibleDataLocation, Set<TaskId>> {
-        self.requested_locations.get(&id).unwrap().clone()
+        self.requested_locations
+            .get(&id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
