@@ -4,13 +4,15 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     mem::MaybeUninit,
+    rc::Rc,
 };
 
 use crate::{
-    operator::{DataDescriptor, OperatorId},
-    storage::{cpu::CpuAllocator, gpu::Allocation, CpuDataLocation},
+    operator::{DataDescriptor, DataId, OperatorId},
+    storage::{cpu::CpuAllocator, gpu::Allocation, CpuDataLocation, DataLocation},
     task::{OpaqueTaskContext, Request, Task},
     task_graph::TaskId,
+    util::Map,
 };
 
 use super::{state::VulkanState, CmdBufferEpoch, DeviceContext};
@@ -178,6 +180,7 @@ impl BufferStash {
 pub struct TransferManager {
     transfer_count: Cell<usize>,
     op_id: OperatorId,
+    running: Rc<RefCell<Map<(DataId, DataLocation), TaskId>>>,
 }
 
 impl Default for TransferManager {
@@ -185,6 +188,7 @@ impl Default for TransferManager {
         Self {
             transfer_count: Cell::new(0),
             op_id: OperatorId::new("builtin::TransferManager"),
+            running: Default::default(),
         }
     }
 }
@@ -213,6 +217,11 @@ impl<T> SendPointer<T> {
 }
 unsafe impl<T> Send for SendPointer<T> {}
 
+pub enum TransferTaskResult<'cref> {
+    New(Task<'cref>),
+    Existing(TaskId),
+}
+
 impl TransferManager {
     pub fn next_id(&self) -> TaskId {
         let count = self.transfer_count.get();
@@ -224,32 +233,50 @@ impl TransferManager {
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
         source: crate::storage::cpu::RawReadHandle<'cref, A>,
-    ) -> Task<'cref> {
-        async move {
-            let key = source.id();
+    ) -> TransferTaskResult<'cref> {
+        let transfer_task_key = (source.id(), DataLocation::GPU(device.id));
+        let running = Rc::clone(&self.running);
+        let maybe_existing = { self.running.borrow().get(&transfer_task_key).cloned() };
+        if let Some(id) = maybe_existing {
+            TransferTaskResult::Existing(id)
+        } else {
+            let prev = running
+                .borrow_mut()
+                .insert(transfer_task_key, ctx.current_task);
+            assert!(prev.is_none());
+            TransferTaskResult::New(
+                async move {
+                    let key = source.id();
 
-            let layout = source.info.layout;
-            let desc = DataDescriptor {
-                id: key,
-                longevity: source.info.data_longevity,
-            };
+                    let layout = source.info.layout;
+                    let desc = DataDescriptor {
+                        id: key,
+                        longevity: source.info.data_longevity,
+                    };
 
-            let gpu_buf_out = ctx.submit(ctx.alloc_raw_gpu(device, desc, layout)).await;
+                    let gpu_buf_out = ctx.submit(ctx.alloc_raw_gpu(device, desc, layout)).await;
 
-            unsafe { copy_to_gpu(ctx, device, source.info.data, layout, gpu_buf_out.buffer).await };
+                    unsafe {
+                        copy_to_gpu(ctx, device, source.info.data, layout, gpu_buf_out.buffer).await
+                    };
 
-            unsafe {
-                gpu_buf_out.initialized(
-                    ctx,
-                    super::SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_WRITE,
-                    },
-                )
-            };
-            Ok(())
+                    unsafe {
+                        gpu_buf_out.initialized(
+                            ctx,
+                            super::SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_WRITE,
+                            },
+                        )
+                    };
+
+                    running.borrow_mut().remove(&transfer_task_key).unwrap();
+
+                    Ok(())
+                }
+                .into(),
+            )
         }
-        .into()
     }
 
     pub fn transfer_to_cpu<'cref, 'inv>(
@@ -258,55 +285,72 @@ impl TransferManager {
         device: &'cref DeviceContext,
         access: crate::storage::gpu::AccessToken<'cref>,
         dst: CpuDataLocation,
-    ) -> Task<'cref> {
-        async move {
-            let key = access.id;
-            let dst_info = super::DstBarrierInfo {
-                stage: vk::PipelineStageFlags2::TRANSFER,
-                access: vk::AccessFlags2::TRANSFER_READ,
-            };
-            if let Err(src_info) = device.storage.is_visible(access.id, dst_info) {
-                ctx.submit(device.barrier(src_info, dst_info)).await;
-            };
-            let Ok(gpu_buf_in) = device.storage.read(access, dst_info) else {
-                panic!("Data should already be in vram and visible");
-            };
-            let layout = gpu_buf_in.layout;
+    ) -> TransferTaskResult<'cref> {
+        let transfer_task_key = (access.id, DataLocation::CPU(dst));
+        let running = Rc::clone(&self.running);
+        let maybe_existing = { self.running.borrow().get(&transfer_task_key).cloned() };
+        if let Some(id) = maybe_existing {
+            TransferTaskResult::Existing(id)
+        } else {
+            let prev = running
+                .borrow_mut()
+                .insert(transfer_task_key, ctx.current_task);
+            assert!(prev.is_none());
+            TransferTaskResult::New(
+                async move {
+                    let key = access.id;
+                    let dst_info = super::DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_READ,
+                    };
+                    if let Err(src_info) = device.storage.is_visible(access.id, dst_info) {
+                        ctx.submit(device.barrier(src_info, dst_info)).await;
+                    };
+                    let Ok(gpu_buf_in) = device.storage.read(access, dst_info) else {
+                        panic!("Data should already be in vram and visible");
+                    };
+                    let layout = gpu_buf_in.layout;
 
-            let desc = DataDescriptor {
-                id: key,
-                longevity: gpu_buf_in.data_longevity,
-            };
-            match dst {
-                CpuDataLocation::Ram => {
-                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
+                    let desc = DataDescriptor {
+                        id: key,
+                        longevity: gpu_buf_in.data_longevity,
+                    };
+                    match dst {
+                        CpuDataLocation::Ram => {
+                            let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
 
-                    unsafe {
-                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
+                            unsafe {
+                                copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data)
+                                    .await
+                            };
+
+                            // Safety: We have just written the complete buffer using a memcpy
+                            unsafe {
+                                out_buf.initialized(ctx);
+                            }
+                        }
+                        CpuDataLocation::Disk => {
+                            let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
+
+                            unsafe {
+                                copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data)
+                                    .await
+                            };
+
+                            // Safety: We have just written the complete buffer using a memcpy
+                            unsafe {
+                                out_buf.initialized(ctx);
+                            }
+                        }
                     };
 
-                    // Safety: We have just written the complete buffer using a memcpy
-                    unsafe {
-                        out_buf.initialized(ctx);
-                    }
+                    running.borrow_mut().remove(&transfer_task_key).unwrap();
+
+                    Ok(())
                 }
-                CpuDataLocation::Disk => {
-                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
-
-                    unsafe {
-                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
-                    };
-
-                    // Safety: We have just written the complete buffer using a memcpy
-                    unsafe {
-                        out_buf.initialized(ctx);
-                    }
-                }
-            };
-
-            Ok(())
+                .into(),
+            )
         }
-        .into()
     }
 }
 

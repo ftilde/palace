@@ -17,7 +17,7 @@ use crate::{
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     util::{Map, Set},
-    vulkan::{BarrierInfo, DeviceContext, VulkanContext},
+    vulkan::{memory::TransferTaskResult, BarrierInfo, DeviceContext, VulkanContext},
     Error,
 };
 
@@ -665,7 +665,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         )
                     }
                 };
-                self.task_manager.add_task(task_id, transfer_task);
+                let task_id = match transfer_task {
+                    TransferTaskResult::New(t) => {
+                        self.task_manager.add_task(task_id, t);
+                        task_id
+                    }
+                    TransferTaskResult::Existing(task_id) => task_id,
+                };
                 self.task_graph
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)
@@ -680,7 +686,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                     target,
                 );
-                self.task_manager.add_task(task_id, transfer_task);
+                let task_id = match transfer_task {
+                    TransferTaskResult::New(t) => {
+                        self.task_manager.add_task(task_id, t);
+                        task_id
+                    }
+                    TransferTaskResult::Existing(task_id) => task_id,
+                };
                 self.task_graph
                     .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                 Some(task_id)

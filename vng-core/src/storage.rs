@@ -26,6 +26,15 @@ pub enum DataLocation {
     GPU(DeviceId),
 }
 
+impl From<VisibleDataLocation> for DataLocation {
+    fn from(v: VisibleDataLocation) -> DataLocation {
+        match v {
+            VisibleDataLocation::CPU(c) => DataLocation::CPU(c),
+            VisibleDataLocation::GPU(c, _) => DataLocation::GPU(c),
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum CpuDataLocation {
     Ram,
