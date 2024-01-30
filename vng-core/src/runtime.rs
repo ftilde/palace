@@ -703,22 +703,34 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    //TODO: We need a "best case" argument here in order to avoid useless transfers
-    fn find_available_location(&self, datum: DataId) -> Option<DataLocation> {
-        if self.data.storage.is_readable(datum) {
-            return Some(DataLocation::CPU(CpuDataLocation::Ram));
-        }
-        for device in self.data.device_contexts {
-            if device.storage.is_readable(datum) {
-                return Some(DataLocation::GPU(device.id));
+    fn is_available_in(&self, datum: DataId, loc: DataLocation) -> bool {
+        match loc {
+            DataLocation::CPU(CpuDataLocation::Ram) => self.data.storage.is_readable(datum),
+            DataLocation::CPU(CpuDataLocation::Disk) => {
+                if let Some(disk) = self.data.disk_cache {
+                    disk.is_readable(datum)
+                } else {
+                    false
+                }
             }
+            DataLocation::GPU(i) => self.data.device_contexts[i].storage.is_readable(datum),
         }
-        if let Some(disk) = self.data.disk_cache {
-            if disk.is_readable(datum) {
-                return Some(DataLocation::CPU(CpuDataLocation::Disk));
-            }
-        }
+    }
 
+    fn find_available_location(
+        &self,
+        datum: DataId,
+        preferred: DataLocation,
+    ) -> Option<DataLocation> {
+        let mut locs = vec![preferred, DataLocation::CPU(CpuDataLocation::Ram)];
+        locs.extend((0..self.data.device_contexts.len()).map(|i| DataLocation::GPU(i)));
+        locs.push(DataLocation::CPU(CpuDataLocation::Disk));
+
+        for loc in locs {
+            if self.is_available_in(datum, loc) {
+                return Some(loc);
+            }
+        }
         None
     }
 
@@ -746,33 +758,34 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let data_id = data_request.id;
                 let data_req_loc = data_request.location;
                 if !already_requested {
-                    let fulfiller_task_id =
-                        if let Some(available) = self.find_available_location(data_id) {
-                            // Data should not already be present => unwrap
-                            self.try_make_available(data_id, available, data_req_loc, req_prio)
-                                .unwrap()
-                        } else {
-                            let batch_size = match data_request.source.granularity() {
-                                crate::operator::ItemGranularity::Single => 1,
-                                crate::operator::ItemGranularity::Batched => 64,
-                            };
-                            // Add item to batcher to spawn later
-                            match self.request_batcher.add(data_request, batch_size, from) {
-                                BatchAddResult::New(id) => {
-                                    self.task_graph
-                                        .add_implied(id, req_prio.downstream(TaskClass::Data));
-                                    id
-                                }
-                                BatchAddResult::Existing(id) => {
-                                    assert_ne!(batch_size, 1);
-                                    self.task_graph.try_increase_priority(
-                                        id,
-                                        req_prio.downstream(TaskClass::Data),
-                                    );
-                                    id
-                                }
-                            }
+                    let fulfiller_task_id = if let Some(available) =
+                        self.find_available_location(data_id, data_req_loc.into())
+                    {
+                        // Data should not already be present => unwrap
+                        self.try_make_available(data_id, available, data_req_loc, req_prio)
+                            .unwrap()
+                    } else {
+                        let batch_size = match data_request.source.granularity() {
+                            crate::operator::ItemGranularity::Single => 1,
+                            crate::operator::ItemGranularity::Batched => 64,
                         };
+                        // Add item to batcher to spawn later
+                        match self.request_batcher.add(data_request, batch_size, from) {
+                            BatchAddResult::New(id) => {
+                                self.task_graph
+                                    .add_implied(id, req_prio.downstream(TaskClass::Data));
+                                id
+                            }
+                            BatchAddResult::Existing(id) => {
+                                assert_ne!(batch_size, 1);
+                                self.task_graph.try_increase_priority(
+                                    id,
+                                    req_prio.downstream(TaskClass::Data),
+                                );
+                                id
+                            }
+                        }
+                    };
                     self.task_graph
                         .will_provide_data(fulfiller_task_id, data_id);
                 } else {
