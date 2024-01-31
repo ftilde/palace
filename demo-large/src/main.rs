@@ -254,19 +254,6 @@ fn slice_viewer_z(
     state: &mut SliceState,
     events: &mut EventStream,
 ) -> FrameOperator {
-    events.act(|c| {
-        c.chain(state.inner.offset.drag(MouseButton::Left))
-            .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
-                state.inner.scroll(delta.y());
-            }))
-            .chain(OnWheelMove(|delta, e_state| {
-                if let Some(m_state) = &e_state.mouse_state {
-                    let pos = m_state.pos.map(|v| v as f32);
-                    state.inner.zoom(delta, pos);
-                }
-            }))
-    });
-
     let md = ImageMetaData {
         dimensions: size,
         chunk_size: Vector::fill(512.into()),
@@ -345,6 +332,19 @@ fn slice_viewer_z(
             };
             ui.label(s);
         });
+    });
+
+    events.act(|c| {
+        c.chain(state.inner.offset.drag(MouseButton::Left))
+            .chain(OnMouseDrag(MouseButton::Right, |_pos, delta| {
+                state.inner.scroll(delta.y());
+            }))
+            .chain(OnWheelMove(|delta, e_state| {
+                if let Some(m_state) = &e_state.mouse_state {
+                    let pos = m_state.pos.map(|v| v as f32);
+                    state.inner.zoom(delta, pos);
+                }
+            }))
     });
 
     let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z);
