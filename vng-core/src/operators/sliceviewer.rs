@@ -377,7 +377,6 @@ void main()
                     .await;
 
                 let request_table_size = 256;
-                let request_batch_size = 32;
 
                 let pipeline =
                     device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
@@ -504,6 +503,7 @@ void main()
                     // Fulfill requests
                     to_request_linear.sort_unstable();
 
+                    let request_batch_size = (1 << it).min(request_table_size);
                     for batch in to_request_linear.chunks(request_batch_size) {
                         let to_request = batch.iter().map(|v| {
                             assert!(*v < num_bricks as _);
