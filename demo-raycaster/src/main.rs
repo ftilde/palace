@@ -2,18 +2,18 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, Matrix, Vector, VoxelPosition};
-use vng_core::dim::*;
+use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
+use vng_core::operators::raycaster::CameraState;
 use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
 use vng_core::vulkan::window::Window;
-//use vng_hdf5::Hdf5VolumeSourceState;
+use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
@@ -79,7 +79,7 @@ fn open_volume(
             let data = path.with_extension("img");
             Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
         }
-        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
+        [.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
         _ => {
             return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
         }
@@ -143,10 +143,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
     };
 
-    let mut fov: f32 = 30.0;
-    let mut eye = [5.0, 0.0, 0.0].into();
-    let mut center = [0.0, 0.0, 0.0].into();
-    let mut up = [1.0, 1.0, 0.0].into();
+    let vol = vol_state.operate();
+
+    let mut camera_state = CameraState {
+        fov: 30.0,
+        trackball: operators::raycaster::TrackballState::for_volume(
+            vol.metadata,
+            vol.embedding_data,
+        ),
+    };
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev = 1.0;
@@ -195,10 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut runtime,
                     &mut window,
                     &*vol_state,
-                    &mut fov,
-                    &mut eye,
-                    &mut center,
-                    &mut up,
+                    &mut camera_state,
                     &mut scale,
                     &mut offset,
                     &mut stddev,
@@ -223,16 +225,15 @@ fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
     vol: &dyn EmbeddedVolumeOperatorState,
-    fov: &mut f32,
-    eye: &mut Vector<D3, f32>,
-    center: &mut Vector<D3, f32>,
-    up: &mut Vector<D3, f32>,
+    camera_state: &mut CameraState,
     scale: &mut f32,
     offset: &mut f32,
     stddev: &mut f32,
     mut events: EventStream,
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
+    let vol = vol.operate();
+
     events.act(|c| {
         c.chain(OnKeyPress(Key::Key1, || *scale *= 1.10))
             .chain(OnKeyPress(Key::Key2, || *scale /= 1.10))
@@ -242,28 +243,12 @@ fn eval_network(
             .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
             //.chain(OnWheelMove(|delta, _| *fov -= delta))
             .chain(OnWheelMove(|delta, _| {
-                let look = *center - *eye;
-                let new_look = look.scale(1.0 - delta * 0.1);
-                *eye = *center - new_look;
+                camera_state.trackball.move_inout(delta);
             }))
             .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
-                let look = *center - *eye;
-                let look_len = look.length();
-                let left = up.cross(look).normalized();
-                let move_factor = 0.005;
-                let delta = delta.map(|v| v as f32 * move_factor);
-
-                let new_look = (look.normalized() + up.scale(delta.y()) + left.scale(-delta.x()))
-                    .normalized()
-                    .scale(look_len);
-
-                *eye = *center - new_look;
-                let left = up.cross(new_look);
-                *up = new_look.cross(left).normalized();
+                camera_state.trackball.pan_around(delta);
             }))
     });
-
-    let vol = vol.operate();
 
     let vol = vol.map_inner(|vol| {
         volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
@@ -299,16 +284,7 @@ fn eval_network(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let perspective: Matrix<D4, f32> = cgmath::perspective(
-        cgmath::Deg(*fov),
-        md.dimensions.x().raw as f32 / md.dimensions.y().raw as f32,
-        0.001, //TODO:
-        100.0,
-    )
-    .into();
-    let look_at: Matrix<D4, f32> =
-        cgmath::Matrix4::look_at_rh((*eye).into(), (*center).into(), (*up).into()).into();
-    let matrix = perspective * look_at;
+    let matrix = camera_state.projection_mat(md.dimensions);
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.fine_metadata(),
         vol.fine_embedding_data(),

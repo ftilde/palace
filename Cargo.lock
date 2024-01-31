@@ -556,6 +556,7 @@ dependencies = [
  "cgmath",
  "clap",
  "vng-core",
+ "vng-hdf5",
  "vng-nifti",
  "vng-vvd",
  "winit",
