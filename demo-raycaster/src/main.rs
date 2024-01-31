@@ -145,13 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = vol_state.operate();
 
-    let mut camera_state = CameraState {
-        fov: 30.0,
-        trackball: operators::raycaster::TrackballState::for_volume(
-            vol.metadata,
-            vol.embedding_data,
-        ),
-    };
+    let mut camera_state = CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0);
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev = 1.0;

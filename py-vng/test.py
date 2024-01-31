@@ -36,12 +36,9 @@ slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 #slice_state1.offset().link_to(slice_state0.offset())
 #slice_state2.offset().link_to(slice_state0.offset())
 
-camera_state = vng.CameraState(
-        vng.TrackballState(
-            [5.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            ),
+camera_state = vng.CameraState.for_volume(
+        vol.levels[0].inner.metadata,
+        vol.levels[0].embedding_data,
         30.0
         ).store(store)
 

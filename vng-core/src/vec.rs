@@ -563,6 +563,20 @@ pub mod state_link_impl {
     }
 }
 
+impl<D: Dimension> Vector<D, f32> {
+    pub fn hmin(&self) -> f32 {
+        self.fold(f32::INFINITY, |a, b| a.min(b))
+    }
+    pub fn hmax(&self) -> f32 {
+        self.fold(-f32::INFINITY, |a, b| a.max(b))
+    }
+    pub fn hadd(&self) -> f32 {
+        self.fold(0.0, |a, b| a + b)
+    }
+    pub fn hmul(&self) -> f32 {
+        self.fold(1.0, |a, b| a * b)
+    }
+}
 impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn hmul(&self) -> usize {
         self.into_iter().map(|v| v.raw as usize).product()

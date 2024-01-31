@@ -46,18 +46,6 @@ impl TrackballState {
         Self { eye, center, up }
     }
 
-    #[staticmethod]
-    pub fn for_volume(input_metadata: VolumeMetaData, embedding_data: VolumeEmbeddingData) -> Self {
-        let real_size = embedding_data.spacing * input_metadata.dimensions.raw().f32();
-        let dist = real_size.length() * 1.5;
-
-        let eye = [dist, 0.0, 0.0].into();
-        let center = [0.0, 0.0, 0.0].into();
-        let up = [0.0, 1.0, 0.0].into();
-
-        Self { eye, center, up }
-    }
-
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
         self.store_py(py, store)
     }
@@ -94,13 +82,47 @@ pub struct CameraState {
     pub fov: f32,
     #[pyo3(get, set)]
     pub trackball: TrackballState,
+    #[pyo3(get, set)]
+    pub near_plane: f32,
+    #[pyo3(get, set)]
+    pub far_plane: f32,
 }
 
 #[cfg_attr(feature = "python", pymethods)]
 impl CameraState {
     #[new]
-    pub fn new(trackball: TrackballState, fov: f32) -> Self {
-        Self { trackball, fov }
+    pub fn new(trackball: TrackballState, fov: f32, near_plane: f32, far_plane: f32) -> Self {
+        Self {
+            trackball,
+            fov,
+            near_plane,
+            far_plane,
+        }
+    }
+
+    #[staticmethod]
+    pub fn for_volume(
+        input_metadata: VolumeMetaData,
+        embedding_data: VolumeEmbeddingData,
+        fov: f32,
+    ) -> Self {
+        let real_size = embedding_data.spacing * input_metadata.dimensions.raw().f32();
+        let dist = real_size.length() * 1.5;
+
+        let eye = [dist, 0.0, 0.0].into();
+        let center = [0.0, 0.0, 0.0].into();
+        let up = [0.0, 1.0, 0.0].into();
+
+        let near_plane = embedding_data.spacing.hmin();
+        let far_plane = 20.0 * dist;
+
+        let trackball = TrackballState { eye, center, up };
+        Self {
+            trackball,
+            fov,
+            near_plane,
+            far_plane,
+        }
     }
 
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
@@ -111,8 +133,8 @@ impl CameraState {
         let perspective: Matrix<D4, f32> = cgmath::perspective(
             cgmath::Deg(self.fov),
             size.x().raw as f32 / size.y().raw as f32,
-            0.001,
-            1000.0,
+            self.near_plane,
+            self.far_plane,
         )
         .into();
         let matrix = perspective * self.trackball.view_mat();
