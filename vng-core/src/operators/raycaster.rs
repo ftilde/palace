@@ -46,6 +46,18 @@ impl TrackballState {
         Self { eye, center, up }
     }
 
+    #[staticmethod]
+    pub fn for_volume(input_metadata: VolumeMetaData, embedding_data: VolumeEmbeddingData) -> Self {
+        let real_size = embedding_data.spacing * input_metadata.dimensions.raw().f32();
+        let dist = real_size.length() * 1.5;
+
+        let eye = [dist, 0.0, 0.0].into();
+        let center = [0.0, 0.0, 0.0].into();
+        let up = [0.0, 1.0, 0.0].into();
+
+        Self { eye, center, up }
+    }
+
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
         self.store_py(py, store)
     }

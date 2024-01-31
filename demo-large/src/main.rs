@@ -150,11 +150,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         raycasting: CameraState {
             fov: 30.0,
-            trackball: operators::raycaster::TrackballState {
-                eye: [5.0, 0.0, 0.0].into(),
-                center: [0.0, 0.0, 0.0].into(),
-                up: [1.0, 1.0, 0.0].into(),
-            },
+            trackball: operators::raycaster::TrackballState::for_volume(
+                vol.metadata,
+                vol.embedding_data,
+            ),
         },
         sliceview: SliceState {
             inner: SliceviewState {
