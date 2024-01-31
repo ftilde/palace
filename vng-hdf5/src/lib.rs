@@ -106,11 +106,22 @@ impl Hdf5VolumeSourceState {
         let brick_size: LocalVoxelPosition =
             to_size_vector(vol.chunk().unwrap_or_else(|| vol.shape()))?;
         //println!("Chunksize {:?}", brick_size);
-        let spacing: Vector<D3, f32> = vol
+        let spacing: Result<Vector<D3, f32>, Error> = vol
             .attr("element_size_um")
             .and_then(|a| a.read_1d::<f32>())
             .map_err(|e| e.into())
-            .and_then(|s| to_vector(s.to_vec()))?;
+            .and_then(|s| to_vector(s.to_vec()).map(|v| v.scale(0.001)));
+
+        let spacing = match spacing {
+            Ok(spacing) => spacing,
+            Err(e) => {
+                eprintln!(
+                    "Could not load spacing from dataset: {}\n Using default spacing.",
+                    e
+                );
+                Vector::fill(1.0)
+            }
+        };
 
         let dtype = vol.dtype()?;
         if !dtype.is::<f32>() {
