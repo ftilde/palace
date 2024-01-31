@@ -489,10 +489,12 @@ void main() {
 pub fn raycast(
     input: LODVolumeOperator<f32>,
     entry_exit_points: ImageOperator<[Vector<D4, f32>; 2]>,
+    lod_coarseness: f32,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
+        lod_coarseness: f32,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -643,8 +645,7 @@ void main()
                 float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
 
 
-                // TODO: We could make these configurable...
-                float coarse_lod_factor = 1.0;
+                float lod_coarseness = consts.lod_coarseness;
                 float oversampling_factor = 1.0;
 
                 uint level_num = 0;
@@ -656,7 +657,7 @@ void main()
                         uint next = level_num+1;
                         vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
                         float left_spacing_dist = length(abs(dir_x) * next_spacing);
-                        if(left_spacing_dist >= pixel_dist * coarse_lod_factor) {
+                        if(left_spacing_dist >= pixel_dist * lod_coarseness) {
                             break;
                         }
                         level_num = next;
@@ -722,7 +723,8 @@ void main()
     TensorOperator::unbatched(
         OperatorDescriptor::new("raycast")
             .dependent_on(&input)
-            .dependent_on(&entry_exit_points),
+            .dependent_on(&entry_exit_points)
+            .dependent_on_data(&lod_coarseness),
         entry_exit_points.metadata,
         (input, entry_exit_points.clone()),
         move |ctx, pos, (input, entry_exit_points)| {
@@ -764,6 +766,7 @@ void main()
                 let chunk_size = out_info.mem_dimensions.raw();
                 let consts = PushConstants {
                     out_mem_dim: chunk_size.into(),
+                    lod_coarseness,
                 };
 
                 let mut lods = Vec::new();

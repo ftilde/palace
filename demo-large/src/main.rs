@@ -100,12 +100,17 @@ enum RenderingState {
     Raycasting,
 }
 
+struct RaycastingState {
+    camera: CameraState,
+    coarse_lod_factor: f32,
+}
+
 struct State {
     gui: GuiState,
     process: ProcessState,
     rendering: RenderingState,
     vesselness: VesselnessState,
-    raycasting: CameraState,
+    raycasting: RaycastingState,
     sliceview: SliceState,
     smoothing_std: f32,
     downsample_state: DownSampleState,
@@ -148,7 +153,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_rad: 5.0,
             steps: 2,
         },
-        raycasting: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
+        raycasting: RaycastingState {
+            camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
+            coarse_lod_factor: 1.0,
+        },
         sliceview: SliceState {
             inner: SliceviewState {
                 selected: 0,
@@ -350,15 +358,15 @@ fn slice_viewer_z(
 fn raycaster(
     vol: LODVolumeOperator<f32>,
     size: Vector<D2, GlobalCoordinate>,
-    state: &mut CameraState,
+    state: &mut RaycastingState,
     mut events: EventStream,
 ) -> FrameOperator {
     events.act(|c| {
         c.chain(OnWheelMove(|delta, _| {
-            state.trackball.move_inout(delta);
+            state.camera.trackball.move_inout(delta);
         }))
         .chain(OnMouseDrag(MouseButton::Left, |_, delta| {
-            state.trackball.pan_around(delta);
+            state.camera.trackball.pan_around(delta);
         }))
     });
 
@@ -368,14 +376,14 @@ fn raycaster(
         chunk_size: Vector::fill(512.into()),
     };
 
-    let matrix = state.projection_mat(md.dimensions);
+    let matrix = state.camera.projection_mat(md.dimensions);
     let eep = vng_core::operators::raycaster::entry_exit_points(
         vol.fine_metadata(),
         vol.fine_embedding_data(),
         md.into(),
         matrix.into(),
     );
-    vng_core::operators::raycaster::raycast(vol, eep)
+    vng_core::operators::raycaster::raycast(vol, eep, state.coarse_lod_factor)
 }
 
 fn eval_network(
@@ -529,9 +537,17 @@ fn eval_network(
                     }
                     RenderingState::Raycasting => {
                         ui.add(
-                            egui::Slider::new(&mut app_state.raycasting.fov, 10.0..=100.0)
+                            egui::Slider::new(&mut app_state.raycasting.camera.fov, 10.0..=100.0)
                                 .text("FOV")
                                 .logarithmic(true),
+                        );
+                        ui.add(
+                            egui::Slider::new(
+                                &mut app_state.raycasting.coarse_lod_factor,
+                                1.0..=100.0,
+                            )
+                            .text("LOD coarseness")
+                            .logarithmic(true),
                         );
                     }
                 }

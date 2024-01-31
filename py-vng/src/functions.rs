@@ -95,9 +95,14 @@ pub fn entry_exit_points(
 pub fn raycast(
     vol: LODTensorOperator,
     entry_exit_points: TensorOperator,
+    lod_coarseness: Option<f32>,
 ) -> PyResult<TensorOperator> {
-    vng_core::operators::raycaster::raycast(vol.try_into()?, entry_exit_points.try_into()?)
-        .try_into()
+    vng_core::operators::raycaster::raycast(
+        vol.try_into()?,
+        entry_exit_points.try_into()?,
+        lod_coarseness.unwrap_or(1.0),
+    )
+    .try_into()
 }
 
 #[pyfunction]
