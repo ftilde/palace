@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 vng-core = { path = "../vng-core" }
-hdf5 = "0.8.1"
+hdf5 = { git = "https://github.com/aldanor/hdf5-rust.git" }
 ndarray = "0.15.6"
