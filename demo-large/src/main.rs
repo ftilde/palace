@@ -6,7 +6,7 @@ use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use vng_core::dim::*;
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::raycaster::CameraState;
+use vng_core::operators::raycaster::{CameraState, RaycasterConfig};
 use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::tensor::FrameOperator;
 use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
@@ -102,7 +102,7 @@ enum RenderingState {
 
 struct RaycastingState {
     camera: CameraState,
-    coarse_lod_factor: f32,
+    config: RaycasterConfig,
 }
 
 struct State {
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         raycasting: RaycastingState {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
-            coarse_lod_factor: 1.0,
+            config: RaycasterConfig::default(),
         },
         sliceview: SliceState {
             inner: SliceviewState {
@@ -383,7 +383,7 @@ fn raycaster(
         md.into(),
         matrix.into(),
     );
-    vng_core::operators::raycaster::raycast(vol, eep, state.coarse_lod_factor)
+    vng_core::operators::raycaster::raycast(vol, eep, state.config)
 }
 
 fn eval_network(
@@ -543,10 +543,18 @@ fn eval_network(
                         );
                         ui.add(
                             egui::Slider::new(
-                                &mut app_state.raycasting.coarse_lod_factor,
+                                &mut app_state.raycasting.config.lod_coarseness,
                                 1.0..=100.0,
                             )
                             .text("LOD coarseness")
+                            .logarithmic(true),
+                        );
+                        ui.add(
+                            egui::Slider::new(
+                                &mut app_state.raycasting.config.oversampling_factor,
+                                0.01..=10.0,
+                            )
+                            .text("Oversampling factor")
                             .logarithmic(true),
                         );
                     }

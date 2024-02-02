@@ -285,7 +285,7 @@ fn eval_network(
         md.into(),
         matrix.into(),
     );
-    let frame = vng_core::operators::raycaster::raycast(vol, eep, 1.0);
+    let frame = vng_core::operators::raycaster::raycast(vol, eep, Default::default());
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

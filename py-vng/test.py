@@ -42,6 +42,8 @@ camera_state = vng.CameraState.for_volume(
         30.0
         ).store(store)
 
+raycaster_config = vng.RaycasterConfig().store(store)
+
 camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
 gui_state = vng.GuiState(rt)
@@ -75,7 +77,8 @@ def render_raycast(vol, camera_state):
         proj = camera_state.load().projection_mat(size)
 
         eep = vng.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
-        frame = vng.raycast(vol, eep)
+        conf = vng.RaycasterConfig()
+        frame = vng.raycast(vol, eep, raycaster_config.load())
         frame = vng.rechunk(frame, [vng.chunk_size_full]*2)
 
         return frame
@@ -102,13 +105,17 @@ def render_slice(vol, dim, slice_state):
 
 # Top-level render component
 def render(size, events):
+
+    def named_slider(name, state, min, max):
+        return vng.Horizontal([
+            vng.Label(name),
+            vng.Slider(state, min, max),
+        ])
     gui = gui_state.setup(events, vng.Vertical([
-        vng.Label("Look at all these buttons"),
-        vng.Horizontal([
-            vng.Button("yes?", lambda: print("yes!")),
-            vng.Button("no?", lambda: print("no!")),
-            vng.Slider(camera_state.fov(), 10, 50),
-            vng.Slider(camera_state.fov(), 20, 60),
+        vng.Vertical([
+            named_slider("fov", camera_state.fov(), 10, 50),
+            named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10),
+            named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10),
         ]),
     ]))
 

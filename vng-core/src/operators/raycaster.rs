@@ -8,6 +8,7 @@ use crate::{
     chunk_utils::ChunkRequestTable,
     data::{from_linear, GlobalCoordinate, Matrix, Vector},
     dim::*,
+    id::{Id, Identify},
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -486,15 +487,52 @@ void main() {
     )
 }
 
+#[cfg_attr(feature = "python", pyclass)]
+#[derive(state_link::State, Clone, Copy)]
+pub struct RaycasterConfig {
+    #[pyo3(get, set)]
+    pub lod_coarseness: f32,
+    #[pyo3(get, set)]
+    pub oversampling_factor: f32,
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl RaycasterConfig {
+    #[new]
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
+        self.store_py(py, store)
+    }
+}
+
+impl Identify for RaycasterConfig {
+    fn id(&self) -> Id {
+        Id::combine(&[self.lod_coarseness.id(), self.oversampling_factor.id()])
+    }
+}
+
+impl Default for RaycasterConfig {
+    fn default() -> Self {
+        RaycasterConfig {
+            lod_coarseness: 1.0,
+            oversampling_factor: 1.0,
+        }
+    }
+}
+
 pub fn raycast(
     input: LODVolumeOperator<f32>,
     entry_exit_points: ImageOperator<[Vector<D4, f32>; 2]>,
-    lod_coarseness: f32,
+    config: RaycasterConfig,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         out_mem_dim: cgmath::Vector2<u32>,
         lod_coarseness: f32,
+        oversampling_factor: f32,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -646,7 +684,7 @@ void main()
 
 
                 float lod_coarseness = consts.lod_coarseness;
-                float oversampling_factor = 1.0;
+                float oversampling_factor = consts.oversampling_factor;
 
                 uint level_num = 0;
                 while(state.t <= t_end) {
@@ -724,7 +762,7 @@ void main()
         OperatorDescriptor::new("raycast")
             .dependent_on(&input)
             .dependent_on(&entry_exit_points)
-            .dependent_on_data(&lod_coarseness),
+            .dependent_on_data(&config),
         entry_exit_points.metadata,
         (input, entry_exit_points.clone()),
         move |ctx, pos, (input, entry_exit_points)| {
@@ -766,7 +804,8 @@ void main()
                 let chunk_size = out_info.mem_dimensions.raw();
                 let consts = PushConstants {
                     out_mem_dim: chunk_size.into(),
-                    lod_coarseness,
+                    oversampling_factor: config.oversampling_factor,
+                    lod_coarseness: config.lod_coarseness,
                 };
 
                 let mut lods = Vec::new();

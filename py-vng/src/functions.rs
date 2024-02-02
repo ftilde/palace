@@ -1,6 +1,7 @@
 use crate::{map_err, types::*};
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::dim::*;
+use vng_core::operators::raycaster::RaycasterConfig;
 use vng_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
@@ -95,12 +96,12 @@ pub fn entry_exit_points(
 pub fn raycast(
     vol: LODTensorOperator,
     entry_exit_points: TensorOperator,
-    lod_coarseness: Option<f32>,
+    config: Option<RaycasterConfig>,
 ) -> PyResult<TensorOperator> {
     vng_core::operators::raycaster::raycast(
         vol.try_into()?,
         entry_exit_points.try_into()?,
-        lod_coarseness.unwrap_or(1.0),
+        config.unwrap_or_default(),
     )
     .try_into()
 }
