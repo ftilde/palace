@@ -665,16 +665,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         )
                     }
                 };
-                let task_id = match transfer_task {
+                Some(match transfer_task {
                     TransferTaskResult::New(t) => {
                         self.task_manager.add_task(task_id, t);
+                        self.task_graph
+                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                         task_id
                     }
                     TransferTaskResult::Existing(task_id) => task_id,
-                };
-                self.task_graph
-                    .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
-                Some(task_id)
+                })
             }
             (DataLocation::GPU(source_id), VisibleDataLocation::CPU(target)) => {
                 let task_id = self.transfer_manager.next_id();
@@ -686,19 +685,49 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     access,
                     target,
                 );
-                let task_id = match transfer_task {
+                Some(match transfer_task {
                     TransferTaskResult::New(t) => {
                         self.task_manager.add_task(task_id, t);
+                        self.task_graph
+                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
                         task_id
                     }
                     TransferTaskResult::Existing(task_id) => task_id,
-                };
-                self.task_graph
-                    .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
-                Some(task_id)
+                })
             }
-            (DataLocation::CPU(_source), VisibleDataLocation::CPU(_target)) => {
-                todo!() //NO_PUSH_main
+            (DataLocation::CPU(source), VisibleDataLocation::CPU(target)) => {
+                let task_id = self.transfer_manager.next_id();
+
+                let ctx = self.context(task_id);
+                let transfer_task = match source {
+                    CpuDataLocation::Ram => {
+                        let s = self.data.storage;
+                        let access = s.register_access(id);
+                        let Ok(source) = s.read_raw(access) else {
+                            panic!("Data should already be in ram");
+                        };
+                        self.transfer_manager
+                            .transfer_cpu_to_cpu(ctx, source, target)
+                    }
+                    CpuDataLocation::Disk => {
+                        let s = self.data.disk_cache.unwrap();
+                        let access = s.register_access(id);
+                        let Ok(source) = s.read_raw(access) else {
+                            panic!("Data should already be in disk cache");
+                        };
+                        self.transfer_manager
+                            .transfer_cpu_to_cpu(ctx, source, target)
+                    }
+                };
+                Some(match transfer_task {
+                    TransferTaskResult::New(t) => {
+                        self.task_manager.add_task(task_id, t);
+                        self.task_graph
+                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
+                        task_id
+                    }
+                    TransferTaskResult::Existing(task_id) => task_id,
+                })
             }
         }
     }

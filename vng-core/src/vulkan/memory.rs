@@ -342,6 +342,66 @@ impl TransferManager {
             };
         })
     }
+    pub fn transfer_cpu_to_cpu<'cref, 'inv, A: CpuAllocator>(
+        &self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        source: crate::storage::cpu::RawReadHandle<'cref, A>,
+        dst: CpuDataLocation,
+    ) -> TransferTaskResult<'cref> {
+        assert_ne!(A::LOCATION, dst, "src and dst must differ for transfer");
+        let transfer_task_key = (source.id(), DataLocation::CPU(dst));
+
+        self.supply_transfer_task(ctx, transfer_task_key, async move {
+            let key = source.id();
+            let layout = source.info.layout;
+            let desc = DataDescriptor {
+                id: key,
+                longevity: source.info.data_longevity,
+            };
+            match dst {
+                CpuDataLocation::Ram => {
+                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
+
+                    // Safety: layout is taken from input, output was constructed with the very
+                    // layout
+                    unsafe { copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data).await };
+
+                    // Safety: We have just written the complete buffer using a memcpy
+                    unsafe {
+                        out_buf.initialized(ctx);
+                    }
+                }
+                CpuDataLocation::Disk => {
+                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
+
+                    // Safety: layout is taken from input, output was constructed with the very
+                    // layout
+                    unsafe { copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data).await };
+
+                    // Safety: We have just written the complete buffer using a memcpy
+                    unsafe {
+                        out_buf.initialized(ctx);
+                    }
+                }
+            };
+        })
+    }
+}
+
+// Safety: `in_buf` and `out_buf` must have the layout `layout`
+pub async unsafe fn copy_cpu_to_cpu<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    in_buf: *const MaybeUninit<u8>,
+    layout: Layout,
+    out_buf: *mut MaybeUninit<u8>,
+) {
+    let in_ptr = unsafe { SendPointer::pack(in_buf) };
+    let out_ptr = unsafe { SendPointerMut::pack(out_buf) };
+
+    ctx.submit(ctx.spawn_compute(|| {
+        unsafe { std::ptr::copy_nonoverlapping(in_ptr.unpack(), out_ptr.unpack(), layout.size()) };
+    }))
+    .await;
 }
 
 /// Copy buffer from cpu to gpu. Both buffers must have the same layout.
