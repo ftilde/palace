@@ -907,7 +907,7 @@ void main()
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                 // Actual rendering
-                let mut it = 1;
+                let mut it = 0;
                 let timed_out = 'outer: loop {
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
@@ -1012,7 +1012,7 @@ void main()
                 };
                 if timed_out {
                     unsafe {
-                        println!("Raycaster: Time out result after {} it", it);
+                        println!("Raycaster: Time out result after {} it", it + 1);
                         gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
                     };
                 } else {
