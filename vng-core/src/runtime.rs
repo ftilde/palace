@@ -646,7 +646,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in ram");
                         };
-                        self.transfer_manager.transfer_to_gpu(
+                        self.transfer_manager.transfer_cpu_to_gpu(
                             ctx,
                             &self.data.device_contexts[target_id],
                             source,
@@ -658,7 +658,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in disk cache");
                         };
-                        self.transfer_manager.transfer_to_gpu(
+                        self.transfer_manager.transfer_cpu_to_gpu(
                             ctx,
                             &self.data.device_contexts[target_id],
                             source,
@@ -680,7 +680,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let task_id = self.transfer_manager.next_id();
                 let device = &self.data.device_contexts[source_id];
                 let access = device.storage.register_access(device, self.data.frame, id);
-                let transfer_task = self.transfer_manager.transfer_to_cpu(
+                let transfer_task = self.transfer_manager.transfer_gpu_to_cpu(
                     self.context(task_id),
                     &self.data.device_contexts[source_id],
                     access,
