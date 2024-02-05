@@ -269,7 +269,7 @@ void main() {
                     },
                 );
 
-                let requests = positions.into_iter().map(|pos| {
+                let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();

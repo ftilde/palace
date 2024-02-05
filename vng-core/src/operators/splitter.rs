@@ -202,7 +202,7 @@ void main()
                         });
 
                     assert!(positions.len() == 1);
-                    let pos = *positions.first().unwrap();
+                    let pos = positions.first().unwrap().0;
                     assert_eq!(pos, Vector::fill(0.into()));
 
                     let out_info = m.chunk_info(pos);

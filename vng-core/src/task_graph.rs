@@ -388,7 +388,6 @@ pub struct TaskGraph {
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
     requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
-    event_stream: GraphEventStream,
     high_level: HighLevelGraph,
     ts_counter: u32,
     postponed_data_operator_tasks: Map<OperatorId, VecDeque<(TaskId, Priority)>>,
@@ -445,35 +444,20 @@ impl TaskGraph {
     ) {
         // Hm, only relevant for the root task, i think. Could be moved somewhere else possibly
         if !self.waits_on.contains_key(&wants) {
-            self.event_stream.node_add(wants);
             self.high_level.add_task(wants);
         }
-        if !self.required_by.contains_key(&wanted) {
-            self.event_stream.node_add(wanted);
-        }
 
-        if self
-            .waits_on
+        self.waits_on
             .entry(wants)
             .or_default()
-            .insert(wanted, progress_indicator)
-            .is_none()
-        {
-            self.event_stream.edge_add(wants, wanted, 1);
-        } else {
-            //println!("Already waiting {:?}", wants);
-        }
+            .insert(wanted, progress_indicator);
+
         self.required_by.entry(wanted).or_default().insert(wants);
         self.implied_ready.remove(&wants);
 
         if let RequestId::Data(d) = wanted {
             let entry = self.requested_locations.entry(d.id).or_default();
             let e = entry.entry(d.location);
-
-            if matches!(e, crate::util::MapEntry::Vacant(_)) {
-                self.event_stream.node_add(d.id);
-                self.event_stream.edge_add(wanted, d.id, 1);
-            }
 
             let loc = e.or_default();
             loc.insert(wants);
@@ -502,7 +486,6 @@ impl TaskGraph {
     pub fn will_provide_data(&mut self, task: TaskId, data: DataId) {
         let entries = self.will_provide_data.entry(task).or_default();
         entries.insert(data);
-        self.event_stream.edge_add(data, task, 1);
         let entry = self.data_provided_by.entry(data).or_default();
         entry.insert(task);
 
@@ -525,7 +508,6 @@ impl TaskGraph {
         let newly_inserted = entries.insert(req);
         if newly_inserted {
             assert!(self.req_fullfil_by.insert(req, task).is_none());
-            self.event_stream.edge_add(req, task, 1);
         }
 
         for requestor in &self.required_by[&req] {
@@ -547,7 +529,6 @@ impl TaskGraph {
         self.waits_on.insert(id, Map::new());
 
         self.high_level.add_task(id);
-        self.event_stream.node_add(id);
 
         let run_now = if origin.class == TaskClass::Data {
             match self.postponed_data_operator_tasks.entry(id.operator()) {
@@ -598,7 +579,6 @@ impl TaskGraph {
         if let RequestId::Data(d) = id {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
             let fulfilled_locs = entry.remove(&d.location).unwrap();
-            self.event_stream.edge_remove(id, d.id, 1);
 
             let by = self.data_provided_by.remove(&d.id).unwrap();
             for from in fulfilled_locs {
@@ -608,12 +588,10 @@ impl TaskGraph {
             }
             if entry.is_empty() {
                 self.requested_locations.remove(&d.id);
-                self.event_stream.node_remove(d.id);
             }
         }
 
         let required_by = self.required_by.remove(&id);
-        let was_requested = required_by.is_some();
 
         if let Some(by) = self.req_fullfil_by.remove(&id) {
             for rev_dep in required_by.iter().flatten() {
@@ -622,8 +600,6 @@ impl TaskGraph {
         }
 
         for rev_dep in required_by.iter().flatten() {
-            self.event_stream.edge_remove(*rev_dep, id, 1);
-
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
             let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
@@ -656,11 +632,6 @@ impl TaskGraph {
         for group in resolved_groups {
             self.resolved_implied(group.into());
         }
-
-        // E.g. cmdbuffer completions are marked as resolved even if no one requested them
-        if was_requested {
-            self.event_stream.node_remove(id);
-        }
     }
 
     pub fn task_done(&mut self, id: TaskId) {
@@ -670,8 +641,6 @@ impl TaskGraph {
 
         let wpd = self.will_provide_data.remove(&id);
         for did in wpd.into_iter().flatten() {
-            self.event_stream.edge_remove(did, id, 1);
-
             self.data_provided_by
                 .get_mut(&did)
                 .and_then(|v| Some(v.remove(&id)));
@@ -691,16 +660,12 @@ impl TaskGraph {
                 }
             }
         }
-        let wfr = self.will_fullfil_req.remove(&id);
-        for rid in wfr.into_iter().flatten() {
-            self.event_stream.edge_remove(rid, id, 1);
-        }
+        let _wfr = self.will_fullfil_req.remove(&id);
 
         let deps = self.waits_on.remove(&id).unwrap();
         assert!(deps.is_empty());
         //assert!(deps.iter().all(|(v, _)| matches!(v, RequestId::Group(_))));
 
-        self.event_stream.node_remove(id);
         self.high_level.remove_task(id);
 
         if let Some(postponed) = self.postponed_data_operator_tasks.get_mut(&id.operator()) {
@@ -903,14 +868,6 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
         "Finished writing high level event stream to file: {}",
         filename
     );
-
-    let filename = "taskeventstream.json";
-    task_graph
-        .event_stream
-        .0
-        .stream
-        .save(std::path::Path::new(filename));
-    println!("Finished writing event stream to file: {}", filename);
 }
 
 pub fn export(task_graph: &TaskGraph) {
@@ -1079,12 +1036,4 @@ pub fn export(task_graph: &TaskGraph) {
         "Finished writing high level event stream to file: {}",
         filename
     );
-
-    let filename = "taskeventstream.json";
-    task_graph
-        .event_stream
-        .0
-        .stream
-        .save(std::path::Path::new(filename));
-    println!("Finished writing event stream to file: {}", filename);
 }

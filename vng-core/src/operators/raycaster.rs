@@ -226,7 +226,7 @@ void main() {
             result_metadata,
             projection_mat,
         ),
-        move |ctx, pos, (m_in, embedding_data, m_out, transform)| {
+        move |ctx, pos, _, (m_in, embedding_data, m_out, transform)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -765,7 +765,7 @@ void main()
             .dependent_on_data(&config),
         entry_exit_points.metadata,
         (input, entry_exit_points.clone()),
-        move |ctx, pos, (input, entry_exit_points)| {
+        move |ctx, pos, _, (input, entry_exit_points)| {
             async move {
                 let device = ctx.vulkan_device();
 

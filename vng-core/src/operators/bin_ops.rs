@@ -94,7 +94,7 @@ void main()
                     });
 
                 let mut brick_stream =
-                    ctx.submit_unordered_with_data(positions.iter().map(|pos| {
+                    ctx.submit_unordered_with_data(positions.iter().map(|(pos, _)| {
                         (
                             ctx.group([
                                 input1.chunks.request_gpu(device.id, *pos, access_info),

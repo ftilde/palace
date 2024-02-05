@@ -127,7 +127,7 @@ impl TypeErased {
 pub type ComputeFunction<ItemDescriptor, Output> = Rc<
     dyn for<'cref, 'inv> Fn(
         TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-        Vec<ItemDescriptor>,
+        Vec<(ItemDescriptor, DataLocation)>,
         &'inv TypeErased,
     ) -> Task<'cref>,
 >;
@@ -191,12 +191,12 @@ impl<Output: Element> Operator<(), Output> {
         let id = DataId::new(self.id(), &item);
 
         Request {
-            type_: RequestType::Data(DataRequest {
+            type_: RequestType::Data(DataRequest::new(
                 id,
-                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
+                VisibleDataLocation::CPU(CpuDataLocation::Ram),
+                self,
+                item,
+            )),
             gen_poll: Box::new(move |ctx| {
                 let mut access = Some(ctx.storage.register_access(id));
                 Box::new(move || unsafe {
@@ -229,7 +229,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
     pub fn new<
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-                Vec<ItemDescriptor>,
+                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
                 &'inv (),
             ) -> Task<'cref>
             + 'static,
@@ -244,7 +244,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         S: 'static,
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-                Vec<ItemDescriptor>,
+                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
                 &'inv S,
             ) -> Task<'cref>
             + 'static,
@@ -271,6 +271,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
                 ItemDescriptor,
+                DataLocation, //DataLocation is only a hint
                 &'inv S,
             ) -> Task<'cref>
             + 'static,
@@ -289,7 +290,7 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
                 let state = unsafe { state.unpack_ref() };
                 assert_eq!(items.len(), 1);
                 let item = items.into_iter().next().unwrap();
-                compute(ctx, item, state)
+                compute(ctx, item.0, item.1, state)
             }),
         }
     }
@@ -302,12 +303,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         let id = DataId::new(self.id(), &item);
 
         Request {
-            type_: RequestType::Data(DataRequest {
+            type_: RequestType::Data(DataRequest::new(
                 id,
-                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
+                VisibleDataLocation::CPU(CpuDataLocation::Ram),
+                self,
+                item,
+            )),
             gen_poll: Box::new(move |ctx| {
                 let mut access = Some(ctx.storage.register_access(id));
                 Box::new(move || unsafe {
@@ -333,12 +334,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         let write_desc = DataDescriptor::new(write_id, &item);
 
         Request {
-            type_: RequestType::Data(DataRequest {
-                id: read_id,
-                location: VisibleDataLocation::CPU(CpuDataLocation::Ram),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
+            type_: RequestType::Data(DataRequest::new(
+                read_id,
+                VisibleDataLocation::CPU(CpuDataLocation::Ram),
+                self,
+                item,
+            )),
             gen_poll: Box::new(move |ctx| {
                 let mut access = Some(ctx.storage.register_access(read_id));
                 Box::new(move || unsafe {
@@ -397,12 +398,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         let id = DataId::new(self.id(), &item);
 
         Request {
-            type_: RequestType::Data(DataRequest {
+            type_: RequestType::Data(DataRequest::new(
                 id,
-                location: VisibleDataLocation::GPU(gpu, dst_info),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
+                VisibleDataLocation::GPU(gpu, dst_info),
+                self,
+                item,
+            )),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
                 let mut access = Some(device.storage.register_access(
@@ -436,12 +437,12 @@ impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDe
         let read_id = DataId::new(self.id(), &item);
 
         Request {
-            type_: RequestType::Data(DataRequest {
-                id: read_id,
-                location: VisibleDataLocation::GPU(gpu, dst_info),
-                source: self,
-                item: TypeErased::pack(item),
-            }),
+            type_: RequestType::Data(DataRequest::new(
+                read_id,
+                VisibleDataLocation::GPU(gpu, dst_info),
+                self,
+                item,
+            )),
             gen_poll: Box::new(move |ctx| {
                 let device = &ctx.device_contexts[gpu];
                 let mut access = Some(device.storage.register_access(

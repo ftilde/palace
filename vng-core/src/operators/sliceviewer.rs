@@ -314,7 +314,7 @@ void main()
             .unstable(),
         result_metadata,
         (input, result_metadata, projection_mat),
-        move |ctx, pos, (input, result_metadata, projection_mat)| {
+        move |ctx, pos, _, (input, result_metadata, projection_mat)| {
             async move {
                 let device = ctx.vulkan_device();
 

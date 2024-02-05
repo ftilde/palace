@@ -7,6 +7,7 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     operator::{Operator, OperatorDescriptor},
+    storage::DataLocation,
     task::{RequestStream, TaskContext},
     Error,
 };
@@ -40,7 +41,7 @@ impl RawVolumeSourceState {
         &self,
         brick_size: LocalVoxelPosition,
         ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
-        mut positions: Vec<BrickPosition>,
+        mut positions: Vec<(BrickPosition, DataLocation)>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {
             dimensions: self.0.size,
@@ -48,7 +49,7 @@ impl RawVolumeSourceState {
         };
         let dim_in_bricks = m.dimension_in_chunks();
 
-        positions.sort_by_key(|v| crate::data::to_linear(*v, dim_in_bricks));
+        positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
 
         let max_lin_len = 4096; //expected page size
 
@@ -57,7 +58,7 @@ impl RawVolumeSourceState {
         let mut batches = Vec::new();
         let mut current_batch: Vec<BrickPosition> = Vec::new();
         let mut current_pos = 0;
-        for pos in positions {
+        for (pos, _) in positions {
             if !(pos.x() < dim_in_bricks.x()
                 && pos.y() < dim_in_bricks.y()
                 && pos.z() < dim_in_bricks.z())

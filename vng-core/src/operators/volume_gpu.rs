@@ -96,7 +96,7 @@ void main()
                     });
 
                 let mut brick_stream = ctx
-                    .submit_unordered_with_data(positions.iter().map(|pos| {
+                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
                         (
                             input.chunks.request_inplace_gpu(
                                 device.id,
@@ -274,7 +274,7 @@ void main() {
                     },
                 );
 
-                let requests = positions.into_iter().map(|pos| {
+                let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
@@ -557,7 +557,7 @@ void main() {
                 assert!(kernel_size % 2 == 1, "Kernel size must be odd");
                 let extent = kernel_size / 2;
 
-                let requests = positions.into_iter().map(|pos| {
+                let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
@@ -972,7 +972,7 @@ void main()
                     },
                 );
 
-                for pos in positions {
+                for (pos, _) in positions {
                     let brick_info = m.chunk_info(pos);
 
                     let gpu_brick_out = ctx

@@ -56,11 +56,30 @@ impl RequestInfo<'_> {
 /// Note: Per contract, the poll function must not be called after it has returned Some once.
 type ResultPoll<'a, V> = Box<dyn FnMut() -> Option<V> + 'a>;
 
+#[non_exhaustive]
 pub struct DataRequest<'inv> {
     pub id: DataId,
     pub location: VisibleDataLocation,
     pub source: &'inv dyn OpaqueOperator,
     pub item: TypeErased,
+    _use_the_constructor: (),
+}
+
+impl<'inv> DataRequest<'inv> {
+    pub(crate) fn new<T>(
+        id: DataId,
+        location: VisibleDataLocation,
+        source: &'inv dyn OpaqueOperator,
+        item: T,
+    ) -> Self {
+        Self {
+            id,
+            location,
+            source,
+            item: TypeErased::pack((item, DataLocation::from(location))),
+            _use_the_constructor: (),
+        }
+    }
 }
 
 pub struct RequestGroup<'inv> {

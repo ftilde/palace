@@ -146,7 +146,7 @@ fn gen_kernel_operator<Params: Element>(
             }
         },
         (params, get_size.clone(), gen_kernel),
-        move |ctx, pos, (params, get_size, gen_kernel)| {
+        move |ctx, pos, _, (params, get_size, gen_kernel)| {
             assert_eq!(pos.raw, 0);
             async move {
                 let size = get_size(&params);

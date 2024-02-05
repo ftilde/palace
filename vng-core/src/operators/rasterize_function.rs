@@ -5,6 +5,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     operator::OperatorDescriptor,
+    storage::DataLocation,
     task::{RequestStream, TaskContext},
     Error,
 };
@@ -49,9 +50,9 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     metadata: &VolumeMetaData,
     function: &F,
     ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
-    positions: Vec<BrickPosition>,
+    positions: Vec<(BrickPosition, DataLocation)>,
 ) -> Result<(), Error> {
-    let allocs = positions.into_iter().map(|pos| {
+    let allocs = positions.into_iter().map(|(pos, _)| {
         let brick_handle_req = ctx.alloc_slot(pos, metadata.num_chunk_elements());
         (brick_handle_req, pos)
     });

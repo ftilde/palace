@@ -136,7 +136,7 @@ void main() {
 
                 let m = input.metadata;
 
-                let requests = positions.into_iter().map(|pos| {
+                let requests = positions.into_iter().map(|(pos, _)| {
                     let hessian_bricks = ctx.group(hessian.into_iter().map(|entry| {
                         entry.chunks.request_gpu(
                             device.id,

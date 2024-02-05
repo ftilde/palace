@@ -566,7 +566,7 @@ void main() {
                 m
             },
             (input.clone(), self),
-            move |ctx, pos, (input, state)| {
+            move |ctx, pos, _, (input, state)| {
                 async move {
                     let device = ctx.vulkan_device();
 

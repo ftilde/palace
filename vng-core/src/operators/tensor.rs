@@ -10,7 +10,7 @@ use crate::{
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
-        Element,
+        DataLocation, Element,
     },
     task::{RequestStream, Task, TaskContext},
 };
@@ -31,7 +31,7 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-                Vec<Vector<D, ChunkCoordinate>>,
+                Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
                 &'inv (),
             ) -> Task<'cref>
             + 'static,
@@ -47,7 +47,7 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
         SB: 'static,
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-                Vec<Vector<D, ChunkCoordinate>>,
+                Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
                 &'inv SB,
             ) -> Task<'cref>
             + 'static,
@@ -68,6 +68,7 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
                 Vector<D, ChunkCoordinate>,
+                DataLocation,
                 &'inv SB,
             ) -> Task<'cref>
             + 'static,
@@ -184,14 +185,14 @@ pub async fn map_values_inplace<
 >(
     ctx: TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
     input: &'op Operator<Vector<D, ChunkCoordinate>, E>,
-    positions: Vec<Vector<D, ChunkCoordinate>>,
+    positions: Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
     f: F,
 ) where
     'op: 'inv,
 {
     let requests = positions
         .into_iter()
-        .map(|pos| input.request_inplace(*ctx, pos, ctx.current_op_desc().unwrap()));
+        .map(|(pos, _)| input.request_inplace(*ctx, pos, ctx.current_op_desc().unwrap()));
 
     let stream = ctx
         .submit_unordered(requests)
