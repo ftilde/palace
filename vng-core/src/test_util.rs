@@ -6,7 +6,6 @@ use crate::{
         volume::{ChunkSize, VolumeOperatorState},
         volume_gpu::rechunk,
     },
-    runtime::RunTime,
     storage::Element,
 };
 
@@ -17,7 +16,7 @@ pub fn compare_tensor_fn<
     vol: TensorOperator<D, T>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
 ) {
-    let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
+    let mut runtime = crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None).unwrap();
 
     let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
     let full_vol = &full_vol;
@@ -46,7 +45,7 @@ pub fn compare_tensor<D: Dimension>(
     result: TensorOperator<D, f32>,
     expected: TensorOperator<D, f32>,
 ) {
-    let mut runtime = RunTime::new(1 << 30, None, Some(1)).unwrap();
+    let mut runtime = crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None).unwrap();
 
     runtime
         .resolve(None, |ctx, _| {

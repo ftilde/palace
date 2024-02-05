@@ -1051,7 +1051,7 @@ mod test {
 
         let output = mean(input);
 
-        let mut runtime = crate::runtime::RunTime::new(1 << 30, None, Some(1)).unwrap();
+        let mut runtime = crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None).unwrap();
 
         let output = &output;
         let mean = runtime
