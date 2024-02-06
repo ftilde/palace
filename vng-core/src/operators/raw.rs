@@ -1,4 +1,4 @@
-use std::{fs::File, mem::MaybeUninit, path::PathBuf, rc::Rc};
+use std::{fs::File, mem::MaybeUninit, ops::DerefMut, path::PathBuf, rc::Rc};
 
 use ash::vk;
 use derive_more::Deref;
@@ -24,6 +24,57 @@ pub struct RawVolumeSourceStateInner {
     _file: File,
     mmap: memmap::Mmap,
     pub size: VoxelPosition,
+}
+
+fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
+    m: VolumeMetaData,
+    in_: ndarray::ArrayView3<f32>,
+    chunks_in_line: &mut [(BrickPosition, S)],
+) {
+    let brick_size = m.chunk_size;
+
+    for (pos, ref mut buf) in &mut *chunks_in_line {
+        let chunk_info = m.chunk_info(*pos);
+        crate::data::init_non_full(buf.as_mut(), &chunk_info, f32::NAN);
+    }
+
+    let first = chunks_in_line.first().unwrap();
+    let first_info = m.chunk_info(first.0);
+    let global_begin = first_info.begin;
+
+    let last = chunks_in_line.last().unwrap();
+    let last_info = m.chunk_info(last.0);
+    let global_end = last_info.end();
+
+    let strip_size_z = first_info.logical_dimensions.z();
+    let strip_size_y = first_info.logical_dimensions.y();
+    for z in 0..strip_size_z.raw {
+        for y in 0..strip_size_y.raw {
+            // Note: This assumes that all bricks have the same memory size! This may
+            // change in the future
+            let line_begin_brick =
+                crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
+
+            let global_line = in_.slice(ndarray::s!(
+                (global_begin.z().raw + z) as usize,
+                (global_begin.y().raw + y) as usize,
+                global_begin.x().raw as usize..global_end.x().raw as usize,
+            ));
+            let global_line = global_line.as_slice().unwrap();
+
+            let bricks = chunks_in_line
+                .iter_mut()
+                .map(|(_, handle)| &mut handle.as_mut()[line_begin_brick..]);
+            let mut global_brick_begin = 0;
+            for brick_line in bricks {
+                let global_line_brick = &global_line[global_brick_begin..];
+                for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
+                    o.write(*i);
+                }
+                global_brick_begin += brick_size.x().raw as usize;
+            }
+        }
+    }
 }
 
 impl RawVolumeSourceState {
@@ -138,52 +189,7 @@ impl RawVolumeSourceState {
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        for (pos, ref mut brick_handle) in &mut brick_handles {
-                            let chunk_info = m.chunk_info(*pos);
-                            crate::data::init_non_full(brick_handle, &chunk_info, f32::NAN);
-                        }
-
-                        let first = brick_handles.first().unwrap();
-                        let first_info = m.chunk_info(first.0);
-                        let global_begin = first_info.begin;
-
-                        let last = brick_handles.last().unwrap();
-                        let last_info = m.chunk_info(last.0);
-                        let global_end = last_info.end();
-
-                        let strip_size_z = first_info.logical_dimensions.z();
-                        let strip_size_y = first_info.logical_dimensions.y();
-                        for z in 0..strip_size_z.raw {
-                            for y in 0..strip_size_y.raw {
-                                // Note: This assumes that all bricks have the same memory size! This may
-                                // change in the future
-                                let line_begin_brick = crate::data::to_linear(
-                                    LocalVoxelPosition::from([z, y, 0]),
-                                    brick_size,
-                                );
-
-                                let global_line = in_.slice(ndarray::s!(
-                                    (global_begin.z().raw + z) as usize,
-                                    (global_begin.y().raw + y) as usize,
-                                    global_begin.x().raw as usize..global_end.x().raw as usize,
-                                ));
-                                let global_line = global_line.as_slice().unwrap();
-
-                                let bricks = brick_handles
-                                    .iter_mut()
-                                    .map(|(_, handle)| &mut handle[line_begin_brick..]);
-                                let mut global_brick_begin = 0;
-                                for brick_line in bricks {
-                                    let global_line_brick = &global_line[global_brick_begin..];
-                                    for (o, i) in
-                                        brick_line.iter_mut().zip(global_line_brick.iter())
-                                    {
-                                        o.write(*i);
-                                    }
-                                    global_brick_begin += brick_size.x().raw as usize;
-                                }
-                            }
-                        }
+                        copy_chunk_line(m, in_, &mut brick_handles);
 
                         brick_handles
                     })
@@ -241,52 +247,7 @@ impl RawVolumeSourceState {
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        for (pos, ref mut buf) in &mut staging_bufs_cpu {
-                            let chunk_info = m.chunk_info(*pos);
-                            crate::data::init_non_full(buf, &chunk_info, f32::NAN);
-                        }
-
-                        let first = staging_bufs_cpu.first().unwrap();
-                        let first_info = m.chunk_info(first.0);
-                        let global_begin = first_info.begin;
-
-                        let last = staging_bufs_cpu.last().unwrap();
-                        let last_info = m.chunk_info(last.0);
-                        let global_end = last_info.end();
-
-                        let strip_size_z = first_info.logical_dimensions.z();
-                        let strip_size_y = first_info.logical_dimensions.y();
-                        for z in 0..strip_size_z.raw {
-                            for y in 0..strip_size_y.raw {
-                                // Note: This assumes that all bricks have the same memory size! This may
-                                // change in the future
-                                let line_begin_brick = crate::data::to_linear(
-                                    LocalVoxelPosition::from([z, y, 0]),
-                                    brick_size,
-                                );
-
-                                let global_line = in_.slice(ndarray::s!(
-                                    (global_begin.z().raw + z) as usize,
-                                    (global_begin.y().raw + y) as usize,
-                                    global_begin.x().raw as usize..global_end.x().raw as usize,
-                                ));
-                                let global_line = global_line.as_slice().unwrap();
-
-                                let bricks = staging_bufs_cpu
-                                    .iter_mut()
-                                    .map(|(_, handle)| &mut handle[line_begin_brick..]);
-                                let mut global_brick_begin = 0;
-                                for brick_line in bricks {
-                                    let global_line_brick = &global_line[global_brick_begin..];
-                                    for (o, i) in
-                                        brick_line.iter_mut().zip(global_line_brick.iter())
-                                    {
-                                        o.write(*i);
-                                    }
-                                    global_brick_begin += brick_size.x().raw as usize;
-                                }
-                            }
-                        }
+                        copy_chunk_line(m, in_, &mut staging_bufs_cpu);
 
                         std::mem::drop(staging_bufs_cpu);
                         (staging_bufs, brick_handles)
