@@ -115,7 +115,7 @@ impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
             self.0.metadata,
             self.clone(),
             move |ctx, mut positions, this| {
-                positions.sort_by_key(|p| p.z());
+                positions.sort_by_key(|(p, _)| p.z());
                 async move {
                     let obj = match &this.0.type_ {
                         Type::Single(path) => {
@@ -129,7 +129,7 @@ impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
                         return Err(format!("File has changed").into());
                     }
                     let mut vol = obj.into_volume();
-                    for pos in positions {
+                    for (pos, _) in positions {
                         let z = pos.z().raw as usize;
                         let chunk = this.0.metadata.chunk_info(pos);
                         let mut brick_handle =

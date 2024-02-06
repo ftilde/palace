@@ -246,6 +246,19 @@ impl NewDataManager {
 #[derive(Copy, Clone, derive_more::From, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GarbageCollectId(u64);
 
+#[derive(Default)]
+struct ThreadHandleDropPanic;
+impl Drop for ThreadHandleDropPanic {
+    fn drop(&mut self) {
+        panic!("ThreadHandles must be returned to main thread before being dropped!");
+    }
+}
+impl ThreadHandleDropPanic {
+    fn dismiss(self) {
+        std::mem::forget(self);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

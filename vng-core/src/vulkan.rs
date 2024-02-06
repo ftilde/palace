@@ -344,8 +344,8 @@ pub struct DeviceContext {
 
     vulkan_states: state::Cache,
     pub storage: crate::storage::gpu::Storage,
-    staging_to_gpu: memory::BufferStash,
-    staging_to_cpu: memory::BufferStash,
+    pub staging_to_gpu: memory::BufferStash,
+    pub staging_to_cpu: memory::BufferStash,
     pub tmp_states: memory::TempStates,
 }
 

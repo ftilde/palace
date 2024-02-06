@@ -63,7 +63,7 @@ impl EmbeddedVolumeOperatorState for Hdf5VolumeSourceState {
             move |ctx, positions, this| {
                 async move {
                     let metadata = this.inner.metadata;
-                    for pos in positions {
+                    for (pos, _) in positions {
                         let chunk = metadata.chunk_info(pos);
 
                         let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());

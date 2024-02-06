@@ -287,6 +287,41 @@ impl<'a> WriteHandle<'a> {
             };
         }
     }
+
+    pub fn into_thread_handle(self) -> ThreadWriteHandle {
+        let id = self.access.id;
+        std::mem::forget(self.drop_handler);
+        std::mem::forget(self.access);
+        ThreadWriteHandle {
+            id,
+            buffer: self.buffer,
+            size: self.size,
+            _panic_handle: Default::default(),
+        }
+    }
+}
+
+pub struct ThreadWriteHandle {
+    id: DataId,
+    pub buffer: ash::vk::Buffer,
+    pub size: u64,
+    _panic_handle: super::ThreadHandleDropPanic,
+}
+
+impl ThreadWriteHandle {
+    pub fn into_main_handle<'a>(self, ctx: &'a DeviceContext) -> WriteHandle<'a> {
+        self._panic_handle.dismiss();
+        WriteHandle {
+            buffer: self.buffer,
+            size: self.size,
+            drop_handler: DropError,
+            access: AccessToken {
+                storage: &ctx.storage,
+                device: ctx,
+                id: self.id,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]

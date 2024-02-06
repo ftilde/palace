@@ -10,6 +10,7 @@ use crate::{
 
 use super::{
     DataLocation, DataLongevity, DataVersion, DataVersionType, Element, GarbageCollectId, LRUIndex,
+    ThreadHandleDropPanic,
 };
 
 #[derive(Debug, Eq, PartialEq)]
@@ -290,19 +291,6 @@ pub struct RawWriteHandle<DropHandler> {
     pub data: *mut MaybeUninit<u8>,
     pub layout: Layout,
     drop_handler: DropHandler,
-}
-
-#[derive(Default)]
-struct ThreadHandleDropPanic;
-impl Drop for ThreadHandleDropPanic {
-    fn drop(&mut self) {
-        panic!("ThreadHandles must be returned to main thread before being dropped!");
-    }
-}
-impl ThreadHandleDropPanic {
-    fn dismiss(self) {
-        std::mem::forget(self);
-    }
 }
 pub struct ThreadMarkerInitialized {
     version: Option<DataVersionType>,

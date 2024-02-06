@@ -36,7 +36,7 @@ const _: () = _scalar_align_check::<f32>();
 const _: () = _scalar_align_check::<f64>();
 
 pub struct CachedAllocation {
-    inner: Allocation,
+    pub inner: Allocation,
     //requested_layout: Layout, //May differ from layout of the allocation, at least in size
 }
 
@@ -136,7 +136,7 @@ impl BufferStash {
             flags,
         }
     }
-    fn request<'a, 'inv>(
+    pub fn request<'a, 'inv>(
         &self,
         device: &'a DeviceContext,
         layout: Layout,
@@ -159,7 +159,7 @@ impl BufferStash {
         })
     }
     /// Safety: The buffer must have previously been allocated from this stash
-    unsafe fn return_buf(&self, device: &DeviceContext, allocation: CachedAllocation) {
+    pub unsafe fn return_buf(&self, device: &DeviceContext, allocation: CachedAllocation) {
         //let mut buffers = self.buffers.borrow_mut();
         //let entry = buffers.get_mut(&allocation.requested_layout).unwrap();
         //entry.push(allocation.inner);
