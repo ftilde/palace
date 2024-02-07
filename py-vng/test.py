@@ -28,23 +28,26 @@ vol = vol.create_lod(2.0)
 
 store = vng.Store()
 
-slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
-slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
-slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
+l0 = vol.levels[0]
+l0md = l0.inner.metadata
+l0ed = l0.embedding_data
+
+slice_state0 = vng.SliceviewState.for_volume(l0md, l0ed, 0).store(store)
+slice_state1 = vng.SliceviewState.for_volume(l0md, l0ed, 1).store(store)
+slice_state2 = vng.SliceviewState.for_volume(l0md, l0ed, 2).store(store)
+camera_state = vng.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
+raycaster_config = vng.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
 
+slice_state0.depth().link_to(camera_state.trackball().center().at(0))
+slice_state1.depth().link_to(camera_state.trackball().center().at(1))
+slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 #slice_state1.zoom_level().link_to(slice_state0.zoom_level())
 #slice_state2.zoom_level().link_to(slice_state0.zoom_level())
 #slice_state1.offset().link_to(slice_state0.offset())
 #slice_state2.offset().link_to(slice_state0.offset())
 
-camera_state = vng.CameraState.for_volume(
-        vol.levels[0].inner.metadata,
-        vol.levels[0].embedding_data,
-        30.0
-        ).store(store)
 
-raycaster_config = vng.RaycasterConfig().store(store)
 
 camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
@@ -97,7 +100,7 @@ def render_slice(vol, dim, slice_state):
 
         md = vng.tensor_metadata(size, size)
 
-        proj = slice_state.load().projection_mat(dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
+        proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
         frame = vng.render_slice(vol, md, proj)
         frame = vng.rechunk(frame, [vng.chunk_size_full]*2)

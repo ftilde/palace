@@ -288,7 +288,7 @@ impl<'a> TryInto<CTensorOperator<D1, f32>> for MaybeConstTensorOperator<'a> {
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct TensorEmbeddingData {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub spacing: Vec<f32>,
 }
 

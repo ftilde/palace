@@ -158,11 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config: RaycasterConfig::default(),
         },
         sliceview: SliceState {
-            inner: SliceviewState {
-                selected: 0,
-                offset: [0.0, 0.0].into(),
-                zoom_level: 1.0,
-            },
+            inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
             gui: GuiState::default(),
         },
         smoothing_std: 1.0,
@@ -264,7 +260,7 @@ fn slice_viewer_z(
     let slice_proj_z =
         state
             .inner
-            .projection_mat(0, vol.fine_metadata(), vol.fine_embedding_data(), size);
+            .projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size);
 
     let mat_ref = &slice_proj_z;
     let vol_ref = &vol;
@@ -515,24 +511,17 @@ fn eval_network(
                     });
                 match app_state.rendering {
                     RenderingState::Slice => {
-                        let metadata = processed.fine_metadata();
-
-                        let num_slices = metadata.dimensions.z().raw;
-                        let max_slice = num_slices - 1;
-
                         ui.horizontal(|ui| {
                             ui.label("Slice (z): ");
                             if ui.button("-").clicked() {
-                                app_state.sliceview.inner.selected =
-                                    app_state.sliceview.inner.selected.saturating_sub(1);
+                                app_state.sliceview.inner.scroll(-1);
                             }
                             ui.add(egui::Slider::new(
-                                &mut app_state.sliceview.inner.selected,
-                                0..=max_slice,
+                                &mut app_state.sliceview.inner.depth,
+                                0.0..=app_state.sliceview.inner.dim_end,
                             ));
                             if ui.button("+").clicked() {
-                                app_state.sliceview.inner.selected =
-                                    (app_state.sliceview.inner.selected + 1).min(max_slice);
+                                app_state.sliceview.inner.scroll(1);
                             }
                         });
                     }

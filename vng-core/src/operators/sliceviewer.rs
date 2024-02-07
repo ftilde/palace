@@ -29,21 +29,34 @@ use pyo3::prelude::*;
 #[cfg_attr(feature = "python", pyclass)]
 pub struct SliceviewState {
     #[pyo3(get, set)]
-    pub selected: u32,
+    pub depth: f32,
     #[pyo3(get, set)]
     pub offset: Vector<D2, f32>,
     #[pyo3(get, set)]
     pub zoom_level: f32,
+    pub dim: u32,
+    pub dim_spacing: f32,
+    pub dim_end: f32,
 }
 
 #[cfg_attr(feature = "python", pymethods)]
 impl SliceviewState {
-    #[new]
-    pub fn new(selected: u32, offset: Vector<D2, f32>, zoom_level: f32) -> Self {
+    #[staticmethod]
+    pub fn for_volume(
+        input_metadata: VolumeMetaData,
+        embedding_data: VolumeEmbeddingData,
+        dim: u32,
+    ) -> Self {
+        let real_size = embedding_data.spacing * input_metadata.dimensions.raw().f32();
+        let dim_spacing = embedding_data.spacing[dim as usize];
+        let dim_end = real_size[dim as usize];
         Self {
-            selected,
-            offset,
-            zoom_level,
+            dim_spacing,
+            dim_end,
+            dim,
+            offset: Vector::fill(0.0),
+            zoom_level: 1.0,
+            depth: dim_end * 0.5,
         }
     }
 
@@ -56,7 +69,7 @@ impl SliceviewState {
     }
 
     pub fn scroll(&mut self, delta: i32) {
-        self.selected = (self.selected as i32 + delta).max(0) as u32;
+        self.depth = (self.depth + delta as f32 * self.dim_spacing).clamp(0.0, self.dim_end);
     }
 
     pub fn zoom(&mut self, delta: f32, on: Vector<D2, f32>) {
@@ -68,17 +81,16 @@ impl SliceviewState {
     }
     pub fn projection_mat(
         &self,
-        dim: usize,
         input_data: VolumeMetaData,
         embedding_data: VolumeEmbeddingData,
         output_size: Vector<D2, GlobalCoordinate>,
     ) -> Matrix<D4, f32> {
         slice_projection_mat(
-            dim,
+            self.dim as _,
             input_data,
             embedding_data,
             output_size,
-            self.selected.into(),
+            ((self.depth / self.dim_spacing).round() as u32).into(),
             self.offset,
             self.zoom_level,
         )
