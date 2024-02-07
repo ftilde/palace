@@ -41,11 +41,6 @@ impl GuiState {
             }
         });
 
-        // Due to... philosophical differences in API design between python and rust (imgui) we
-        // need to progagate state changed via gui in a separate step _after_ all the egui
-        // machinery.
-        window_content.propagate_values(py);
-
         if let Some(err) = err {
             Err(err)
         } else {
@@ -135,8 +130,6 @@ impl SliderVal {
 #[derive(Clone)]
 pub struct Slider {
     val: SliderVal,
-    proxy: f64,
-    proxy_orig: f64,
     min: f64,
     max: f64,
 }
@@ -144,15 +137,8 @@ pub struct Slider {
 #[pymethods]
 impl Slider {
     #[new]
-    fn new(py: Python, val: SliderVal, min: f64, max: f64) -> Self {
-        let proxy = val.get(py);
-        Self {
-            val,
-            proxy,
-            proxy_orig: proxy,
-            min,
-            max,
-        }
+    fn new(val: SliderVal, min: f64, max: f64) -> Self {
+        Self { val, min, max }
     }
 }
 
@@ -201,7 +187,12 @@ impl GuiNode {
             }
             GuiNode::Slider(b) => {
                 let range = b.min..=b.max;
-                ui.add(c::egui::Slider::new(&mut b.proxy, range));
+                ui.add(c::egui::Slider::from_get_set(range, |new| {
+                    if let Some(new) = new {
+                        b.val.set(py, new);
+                    }
+                    b.val.get(py)
+                }));
             }
             GuiNode::Label(b) => {
                 ui.label(&b.text);
@@ -226,27 +217,5 @@ impl GuiNode {
             }
         }
         Ok(())
-    }
-
-    fn propagate_values(&self, py: Python) {
-        match self {
-            GuiNode::Button(_) => {}
-            GuiNode::Slider(v) => {
-                if v.proxy != v.proxy_orig {
-                    v.val.set(py, v.proxy);
-                }
-            }
-            GuiNode::Label(_) => {}
-            GuiNode::Horizontal(h) => {
-                for n in &h.nodes {
-                    n.propagate_values(py)
-                }
-            }
-            GuiNode::Vertical(h) => {
-                for n in &h.nodes {
-                    n.propagate_values(py)
-                }
-            }
-        }
     }
 }
