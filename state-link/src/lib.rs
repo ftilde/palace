@@ -86,6 +86,25 @@ impl State for u32 {
     }
 }
 
+impl State for String {
+    type NodeHandle = NodeHandleSpecialized<Self>;
+
+    fn store(&self, store: &mut Store) -> NodeRef {
+        store.push(Node::Val(Value::String(self.clone())))
+    }
+
+    fn load(store: &Store, location: NodeRef) -> Result<Self> {
+        if let ResolveResult::Atom(Value::String(v)) = store.to_val(location)? {
+            Ok(v)
+        } else {
+            Err(Error::IncorrectType)
+        }
+    }
+    fn write(&self, store: &mut Store, at: NodeRef) -> Result<()> {
+        store.write_at(Node::Val(Value::String(self.clone())), at)
+    }
+}
+
 impl<V: State> State for Vec<V> {
     type NodeHandle = NodeHandleSpecialized<Self>;
     fn store(&self, store: &mut Store) -> NodeRef {
@@ -322,7 +341,7 @@ impl Store {
         match &self.elms[root.index] {
             Node::Dir(s) => Ok(ResolveResult::Struct(&s)),
             Node::Seq(s) => Ok(ResolveResult::Seq(&s)),
-            Node::Val(v) => Ok(ResolveResult::Atom(*v)),
+            Node::Val(v) => Ok(ResolveResult::Atom(v.clone())),
             Node::Link(l) if link_budget > 0 => self.to_val_inner(*l, link_budget - 1),
             Node::Link(_l) => Err(Error::LinkReferenceCycle),
         }
@@ -355,10 +374,11 @@ impl PathElm {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum Value {
     F32(f32),
     U32(u32),
+    String(String),
     Unit,
 }
 

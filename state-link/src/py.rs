@@ -8,6 +8,13 @@ pub struct Store {
     pub inner: super::Store,
 }
 
+#[derive(FromPyObject)]
+enum StorePrimitive {
+    F32(f32),
+    U32(u32),
+    String(String),
+}
+
 #[pymethods]
 impl Store {
     #[new]
@@ -22,18 +29,34 @@ impl Store {
     //    PyCell::new(py, init).unwrap().to_object(py)
     //}
 
-    //fn store_f32(&mut self, py: Python, val: f32) -> PyObject {
-    //    let init = NodeHandleF32 {
-    //        inner: self.inner.store(&val),
-    //    };
-    //    PyCell::new(py, init).unwrap().to_object(py)
-    //}
-
-    //fn store_f32_arr(self, py: Python, val: [f32; 3]) -> PyObject {
-    //    let store = Py::new(self)
-    //    let init = NodeHandleArray::new::<f32>(self.inner.store(&val).inner, 3, store);
-    //    PyCell::new(py, init).unwrap().to_object(py)
-    //}
+    fn store_primitive(this: Py<Store>, py: Python, primitive: StorePrimitive) -> PyObject {
+        match primitive {
+            StorePrimitive::F32(v) => NodeHandleF32 {
+                inner: {
+                    let x = this.borrow_mut(py).inner.store(&v);
+                    x
+                },
+                store: this.into(),
+            }
+            .into_py(py),
+            StorePrimitive::U32(v) => NodeHandleU32 {
+                inner: {
+                    let x = this.borrow_mut(py).inner.store(&v);
+                    x
+                },
+                store: this.into(),
+            }
+            .into_py(py),
+            StorePrimitive::String(v) => NodeHandleString {
+                inner: {
+                    let x = this.borrow_mut(py).inner.store(&v);
+                    x
+                },
+                store: this.into(),
+            }
+            .into_py(py),
+        }
+    }
 }
 
 #[pyclass]
@@ -72,6 +95,7 @@ impl NodeHandleF32 {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct NodeHandleU32 {
     inner: <u32 as super::State>::NodeHandle,
     store: Py<Store>,
@@ -93,17 +117,47 @@ impl NodeHandleU32 {
             .link(&self.inner, &dst.inner)
             .map_err(map_link_err)
     }
-    fn load(&self, py: Python) -> PyObject {
+    fn load(&self, py: Python) -> u32 {
+        self.store.borrow_mut(py).inner.load(&self.inner)
+    }
+    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+        let val_py = self.load(py).into_py(py);
+        let res_py = f.call1((&val_py,))?;
+        let val = res_py.extract::<u32>()?;
+        self.write(py, val)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct NodeHandleString {
+    inner: <String as super::State>::NodeHandle,
+    store: Py<Store>,
+}
+
+#[pymethods]
+impl NodeHandleString {
+    pub fn write(&self, py: Python, val: String) -> PyResult<()> {
         self.store
             .borrow_mut(py)
             .inner
-            .load(&self.inner)
-            .into_py(py)
+            .write(&self.inner, &val)
+            .map_err(map_link_err)
+    }
+    fn link_to(&self, py: Python, dst: &NodeHandleString) -> PyResult<()> {
+        self.store
+            .borrow_mut(py)
+            .inner
+            .link(&self.inner, &dst.inner)
+            .map_err(map_link_err)
+    }
+    pub fn load(&self, py: Python) -> String {
+        self.store.borrow_mut(py).inner.load(&self.inner)
     }
     fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
-        let val_py = self.load(py);
+        let val_py = self.load(py).into_py(py);
         let res_py = f.call1((&val_py,))?;
-        let val = res_py.extract::<u32>()?;
+        let val = res_py.extract::<String>()?;
         self.write(py, val)
     }
 }
@@ -149,6 +203,16 @@ impl PyState for f32 {
 impl PyState for u32 {
     fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
         let init = NodeHandleU32 {
+            inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
+            store,
+        };
+        PyCell::new(py, init).unwrap().to_object(py)
+    }
+}
+
+impl PyState for String {
+    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
+        let init = NodeHandleString {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
