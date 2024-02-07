@@ -1,6 +1,6 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::PyArray0;
-use state_link::py::NodeHandleF32;
+use state_link::py::{NodeHandleF32, NodeHandleString};
 use vng_core::{operators::gui as c, vulkan::state::VulkanState};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -94,6 +94,25 @@ impl Button {
 
 #[pyclass(unsendable)]
 #[derive(Clone)]
+pub struct ComboBox {
+    title: String,
+    alternatives: Vec<String>,
+    current: NodeHandleString,
+}
+#[pymethods]
+impl ComboBox {
+    #[new]
+    fn new(title: String, current: NodeHandleString, alternatives: Vec<String>) -> Self {
+        Self {
+            title,
+            alternatives,
+            current,
+        }
+    }
+}
+
+#[pyclass(unsendable)]
+#[derive(Clone)]
 pub struct Label {
     text: String,
 }
@@ -173,6 +192,7 @@ enum GuiNode {
     Button(Button),
     Slider(Slider),
     Label(Label),
+    ComboBox(ComboBox),
     Horizontal(Horizontal),
     Vertical(Vertical),
 }
@@ -196,6 +216,17 @@ impl GuiNode {
             }
             GuiNode::Label(b) => {
                 ui.label(&b.text);
+            }
+            GuiNode::ComboBox(b) => {
+                let mut c: String = b.current.load(py);
+                c::egui::ComboBox::from_label(&b.title)
+                    .selected_text(&c)
+                    .show_ui(ui, |ui| {
+                        for v in &b.alternatives {
+                            ui.selectable_value(&mut c, v.to_owned(), v);
+                        }
+                    });
+                b.current.write(py, c).unwrap();
             }
             GuiNode::Horizontal(h) => {
                 ui.horizontal(|ui| {
