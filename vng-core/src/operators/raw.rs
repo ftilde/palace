@@ -124,37 +124,39 @@ impl RawVolumeSourceState {
                 return Err(format!("Brick position {:?} is outside of volume", pos).into());
             }
 
-            if current_loc.is_none() {
-                current_loc = Some(loc);
-            }
-
             current_pos += chunk_mem_size_x;
-            if current_pos < max_lin_len {
+            let start_new_line = if current_pos < max_lin_len {
                 if let Some(end) = current_batch.last() {
                     let mut next = *end;
                     next[2] = next[2] + 1u32;
-                    if next == pos && current_loc == Some(loc) {
-                        current_batch.push(pos);
-                        continue;
-                    }
+                    let adjacent = next == pos && current_loc == Some(loc);
+
+                    !adjacent
                 } else {
-                    current_batch.push(pos);
-                    continue;
+                    // We have just started a new line anyway
+                    false
                 }
+            } else {
+                // Line too long
+                true
+            };
+
+            if start_new_line {
+                let finished_batch = std::mem::take(&mut current_batch);
+                assert!(!finished_batch.is_empty());
+                match loc {
+                    DataLocation::CPU(_) => {
+                        batches_cpu.push(finished_batch);
+                    }
+                    DataLocation::GPU(i) => {
+                        batches_gpus.entry(i).or_default().push(finished_batch);
+                    }
+                }
+                current_pos = 0;
             }
-            let finished_batch = std::mem::take(&mut current_batch);
-            assert!(!finished_batch.is_empty());
-            match loc {
-                DataLocation::CPU(_) => {
-                    batches_cpu.push(finished_batch);
-                }
-                DataLocation::GPU(i) => {
-                    batches_gpus.entry(i).or_default().push(finished_batch);
-                }
-            }
-            current_batch.push(pos);
-            current_pos = 0;
+
             current_loc = Some(loc);
+            current_batch.push(pos);
         }
         if !current_batch.is_empty() {
             match current_loc.unwrap() {
