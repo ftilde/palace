@@ -368,7 +368,7 @@ fn eval_network(
     let vol = vol.operate();
 
     let vol = vol.map_inner(|vol| {
-        let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());
+        //let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());
 
         //    let after_kernel =
         //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
