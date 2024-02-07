@@ -11,8 +11,8 @@ rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 
-#vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
-vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
@@ -31,6 +31,7 @@ store = vng.Store()
 slice_state0 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 slice_state1 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
 slice_state2 = vng.SliceviewState(0, [0.0, 0.0], 1.0).store(store)
+view = store.store_primitive("raycast")
 
 #slice_state1.zoom_level().link_to(slice_state0.zoom_level())
 #slice_state2.zoom_level().link_to(slice_state0.zoom_level())
@@ -117,15 +118,30 @@ def render(size, events):
             named_slider("fov", camera_state.fov(), 10, 50),
             named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10),
             named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10),
+            vng.ComboBox("Options", view, ["quad", "raycast", "x", "y", "z"]),
         ]),
     ]))
 
-    lower = split(vng.SplitDirection.Horizontal, 0.5, render_slice(vol, 0, slice_state0), render_slice(vol, 1, slice_state1))
-    upper = split(vng.SplitDirection.Horizontal, 0.5, render_raycast(vol, camera_state), render_slice(vol, 2, slice_state2))
+    slice0 = render_slice(vol, 0, slice_state0)
+    slice1 = render_slice(vol, 1, slice_state1)
+    slice2 = render_slice(vol, 2, slice_state2)
+    ray = render_raycast(vol, camera_state)
 
-    frame = split(vng.SplitDirection.Vertical, 0.5, upper, lower)(size, events)
+    match view.load():
+        case "quad":
+            lower = split(vng.SplitDirection.Horizontal, 0.5, slice0, slice1)
+            upper = split(vng.SplitDirection.Horizontal, 0.5, ray, slice2)
+            frame = split(vng.SplitDirection.Vertical, 0.5, upper, lower)
+        case "raycast":
+            frame = ray
+        case "x":
+            frame = slice0
+        case "y":
+            frame = slice1
+        case "z":
+            frame = slice2
 
-    frame = gui.render(frame)
+    frame = gui.render(frame(size, events))
 
     return frame
 
