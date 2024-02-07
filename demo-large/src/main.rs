@@ -257,7 +257,8 @@ fn slice_viewer_z(
 ) -> FrameOperator {
     let md = ImageMetaData {
         dimensions: size,
-        chunk_size: Vector::fill(512.into()),
+        chunk_size: size.local(),
+        //chunk_size: Vector::fill(512.into()),
     };
 
     let slice_proj_z =
@@ -372,8 +373,8 @@ fn raycaster(
 
     let md = ImageMetaData {
         dimensions: size,
-        //chunk_size: window.size().local(),
-        chunk_size: Vector::fill(512.into()),
+        chunk_size: size.local(),
+        //chunk_size: Vector::fill(512.into()),
     };
 
     let matrix = state.camera.projection_mat(md.dimensions);

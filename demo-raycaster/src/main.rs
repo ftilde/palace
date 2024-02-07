@@ -274,8 +274,8 @@ fn eval_network(
 
     let md = ImageMetaData {
         dimensions: window.size(),
-        //chunk_size: window.size().local(),
-        chunk_size: Vector::fill(512.into()),
+        chunk_size: window.size().local(),
+        //chunk_size: Vector::fill(512.into()),
     };
 
     let matrix = camera_state.projection_mat(md.dimensions);

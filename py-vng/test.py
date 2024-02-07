@@ -11,7 +11,8 @@ rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 
-vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
@@ -73,7 +74,7 @@ def render_raycast(vol, camera_state):
             vng.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
         ]);
 
-        md = vng.tensor_metadata(size, [512]*2)
+        md = vng.tensor_metadata(size, size)
         proj = camera_state.load().projection_mat(size)
 
         eep = vng.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
@@ -93,7 +94,7 @@ def render_slice(vol, dim, slice_state):
             vng.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
         ]);
 
-        md = vng.tensor_metadata(size, [512]*2)
+        md = vng.tensor_metadata(size, size)
 
         proj = slice_state.load().projection_mat(dim, vol.fine_metadata(), vol.fine_embedding_data(), size)
 
