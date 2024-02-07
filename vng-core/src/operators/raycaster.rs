@@ -33,7 +33,7 @@ use super::{
 #[derive(state_link::State, Clone)]
 pub struct TrackballState {
     #[pyo3(get, set)]
-    pub eye: Vector<D3, f32>,
+    pub eye: Vector<D3, f32>, //Relative to center
     #[pyo3(get, set)]
     pub center: Vector<D3, f32>,
     #[pyo3(get, set)]
@@ -52,7 +52,7 @@ impl TrackballState {
     }
 
     pub fn pan_around(&mut self, delta: Vector<D2, i32>) {
-        let look = self.center - self.eye;
+        let look = -self.eye;
         let look_len = look.length();
         let left = self.up.cross(look).normalized();
         let move_factor = 0.005;
@@ -62,17 +62,22 @@ impl TrackballState {
             .normalized()
             .scale(look_len);
 
-        self.eye = self.center - new_look;
+        self.eye = -new_look;
         let left = self.up.cross(new_look);
         self.up = new_look.cross(left).normalized();
     }
     pub fn move_inout(&mut self, delta: f32) {
-        let look = self.center - self.eye;
+        let look = -self.eye;
         let new_look = look.scale(1.0 - delta * 0.1);
-        self.eye = self.center - new_look;
+        self.eye = -new_look;
     }
     pub fn view_mat(&self) -> Matrix<D4, f32> {
-        cgmath::Matrix4::look_at_rh(self.eye.into(), self.center.into(), self.up.into()).into()
+        cgmath::Matrix4::look_at_rh(
+            (self.eye + self.center).into(),
+            self.center.into(),
+            self.up.into(),
+        )
+        .into()
     }
 }
 
@@ -111,7 +116,7 @@ impl CameraState {
         let dist = real_size.length() * 1.5;
 
         let eye = [dist, 0.0, 0.0].into();
-        let center = [0.0, 0.0, 0.0].into();
+        let center = real_size.scale(0.5);
         let up = [0.0, 1.0, 0.0].into();
 
         let near_plane = embedding_data.spacing.hmin();
@@ -235,8 +240,7 @@ void main() {
                 let norm_to_world = Matrix::from_scale(
                     m_in.dimensions.map(|v| v.raw as f32) * embedding_data.spacing,
                 )
-                .to_homogeneous()
-                    * Matrix::from_translation(Vector::fill(-0.5));
+                .to_homogeneous();
                 let transform = *transform * norm_to_world;
 
                 let render_pass = device.request_state(
