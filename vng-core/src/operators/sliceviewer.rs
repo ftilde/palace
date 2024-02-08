@@ -456,7 +456,6 @@ void main()
                 let chunk_size = m_out.chunk_size.raw();
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
-                let mut it = 0;
                 let timed_out = loop {
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
@@ -526,8 +525,6 @@ void main()
 
                     // Clear request table for the next iteration
                     device.with_cmd_buffer(|cmd| request_table.clear(cmd));
-
-                    it += 1;
                 };
 
                 let src_info = SrcBarrierInfo {
@@ -536,7 +533,6 @@ void main()
                 };
                 if timed_out {
                     unsafe {
-                        println!("Sliceviewer: Time out result after {} it", it + 1);
                         gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
                     };
                 } else {
