@@ -33,6 +33,8 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
 ) {
     let brick_size = m.chunk_size;
 
+    //dbg!(chunks_in_line.len());
+
     for (pos, ref mut buf) in &mut *chunks_in_line {
         let chunk_info = m.chunk_info(*pos);
         crate::data::init_non_full(buf.as_mut(), &chunk_info, f32::NAN);

@@ -242,7 +242,7 @@ void main() {
             m
         },
         input,
-        move |ctx, positions, input| {
+        move |ctx, mut positions, input| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let device = ctx.vulkan_device();
@@ -253,6 +253,9 @@ void main() {
                     m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
+
+                let dim_in_bricks = m_in.dimension_in_chunks();
+                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
@@ -528,7 +531,7 @@ void main() {
             .dependent_on_data(&dim),
         input.metadata,
         (input, kernel),
-        move |ctx, positions, (input, kernel)| {
+        move |ctx, mut positions, (input, kernel)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -556,6 +559,9 @@ void main() {
                 let kernel_size = *kernel_m.dimensions.raw();
                 assert!(kernel_size % 2 == 1, "Kernel size must be odd");
                 let extent = kernel_size / 2;
+
+                let dim_in_bricks = m_in.dimension_in_chunks();
+                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);

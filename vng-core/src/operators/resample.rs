@@ -236,7 +236,7 @@ void main() {
             .dependent_on_data(&element_out_to_in),
         output_size,
         (input, output_size, element_out_to_in),
-        move |ctx, positions, (input, output_size, element_out_to_in)| {
+        move |ctx, mut positions, (input, output_size, element_out_to_in)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -268,6 +268,8 @@ void main() {
                         )
                     },
                 );
+                let dim_in_bricks = m_in.dimension_in_chunks();
+                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
