@@ -105,10 +105,10 @@ pub fn create_lod<'op, D: LargerDim>(
             }
         };
 
-        current = smooth_downsample(current, new_md);
+        current = smooth_downsample(current, new_md).cache();
         //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
         //like "cache everything but the highest resolution layer" on LODTensorOperator
-        levels.push(current.clone().cache());
+        levels.push(current.clone());
 
         if new_md.dimension_in_chunks().hmul() == 1 {
             break;
