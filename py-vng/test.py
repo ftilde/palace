@@ -11,8 +11,9 @@ rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 
-vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
-#vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/large_32.vvd")
 
 k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
@@ -49,7 +50,7 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 
 
 
-camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
+#camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
 gui_state = vng.GuiState(rt)
 

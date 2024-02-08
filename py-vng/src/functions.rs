@@ -126,8 +126,11 @@ pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
 }
 
 #[pyfunction]
-pub fn open_volume(path: std::path::PathBuf) -> PyResult<EmbeddedTensorOperator> {
-    let brick_size_hint = LocalVoxelPosition::fill(32.into());
+pub fn open_volume(
+    path: std::path::PathBuf,
+    brick_size_hint: Option<u32>,
+) -> PyResult<EmbeddedTensorOperator> {
+    let brick_size_hint = LocalVoxelPosition::fill(brick_size_hint.unwrap_or(64).into());
 
     let Some(file) = path.file_name() else {
         return map_err(Err("No file name in path".into()));
