@@ -57,6 +57,10 @@ struct CliArgs {
     #[arg(short, long)]
     disk_cache_size: Option<bytesize::ByteSize>,
 
+    /// Stop after rendering a complete frame
+    #[arg(short, long)]
+    bench: bool,
+
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
@@ -202,8 +206,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next_timeout,
                 )
                 .unwrap();
-                if version == DataVersionType::Final {
-                    //control_flow.set_exit();
+                if args.bench && version == DataVersionType::Final {
+                    control_flow.set_exit();
                 }
             }
             _ => (),
@@ -245,7 +249,7 @@ fn eval_network(
     });
 
     let vol = vol.map_inner(|vol| {
-        volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
+        //volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
 
         //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
         //let after_kernel =
@@ -271,6 +275,7 @@ fn eval_network(
     //let vol = bin_ops::sub(vol, gen);
 
     let vol = vng_core::operators::resample::create_lod(vol, 2.0);
+    //let vol = vol.single_level_lod();
 
     let md = ImageMetaData {
         dimensions: window.size(),
