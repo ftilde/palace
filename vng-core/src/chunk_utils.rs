@@ -3,9 +3,10 @@ use std::alloc::Layout;
 use ash::vk;
 
 use crate::{
-    storage::gpu::Allocation,
+    operators::volume::VolumeOperator,
+    storage::gpu::{Allocation, IndexHandle},
     task::{OpaqueTaskContext, Request},
-    vulkan::{state::VulkanState, CommandBuffer, DeviceContext},
+    vulkan::{state::VulkanState, CommandBuffer, DeviceContext, DstBarrierInfo},
 };
 
 pub struct ChunkRequestTable {
@@ -93,4 +94,54 @@ impl VulkanState for ChunkRequestTable {
     unsafe fn deinitialize(&mut self, context: &DeviceContext) {
         self.allocation.deinitialize(context);
     }
+}
+
+pub struct Timeout;
+
+pub async fn request_to_index_with_timeout<'cref, 'inv>(
+    ctx: &OpaqueTaskContext<'cref, 'inv>,
+    device: &DeviceContext,
+    to_request_linear: &mut [RTElement],
+    vol: &'inv VolumeOperator<f32>,
+    index: &IndexHandle<'_>,
+) -> Result<(), Timeout> {
+    let dim_in_bricks = vol.metadata.dimension_in_chunks();
+    let num_bricks = dim_in_bricks.hmul();
+
+    // Sort to get at least some benefit from spatial neighborhood
+    to_request_linear.sort_unstable();
+
+    // Fulfill requests
+    let mut batch_size = 1;
+    let mut to_request_linear = &to_request_linear[..];
+    while !to_request_linear.is_empty() {
+        let batch;
+        (batch, to_request_linear) =
+            to_request_linear.split_at(batch_size.min(to_request_linear.len()));
+
+        let to_request = batch.iter().map(|v| {
+            assert!(*v < num_bricks as _);
+            vol.chunks.request_gpu(
+                device.id,
+                crate::vec::from_linear(*v as usize, dim_in_bricks),
+                DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                },
+            )
+        });
+        let requested_bricks = ctx.submit(ctx.group(to_request)).await;
+
+        for (brick, brick_linear_pos) in requested_bricks.into_iter().zip(batch.into_iter()) {
+            index.insert(*brick_linear_pos as u64, brick);
+        }
+
+        if ctx.past_deadline() {
+            return Err(Timeout);
+        }
+
+        batch_size *= 2;
+    }
+
+    Ok(())
 }

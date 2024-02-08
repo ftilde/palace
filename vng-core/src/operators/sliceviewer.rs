@@ -8,7 +8,7 @@ use super::{tensor::FrameOperator, volume::LODVolumeOperator};
 use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     chunk_utils::ChunkRequestTable,
-    data::{from_linear, GlobalCoordinate, Matrix, Vector},
+    data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
@@ -441,7 +441,6 @@ void main()
                         .await,
                 );
 
-                let dim_in_bricks = m_in.dimension_in_chunks();
                 let consts = PushConstants {
                     vol_dim: m_in.dimensions.raw().into(),
                     chunk_dim: m_in.chunk_size.raw().into(),
@@ -458,7 +457,7 @@ void main()
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                 let mut it = 0;
-                let timed_out = 'outer: loop {
+                let timed_out = loop {
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -512,33 +511,17 @@ void main()
                         break false;
                     }
 
-                    // Fulfill requests
-                    to_request_linear.sort_unstable();
-
-                    let request_batch_size = (1 << it).min(request_table_size);
-                    for batch in to_request_linear.chunks(request_batch_size) {
-                        let to_request = batch.iter().map(|v| {
-                            assert!(*v < num_bricks as _);
-                            level.chunks.request_gpu(
-                                device.id,
-                                from_linear(*v as usize, dim_in_bricks),
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            )
-                        });
-                        let requested_bricks = ctx.submit(ctx.group(to_request)).await;
-
-                        for (brick, brick_linear_pos) in
-                            requested_bricks.into_iter().zip(batch.into_iter())
-                        {
-                            brick_index.insert(*brick_linear_pos as u64, brick);
-                        }
-
-                        if ctx.past_deadline() {
-                            break 'outer true;
-                        }
+                    if let Err(crate::chunk_utils::Timeout) =
+                        crate::chunk_utils::request_to_index_with_timeout(
+                            &*ctx,
+                            device,
+                            &mut to_request_linear,
+                            level,
+                            &brick_index,
+                        )
+                        .await
+                    {
+                        break true;
                     }
 
                     // Clear request table for the next iteration
