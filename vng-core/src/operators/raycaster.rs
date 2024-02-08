@@ -958,7 +958,7 @@ void main()
                     .await;
 
                     let mut requested_anything = false;
-                    for (level, data) in input.levels.iter().zip(lod_data.iter()) {
+                    for (level, data) in (input.levels.iter().zip(lod_data.iter())).rev() {
                         let mut to_request_linear = data.1.download_requested(*ctx, device).await;
 
                         if to_request_linear.is_empty() {
