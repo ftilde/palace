@@ -970,11 +970,17 @@ void main()
                         let dim_in_bricks = data.2.dimension_in_chunks();
                         let num_bricks = dim_in_bricks.hmul();
 
-                        // Fulfill requests
+                        // Sort to get at least some benefit from spatial neighborhood
                         to_request_linear.sort_unstable();
 
-                        let request_batch_size = (1 << it).min(request_table_size);
-                        for batch in to_request_linear.chunks(request_batch_size) {
+                        // Fulfill requests
+                        let mut batch_size = 1;
+                        let mut to_request_linear = &to_request_linear[..];
+                        while !to_request_linear.is_empty() {
+                            let batch;
+                            (batch, to_request_linear) =
+                                to_request_linear.split_at(batch_size.min(to_request_linear.len()));
+
                             let to_request = batch.iter().map(|v| {
                                 assert!(*v < num_bricks as _);
                                 level.chunks.request_gpu(
@@ -995,8 +1001,11 @@ void main()
                             }
 
                             if ctx.past_deadline() {
+                                dbg!(batch_size);
                                 break 'outer true;
                             }
+
+                            batch_size *= 2;
                         }
 
                         // Clear request table for the next iteration
