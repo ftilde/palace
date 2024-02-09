@@ -634,7 +634,7 @@ impl Storage {
     pub fn try_garbage_collect(
         &self,
         device: &DeviceContext,
-        mut goal_in_bytes: usize,
+        goal_in_bytes: usize,
         current_frame: FrameNumber,
     ) -> usize {
         let mut collected = self.manual_garbage_returns.get() as usize;
@@ -661,7 +661,7 @@ impl Storage {
         for (longevity, inner_lru) in lru.inner_mut() {
             let mut collected_local = 0;
 
-            if goal_in_bytes == 0 {
+            if goal_in_bytes <= collected {
                 break;
             };
 
@@ -738,8 +738,7 @@ impl Storage {
                 let size = info.layout.size();
                 collected += size;
                 collected_local += size;
-                goal_in_bytes = goal_in_bytes.saturating_sub(size);
-                if goal_in_bytes == 0 && longevity != DataLongevity::Ephemeral {
+                if goal_in_bytes <= collected && longevity != DataLongevity::Ephemeral {
                     break;
                 };
             }
@@ -760,7 +759,7 @@ impl Storage {
         }
 
         let mut unindexed = 0;
-        if goal_in_bytes > 0 {
+        if goal_in_bytes > collected {
             while let Some((op, pos, data_id)) = index_lru.get_next() {
                 let brick_index = index_index.get_mut(&op).unwrap();
 
@@ -777,10 +776,9 @@ impl Storage {
                 let size = brick_info.layout.size();
 
                 unindexed += size;
-                let Some(rest) = goal_in_bytes.checked_sub(size) else {
+                if goal_in_bytes <= collected + unindexed {
                     break;
                 };
-                goal_in_bytes = rest;
             }
         }
 
