@@ -133,7 +133,7 @@ impl layout::core::format::RenderBackend for RenderStuff {
         look: &layout::core::style::StyleAttr,
         _clip: Option<layout::core::format::ClipHandle>,
     ) {
-        let mut size = to_mq(size);
+        let size = to_mq(size);
         let mut xy = to_mq(xy);
         xy += size * 0.5;
         //size *= 2.0;
@@ -468,7 +468,7 @@ impl GameLoop for MyGame {
 
     fn update(&mut self, c: &mut EngineContext) {
         let mut event_index = self.timeline.current_event_index;
-        let mut time_step = self.timeline.current_timestep.ms();
+        let mut time_step = self.timeline.current_timestep.micros();
         let prev_index = event_index;
         let prev_time = time_step;
 
@@ -487,7 +487,7 @@ impl GameLoop for MyGame {
                 ui.add(
                     egui::Slider::new(
                         &mut time_step,
-                        self.timeline.begin_timestep.ms()..=self.timeline.end_timestep.ms(),
+                        self.timeline.begin_timestep.micros()..=self.timeline.end_timestep.micros(),
                     )
                     .text("Time step"),
                 );
@@ -497,7 +497,8 @@ impl GameLoop for MyGame {
             self.timeline.go_to_index(event_index);
         }
         if time_step != prev_time {
-            self.timeline.go_to_timestep(Timestamp::from_ms(time_step));
+            self.timeline
+                .go_to_timestep(Timestamp::from_micros(time_step));
         }
 
         let zoom = {

@@ -47,10 +47,10 @@ impl Event {
 #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Timestamp(u64);
 impl Timestamp {
-    pub fn ms(&self) -> u64 {
+    pub fn micros(&self) -> u64 {
         self.0
     }
-    pub fn from_ms(ms: u64) -> Self {
+    pub fn from_micros(ms: u64) -> Self {
         Timestamp(ms)
     }
 }
@@ -70,9 +70,10 @@ impl Default for EventStreamBuilder {
 }
 impl EventStreamBuilder {
     pub fn add(&mut self, e: Event) {
-        self.stream
-            .0
-            .push((Timestamp(self.begin_ts.elapsed().as_millis() as _), e));
+        self.stream.0.push((
+            Timestamp::from_micros(self.begin_ts.elapsed().as_micros() as _),
+            e,
+        ));
     }
 }
 
