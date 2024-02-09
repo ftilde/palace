@@ -170,8 +170,13 @@ impl GLSLType for Vector<D4, u8> {
 
 pub fn rechunk<D: Dimension, T: Element + GLSLType>(
     input: TensorOperator<D, T>,
-    brick_size: Vector<D, ChunkSize>,
+    chunk_size: Vector<D, ChunkSize>,
 ) -> TensorOperator<D, T> {
+    // Early return in case of matched sizes
+    if input.metadata.chunk_size == chunk_size.zip(input.metadata.dimensions, |b, d| b.apply(d)) {
+        return input;
+    }
+
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
     #[allow(dead_code)] //It says these fields are not read otherwise?? Why?
@@ -233,24 +238,23 @@ void main() {
     TensorOperator::with_state(
         OperatorDescriptor::new("volume_rechunk_gpu")
             .dependent_on(&input)
-            .dependent_on_data(&brick_size)
+            .dependent_on_data(&chunk_size)
             .dependent_on_data(T::TYPE_NAME)
             .dependent_on_data(&D::N),
         {
             let mut m = input.metadata;
-            m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
+            m.chunk_size = chunk_size.zip(m.dimensions, |v, d| v.apply(d));
             m
         },
         input,
         move |ctx, mut positions, input| {
-            // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let device = ctx.vulkan_device();
 
                 let m_in = input.metadata;
                 let m_out = {
                     let mut m_out = m_in;
-                    m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
+                    m_out.chunk_size = chunk_size.zip(m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
 
