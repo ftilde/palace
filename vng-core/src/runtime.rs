@@ -286,6 +286,7 @@ impl RunTime {
     >(
         &'call mut self,
         deadline: Option<Instant>,
+        save_task_stream: bool,
         task: F,
     ) -> Result<R, Error> {
         let request_queue = RequestQueue::new();
@@ -330,10 +331,9 @@ impl RunTime {
 
         let res = executor.resolve(|ctx| task(ctx, &&()));
 
-        //static C: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        //if C.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-        //    crate::task_graph::export(&executor.task_graph);
-        //}
+        if save_task_stream {
+            crate::task_graph::export(&executor.task_graph);
+        }
 
         res
     }

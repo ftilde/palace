@@ -73,7 +73,7 @@ impl RunTime {
             || {
                 let op: vng_core::operators::tensor::TensorOperator<D, f32> = v.try_into()?;
                 let op_ref = &op;
-                map_err(self.inner.resolve(None, |ctx, _| {
+                map_err(self.inner.resolve(None, false, |ctx, _| {
                     async move {
                         let pos: Vector<D, u32> = pos.try_into().unwrap();
                         let chunk = ctx.submit(op_ref.chunks.request(pos.chunk())).await;
@@ -95,7 +95,7 @@ impl RunTime {
     fn resolve_scalar(&mut self, v: ScalarOperator) -> PyResult<f32> {
         let op: vng_core::operators::scalar::ScalarOperator<f32> = v.try_into()?;
         let op_ref = &op;
-        map_err(self.inner.resolve(None, |ctx, _| {
+        map_err(self.inner.resolve(None, false, |ctx, _| {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
     }
@@ -190,7 +190,7 @@ impl Window {
                         let frame_ref = &frame;
                         let window = &mut self.window;
                         rt.inner
-                            .resolve(end, |ctx, _| {
+                            .resolve(end, false, |ctx, _| {
                                 async move { window.render(ctx, frame_ref).await }.into()
                             })
                             .unwrap();

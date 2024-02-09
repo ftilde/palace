@@ -392,7 +392,7 @@ fn eval_network(
     let frame = splitter.render(left, right);
 
     let slice_ref = &frame;
-    let version = runtime.resolve(Some(deadline), |ctx, _| {
+    let version = runtime.resolve(Some(deadline), false, |ctx, _| {
         async move { window.render(ctx, slice_ref).await }.into()
     })?;
 

@@ -260,7 +260,7 @@ fn slice_viewer_z(
         let md = vol.fine_metadata();
         let md_ref = &md;
         runtime
-            .resolve(None, move |ctx, _| {
+            .resolve(None, false, move |ctx, _| {
                 async move {
                     let mat = mat_ref;
                     let m_in = md_ref;
@@ -429,6 +429,7 @@ fn eval_network(
         }),
     };
     let mut take_screenshot = false;
+    let mut save_task_stream = false;
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
@@ -535,6 +536,9 @@ fn eval_network(
                 if ui.button("Save Screenshot").clicked() {
                     take_screenshot = true;
                 }
+                if ui.button("Save Task Stream").clicked() {
+                    save_task_stream = true;
+                }
             });
         });
     });
@@ -559,13 +563,13 @@ fn eval_network(
     let frame = gui.render(frame);
 
     let slice_ref = &frame;
-    let version = runtime.resolve(Some(deadline), |ctx, _| {
+    let version = runtime.resolve(Some(deadline), save_task_stream, |ctx, _| {
         async move { window.render(ctx, slice_ref).await }.into()
     })?;
 
     if take_screenshot {
         runtime
-            .resolve(Some(deadline), |ctx, _| {
+            .resolve(Some(deadline), false, |ctx, _| {
                 async move {
                     vng_core::operators::png_writer::write(ctx, slice_ref, "screenshot.png".into())
                         .await

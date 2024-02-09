@@ -157,7 +157,7 @@ fn eval_network(
     // TODO: it's slightly annoying that we have to construct the reference here (because of async
     // move). Is there a better way, i.e. to only move some values into the future?
     let mean_ref = &mean;
-    let _mean_val = runtime.resolve(None, |ctx, _| {
+    let _mean_val = runtime.resolve(None, false, |ctx, _| {
         async move { Ok(ctx.submit(mean_ref.request_scalar()).await) }.into()
     })?;
 
@@ -165,7 +165,7 @@ fn eval_network(
     let mean_unscaled_ref = &mean_unscaled;
     let mut mean_val_unscaled = 0.0;
     let muv_ref = &mut mean_val_unscaled;
-    runtime.resolve(None, |ctx, _| {
+    runtime.resolve(None, false, |ctx, _| {
         async move {
             let req = mean_unscaled_ref.request_scalar();
             *muv_ref = ctx.submit(req).await;

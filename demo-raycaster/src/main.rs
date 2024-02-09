@@ -294,7 +294,7 @@ fn eval_network(
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;
-    let version = runtime.resolve(Some(deadline), |ctx, _| {
+    let version = runtime.resolve(Some(deadline), false, |ctx, _| {
         async move { window.render(ctx, slice_ref).await }.into()
     })?;
     //let tasks_executed = executor.statistics().tasks_executed;
