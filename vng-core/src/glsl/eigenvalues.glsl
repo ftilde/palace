@@ -9,8 +9,8 @@ struct SymMat3 {
     float zz;
 };
 
-#define complex vec2
-#define scalar float
+#define complex dvec2
+#define scalar double
 
 complex c_mul(complex a, complex b) {
     return complex(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x);

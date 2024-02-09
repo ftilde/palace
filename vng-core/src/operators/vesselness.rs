@@ -10,19 +10,26 @@ use crate::vulkan::shader::ShaderDefines;
 use crate::vulkan::state::RessourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 
+use super::tensor::TensorOperator;
+use super::volume::EmbeddedVolumeOperator;
 use super::{kernels::*, volume_gpu};
-use super::{tensor::TensorOperator, volume::VolumeOperator};
 
 pub fn multiscale_vesselness(
-    //TODO: Make this embedding-aware
-    input: VolumeOperator<f32>,
+    input: EmbeddedVolumeOperator<f32>,
     min_scale: f32,
     max_scale: f32,
     num_steps: usize,
-) -> VolumeOperator<f32> {
+) -> EmbeddedVolumeOperator<f32> {
     assert!(num_steps > 0);
 
-    let mut out = vesselness(input.clone(), min_scale);
+    let step_scale = min_scale;
+    let out = vesselness(input.clone(), step_scale);
+    let spacing_diag = input.embedding_data.spacing.length();
+    let c = 1.0 / (spacing_diag * spacing_diag);
+
+    let mut out = out.map_inner(|v| {
+        crate::operators::volume_gpu::linear_rescale(v, c * step_scale * step_scale, 0.0)
+    });
 
     let num_reductions = num_steps - 1;
     for step in 1..num_steps {
@@ -39,15 +46,17 @@ pub fn multiscale_vesselness(
         };
 
         let vesselness = vesselness(input.clone(), step_scale.clone());
-        let step_vesselness =
-            crate::operators::volume_gpu::linear_rescale(vesselness, step_scale * step_scale, 0.0);
-        out = crate::operators::bin_ops::max(out, step_vesselness);
+        let step_vesselness = vesselness.map_inner(|v| {
+            crate::operators::volume_gpu::linear_rescale(v, c * step_scale * step_scale, 0.0)
+        });
+        out = crate::operators::bin_ops::max(out.inner, step_vesselness.inner)
+            .embedded(input.embedding_data);
     }
 
     out
 }
 
-pub fn vesselness(input: VolumeOperator<f32>, scale: f32) -> VolumeOperator<f32> {
+pub fn vesselness(input: EmbeddedVolumeOperator<f32>, scale: f32) -> EmbeddedVolumeOperator<f32> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -111,10 +120,15 @@ void main() {
 
     type Conv = fn(f32) -> ArrayOperator<f32>;
 
+    let spacing = input.embedding_data.spacing;
     let g = |f1: Conv, f2: Conv, f3: Conv| {
-        let kernels = [f1(scale.clone()), f2(scale.clone()), f3(scale.clone())];
+        let kernels = [
+            f1(scale / spacing[0]),
+            f2(scale / spacing[1]),
+            f3(scale / spacing[2]),
+        ];
         let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-        volume_gpu::separable_convolution(input.clone(), kernel_refs)
+        volume_gpu::separable_convolution(input.inner.clone(), kernel_refs)
     };
 
     let xx = g(gauss, gauss, ddgauss_dxdx);
@@ -124,6 +138,7 @@ void main() {
     let yz = g(dgauss_dx, dgauss_dx, gauss);
     let zz = g(ddgauss_dxdx, gauss, gauss);
 
+    let embedding_data = input.embedding_data;
     TensorOperator::with_state(
         OperatorDescriptor::new("vesselness")
             .dependent_on(&input)
@@ -208,4 +223,5 @@ void main() {
             .into()
         },
     )
+    .embedded(embedding_data)
 }

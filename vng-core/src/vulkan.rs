@@ -393,7 +393,9 @@ impl DeviceContext {
                 .storage_buffer8_bit_access(true)
                 .shader_int8(true)
                 .build();
-            let enabled_features = vk::PhysicalDeviceFeatures::builder().shader_int64(true);
+            let enabled_features = vk::PhysicalDeviceFeatures::builder()
+                .shader_int64(true)
+                .shader_float64(true);
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)

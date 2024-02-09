@@ -145,6 +145,10 @@ impl<D: Dimension, E: Element> EmbeddedTensorOperator<D, E> {
         }
     }
 
+    pub fn real_dimensions(&self) -> Vector<D, f32> {
+        self.embedding_data.spacing * self.metadata.dimensions.raw().f32()
+    }
+
     pub fn cache(self) -> Self {
         self.map_inner(|t| t.cache())
     }
@@ -171,6 +175,17 @@ impl<D: Dimension, E> LODTensorOperator<D, E> {
     }
     pub fn fine_embedding_data(&self) -> TensorEmbeddingData<D> {
         self.levels[0].embedding_data.clone()
+    }
+}
+
+impl<D: Dimension, E> LODTensorOperator<D, E> {
+    pub fn map(
+        self,
+        f: impl FnMut(EmbeddedTensorOperator<D, E>) -> EmbeddedTensorOperator<D, E>,
+    ) -> Self {
+        Self {
+            levels: self.levels.into_iter().map(f).collect(),
+        }
     }
 }
 

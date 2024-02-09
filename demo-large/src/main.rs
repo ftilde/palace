@@ -144,13 +144,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vol = &vol;
     let vol_size = vol.metadata.dimensions.raw();
 
+    let diag = vol.real_dimensions().length();
+
     let mut state = State {
         gui: GuiState::default(),
         process: ProcessState::PassThrough,
         rendering: RenderingState::Slice,
         vesselness: VesselnessState {
-            min_rad: 1.0,
-            max_rad: 5.0,
+            min_rad: vol.embedding_data.spacing.length() * 2.0,
+            max_rad: diag * 0.05,
             steps: 2,
         },
         raycasting: RaycastingState {
@@ -316,20 +318,23 @@ fn slice_viewer_z(
     };
 
     let gui = state.gui.setup(events, |ctx| {
-        egui::Window::new("Info").show(ctx, |ui| {
-            let s = if let Some((val, pos)) = info {
-                format!(
-                    "Pos: [{}, {}, {}]\n Value: {}",
-                    pos.x().raw,
-                    pos.y().raw,
-                    pos.z().raw,
-                    val
-                )
-            } else {
-                format!("Outside the volume")
-            };
-            ui.label(s);
-        });
+        egui::Window::new("Info")
+            .anchor(egui::Align2::RIGHT_TOP, [0.0; 2])
+            .show(ctx, |ui| {
+                let s = if let Some((val, pos)) = info {
+                    let pos = pos.raw().f32() * vol.fine_embedding_data().spacing;
+                    format!(
+                        "Pos: [{}, {}, {}]\n Value: {}",
+                        pos.x(),
+                        pos.y(),
+                        pos.z(),
+                        val
+                    )
+                } else {
+                    format!("Outside the volume")
+                };
+                ui.label(s);
+            });
     });
 
     events.act(|c| {
@@ -404,6 +409,9 @@ fn eval_network(
 
     let vol = vol.operate();
 
+    let diag = vol.real_dimensions().length();
+    let radius_range = vol.embedding_data.spacing.length()..=diag * 0.1;
+
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let processed = match app_state.process {
@@ -414,14 +422,12 @@ fn eval_network(
             let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
             operators::volume_gpu::separable_convolution(vol, kernel_refs)
         }),
-        ProcessState::Vesselness => vol.map_inner(|vol| {
-            operators::vesselness::multiscale_vesselness(
-                vol,
-                app_state.vesselness.min_rad.into(),
-                app_state.vesselness.max_rad.into(),
-                app_state.vesselness.steps,
-            )
-        }),
+        ProcessState::Vesselness => operators::vesselness::multiscale_vesselness(
+            vol,
+            app_state.vesselness.min_rad.into(),
+            app_state.vesselness.max_rad.into(),
+            app_state.vesselness.steps,
+        ),
         ProcessState::DownSample => {
             let md = vng_core::array::VolumeMetaData {
                 dimensions: app_state.downsample_state.target.global(),
@@ -467,12 +473,15 @@ fn eval_network(
                     }
                     ProcessState::Vesselness => {
                         ui.add(
-                            egui::Slider::new(&mut app_state.vesselness.min_rad, 0.5..=100.0)
-                                .text("Min Radius")
-                                .logarithmic(true),
+                            egui::Slider::new(
+                                &mut app_state.vesselness.min_rad,
+                                radius_range.clone(),
+                            )
+                            .text("Min Radius")
+                            .logarithmic(true),
                         );
                         ui.add(
-                            egui::Slider::new(&mut app_state.vesselness.max_rad, 0.5..=100.0)
+                            egui::Slider::new(&mut app_state.vesselness.max_rad, radius_range)
                                 .text("Max Radius")
                                 .logarithmic(true),
                         );
