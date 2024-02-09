@@ -81,17 +81,11 @@ struct VesselnessState {
     steps: usize,
 }
 
-struct DownSampleState {
-    target: Vector<D3, u32>,
-    vol_size: Vector<D3, u32>,
-}
-
 #[derive(Debug, PartialEq)]
 enum ProcessState {
     PassThrough,
     Smooth,
     Vesselness,
-    DownSample,
 }
 
 #[derive(Debug, PartialEq)]
@@ -113,7 +107,6 @@ struct State {
     raycasting: RaycastingState,
     sliceview: SliceState,
     smoothing_std: f32,
-    downsample_state: DownSampleState,
 }
 
 struct SliceState {
@@ -142,18 +135,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = vol_state.operate();
     let vol = &vol;
-    let vol_size = vol.metadata.dimensions.raw();
 
-    let diag = vol.real_dimensions().length();
+    let vol_diag = vol.real_dimensions().length();
+    let voxel_diag = vol.embedding_data.spacing.length();
 
     let mut state = State {
         gui: GuiState::default(),
         process: ProcessState::PassThrough,
         rendering: RenderingState::Slice,
         vesselness: VesselnessState {
-            min_rad: vol.embedding_data.spacing.length() * 2.0,
-            max_rad: diag * 0.05,
-            steps: 2,
+            min_rad: voxel_diag * 2.0,
+            max_rad: vol_diag * 0.01,
+            steps: 3,
         },
         raycasting: RaycastingState {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
@@ -163,11 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
             gui: GuiState::default(),
         },
-        smoothing_std: 1.0,
-        downsample_state: DownSampleState {
-            target: vol_size,
-            vol_size,
-        },
+        smoothing_std: voxel_diag,
     };
 
     let mut event_loop = EventLoop::new();
@@ -409,39 +398,55 @@ fn eval_network(
 
     let vol = vol.operate();
 
-    let diag = vol.real_dimensions().length();
-    let radius_range = vol.embedding_data.spacing.length()..=diag * 0.1;
+    let volume_diag = vol.real_dimensions().length();
+    let voxel_diag = vol.embedding_data.spacing.length();
+    let radius_range = voxel_diag..=volume_diag * 0.1;
+    let smoothing_range = voxel_diag..=volume_diag * 0.1;
+
+    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let processed = match app_state.process {
         ProcessState::PassThrough => vol,
-        ProcessState::Smooth => vol.map_inner(|vol| {
-            let kernel = operators::kernels::gauss(app_state.smoothing_std.into());
-            let kernels: [_; 3] = std::array::from_fn(|_| kernel.clone());
-            let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-            operators::volume_gpu::separable_convolution(vol, kernel_refs)
+        ProcessState::Smooth => vol.map(|evol| {
+            let spacing = evol.embedding_data.spacing;
+            evol.map_inner(|vol| {
+                let factor = app_state.smoothing_std;
+                let kernels: [_; 3] =
+                    std::array::from_fn(|i| operators::kernels::gauss(factor / spacing[i]));
+                let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
+                operators::volume_gpu::separable_convolution(vol, kernel_refs)
+            })
         }),
-        ProcessState::Vesselness => operators::vesselness::multiscale_vesselness(
-            vol,
-            app_state.vesselness.min_rad.into(),
-            app_state.vesselness.max_rad.into(),
-            app_state.vesselness.steps,
-        ),
-        ProcessState::DownSample => {
-            let md = vng_core::array::VolumeMetaData {
-                dimensions: app_state.downsample_state.target.global(),
-                chunk_size: [32; 3].into(),
-            };
-            operators::resample::smooth_downsample(vol, md.into())
-        }
+        ProcessState::Vesselness => vol.map(|vol| {
+            operators::vesselness::multiscale_vesselness(
+                vol,
+                app_state.vesselness.min_rad.into(),
+                app_state.vesselness.max_rad.into(),
+                app_state.vesselness.steps,
+            )
+        }),
     };
-    let processed = vng_core::operators::resample::create_lod(processed, 2.0);
     let mut take_screenshot = false;
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
             ui.vertical(|ui| {
+                egui::ComboBox::from_label("Rendering")
+                    .selected_text(format!("{:?}", app_state.rendering))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app_state.rendering,
+                            RenderingState::Slice,
+                            "Slice",
+                        );
+                        ui.selectable_value(
+                            &mut app_state.rendering,
+                            RenderingState::Raycasting,
+                            "Raycasting",
+                        );
+                    });
                 egui::ComboBox::from_label("Processing")
                     .selected_text(format!("{:?}", app_state.process))
                     .show_ui(ui, |ui| {
@@ -453,11 +458,6 @@ fn eval_network(
                         ui.selectable_value(&mut app_state.process, ProcessState::Smooth, "Smooth");
                         ui.selectable_value(
                             &mut app_state.process,
-                            ProcessState::DownSample,
-                            "DownSample",
-                        );
-                        ui.selectable_value(
-                            &mut app_state.process,
                             ProcessState::Vesselness,
                             "Vesselness",
                         );
@@ -466,7 +466,7 @@ fn eval_network(
                     ProcessState::PassThrough => {}
                     ProcessState::Smooth => {
                         ui.add(
-                            egui::Slider::new(&mut app_state.smoothing_std, 0.01..=100.0)
+                            egui::Slider::new(&mut app_state.smoothing_std, smoothing_range)
                                 .text("Standard deviation")
                                 .logarithmic(true),
                         );
@@ -490,34 +490,8 @@ fn eval_network(
                                 .text("Scale space steps"),
                         );
                     }
-                    ProcessState::DownSample => {
-                        for i in 0..3 {
-                            ui.add(
-                                egui::Slider::new(
-                                    &mut app_state.downsample_state.target[i],
-                                    1..=app_state.downsample_state.vol_size[i],
-                                )
-                                .text(format!("Size dim {}", i))
-                                .logarithmic(true),
-                            );
-                        }
-                    }
                 }
 
-                egui::ComboBox::from_label("Rendering")
-                    .selected_text(format!("{:?}", app_state.rendering))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut app_state.rendering,
-                            RenderingState::Slice,
-                            "Slice",
-                        );
-                        ui.selectable_value(
-                            &mut app_state.rendering,
-                            RenderingState::Raycasting,
-                            "Raycasting",
-                        );
-                    });
                 match app_state.rendering {
                     RenderingState::Slice => {
                         ui.horizontal(|ui| {
