@@ -9,8 +9,8 @@ struct SymMat3 {
     float zz;
 };
 
-#define complex dvec2
-#define scalar double
+#define complex vec2
+#define scalar float
 
 complex c_mul(complex a, complex b) {
     return complex(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x);
@@ -26,7 +26,7 @@ complex c_div(complex a, complex b) {
 complex c_sqrt(complex a) {
     scalar l = length(a);
     scalar real = sqrt(0.5*(l+a.x));
-    scalar imag = sqrt(0.5*(l-a.x));
+    scalar imag = sqrt(0.5*max((l-a.x), 0.0));
     if (a.y < 0.0) {
         imag = -imag;
     }
