@@ -49,6 +49,10 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
+
+    /// Stop after rendering a complete frame
+    #[arg(short, long)]
+    bench: bool,
 }
 
 fn open_volume(
@@ -208,8 +212,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next_timeout,
                 )
                 .unwrap();
-                if version == DataVersionType::Final {
-                    //control_flow.set_exit();
+                if args.bench && version == DataVersionType::Final {
+                    control_flow.set_exit();
                 }
                 //std::thread::sleep(dbg!(
                 //    next_timeout.saturating_duration_since(std::time::Instant::now())
