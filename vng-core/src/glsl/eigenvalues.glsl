@@ -16,13 +16,6 @@ complex c_mul(complex a, complex b) {
     return complex(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x);
 }
 
-complex c_mul3(complex a, complex b, complex c) {
-    return c_mul(c_mul(a, b), c);
-}
-complex c_div(complex a, complex b) {
-    return complex(((a.x*b.x+a.y*b.y)/(b.x*b.x+b.y*b.y)),((a.y*b.x-a.x*b.y)/(b.x*b.x+b.y*b.y)));
-}
-
 complex c_sqrt(complex a) {
     scalar l = length(a);
     float u,v;
@@ -51,31 +44,30 @@ void eigenvalues_impl(float xx, float xy, float xz, float yy, float yz, float zz
     // b = the trace
     // c = -sum of diagonal minors
     // d = the negative determinant
-    complex b = complex(xx + yy + zz, 0.0);
-    complex c = complex(yz * yz - yy * zz
-                      + xz * xz - zz * xx
-                      + xy * xy - xx * yy, 0.0);
-    complex d = complex(xx*yy*zz + 2*xy*yz*xz - xx*yz*yz - yy*xz*xz - zz*xy*xy, 0.0);
+    scalar b = xx + yy + zz;
+    scalar c = yz * yz - yy * zz + xz * xz - zz * xx + xy * xy - xx * yy;
+    scalar d = xx*yy*zz + 2*xy*yz*xz - xx*yz*yz - yy*xz*xz - zz*xy*xy;
 
     // Solve cubic by Cardano's method (a is already factored into the
     // equations below as a constant).
-    complex p = (c_mul(b, b) + 3.0 * c) / 9.0;
-    complex q = (-9.0 * c_mul(b, c) - 27.0 * d - 2.0 * c_mul3(b, b, b)) / -54.0;
-    complex delta = c_mul(q, q) - c_mul3(p, p, p);
+    scalar p = (b * b + 3.0 * c) / 9.0;
+    scalar q = (-9.0 * b * c - 27.0 * d - 2.0 * b * b * b) / -54.0;
+    complex delta = complex(q*q - p*p*p, 0.0);
+    complex q_c = complex(q, 0.0);
     complex deltaSqrt = c_sqrt(delta);
-    complex g1 = c_pow(q + deltaSqrt, 1.0 / 3.0);
-    complex g2 = c_pow(q - deltaSqrt, 1.0 / 3.0);
-    complex offset = b / 3.0;
+    complex g1 = c_pow(q_c + deltaSqrt, 1.0 / 3.0);
+    complex g2 = c_pow(q_c - deltaSqrt, 1.0 / 3.0);
+    scalar offset = b / 3.0;
     complex omega = complex(-0.5, 0.5 * sqrt( 3.0 ));
     complex omega2 = c_mul(omega, omega);
 
-    complex cl1 = g1                + g2                + offset;
-    complex cl2 = c_mul(g1, omega)  + c_mul(g2, omega2) + offset;
-    complex cl3 = c_mul(g1, omega2) + c_mul(g2, omega)  + offset;
+    scalar cl1 = g1.x                + g2.x                + offset;
+    scalar cl2 = c_mul(g1, omega).x  + c_mul(g2, omega2).x + offset;
+    scalar cl3 = c_mul(g1, omega2).x + c_mul(g2, omega).x  + offset;
 
-    l1=float(cl1.x);
-    l2=float(cl2.x);
-    l3=float(cl3.x);
+    l1=float(cl1);
+    l2=float(cl2);
+    l3=float(cl3);
 }
 
 void eigenvalues(SymMat3 m, out float l1, out float l2, out float l3) {
