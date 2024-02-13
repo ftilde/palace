@@ -25,12 +25,15 @@ complex c_div(complex a, complex b) {
 
 complex c_sqrt(complex a) {
     scalar l = length(a);
-    scalar real = sqrt(0.5*(l+a.x));
-    scalar imag = sqrt(0.5*max((l-a.x), 0.0));
-    if (a.y < 0.0) {
-        imag = -imag;
+    float u,v;
+    if (a.x > 0.0) {
+        u = sqrt(0.5*(l+a.x));
+        v = a.y / (2.0*u);
+    } else {
+        v = sqrt(0.5*(l-a.x));
+        u = a.y / (2.0*v);
     }
-    return complex(real, imag);
+    return complex(u, v);
 }
 
 complex c_pow(complex a, float n) {
