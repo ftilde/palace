@@ -51,11 +51,11 @@ void eigenvalues_impl(float xx, float xy, float xz, float yy, float yz, float zz
     // b = the trace
     // c = -sum of diagonal minors
     // d = the negative determinant
-    complex b = complex(xx + yy + zz);
+    complex b = complex(xx + yy + zz, 0.0);
     complex c = complex(yz * yz - yy * zz
                       + xz * xz - zz * xx
-                      + xy * xy - xx * yy);
-    complex d = complex(xx*yy*zz + 2*xy*yz*xz - xx*yz*yz - yy*xz*xz - zz*xy*xy);
+                      + xy * xy - xx * yy, 0.0);
+    complex d = complex(xx*yy*zz + 2*xy*yz*xz - xx*yz*yz - yy*xz*xz - zz*xy*xy, 0.0);
 
     // Solve cubic by Cardano's method (a is already factored into the
     // equations below as a constant).
