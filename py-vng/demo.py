@@ -9,23 +9,10 @@ disk_cache_size = 20 << 30
 
 rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
-window = vng.Window(rt)
-
 #vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
 vol = vng.open_volume("/nosnapshot/test-volumes/large.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/large_32.vvd")
-
-#k = np.array([1, 2, 1]).astype(np.float32) * 0.25
-
-#v2 = vng.linear_rescale(v1, 2, m1)
-#vol = vng.separable_convolution(vol, [k]*3)
-
-#rechunked = vng.rechunk(vol.levels[-1], [4]*3)
-#print(rt.resolve(rechunked, [0]*3))
-#m = vng.mean(vol.levels[-1])
-#print(rt.resolve_scalar(m))
-#print(rt.resolve(vol.levels[0], [0]*3))
 
 store = vng.Store()
 
@@ -57,10 +44,6 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 #slice_state2.zoom_level().link_to(slice_state0.zoom_level())
 #slice_state1.offset().link_to(slice_state0.offset())
 #slice_state2.offset().link_to(slice_state0.offset())
-
-
-
-#camera_state.trackball().eye().map(lambda v: np.array(v) + [1.1, 1.0, 1.0])
 
 gui_state = vng.GuiState(rt)
 
@@ -122,11 +105,7 @@ def render_slice(vol, dim, slice_state):
 # Top-level render component
 def render(size, events):
 
-    def named_slider(name, state, min, max, logarithmic=False):
-        return vng.Horizontal([
-            vng.Slider(state, min, max, logarithmic),
-            vng.Label(name),
-        ])
+    # Volume Processing
 
     v = vol.create_lod(2.0)
     match processing.load():
@@ -147,6 +126,15 @@ def render(size, events):
             v = v.map(lambda evol: vng.threshold(evol, threshold_val.load()))
         case "no":
             pass
+
+
+    # GUI stuff
+
+    def named_slider(name, state, min, max, logarithmic=False):
+        return vng.Horizontal([
+            vng.Slider(state, min, max, logarithmic),
+            vng.Label(name),
+        ])
 
     widgets = []
 
@@ -179,6 +167,7 @@ def render(size, events):
 
     gui = gui_state.setup(events, vng.Vertical(widgets))
 
+    # Actual composition of the rendering
     slice0 = render_slice(v, 0, slice_state0)
     slice1 = render_slice(v, 1, slice_state1)
     slice2 = render_slice(v, 2, slice_state2)
@@ -207,4 +196,5 @@ def render(size, events):
 # (And also currently only the conversion for f32 is implemented...)
 #print(rt.resolve(render([10, 10], vng.Events.none()), [0]*2))
 
+window = vng.Window(rt)
 window.run(render, timeout_ms=10)
