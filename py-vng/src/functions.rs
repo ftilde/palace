@@ -62,6 +62,21 @@ pub fn linear_rescale(
 }
 
 #[pyfunction]
+pub fn threshold(
+    py: Python,
+    vol: MaybeEmbeddedTensorOperator,
+    threshold: f32,
+) -> PyResult<PyObject> {
+    vol.try_map_inner(
+        py,
+        |vol: vng_core::operators::volume::VolumeOperator<f32>| {
+            //TODO: ndim -> static dispatch
+            vng_core::operators::volume_gpu::threshold(vol, threshold)
+        },
+    )
+}
+
+#[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
     vol: MaybeEmbeddedTensorOperator,

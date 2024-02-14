@@ -42,6 +42,8 @@ camera_state = vng.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = vng.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
 processing = store.store_primitive("passthrough")
+do_threshold = store.store_primitive("no")
+threshold_val = store.store_primitive(0.5)
 
 smoothing_std = store.store_primitive(min_scale * 2.0)
 vesselness_rad_min = store.store_primitive(min_scale * 2.0)
@@ -140,11 +142,15 @@ def render(size, events):
         case "vesselness":
             v = v.map(lambda evol: vng.vesselness(evol, vesselness_rad_min.load(), vesselness_rad_max.load(), vesselness_steps.load()))
 
-    widgets = [
-            vng.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]),
-            vng.ComboBox("Processing", processing, ["passthrough", "smooth", "vesselness"]),
-            ]
+    match do_threshold.load():
+        case "yes":
+            v = v.map(lambda evol: vng.threshold(evol, threshold_val.load()))
+        case "no":
+            pass
 
+    widgets = []
+
+    widgets.append(vng.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]))
     match view.load():
         case "quad" | "raycast":
             widgets.append(named_slider("FOV", camera_state.fov(), 10, 50))
@@ -153,6 +159,7 @@ def render(size, events):
         case "x" | "y" | "z":
             pass
 
+    widgets.append(vng.ComboBox("Processing", processing, ["passthrough", "smooth", "vesselness"]))
     match processing.load():
         case "passthrough":
             pass
@@ -162,6 +169,13 @@ def render(size, events):
             widgets.append(named_slider("Min vessel rad", vesselness_rad_min, min_scale, max_scale, logarithmic=True))
             widgets.append(named_slider("Max vessel rad", vesselness_rad_max, min_scale, max_scale, logarithmic=True))
             widgets.append(named_slider("Vesselness steps", vesselness_steps, 1, 10))
+
+    widgets.append(vng.ComboBox("Apply Threshold", do_threshold, ["yes", "no"]))
+    match do_threshold.load():
+        case "yes":
+            widgets.append(named_slider("Threshold Value", threshold_val, 0.01, 10.0, logarithmic=True))
+        case "no":
+            pass
 
     gui = gui_state.setup(events, vng.Vertical(widgets))
 
