@@ -126,6 +126,11 @@ pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
 }
 
 #[pyfunction]
+pub fn gauss_kernel(stddev: f32) -> PyResult<TensorOperator> {
+    vng_core::operators::kernels::gauss(stddev).try_into()
+}
+
+#[pyfunction]
 pub fn open_volume(
     path: std::path::PathBuf,
     brick_size_hint: Option<u32>,

@@ -11,15 +11,14 @@ rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 
-#vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
-vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/large_32.vvd")
 
-k = np.array([1, 2, 1]).astype(np.float32) * 0.25
+#k = np.array([1, 2, 1]).astype(np.float32) * 0.25
 
 #v2 = vng.linear_rescale(v1, 2, m1)
 #vol = vng.separable_convolution(vol, [k]*3)
-vol = vol.create_lod(2.0)
 
 #rechunked = vng.rechunk(vol.levels[-1], [4]*3)
 #print(rt.resolve(rechunked, [0]*3))
@@ -29,9 +28,8 @@ vol = vol.create_lod(2.0)
 
 store = vng.Store()
 
-l0 = vol.levels[0]
-l0md = l0.inner.metadata
-l0ed = l0.embedding_data
+l0md = vol.inner.metadata
+l0ed = vol.embedding_data
 
 slice_state0 = vng.SliceviewState.for_volume(l0md, l0ed, 0).store(store)
 slice_state1 = vng.SliceviewState.for_volume(l0md, l0ed, 1).store(store)
@@ -39,6 +37,9 @@ slice_state2 = vng.SliceviewState.for_volume(l0md, l0ed, 2).store(store)
 camera_state = vng.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = vng.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
+processing = store.store_primitive("passthrough")
+
+smoothing_std = store.store_primitive(min(l0ed.spacing) * 5.0)
 
 slice_state0.depth().link_to(camera_state.trackball().center().at(0))
 slice_state1.depth().link_to(camera_state.trackball().center().at(1))
@@ -114,22 +115,47 @@ def render(size, events):
 
     def named_slider(name, state, min, max):
         return vng.Horizontal([
-            vng.Label(name),
             vng.Slider(state, min, max),
+            vng.Label(name),
         ])
-    gui = gui_state.setup(events, vng.Vertical([
-        vng.Vertical([
-            named_slider("fov", camera_state.fov(), 10, 50),
-            named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10),
-            named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10),
-            vng.ComboBox("Options", view, ["quad", "raycast", "x", "y", "z"]),
-        ]),
-    ]))
 
-    slice0 = render_slice(vol, 0, slice_state0)
-    slice1 = render_slice(vol, 1, slice_state1)
-    slice2 = render_slice(vol, 2, slice_state2)
-    ray = render_raycast(vol, camera_state)
+    v = vol.create_lod(2.0)
+    match processing.load():
+        case "passthrough":
+            v
+        case "smooth":
+            def smooth(evol, k):
+                return vng.separable_convolution(vol, [vng.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
+
+            k = smoothing_std.load()
+            v = v.map(lambda evol: smooth(evol, k))
+
+    widgets = [
+            vng.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]),
+            vng.ComboBox("Processing", processing, ["passthrough", "smooth"]),
+            ]
+
+    match view.load():
+        case "quad" | "raycast":
+            widgets.append(named_slider("FOV", camera_state.fov(), 10, 50))
+            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10))
+            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10))
+        case "x" | "y" | "z":
+            pass
+
+    match processing.load():
+        case "passthrough":
+            pass
+        case "smooth":
+            widgets.append(named_slider("Smoothing std", smoothing_std, min(l0ed.spacing), (np.array(l0ed.spacing) * np.array(l0md.dimensions)).mean() / 5.0))
+        #case "x" | "y" | "z":
+
+    gui = gui_state.setup(events, vng.Vertical(widgets))
+
+    slice0 = render_slice(v, 0, slice_state0)
+    slice1 = render_slice(v, 1, slice_state1)
+    slice2 = render_slice(v, 2, slice_state2)
+    ray = render_raycast(v, camera_state)
 
     match view.load():
         case "quad":

@@ -1,3 +1,4 @@
+use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::array::TensorEmbeddingData as CTensorEmbeddingData;
 use vng_core::array::TensorMetaData as CTensorMetaData;
@@ -438,5 +439,18 @@ impl LODTensorOperator {
     }
     pub fn fine_embedding_data(&self) -> TensorEmbeddingData {
         self.levels[0].embedding_data.clone()
+    }
+
+    pub fn map(&self, py: Python, f: Py<PyFunction>) -> PyResult<Self> {
+        Ok(Self {
+            levels: self
+                .levels
+                .iter()
+                .map(|l| {
+                    f.call1(py, (l.clone().into_py(py),))
+                        .and_then(|v| v.extract::<EmbeddedTensorOperator>(py))
+                })
+                .collect::<PyResult<Vec<_>>>()?,
+        })
     }
 }
