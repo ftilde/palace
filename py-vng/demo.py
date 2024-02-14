@@ -11,7 +11,8 @@ rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 window = vng.Window(rt)
 
-vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/large.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/large_32.vvd")
 
@@ -31,6 +32,9 @@ store = vng.Store()
 l0md = vol.inner.metadata
 l0ed = vol.embedding_data
 
+min_scale = l0ed.spacing.mean()
+max_scale = (l0ed.spacing * l0md.dimensions).mean() / 5.0
+
 slice_state0 = vng.SliceviewState.for_volume(l0md, l0ed, 0).store(store)
 slice_state1 = vng.SliceviewState.for_volume(l0md, l0ed, 1).store(store)
 slice_state2 = vng.SliceviewState.for_volume(l0md, l0ed, 2).store(store)
@@ -39,7 +43,10 @@ raycaster_config = vng.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
 processing = store.store_primitive("passthrough")
 
-smoothing_std = store.store_primitive(min(l0ed.spacing) * 5.0)
+smoothing_std = store.store_primitive(min_scale * 2.0)
+vesselness_rad_min = store.store_primitive(min_scale * 2.0)
+vesselness_rad_max = store.store_primitive(max_scale * 0.3)
+vesselness_steps = store.store_primitive(3)
 
 slice_state0.depth().link_to(camera_state.trackball().center().at(0))
 slice_state1.depth().link_to(camera_state.trackball().center().at(1))
@@ -113,9 +120,9 @@ def render_slice(vol, dim, slice_state):
 # Top-level render component
 def render(size, events):
 
-    def named_slider(name, state, min, max):
+    def named_slider(name, state, min, max, logarithmic=False):
         return vng.Horizontal([
-            vng.Slider(state, min, max),
+            vng.Slider(state, min, max, logarithmic),
             vng.Label(name),
         ])
 
@@ -130,16 +137,19 @@ def render(size, events):
             k = smoothing_std.load()
             v = v.map(lambda evol: smooth(evol, k))
 
+        case "vesselness":
+            v = v.map(lambda evol: vng.vesselness(evol, vesselness_rad_min.load(), vesselness_rad_max.load(), vesselness_steps.load()))
+
     widgets = [
             vng.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]),
-            vng.ComboBox("Processing", processing, ["passthrough", "smooth"]),
+            vng.ComboBox("Processing", processing, ["passthrough", "smooth", "vesselness"]),
             ]
 
     match view.load():
         case "quad" | "raycast":
             widgets.append(named_slider("FOV", camera_state.fov(), 10, 50))
-            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10))
-            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10))
+            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10, logarithmic=True))
+            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10, logarithmic=True))
         case "x" | "y" | "z":
             pass
 
@@ -147,8 +157,11 @@ def render(size, events):
         case "passthrough":
             pass
         case "smooth":
-            widgets.append(named_slider("Smoothing std", smoothing_std, l0ed.spacing.mean(), (l0ed.spacing * l0md.dimensions).mean() / 5.0))
-        #case "x" | "y" | "z":
+            widgets.append(named_slider("Smoothing std", smoothing_std, min_scale, max_scale, logarithmic=True))
+        case "vesselness":
+            widgets.append(named_slider("Min vessel rad", vesselness_rad_min, min_scale, max_scale, logarithmic=True))
+            widgets.append(named_slider("Max vessel rad", vesselness_rad_max, min_scale, max_scale, logarithmic=True))
+            widgets.append(named_slider("Vesselness steps", vesselness_steps, 1, 10))
 
     gui = gui_state.setup(events, vng.Vertical(widgets))
 

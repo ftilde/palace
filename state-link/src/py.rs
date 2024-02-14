@@ -10,8 +10,8 @@ pub struct Store {
 
 #[derive(FromPyObject)]
 enum StorePrimitive {
-    F32(f32),
     U32(u32),
+    F32(f32),
     String(String),
 }
 
@@ -21,13 +21,6 @@ impl Store {
     fn new() -> Self {
         Default::default()
     }
-
-    //fn store_u32(&mut self, py: Python, val: u32) -> PyObject {
-    //    let init = NodeHandleU32 {
-    //        inner: self.inner.store(&val),
-    //    };
-    //    PyCell::new(py, init).unwrap().to_object(py)
-    //}
 
     fn store_primitive(this: Py<Store>, py: Python, primitive: StorePrimitive) -> PyObject {
         match primitive {
@@ -103,7 +96,7 @@ pub struct NodeHandleU32 {
 
 #[pymethods]
 impl NodeHandleU32 {
-    fn write(&self, py: Python, val: u32) -> PyResult<()> {
+    pub fn write(&self, py: Python, val: u32) -> PyResult<()> {
         self.store
             .borrow_mut(py)
             .inner
@@ -117,7 +110,7 @@ impl NodeHandleU32 {
             .link(&self.inner, &dst.inner)
             .map_err(map_link_err)
     }
-    fn load(&self, py: Python) -> u32 {
+    pub fn load(&self, py: Python) -> u32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
     fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {

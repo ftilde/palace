@@ -1,6 +1,6 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::PyArray0;
-use state_link::py::{NodeHandleF32, NodeHandleString};
+use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 use vng_core::{operators::gui as c, vulkan::state::VulkanState};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -127,20 +127,35 @@ impl Label {
 #[derive(Clone, FromPyObject)]
 enum SliderVal {
     Array0(Py<PyArray0<f64>>),
-    StoreRef(NodeHandleF32),
+    StoreRefF32(NodeHandleF32),
+    StoreRefU32(NodeHandleU32),
+}
+
+enum ValType {
+    Float,
+    Int,
 }
 
 impl SliderVal {
+    fn type_(&self) -> ValType {
+        match self {
+            SliderVal::Array0(_) | SliderVal::StoreRefF32(_) => ValType::Float,
+            SliderVal::StoreRefU32(_) => ValType::Int,
+        }
+    }
+
     fn get(&self, py: Python) -> f64 {
         match self {
             SliderVal::Array0(h) => unsafe { *h.as_ref(py).get(()).unwrap() },
-            SliderVal::StoreRef(h) => h.load(py) as f64,
+            SliderVal::StoreRefF32(h) => h.load(py) as f64,
+            SliderVal::StoreRefU32(h) => h.load(py) as f64,
         }
     }
     fn set(&self, py: Python, v: f64) {
         match self {
             SliderVal::Array0(h) => *unsafe { h.as_ref(py).get_mut(()).unwrap() } = v,
-            SliderVal::StoreRef(h) => h.write(py, v as f32).unwrap(),
+            SliderVal::StoreRefF32(h) => h.write(py, v as f32).unwrap(),
+            SliderVal::StoreRefU32(h) => h.write(py, v as u32).unwrap(),
         };
     }
 }
@@ -151,13 +166,19 @@ pub struct Slider {
     val: SliderVal,
     min: f64,
     max: f64,
+    logarithmic: bool,
 }
 
 #[pymethods]
 impl Slider {
     #[new]
-    fn new(val: SliderVal, min: f64, max: f64) -> Self {
-        Self { val, min, max }
+    fn new(val: SliderVal, min: f64, max: f64, logarithmic: Option<bool>) -> Self {
+        Self {
+            val,
+            min,
+            max,
+            logarithmic: logarithmic.unwrap_or(false),
+        }
     }
 }
 
@@ -207,12 +228,18 @@ impl GuiNode {
             }
             GuiNode::Slider(b) => {
                 let range = b.min..=b.max;
-                ui.add(c::egui::Slider::from_get_set(range, |new| {
+                let mut slider = c::egui::Slider::from_get_set(range, |new| {
                     if let Some(new) = new {
                         b.val.set(py, new);
                     }
                     b.val.get(py)
-                }));
+                })
+                .logarithmic(b.logarithmic);
+
+                if let ValType::Int = b.val.type_() {
+                    slider = slider.integer();
+                }
+                ui.add(slider);
             }
             GuiNode::Label(b) => {
                 ui.label(&b.text);

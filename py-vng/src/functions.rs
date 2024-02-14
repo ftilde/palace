@@ -77,6 +77,22 @@ pub fn separable_convolution<'py>(
 }
 
 #[pyfunction]
+pub fn vesselness<'py>(
+    vol: EmbeddedTensorOperator,
+    min_scale: f32,
+    max_scale: f32,
+    steps: usize,
+) -> PyResult<EmbeddedTensorOperator> {
+    vng_core::operators::vesselness::multiscale_vesselness(
+        vol.try_into()?,
+        min_scale,
+        max_scale,
+        steps,
+    )
+    .try_into()
+}
+
+#[pyfunction]
 pub fn entry_exit_points(
     input_md: VolumeMetaData,
     embedding_data: VolumeEmbeddingData,
