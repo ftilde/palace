@@ -147,7 +147,7 @@ def render(size, events):
         case "passthrough":
             pass
         case "smooth":
-            widgets.append(named_slider("Smoothing std", smoothing_std, min(l0ed.spacing), (np.array(l0ed.spacing) * np.array(l0md.dimensions)).mean() / 5.0))
+            widgets.append(named_slider("Smoothing std", smoothing_std, l0ed.spacing.mean(), (l0ed.spacing * l0md.dimensions).mean() / 5.0))
         #case "x" | "y" | "z":
 
     gui = gui_state.setup(events, vng.Vertical(widgets))

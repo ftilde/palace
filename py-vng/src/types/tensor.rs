@@ -1,3 +1,4 @@
+use numpy::PyArray1;
 use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::array::TensorEmbeddingData as CTensorEmbeddingData;
@@ -170,10 +171,20 @@ type CTensorDataOperator<D, T> = COperator<Vector<D, ChunkCoordinate>, T>;
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct TensorMetaData {
-    #[pyo3(get)]
-    pub dimensions: Vec<u32>,
-    #[pyo3(get)]
-    pub chunk_size: Vec<u32>,
+    dimensions: Vec<u32>,
+    chunk_size: Vec<u32>,
+}
+
+#[pymethods]
+impl TensorMetaData {
+    #[getter]
+    fn dimensions<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
+        PyArray1::from_vec(py, self.dimensions.clone())
+    }
+    #[getter]
+    fn chunk_size<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
+        PyArray1::from_vec(py, self.chunk_size.clone())
+    }
 }
 
 impl<D: Dimension> From<CTensorMetaData<D>> for TensorMetaData {
@@ -289,8 +300,20 @@ impl<'a> TryInto<CTensorOperator<D1, f32>> for MaybeConstTensorOperator<'a> {
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct TensorEmbeddingData {
-    #[pyo3(get, set)]
-    pub spacing: Vec<f32>,
+    spacing: Vec<f32>,
+}
+
+#[pymethods]
+impl TensorEmbeddingData {
+    #[getter]
+    fn get_spacing<'a>(&self, py: Python<'a>) -> &'a PyArray1<f32> {
+        PyArray1::from_vec(py, self.spacing.clone())
+    }
+
+    #[setter]
+    fn set_spacing(&mut self, value: &PyArray1<f32>) {
+        self.spacing = value.to_vec().unwrap();
+    }
 }
 
 impl<D: Dimension> From<CTensorEmbeddingData<D>> for TensorEmbeddingData {
