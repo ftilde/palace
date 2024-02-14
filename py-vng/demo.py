@@ -32,7 +32,7 @@ store = vng.Store()
 l0md = vol.inner.metadata
 l0ed = vol.embedding_data
 
-min_scale = l0ed.spacing.mean()
+min_scale = l0ed.spacing.min() / 10.0
 max_scale = (l0ed.spacing * l0md.dimensions).mean() / 5.0
 
 slice_state0 = vng.SliceviewState.for_volume(l0md, l0ed, 0).store(store)
@@ -132,7 +132,7 @@ def render(size, events):
             v
         case "smooth":
             def smooth(evol, k):
-                return vng.separable_convolution(vol, [vng.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
+                return vng.separable_convolution(evol, [vng.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
 
             k = smoothing_std.load()
             v = v.map(lambda evol: smooth(evol, k))

@@ -59,7 +59,7 @@ pub fn tensor_metadata(
 }
 
 #[pyclass(unsendable)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DType {
     F32,
     U8Vec4,
@@ -169,7 +169,7 @@ impl<T: Identify + vng_core::storage::Element> TryInto<CScalarOperator<T>>
 type CTensorDataOperator<D, T> = COperator<Vector<D, ChunkCoordinate>, T>;
 
 #[pyclass(unsendable)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TensorMetaData {
     dimensions: Vec<u32>,
     chunk_size: Vec<u32>,
@@ -218,6 +218,7 @@ impl<D: Dimension> TryInto<CTensorMetaData<D>> for TensorMetaData {
 }
 
 #[pyclass(unsendable)]
+#[derive(Debug)]
 pub struct TensorOperator {
     pub inner: Box<dyn std::any::Any>,
     #[pyo3(get)]
@@ -298,7 +299,7 @@ impl<'a> TryInto<CTensorOperator<D1, f32>> for MaybeConstTensorOperator<'a> {
 }
 
 #[pyclass(unsendable)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TensorEmbeddingData {
     spacing: Vec<f32>,
 }
@@ -343,7 +344,7 @@ impl<D: Dimension> TryInto<CTensorEmbeddingData<D>> for TensorEmbeddingData {
 }
 
 #[pyclass(unsendable)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EmbeddedTensorOperator {
     #[pyo3(get, set)]
     pub inner: TensorOperator,
@@ -387,7 +388,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
-#[derive(FromPyObject)]
+#[derive(FromPyObject, Debug)]
 pub enum MaybeEmbeddedTensorOperator {
     Not(TensorOperator),
     Embedded(EmbeddedTensorOperator),
