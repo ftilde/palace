@@ -103,8 +103,8 @@ pub enum DataVersionType {
 pub enum DataLongevity {
     Ephemeral = 0,
     Unstable = 1,
-    Stable = 2,
-    Cache = 3,
+    Cache = 2,
+    Stable = 3,
 }
 
 impl TryFrom<usize> for DataLongevity {
@@ -114,8 +114,8 @@ impl TryFrom<usize> for DataLongevity {
         match raw {
             0 => Ok(DataLongevity::Ephemeral),
             1 => Ok(DataLongevity::Unstable),
-            2 => Ok(DataLongevity::Stable),
-            3 => Ok(DataLongevity::Cache),
+            2 => Ok(DataLongevity::Cache),
+            3 => Ok(DataLongevity::Stable),
             _ => Err("Invalid DataLongevity value"),
         }
     }
