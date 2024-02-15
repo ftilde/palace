@@ -142,8 +142,8 @@ def render(size, events):
     match view.load():
         case "quad" | "raycast":
             widgets.append(named_slider("FOV", camera_state.fov(), 10, 50))
-            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 0.1, 10, logarithmic=True))
-            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.1, 10, logarithmic=True))
+            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 1.0, 10, logarithmic=True))
+            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.01, 10, logarithmic=True))
         case "x" | "y" | "z":
             pass
 
