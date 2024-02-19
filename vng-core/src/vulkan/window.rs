@@ -619,24 +619,22 @@ impl Window {
         // The rendering part:
 
         let f = self.current_frame;
-        self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
         let sync_object = &mut self.sync_objects[f];
 
         ctx.submit(device.wait_for_cmd_buffer_completion(sync_object.last_use_epoch))
             .await;
 
-        let image_index = unsafe {
-            device
-                .functions
-                .swap_chain_ext
-                .acquire_next_image(
-                    self.swap_chain.inner,
-                    u64::max_value(),
-                    sync_object.image_available_semaphore,
-                    vk::Fence::null(),
-                )
-                .unwrap()
-                .0
+        let image_index = match unsafe {
+            device.functions.swap_chain_ext.acquire_next_image(
+                self.swap_chain.inner,
+                u64::max_value(),
+                sync_object.image_available_semaphore,
+                vk::Fence::null(),
+            )
+        } {
+            Ok(i) => i.0,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(version),
+            Err(e) => panic!("{}", e),
         };
 
         let clear_values = [vk::ClearValue {
@@ -724,9 +722,12 @@ impl Window {
                 .swap_chain_ext
                 .queue_present(*device.queues.first().unwrap(), &present_info)
         } {
-            Ok(_) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {}
+            Ok(_) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(version),
             Err(e) => panic!("{}", e),
         }
+
+        self.current_frame = (self.current_frame + 1) % self.sync_objects.len();
 
         Ok(version)
     }
