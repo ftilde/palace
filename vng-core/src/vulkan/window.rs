@@ -718,13 +718,15 @@ impl Window {
             .image_indices(image_indices)
             .wait_semaphores(wait_sem);
 
-        unsafe {
+        match unsafe {
             device
                 .functions
                 .swap_chain_ext
                 .queue_present(*device.queues.first().unwrap(), &present_info)
+        } {
+            Ok(_) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {}
+            Err(e) => panic!("{}", e),
         }
-        .unwrap();
 
         Ok(version)
     }
