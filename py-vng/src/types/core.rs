@@ -152,7 +152,7 @@ impl Window {
         let mut res = Ok(());
         self.event_loop.run_return(|event, _, control_flow| {
             let call_res: PyResult<()> = (|| {
-                control_flow.set_wait();
+                control_flow.set_poll();
 
                 match event {
                     Event::WindowEvent {

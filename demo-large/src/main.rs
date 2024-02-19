@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut next_timeout = Instant::now() + Duration::from_millis(10);
 
     event_loop.run_return(|event, _, control_flow| {
-        control_flow.set_wait();
+        control_flow.set_poll();
 
         match event {
             Event::WindowEvent {
