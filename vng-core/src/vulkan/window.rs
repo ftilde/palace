@@ -405,12 +405,35 @@ pub struct Window {
     surface: vk::SurfaceKHR,
     device_id: DeviceId,
     pipeline: GraphicsPipeline,
-    swap_chain_support: SwapChainSupportDetails,
-    swap_chain_config: SwapChainConfiguration,
     swap_chain: SwapChainData,
     render_pass: vk::RenderPass,
     sync_objects: [SyncObjects; MAX_FRAMES_IN_FLIGHT],
     current_frame: usize,
+}
+
+fn swap_chain_support(
+    ctx: &VulkanContext,
+    device: DeviceId,
+    surface: vk::SurfaceKHR,
+) -> Option<SwapChainSupportDetails> {
+    let device = &ctx.device_contexts[device];
+
+    let support = SwapChainSupportDetails::query(ctx, device.physical_device, surface);
+    let surface_support = unsafe {
+        ctx.functions
+            .surface_ext
+            .get_physical_device_surface_support(
+                device.physical_device,
+                device.queue_family_index,
+                surface,
+            )
+            .unwrap()
+    };
+    if !support.formats.is_empty() && !support.present_modes.is_empty() && surface_support {
+        Some(support)
+    } else {
+        None
+    }
 }
 
 impl Window {
@@ -446,26 +469,9 @@ impl Window {
         let (device, swap_chain_support) = ctx
             .device_contexts
             .iter()
-            .find_map(|device| {
-                let support = SwapChainSupportDetails::query(ctx, device.physical_device, surface);
-                let surface_support = unsafe {
-                    ctx.functions
-                        .surface_ext
-                        .get_physical_device_surface_support(
-                            device.physical_device,
-                            device.queue_family_index,
-                            surface,
-                        )
-                        .unwrap()
-                };
-                if !support.formats.is_empty()
-                    && !support.present_modes.is_empty()
-                    && surface_support
-                {
-                    Some((device, support))
-                } else {
-                    None
-                }
+            .enumerate()
+            .find_map(|(i, device)| {
+                swap_chain_support(ctx, i, surface).map(|support| (device, support))
             })
             .ok_or_else(|| "Could not find any device with present capabilities")?;
 
@@ -554,9 +560,7 @@ impl Window {
         Ok(Self {
             winit_win,
             surface,
-            swap_chain_config,
             device_id: device.id,
-            swap_chain_support,
             swap_chain,
             pipeline,
             render_pass,
@@ -573,14 +577,17 @@ impl Window {
     pub fn resize(&mut self, size: WindowSize, ctx: &VulkanContext) {
         let device = &ctx.device_contexts[self.device_id];
 
+        let swap_chain_support = swap_chain_support(ctx, self.device_id, self.surface).unwrap();
+        let swap_chain_config = swap_chain_support.default_config();
+
         unsafe {
             device.functions.device_wait_idle().unwrap();
             self.swap_chain.deinitialize(device);
 
             self.swap_chain = SwapChainData::new(
                 device,
-                &self.swap_chain_support,
-                &self.swap_chain_config,
+                &swap_chain_support,
+                &swap_chain_config,
                 self.render_pass,
                 self.surface,
                 size,
