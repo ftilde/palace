@@ -175,15 +175,19 @@ fn select_swap_extent(
     capabilities: &vk::SurfaceCapabilitiesKHR,
     window_size: WindowSize,
 ) -> vk::Extent2D {
-    vk::Extent2D {
-        width: window_size.width.clamp(
-            capabilities.min_image_extent.width,
-            capabilities.max_image_extent.width,
-        ),
-        height: window_size.height.clamp(
-            capabilities.min_image_extent.height,
-            capabilities.max_image_extent.height,
-        ),
+    if capabilities.current_extent.width != u32::max_value() {
+        capabilities.current_extent
+    } else {
+        vk::Extent2D {
+            width: window_size.width.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: window_size.height.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
+        }
     }
 }
 
