@@ -25,6 +25,7 @@ use crate::{
 use pyo3::prelude::*;
 
 use super::{
+    array::ArrayOperator,
     tensor::{FrameOperator, ImageOperator},
     volume::LODVolumeOperator,
 };
@@ -527,9 +528,47 @@ impl Default for RaycasterConfig {
     }
 }
 
+pub type TransFuncTableOperator = ArrayOperator<Vector<D4, u8>>;
+
+#[derive(Clone)]
+pub struct TransFuncOperator {
+    pub table: TransFuncTableOperator,
+    pub min: f32,
+    pub max: f32,
+}
+
+impl TransFuncOperator {
+    pub fn data(&self) -> TransFuncData {
+        TransFuncData {
+            len: self.table.metadata.dimensions[0].raw,
+            min: self.min,
+            max: self.max,
+        }
+    }
+    pub fn gen(min: f32, max: f32, len: usize, g: impl FnMut(usize) -> Vector<D4, u8>) -> Self {
+        let vals = (0..len).map(g).collect::<Vec<_>>();
+        let table = super::array::from_rc(std::rc::Rc::from(vals));
+        Self { table, min, max }
+    }
+    pub fn grey_ramp(min: f32, max: f32) -> Self {
+        Self::gen(min, max, 256, |i| Vector::fill(i as u8))
+    }
+    pub fn red_ramp(min: f32, max: f32) -> Self {
+        Self::gen(min, max, 256, |i| Vector::from([i as u8, 0, 0, i as u8]))
+    }
+}
+
+#[derive(Copy, Clone, AsStd140, GlslStruct)]
+pub struct TransFuncData {
+    pub len: u32,
+    pub min: f32,
+    pub max: f32,
+}
+
 pub fn raycast(
     input: LODVolumeOperator<f32>,
     entry_exit_points: ImageOperator<[Vector<D4, f32>; 2]>,
+    tf: TransFuncOperator,
     config: RaycasterConfig,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
@@ -537,6 +576,9 @@ pub fn raycast(
         out_mem_dim: cgmath::Vector2<u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
+        tf_min: f32,
+        tf_max: f32,
+        tf_len: u32,
     }
     const SHADER: &'static str = r#"
 #version 450
@@ -594,6 +636,10 @@ layout(std430, binding = 3) buffer StateBuffer {
     State values[];
 } state_cache;
 
+layout(std430, binding = 4) buffer TFTableBuffer {
+    u8vec4 values[];
+} tf_table;
+
 declare_push_consts(consts);
 
 struct EEPoint {
@@ -632,6 +678,12 @@ bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
     eep.exit = norm_to_world(exit.xyz, l);
 
     return entry.a > 0.0 && exit.a > 0.0;
+}
+
+u8vec4 classify(float val) {
+    float norm = (val-consts.tf_min)/(consts.tf_max - consts.tf_min);
+    uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len);
+    return tf_table.values[index];
 }
 
 #define T_DONE -1.0
@@ -742,7 +794,7 @@ void main()
                 state_cache.values[gID] = state;
             }
 
-            color = intensity_to_grey(state.intensity);
+            color = classify(state.intensity);
         } else {
             color = u8vec4(0);
         }
@@ -768,8 +820,8 @@ void main()
             .dependent_on(&entry_exit_points)
             .dependent_on_data(&config),
         entry_exit_points.metadata,
-        (input, entry_exit_points.clone()),
-        move |ctx, pos, _, (input, entry_exit_points)| {
+        (input, entry_exit_points.clone(), tf),
+        move |ctx, pos, _, (input, entry_exit_points, tf)| {
             async move {
                 let device = ctx.vulkan_device();
 
@@ -803,10 +855,23 @@ void main()
                             .request_gpu(device.id, pos, dst_info),
                     )
                     .await;
+
+                assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
+                let tf_data_gpu = ctx
+                    .submit(
+                        tf.table
+                            .chunks
+                            .request_gpu(device.id, Vector::from([0]), dst_info),
+                    )
+                    .await;
                 let out_info = m_out.chunk_info(pos);
 
                 let chunk_size = out_info.mem_dimensions.raw();
+                let tf_data = tf.data();
                 let consts = PushConstants {
+                    tf_min: tf_data.min,
+                    tf_max: tf_data.max,
+                    tf_len: tf_data.len,
                     out_mem_dim: chunk_size.into(),
                     oversampling_factor: config.oversampling_factor,
                     lod_coarseness: config.lod_coarseness,
@@ -933,6 +998,7 @@ void main()
                             &eep,
                             &*lod_data_gpu,
                             &state_initialized,
+                            &tf_data_gpu,
                         ]);
 
                         unsafe {

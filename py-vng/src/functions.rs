@@ -1,7 +1,7 @@
 use crate::{map_err, types::*};
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::dim::*;
-use vng_core::operators::raycaster::RaycasterConfig;
+use vng_core::operators::raycaster::{RaycasterConfig, TransFuncOperator};
 use vng_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
@@ -129,9 +129,11 @@ pub fn raycast(
     entry_exit_points: TensorOperator,
     config: Option<RaycasterConfig>,
 ) -> PyResult<TensorOperator> {
+    let tf = TransFuncOperator::grey_ramp(0.0, 1.0); //TODO make configurable
     vng_core::operators::raycaster::raycast(
         vol.try_into()?,
         entry_exit_points.try_into()?,
+        tf,
         config.unwrap_or_default(),
     )
     .try_into()

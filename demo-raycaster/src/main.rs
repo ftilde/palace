@@ -6,7 +6,7 @@ use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use vng_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::raycaster::CameraState;
+use vng_core::operators::raycaster::{CameraState, TransFuncOperator};
 use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
 use vng_core::operators::volume_gpu;
 use vng_core::operators::{self};
@@ -153,6 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev = 1.0;
+    let mut tf = TransFuncOperator::red_ramp(0.0, 1.0);
 
     let mut event_loop = winit::event_loop::EventLoop::new();
 
@@ -202,6 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut scale,
                     &mut offset,
                     &mut stddev,
+                    &mut tf,
                     events.current_batch(),
                     next_timeout,
                 )
@@ -227,6 +229,7 @@ fn eval_network(
     scale: &mut f32,
     offset: &mut f32,
     stddev: &mut f32,
+    tf: &mut TransFuncOperator,
     mut events: EventStream,
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
@@ -290,7 +293,7 @@ fn eval_network(
         md.into(),
         matrix.into(),
     );
-    let frame = vng_core::operators::raycaster::raycast(vol, eep, Default::default());
+    let frame = vng_core::operators::raycaster::raycast(vol, eep, tf.clone(), Default::default());
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

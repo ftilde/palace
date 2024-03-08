@@ -10,8 +10,8 @@ disk_cache_size = 20 << 30
 rt = vng.RunTime(ram_size, vram_size, disk_cache_size)
 
 #vol = vng.open_volume("/nosnapshot/test-volumes/walnut_float2.vvd")
-vol = vng.open_volume("/nosnapshot/test-volumes/large.vvd")
-#vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
+#vol = vng.open_volume("/nosnapshot/test-volumes/large.vvd")
+vol = vng.open_volume("/nosnapshot/test-volumes/liver_c01.vvd")
 #vol = vng.open_volume("/nosnapshot/test-volumes/large_32.vvd")
 
 store = vng.Store()

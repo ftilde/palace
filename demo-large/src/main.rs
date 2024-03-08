@@ -6,7 +6,7 @@ use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use vng_core::dim::*;
 use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::raycaster::{CameraState, RaycasterConfig};
+use vng_core::operators::raycaster::{CameraState, RaycasterConfig, TransFuncOperator};
 use vng_core::operators::sliceviewer::SliceviewState;
 use vng_core::operators::tensor::FrameOperator;
 use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
@@ -100,6 +100,7 @@ enum RenderingState {
 
 struct RaycastingState {
     camera: CameraState,
+    tf: TransFuncOperator,
     config: RaycasterConfig,
 }
 
@@ -155,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         raycasting: RaycastingState {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
             config: RaycasterConfig::default(),
+            tf: TransFuncOperator::grey_ramp(0.0, 1.0),
         },
         sliceview: SliceState {
             inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
@@ -378,7 +380,7 @@ fn raycaster(
         md.into(),
         matrix.into(),
     );
-    vng_core::operators::raycaster::raycast(vol, eep, state.config)
+    vng_core::operators::raycaster::raycast(vol, eep, state.tf.clone(), state.config)
 }
 
 fn eval_network(
