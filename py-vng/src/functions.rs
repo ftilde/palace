@@ -2,10 +2,12 @@ use crate::{map_err, types::*};
 use pyo3::{exceptions::PyException, prelude::*};
 use vng_core::dim::*;
 use vng_core::operators::raycaster::{RaycasterConfig, TransFuncOperator};
+use vng_core::operators::volume::EmbeddedVolumeOperatorState;
 use vng_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
 };
+use vng_hdf5::Hdf5VolumeSourceState;
 use vng_vvd::VvdVolumeSourceState;
 
 #[pyfunction]
@@ -167,6 +169,7 @@ pub fn gauss_kernel(stddev: f32) -> PyResult<TensorOperator> {
 pub fn open_volume(
     path: std::path::PathBuf,
     brick_size_hint: Option<u32>,
+    volume_path_hint: Option<String>,
 ) -> PyResult<EmbeddedTensorOperator> {
     let brick_size_hint = LocalVoxelPosition::fill(brick_size_hint.unwrap_or(64).into());
 
@@ -176,7 +179,7 @@ pub fn open_volume(
     let file = file.to_string_lossy();
     let segments = file.split('.').collect::<Vec<_>>();
 
-    let vol_source = match segments[..] {
+    let vol_source: Box<dyn EmbeddedVolumeOperatorState> = match segments[..] {
         [.., "vvd"] => Box::new(map_err(VvdVolumeSourceState::open(&path, brick_size_hint))?),
         //[.., "nii"] | [.., "nii", "gz"] => {
         //    Box::new(map_err(NiftiVolumeSourceState::open_single(path)?))
@@ -185,7 +188,10 @@ pub fn open_volume(
         //    let data = path.with_extension("img");
         //    Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
         //}
-        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
+        [.., "h5"] => Box::new(map_err(Hdf5VolumeSourceState::open(
+            path,
+            volume_path_hint.unwrap_or_else(|| "/volume".to_string()),
+        ))?),
         _ => {
             return map_err(Err(format!(
                 "Unknown volume format for file {}",
@@ -195,7 +201,6 @@ pub fn open_volume(
         }
     };
 
-    use vng_core::operators::volume::EmbeddedVolumeOperatorState;
     let vol = vol_source.operate();
 
     vol.try_into()

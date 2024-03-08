@@ -2565,6 +2565,7 @@ dependencies = [
  "pyo3",
  "state-link",
  "vng-core",
+ "vng-hdf5",
  "vng-vvd",
  "winit",
 ]

@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.19.1", features = ["extension-module"] }
 vng-core = { path = "../vng-core" }
 vng-vvd = { path = "../vng-vvd" }
+vng-hdf5 = { path = "../vng-hdf5" }
 derive_more = "0.99"
 numpy = "0.19.0"
 winit = "0.28"
