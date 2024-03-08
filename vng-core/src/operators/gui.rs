@@ -17,6 +17,7 @@ use crate::{
     event::{EventChain, EventStream},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
+    runtime::RunTime,
     storage::gpu::ImageAllocation,
     task::OpaqueTaskContext,
     util::Map,
@@ -25,7 +26,7 @@ use crate::{
         pipeline::{DescriptorConfig, GraphicsPipeline},
         shader::ShaderDefines,
         state::{RessourceId, VulkanState},
-        DeviceContext, DstBarrierInfo, SrcBarrierInfo,
+        DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -36,6 +37,32 @@ use super::tensor::FrameOperator;
 #[derive(Clone, Deref)]
 pub struct GuiState(Rc<RefCell<GuiStateInner>>);
 
+impl GuiState {
+    pub fn on_device(device_id: DeviceId) -> Self {
+        Self(Rc::new(RefCell::new(GuiStateInner {
+            egui_ctx: Default::default(),
+            version: Default::default(),
+            latest_size: Cell::new(Vector::fill(0)),
+            textures_delta: Default::default(),
+            textures: Default::default(),
+            scale_factor: 1.0,
+            device: device_id,
+        })))
+    }
+    pub fn new(ctx: &OpaqueTaskContext<'_, '_>) -> Self {
+        Self::on_device(ctx.preferred_device().id)
+    }
+
+    pub unsafe fn deinit(&mut self, rt: &RunTime) {
+        let device = self.0.borrow().device;
+        unsafe { self.deinitialize(&rt.vulkan.device_contexts()[device]) };
+    }
+    pub fn destroy(mut self, rt: &RunTime) {
+        // Safety we are actually taken ownership of the state
+        unsafe { self.deinit(rt) };
+    }
+}
+
 pub struct GuiStateInner {
     egui_ctx: egui::Context,
     version: u64,
@@ -43,15 +70,13 @@ pub struct GuiStateInner {
     textures_delta: TexturesDelta,
     textures: Map<TextureId, (ImageAllocation, vk::ImageView)>,
     scale_factor: f32,
+    device: DeviceId,
 }
 
 impl GuiStateInner {
-    async fn update(
-        &mut self,
-        ctx: &OpaqueTaskContext<'_, '_>,
-        device: &DeviceContext,
-        size: Vector<D2, u32>,
-    ) {
+    async fn update(&mut self, ctx: &OpaqueTaskContext<'_, '_>, size: Vector<D2, u32>) {
+        let device = ctx.device_ctx(self.device);
+
         self.latest_size.set(size);
 
         let textures_delta = &mut self.textures_delta;
@@ -218,19 +243,6 @@ impl VulkanState for GuiState {
             img.deinitialize(context);
             img_view.deinitialize(context);
         }
-    }
-}
-
-impl Default for GuiState {
-    fn default() -> Self {
-        Self(Rc::new(RefCell::new(GuiStateInner {
-            egui_ctx: Default::default(),
-            version: Default::default(),
-            latest_size: Cell::new(Vector::fill(0)),
-            textures_delta: Default::default(),
-            textures: Default::default(),
-            scale_factor: 1.0,
-        })))
     }
 }
 
@@ -568,7 +580,7 @@ void main() {
             (input.clone(), self),
             move |ctx, pos, _, (input, state)| {
                 async move {
-                    let device = ctx.vulkan_device();
+                    let device = ctx.preferred_device();
 
                     let m_out = input.metadata;
                     let out_info = m_out.chunk_info(pos);
@@ -915,7 +927,7 @@ void main() {
                         frame_size: out_info.mem_dimensions.try_into_elem().unwrap().into(),
                     };
 
-                    state_i.update(&ctx, device, size2d).await;
+                    state_i.update(&ctx, size2d).await;
 
                     let textures = &state_i.textures;
                     for primitive in state.clipped_primitives.iter() {

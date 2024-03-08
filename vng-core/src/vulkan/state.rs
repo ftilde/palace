@@ -64,7 +64,7 @@ pub trait VulkanState: Any {
     /// Safety: Callers must ensure that the object is not used in any way anymore after this
     /// method is called. In particular, this method may not be called twice.
     ///
-    /// Implementors may use this guarantee, but should not that a drop implementation (if it
+    /// Implementors may use this guarantee, but should note that a drop implementation (if it
     /// exists) may still be called after deinitilization.
     unsafe fn deinitialize(&mut self, context: &DeviceContext);
 }

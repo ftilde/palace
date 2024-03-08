@@ -73,7 +73,7 @@ void main()
         (input, scale, offset),
         move |ctx, positions, (input, scale, offset)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let access_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -201,7 +201,7 @@ void main()
         (input, threshold),
         move |ctx, positions, (input, threshold)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let access_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -376,7 +376,7 @@ void main() {
         input,
         move |ctx, mut positions, input| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let m_in = input.metadata;
                 let m_out = {
@@ -664,7 +664,7 @@ void main() {
         (input, kernel),
         move |ctx, mut positions, (input, kernel)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let m_in = input.metadata;
                 let kernel_m = kernel.metadata;
@@ -926,7 +926,7 @@ void main()
         input,
         move |ctx, input| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let m = input.metadata;
 
@@ -1087,7 +1087,7 @@ void main()
         (metadata, shader),
         move |ctx, positions, (metadata, shader)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let m = metadata;
 

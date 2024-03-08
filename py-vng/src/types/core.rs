@@ -49,6 +49,7 @@ impl RunTime {
         gpu_storage_size: u64,
         disk_cache_size: Option<usize>,
         num_compute_threads: Option<usize>,
+        device: Option<usize>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: map_err(vng_core::runtime::RunTime::new(
@@ -57,6 +58,7 @@ impl RunTime {
                 num_compute_threads,
                 disk_cache_size,
                 None,
+                device,
             ))?,
         })
     }

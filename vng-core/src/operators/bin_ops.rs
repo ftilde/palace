@@ -73,7 +73,7 @@ void main()
         (input1.clone(), input2.clone(), shader),
         move |ctx, positions, (input1, input2, shader)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let access_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

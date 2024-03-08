@@ -238,7 +238,7 @@ void main() {
         (input, output_size, element_out_to_in),
         move |ctx, mut positions, (input, output_size, element_out_to_in)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

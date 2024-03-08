@@ -234,7 +234,7 @@ void main() {
         ),
         move |ctx, pos, _, (m_in, embedding_data, m_out, transform)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let out_info = m_out.chunk_info(pos);
 
@@ -823,7 +823,7 @@ void main()
         (input, entry_exit_points.clone(), tf),
         move |ctx, pos, _, (input, entry_exit_points, tf)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let request_table_size = 256;
 

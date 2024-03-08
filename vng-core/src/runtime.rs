@@ -17,7 +17,7 @@ use crate::{
     task_manager::{TaskManager, ThreadSpawner},
     threadpool::{ComputeThreadPool, IoThreadPool, JobInfo},
     util::{Map, Set},
-    vulkan::{memory::TransferTaskResult, BarrierInfo, DeviceContext, VulkanContext},
+    vulkan::{memory::TransferTaskResult, BarrierInfo, DeviceContext, DeviceId, VulkanContext},
     Error,
 };
 
@@ -237,6 +237,7 @@ pub struct RunTime {
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
     frame: FrameNumber,
+    pub preferred_device: DeviceId,
 }
 
 impl RunTime {
@@ -246,10 +247,20 @@ impl RunTime {
         num_compute_threads: Option<usize>,
         disk_cache_size: Option<usize>,
         disk_cache_path: Option<&Path>,
+        preferred_device: Option<usize>,
     ) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size)?;
+        let preferred_device = preferred_device.unwrap_or(0);
+        if preferred_device >= vulkan.device_contexts().len() {
+            return Err(format!(
+                "Invalid device index {} (we only have {} devices)",
+                preferred_device,
+                vulkan.device_contexts().len()
+            )
+            .into());
+        }
         let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
         let ram = crate::storage::cpu::Storage::new(ram);
         let disk = if let Some(size) = disk_cache_size {
@@ -273,6 +284,7 @@ impl RunTime {
             async_result_receiver,
             vulkan,
             frame,
+            preferred_device,
         })
     }
 
@@ -326,6 +338,7 @@ impl RunTime {
                 deadline: deadline.unwrap_or_else(|| {
                     Instant::now() + std::time::Duration::from_secs(1 << 32)
                 } /* basically: never */),
+                preferred_device: self.preferred_device,
             }
         };
 
@@ -391,6 +404,7 @@ struct Executor<'cref, 'inv> {
     operator_info: Map<OperatorId, OperatorDescriptor>,
     waker: Waker,
     deadline: Instant,
+    preferred_device: usize,
 }
 
 impl<'cref, 'inv> Executor<'cref, 'inv> {
@@ -411,6 +425,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             current_frame: self.data.frame,
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
             deadline: self.deadline,
+            preferred_device: self.preferred_device,
         }
     }
 
@@ -639,8 +654,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 }
             }
-            (DataLocation::GPU(_source), VisibleDataLocation::GPU(_target, _)) => {
-                panic!("VRam to VRam transfer not implemented, yet")
+            (DataLocation::GPU(source), VisibleDataLocation::GPU(target, _)) => {
+                panic!(
+                    "VRam to VRam transfer ({} -> {}) not implemented, yet",
+                    source, target
+                )
             }
             (DataLocation::CPU(source), VisibleDataLocation::GPU(target_id, _)) => {
                 let task_id = self.transfer_manager.next_id();

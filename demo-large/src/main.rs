@@ -13,7 +13,6 @@ use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVol
 use vng_core::operators::{self, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
-use vng_core::vulkan::state::VulkanState;
 use vng_core::vulkan::window::Window;
 use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
@@ -49,6 +48,10 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
+
+    /// Use the vulkan device with the specified id
+    #[arg(short, long, default_value = "0")]
+    device: usize,
 
     /// Stop after rendering a complete frame
     #[arg(short, long)]
@@ -132,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
+        Some(args.device),
     )?;
 
     let brick_size = LocalVoxelPosition::fill(32.into());
@@ -145,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voxel_diag = vol.embedding_data.spacing.length();
 
     let mut state = State {
-        gui: GuiState::default(),
+        gui: GuiState::on_device(args.device),
         process: ProcessState::PassThrough,
         rendering: RenderingState::Slice,
         vesselness: VesselnessState {
@@ -160,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         sliceview: SliceState {
             inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
-            gui: GuiState::default(),
+            gui: GuiState::on_device(args.device),
         },
         smoothing_std: voxel_diag,
     };
@@ -225,15 +229,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    //TODO: Hm, not sure if this works out to well in a multi-device scenario... We have to
-    //investigate how to fix that.
-    unsafe {
-        state
-            .sliceview
-            .gui
-            .deinitialize(&runtime.vulkan.device_contexts()[0])
-    };
-    unsafe { state.gui.deinitialize(&runtime.vulkan.device_contexts()[0]) };
+    state.sliceview.gui.destroy(&runtime);
+    state.gui.destroy(&runtime);
     unsafe { window.deinitialize(&runtime.vulkan) };
 
     Ok(())

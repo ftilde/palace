@@ -13,7 +13,6 @@ use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVol
 use vng_core::operators::{self, volume_gpu};
 use vng_core::runtime::RunTime;
 use vng_core::storage::DataVersionType;
-use vng_core::vulkan::state::VulkanState;
 use vng_core::vulkan::window::Window;
 //use vng_hdf5::Hdf5VolumeSourceState;
 use vng_nifti::NiftiVolumeSourceState;
@@ -59,6 +58,10 @@ struct CliArgs {
     #[arg(short, long)]
     disk_cache_size: Option<bytesize::ByteSize>,
 
+    /// Use the vulkan device with the specified id
+    #[arg(short, long, default_value = "0")]
+    device: usize,
+
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
@@ -101,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
+        Some(args.device),
     )?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());
@@ -152,7 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev: f32 = 5.0;
-    let mut gui = GuiState::default();
+    let mut gui = GuiState::on_device(args.device);
 
     let mut event_loop = EventLoop::new();
 
@@ -218,9 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    //TODO: Hm, not sure if this works out to well in a multi-device scenario... We have to
-    //investigate how to fix that.
-    unsafe { gui.deinitialize(&runtime.vulkan.device_contexts()[0]) };
+    gui.destroy(&runtime);
     unsafe { window.deinitialize(&runtime.vulkan) };
 
     Ok(())

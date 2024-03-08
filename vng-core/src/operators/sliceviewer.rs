@@ -328,7 +328,7 @@ void main()
         (input, result_metadata, projection_mat),
         move |ctx, pos, _, (input, result_metadata, projection_mat)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

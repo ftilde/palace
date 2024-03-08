@@ -22,7 +22,7 @@ use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDa
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::util::{Map, Set};
-use crate::vulkan::{BarrierInfo, DeviceContext};
+use crate::vulkan::{BarrierInfo, DeviceContext, DeviceId};
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
@@ -267,6 +267,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
     pub(crate) current_frame: FrameNumber,
     pub(crate) deadline: Instant,
+    pub(crate) preferred_device: usize,
 }
 
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
@@ -496,8 +497,12 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &self.storage
     }
 
-    pub fn vulkan_device(&self) -> &DeviceContext {
-        self.device_contexts.first().unwrap()
+    pub fn preferred_device(&self) -> &DeviceContext {
+        &self.device_contexts[self.preferred_device]
+    }
+
+    pub fn device_ctx(&self, id: DeviceId) -> &DeviceContext {
+        &self.device_contexts[id]
     }
 
     pub fn past_deadline(&self) -> bool {

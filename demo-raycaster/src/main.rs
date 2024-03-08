@@ -64,6 +64,10 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
+
+    /// Use the vulkan device with the specified id
+    #[arg(short, long, default_value = "0")]
+    device: usize,
 }
 
 fn open_volume(
@@ -103,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
+        Some(args.device),
     )?;
 
     let brick_size = LocalVoxelPosition::fill(64.into());

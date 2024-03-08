@@ -147,7 +147,7 @@ void main() {
         (input, [xx, xy, xz, yy, yz, zz]),
         move |ctx, positions, (input, hessian)| {
             async move {
-                let device = ctx.vulkan_device();
+                let device = ctx.preferred_device();
 
                 let m = input.metadata;
 

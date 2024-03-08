@@ -176,7 +176,7 @@ void main()
             (input_l, input_r, self),
             move |ctx, positions, (input_l, input_r, this)| {
                 async move {
-                    let device = ctx.vulkan_device();
+                    let device = ctx.preferred_device();
 
                     let access_info = DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

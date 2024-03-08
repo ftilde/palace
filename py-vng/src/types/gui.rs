@@ -1,7 +1,7 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::PyArray0;
 use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
-use vng_core::{operators::gui as c, vulkan::state::VulkanState};
+use vng_core::operators::gui as c;
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 
@@ -14,9 +14,12 @@ pub struct GuiState {
 #[pymethods]
 impl GuiState {
     #[new]
-    fn new(runtime: Py<RunTime>) -> Self {
+    fn new(python: Python, runtime: Py<RunTime>) -> Self {
         Self {
-            inner: c::GuiState::default(),
+            inner: {
+                let rt = runtime.borrow(python);
+                c::GuiState::on_device(rt.inner.preferred_device)
+            },
             runtime,
         }
     }
@@ -54,12 +57,7 @@ impl Drop for GuiState {
         Python::with_gil(|py| {
             let rt = self.runtime.borrow(py);
 
-            //TODO: Hm, not sure if this works out to well in a multi-device scenario... We have to
-            //investigate how to fix that.
-            unsafe {
-                self.inner
-                    .deinitialize(&rt.inner.vulkan.device_contexts()[0])
-            };
+            unsafe { self.inner.deinit(&rt.inner) };
         });
     }
 }
