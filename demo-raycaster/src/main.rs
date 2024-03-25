@@ -66,7 +66,7 @@ struct CliArgs {
     compute_pool_size: Option<usize>,
 
     /// Use the vulkan device with the specified id
-    #[arg(short, long, default_value = "0")]
+    #[arg(long, default_value = "0")]
     device: usize,
 }
 

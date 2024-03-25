@@ -59,7 +59,7 @@ struct CliArgs {
     disk_cache_size: Option<bytesize::ByteSize>,
 
     /// Use the vulkan device with the specified id
-    #[arg(short, long, default_value = "0")]
+    #[arg(long, default_value = "0")]
     device: usize,
 
     /// Force a specific size for the compute task pool [default: number of cores]
