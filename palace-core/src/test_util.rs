@@ -16,13 +16,14 @@ pub fn compare_tensor_fn<
     vol: TensorOperator<D, T>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
 ) {
-    let mut runtime = crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None).unwrap();
+    let mut runtime =
+        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
 
     let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
     let full_vol = &full_vol;
 
     runtime
-        .resolve(None, |ctx, _| {
+        .resolve(None, false, |ctx, _| {
             async move {
                 let pos = Vector::fill(0.into());
                 let m = full_vol.metadata;
@@ -45,10 +46,11 @@ pub fn compare_tensor<D: Dimension>(
     result: TensorOperator<D, f32>,
     expected: TensorOperator<D, f32>,
 ) {
-    let mut runtime = crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None).unwrap();
+    let mut runtime =
+        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
 
     runtime
-        .resolve(None, |ctx, _| {
+        .resolve(None, false, |ctx, _| {
             let result = &result;
             let expected = &expected;
             async move {
