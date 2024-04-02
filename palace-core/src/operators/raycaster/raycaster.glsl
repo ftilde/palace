@@ -46,7 +46,11 @@ layout(scalar, binding = 2) buffer LodBuffer {
 
 struct State {
     float t;
+    #ifdef COMPOSITING_MIP
     float intensity;
+    #elif COMPOSITING_DVR
+    vec4 color;
+    #endif
 };
 
 layout(std430, binding = 3) buffer StateBuffer {
@@ -97,13 +101,53 @@ bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
     return entry.a > 0.0 && exit.a > 0.0;
 }
 
+#define T_DONE (intBitsToFloat(int(0xFFC00000u)))
+
 u8vec4 classify(float val) {
     float norm = (val-consts.tf_min)/(consts.tf_max - consts.tf_min);
     uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len - 1);
     return tf_table.values[index];
 }
 
-#define T_DONE -1.0
+#ifdef COMPOSITING_MIP
+void update_state(inout State state, float intensity, float step_size) {
+    state.intensity = max(state.intensity, intensity);
+    return false;
+}
+
+u8vec4 color_from_state(State state) {
+    return classify(state.intensity);
+}
+#endif
+
+#ifdef COMPOSITING_DVR
+void update_state(inout State state, float intensity, float step_size) {
+    u8vec4 sample_u8 = classify(intensity);
+    vec4 sample_f = to_uniform(sample_u8);
+
+    // Welp, there appears to be another graphics driver bug. If the following
+    // (pretty much nonsensical) lines are removed, rendering is way slower and
+    // there are a few dark voxels in the volume.
+    if(sample_u8.a == 255 && sample_f.a != 0.0) {
+        sample_f.r *= 1.00001;
+    }
+
+    float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * 200.0);
+
+    state.color.rgb = state.color.rgb + alpha * (1.0 - state.color.a) * sample_f.rgb;
+    state.color.a   = state.color.a   + alpha * (1.0 - state.color.a);
+
+    if (state.color.a >= 0.95) {
+        state.color.a = 1.0;
+        state.t = T_DONE;
+    }
+}
+
+u8vec4 color_from_state(State state) {
+    return from_uniform(clamp(state.color, 0.0, 1.0));
+    //return intensity_to_grey(state.color.a);
+}
+#endif
 
 void main()
 {
@@ -184,12 +228,15 @@ void main()
                     vec3 pos_voxel_g = round(world_to_voxel(p, level));
                     float[3] pos_voxel = from_glsl(pos_voxel_g);
 
+                    float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
+
                     int res;
                     uint sample_brick_pos_linear;
                     float sampled_intensity;
                     try_sample(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
+                    bool stop = false;
                     if(res == SAMPLE_RES_FOUND) {
-                        state.intensity = max(state.intensity, sampled_intensity);
+                        update_state(state, sampled_intensity, step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
@@ -197,7 +244,6 @@ void main()
                         // Should only happen at the border of the volume due to rounding errors
                     }
 
-                    float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
 
                     state.t += step;
                 }
@@ -211,7 +257,7 @@ void main()
                 state_cache.values[gID] = state;
             }
 
-            color = classify(state.intensity);
+            color = color_from_state(state);
         } else {
             color = u8vec4(0);
         }

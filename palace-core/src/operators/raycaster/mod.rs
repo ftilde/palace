@@ -436,11 +436,29 @@ pub fn entry_exit_points(
 
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy)]
+pub enum CompositingMode {
+    MIP,
+    DVR,
+}
+
+impl CompositingMode {
+    fn define_name(&self) -> &'static str {
+        match self {
+            CompositingMode::MIP => "COMPOSITING_MIP",
+            CompositingMode::DVR => "COMPOSITING_DVR",
+        }
+    }
+}
+
+#[cfg_attr(feature = "python", pyclass)]
+#[derive(state_link::State, Clone, Copy)]
 pub struct RaycasterConfig {
     #[pyo3(get, set)]
     pub lod_coarseness: f32,
     #[pyo3(get, set)]
     pub oversampling_factor: f32,
+    #[pyo3(get, set)]
+    pub compositing_mode: CompositingMode,
 }
 
 #[cfg_attr(feature = "python", pymethods)]
@@ -466,6 +484,7 @@ impl Default for RaycasterConfig {
         RaycasterConfig {
             lod_coarseness: 1.0,
             oversampling_factor: 1.0,
+            compositing_mode: CompositingMode::MIP,
         }
     }
 }
@@ -563,7 +582,8 @@ pub fn raycast(
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
                                     .add("NUM_LEVELS", input.levels.len())
-                                    .add("REQUEST_TABLE_SIZE", request_table_size),
+                                    .add("REQUEST_TABLE_SIZE", request_table_size)
+                                    .add(config.compositing_mode.define_name(), 1),
                             ),
                             false,
                         )

@@ -6,7 +6,9 @@ use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use palace_core::operators::raycaster::{CameraState, TransFuncOperator};
+use palace_core::operators::raycaster::{
+    CameraState, CompositingMode, RaycasterConfig, TransFuncOperator,
+};
 use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
 use palace_core::operators::volume_gpu;
 use palace_core::operators::{self};
@@ -298,7 +300,9 @@ fn eval_network(
         md.into(),
         matrix.into(),
     );
-    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), Default::default());
+    let mut config = RaycasterConfig::default();
+    config.compositing_mode = CompositingMode::DVR;
+    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;
