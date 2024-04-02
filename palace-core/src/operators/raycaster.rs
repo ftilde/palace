@@ -688,7 +688,7 @@ bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
 
 u8vec4 classify(float val) {
     float norm = (val-consts.tf_min)/(consts.tf_max - consts.tf_min);
-    uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len);
+    uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len - 1);
     return tf_table.values[index];
 }
 
