@@ -537,6 +537,12 @@ pub struct TransFuncOperator {
     pub max: f32,
 }
 
+impl Identify for TransFuncOperator {
+    fn id(&self) -> Id {
+        Id::combine(&[self.table.metadata.id(), self.min.id(), self.max.id()])
+    }
+}
+
 impl TransFuncOperator {
     pub fn data(&self) -> TransFuncData {
         TransFuncData {
@@ -818,6 +824,7 @@ void main()
         OperatorDescriptor::new("raycast")
             .dependent_on(&input)
             .dependent_on(&entry_exit_points)
+            .dependent_on_data(&tf)
             .dependent_on_data(&config),
         entry_exit_points.metadata,
         (input, entry_exit_points.clone(), tf),
