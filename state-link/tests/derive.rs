@@ -58,6 +58,25 @@ fn unit() {
     assert_eq!(f, n);
 }
 
+#[derive(state_link::StateNoPy, Debug, PartialEq)]
+enum Enum {
+    One,
+    Two,
+}
+
+#[test]
+fn derive_enum() {
+    let mut f = Enum::One;
+
+    let mut store = state_link::Store::default();
+
+    let r = store.store(&f);
+
+    let n = store.load(&r);
+
+    assert_eq!(f, n);
+}
+
 #[derive(state_link::StateNoPy, Default, Debug, PartialEq)]
 struct Generics<T>(T, u32);
 #[test]

@@ -37,6 +37,7 @@ pub enum Error {
     SeqTooShort,
     MissingField(&'static str),
     LinkReferenceCycle,
+    UnknownVariant,
 }
 
 pub type Result<S> = std::result::Result<S, Error>;

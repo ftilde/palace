@@ -204,7 +204,58 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 (store_code, load_code, write_code, handle_access)
             }
         },
-        Data::Enum(_) => unimplemented!(),
+        Data::Enum(e) => {
+            let str_to_variant = e.variants.iter().map(|v| {
+                assert_eq!(
+                    v.fields.len(),
+                    0,
+                    "Only simple enums without data are supported"
+                );
+                let name = &v.ident;
+                quote! {
+                    if s == stringify!(#name) {
+                        Ok(Self::#name)
+                    } else
+                }
+            });
+            let load_code = quote! {
+                if let state_link::ResolveResult::Atom(state_link::Value::String(s)) = store.to_val(location)? {
+                    #(#str_to_variant)*
+                    {
+                        Err(state_link::Error::UnknownVariant)
+                    }
+                } else {
+                    Err(state_link::Error::IncorrectType)
+                }
+            };
+
+            let variant_to_str = e.variants.iter().map(|v| {
+                let name = &v.ident;
+                quote! {
+                    Self::#name => stringify!(#name),
+                }
+            });
+            let variant_to_str2 = variant_to_str.clone();
+
+            let store_code = quote! {
+                let s = match self {
+                    #(#variant_to_str)*
+                };
+                store.push(::state_link::Node::Val(::state_link::Value::String(s.to_owned())))
+            };
+
+            let write_code = quote! {
+                let s = match self {
+                    #(#variant_to_str2)*
+                };
+
+                store.write_at(::state_link::Node::Val(::state_link::Value::String(s.to_owned())), at)
+            };
+
+            let handle_access = quote! {};
+
+            (store_code, load_code, write_code, handle_access)
+        }
         Data::Union(_) => unimplemented!(),
     };
 
@@ -296,7 +347,10 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 }
                 Fields::Unit => todo!(),
             },
-            Data::Enum(_) => todo!(),
+            Data::Enum(_) => {
+                //Nothing to do, no handles to give access to
+                quote! {}
+            }
             Data::Union(_) => todo!(),
         };
 
