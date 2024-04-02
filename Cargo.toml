@@ -1,17 +1,17 @@
 [workspace]
 
 members = [
-    "vng-core",
-    "vng-hdf5",
-    "vng-vvd",
-    "vng-nifti",
+    "palace-core",
+    "palace-hdf5",
+    "palace-vvd",
+    "palace-nifti",
     "demo-sliceviewer",
     "demo-mean",
     "demo-raycaster",
     "demo-large",
     "state-link",
     "state-link-derive",
-    "py-vng",
+    "py-palace",
 ]
 
 resolver = "2"

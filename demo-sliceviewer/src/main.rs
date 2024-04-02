@@ -2,25 +2,25 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
-use vng_core::dim::*;
-use vng_core::event::{
+use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use palace_core::dim::*;
+use palace_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::tensor::FrameOperator;
-use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
-use vng_core::operators::{self, volume_gpu};
-use vng_core::runtime::RunTime;
-use vng_core::storage::DataVersionType;
-use vng_core::vulkan::window::Window;
-//use vng_hdf5::Hdf5VolumeSourceState;
-use vng_nifti::NiftiVolumeSourceState;
-use vng_vvd::VvdVolumeSourceState;
+use palace_core::operators::gui::{egui, GuiState};
+use palace_core::operators::tensor::FrameOperator;
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use palace_core::operators::{self, volume_gpu};
+use palace_core::runtime::RunTime;
+use palace_core::storage::DataVersionType;
+use palace_core::vulkan::window::Window;
+//use palace_hdf5::Hdf5VolumeSourceState;
+use palace_nifti::NiftiVolumeSourceState;
+use palace_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::{self, ImageMetaData, VolumeEmbeddingData};
+use palace_core::array::{self, ImageMetaData, VolumeEmbeddingData};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -378,7 +378,7 @@ fn eval_network(
         let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
         scaled
     });
-    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
+    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
 
     let left = slice_viewer_z(
         vol.clone(),

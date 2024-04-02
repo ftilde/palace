@@ -2,24 +2,24 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
-use vng_core::event::{
+use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use palace_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
-use vng_core::operators::raycaster::{CameraState, TransFuncOperator};
-use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
-use vng_core::operators::volume_gpu;
-use vng_core::operators::{self};
-use vng_core::runtime::RunTime;
-use vng_core::storage::DataVersionType;
-use vng_core::vulkan::window::Window;
-use vng_hdf5::Hdf5VolumeSourceState;
-use vng_nifti::NiftiVolumeSourceState;
-use vng_vvd::VvdVolumeSourceState;
+use palace_core::operators::raycaster::{CameraState, TransFuncOperator};
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
+use palace_core::operators::volume_gpu;
+use palace_core::operators::{self};
+use palace_core::runtime::RunTime;
+use palace_core::storage::DataVersionType;
+use palace_core::vulkan::window::Window;
+use palace_hdf5::Hdf5VolumeSourceState;
+use palace_nifti::NiftiVolumeSourceState;
+use palace_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::{self, ImageMetaData, VolumeEmbeddingData};
+use palace_core::array::{self, ImageMetaData, VolumeEmbeddingData};
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -282,7 +282,7 @@ fn eval_network(
     //);
     //let vol = bin_ops::sub(vol, gen);
 
-    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
+    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
     //let vol = vol.single_level_lod();
 
     let md = ImageMetaData {
@@ -292,13 +292,13 @@ fn eval_network(
     };
 
     let matrix = camera_state.projection_mat(md.dimensions);
-    let eep = vng_core::operators::raycaster::entry_exit_points(
+    let eep = palace_core::operators::raycaster::entry_exit_points(
         vol.fine_metadata(),
         vol.fine_embedding_data(),
         md.into(),
         matrix.into(),
     );
-    let frame = vng_core::operators::raycaster::raycast(vol, eep, tf.clone(), Default::default());
+    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), Default::default());
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

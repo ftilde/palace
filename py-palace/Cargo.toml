@@ -1,0 +1,18 @@
+[package]
+name = "palace"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "palace"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.19.1", features = ["extension-module"] }
+palace-core = { path = "../palace-core" }
+palace-vvd = { path = "../palace-vvd" }
+palace-hdf5 = { path = "../palace-hdf5" }
+derive_more = "0.99"
+numpy = "0.19.0"
+winit = "0.28"
+state-link = { path = "../state-link" }

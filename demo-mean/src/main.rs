@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use vng_core::data::{LocalVoxelPosition, VoxelPosition};
-use vng_core::dim::D3;
-use vng_core::operators::{self, volume::VolumeOperatorState};
-use vng_core::runtime::RunTime;
-use vng_core::vec::Vector;
-use vng_core::{array, operators::volume_gpu};
-//use vng_hdf5::Hdf5VolumeSourceState;
-use vng_nifti::NiftiVolumeSourceState;
-use vng_vvd::VvdVolumeSourceState;
+use palace_core::data::{LocalVoxelPosition, VoxelPosition};
+use palace_core::dim::D3;
+use palace_core::operators::{self, volume::VolumeOperatorState};
+use palace_core::runtime::RunTime;
+use palace_core::vec::Vector;
+use palace_core::{array, operators::volume_gpu};
+//use palace_hdf5::Hdf5VolumeSourceState;
+use palace_nifti::NiftiVolumeSourceState;
+use palace_vvd::VvdVolumeSourceState;
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {

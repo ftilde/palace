@@ -530,10 +530,10 @@ version = "0.1.0"
 dependencies = [
  "bytesize",
  "clap",
- "vng-core",
- "vng-hdf5",
- "vng-nifti",
- "vng-vvd",
+ "palace-core",
+ "palace-hdf5",
+ "palace-nifti",
+ "palace-vvd",
  "winit",
 ]
 
@@ -543,9 +543,9 @@ version = "0.1.0"
 dependencies = [
  "bytesize",
  "clap",
- "vng-core",
- "vng-nifti",
- "vng-vvd",
+ "palace-core",
+ "palace-nifti",
+ "palace-vvd",
 ]
 
 [[package]]
@@ -555,10 +555,10 @@ dependencies = [
  "bytesize",
  "cgmath",
  "clap",
- "vng-core",
- "vng-hdf5",
- "vng-nifti",
- "vng-vvd",
+ "palace-core",
+ "palace-hdf5",
+ "palace-nifti",
+ "palace-vvd",
  "winit",
 ]
 
@@ -568,9 +568,9 @@ version = "0.1.0"
 dependencies = [
  "bytesize",
  "clap",
- "vng-core",
- "vng-nifti",
- "vng-vvd",
+ "palace-core",
+ "palace-nifti",
+ "palace-vvd",
  "winit",
 ]
 
@@ -1616,6 +1616,89 @@ dependencies = [
 ]
 
 [[package]]
+name = "palace"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "numpy",
+ "palace-core",
+ "palace-hdf5",
+ "palace-vvd",
+ "pyo3",
+ "state-link",
+ "winit",
+]
+
+[[package]]
+name = "palace-core"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "array-init",
+ "ash",
+ "bytemuck",
+ "bytesize",
+ "cgmath",
+ "crevice",
+ "cstr",
+ "derive_more",
+ "egui",
+ "futures",
+ "good_memory_allocator",
+ "gpu-allocator",
+ "graphviz-rust",
+ "gs-core",
+ "im-rc",
+ "itertools",
+ "memmap",
+ "ndarray",
+ "num",
+ "num_cpus",
+ "numpy",
+ "oneshot",
+ "pin-project",
+ "png",
+ "priority-queue",
+ "pyo3",
+ "sha1_smol",
+ "spirq",
+ "spirv",
+ "spirv-compiler",
+ "state-link",
+ "winapi",
+ "winit",
+ "work-queue",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "palace-hdf5"
+version = "0.1.0"
+dependencies = [
+ "hdf5",
+ "ndarray",
+ "palace-core",
+]
+
+[[package]]
+name = "palace-nifti"
+version = "0.1.0"
+dependencies = [
+ "ndarray",
+ "nifti",
+ "palace-core",
+]
+
+[[package]]
+name = "palace-vvd"
+version = "0.1.0"
+dependencies = [
+ "palace-core",
+ "sxd-document",
+ "sxd-xpath",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2546,89 +2629,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vng"
-version = "0.1.0"
-dependencies = [
- "derive_more",
- "numpy",
- "pyo3",
- "state-link",
- "vng-core",
- "vng-hdf5",
- "vng-vvd",
- "winit",
-]
-
-[[package]]
-name = "vng-core"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "array-init",
- "ash",
- "bytemuck",
- "bytesize",
- "cgmath",
- "crevice",
- "cstr",
- "derive_more",
- "egui",
- "futures",
- "good_memory_allocator",
- "gpu-allocator",
- "graphviz-rust",
- "gs-core",
- "im-rc",
- "itertools",
- "memmap",
- "ndarray",
- "num",
- "num_cpus",
- "numpy",
- "oneshot",
- "pin-project",
- "png",
- "priority-queue",
- "pyo3",
- "sha1_smol",
- "spirq",
- "spirv",
- "spirv-compiler",
- "state-link",
- "winapi",
- "winit",
- "work-queue",
- "xxhash-rust",
-]
-
-[[package]]
-name = "vng-hdf5"
-version = "0.1.0"
-dependencies = [
- "hdf5",
- "ndarray",
- "vng-core",
-]
-
-[[package]]
-name = "vng-nifti"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "nifti",
- "vng-core",
-]
-
-[[package]]
-name = "vng-vvd"
-version = "0.1.0"
-dependencies = [
- "sxd-document",
- "sxd-xpath",
- "vng-core",
-]
 
 [[package]]
 name = "wasi"

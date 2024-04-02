@@ -1,0 +1,11 @@
+[package]
+name = "palace-vvd"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+palace-core = { path = "../palace-core" }
+sxd-xpath = "0.4"
+sxd-document = "0.3"

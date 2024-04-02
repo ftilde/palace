@@ -2,25 +2,25 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use vng_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
-use vng_core::dim::*;
-use vng_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
-use vng_core::operators::gui::{egui, GuiState};
-use vng_core::operators::raycaster::{CameraState, RaycasterConfig, TransFuncOperator};
-use vng_core::operators::sliceviewer::SliceviewState;
-use vng_core::operators::tensor::FrameOperator;
-use vng_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
-use vng_core::operators::{self, volume_gpu};
-use vng_core::runtime::RunTime;
-use vng_core::storage::DataVersionType;
-use vng_core::vulkan::window::Window;
-use vng_hdf5::Hdf5VolumeSourceState;
-use vng_nifti::NiftiVolumeSourceState;
-use vng_vvd::VvdVolumeSourceState;
+use palace_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
+use palace_core::dim::*;
+use palace_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
+use palace_core::operators::gui::{egui, GuiState};
+use palace_core::operators::raycaster::{CameraState, RaycasterConfig, TransFuncOperator};
+use palace_core::operators::sliceviewer::SliceviewState;
+use palace_core::operators::tensor::FrameOperator;
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use palace_core::operators::{self, volume_gpu};
+use palace_core::runtime::RunTime;
+use palace_core::storage::DataVersionType;
+use palace_core::vulkan::window::Window;
+use palace_hdf5::Hdf5VolumeSourceState;
+use palace_nifti::NiftiVolumeSourceState;
+use palace_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use vng_core::array::ImageMetaData;
+use palace_core::array::ImageMetaData;
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -292,7 +292,7 @@ fn slice_viewer_z(
                             .await;
 
                         let local_pos = chunk_info.in_chunk(vol_pos);
-                        let brick = vng_core::data::chunk(&brick, &chunk_info);
+                        let brick = palace_core::data::chunk(&brick, &chunk_info);
 
                         let val = *brick.get(local_pos.as_index()).unwrap();
                         Some((val, vol_pos))
@@ -371,13 +371,13 @@ fn raycaster(
     };
 
     let matrix = state.camera.projection_mat(md.dimensions);
-    let eep = vng_core::operators::raycaster::entry_exit_points(
+    let eep = palace_core::operators::raycaster::entry_exit_points(
         vol.fine_metadata(),
         vol.fine_embedding_data(),
         md.into(),
         matrix.into(),
     );
-    vng_core::operators::raycaster::raycast(vol, eep, state.tf.clone(), state.config)
+    palace_core::operators::raycaster::raycast(vol, eep, state.tf.clone(), state.config)
 }
 
 fn eval_network(
@@ -406,7 +406,7 @@ fn eval_network(
     let radius_range = voxel_diag..=volume_diag * 0.1;
     let smoothing_range = voxel_diag..=volume_diag * 0.1;
 
-    let vol = vng_core::operators::resample::create_lod(vol, 2.0);
+    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
@@ -574,7 +574,7 @@ fn eval_network(
         runtime
             .resolve(Some(deadline), false, |ctx, _| {
                 async move {
-                    vng_core::operators::png_writer::write(ctx, slice_ref, "screenshot.png".into())
+                    palace_core::operators::png_writer::write(ctx, slice_ref, "screenshot.png".into())
                         .await
                 }
                 .into()
