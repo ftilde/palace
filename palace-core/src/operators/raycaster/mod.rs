@@ -437,7 +437,7 @@ pub fn entry_exit_points(
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy, Debug, Hash)]
 pub enum CompositingMode {
-    MIP,
+    MOP,
     DVR,
 }
 crate::id::impl_hash!(CompositingMode);
@@ -445,7 +445,7 @@ crate::id::impl_hash!(CompositingMode);
 impl CompositingMode {
     fn define_name(&self) -> &'static str {
         match self {
-            CompositingMode::MIP => "COMPOSITING_MIP",
+            CompositingMode::MOP => "COMPOSITING_MOP",
             CompositingMode::DVR => "COMPOSITING_DVR",
         }
     }
@@ -489,7 +489,7 @@ impl Default for RaycasterConfig {
         RaycasterConfig {
             lod_coarseness: 1.0,
             oversampling_factor: 1.0,
-            compositing_mode: CompositingMode::MIP,
+            compositing_mode: CompositingMode::MOP,
         }
     }
 }

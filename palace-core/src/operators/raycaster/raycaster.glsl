@@ -46,11 +46,8 @@ layout(scalar, binding = 2) buffer LodBuffer {
 
 struct State {
     float t;
-    #ifdef COMPOSITING_MIP
     float intensity;
-    #elif COMPOSITING_DVR
     vec4 color;
-    #endif
 };
 
 layout(std430, binding = 3) buffer StateBuffer {
@@ -109,19 +106,17 @@ u8vec4 classify(float val) {
     return tf_table.values[index];
 }
 
-#ifdef COMPOSITING_MIP
-void update_state(inout State state, float intensity, float step_size) {
-    state.intensity = max(state.intensity, intensity);
-}
-
-u8vec4 color_from_state(State state) {
-    return classify(state.intensity);
+#ifdef COMPOSITING_MOP
+void update_state(inout State state, u8vec4 color8, float step_size) {
+    vec4 color = to_uniform(color8);
+    if(state.color.a < color.a) {
+        state.color = color;
+    }
 }
 #endif
 
 #ifdef COMPOSITING_DVR
-void update_state(inout State state, float intensity, float step_size) {
-    u8vec4 sample_u8 = classify(intensity);
+void update_state(inout State state, u8vec4 sample_u8, float step_size) {
     vec4 sample_f = to_uniform(sample_u8);
 
     // Welp, there appears to be another graphics driver bug. If the following
@@ -140,11 +135,6 @@ void update_state(inout State state, float intensity, float step_size) {
         state.color.a = 1.0;
         state.t = T_DONE;
     }
-}
-
-u8vec4 color_from_state(State state) {
-    return from_uniform(clamp(state.color, 0.0, 1.0));
-    //return intensity_to_grey(state.color.a);
 }
 #endif
 
@@ -232,10 +222,15 @@ void main()
                     int res;
                     uint sample_brick_pos_linear;
                     float sampled_intensity;
-                    try_sample(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
+                    float[3] grad_f;
+                    try_sample_with_grad(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    vec3 grad = to_glsl(grad_f);
+
+
                     bool stop = false;
                     if(res == SAMPLE_RES_FOUND) {
-                        update_state(state, sampled_intensity, step);
+                        u8vec4 sampled_color = classify(sampled_intensity);
+                        update_state(state, sampled_color, step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
@@ -256,7 +251,7 @@ void main()
                 state_cache.values[gID] = state;
             }
 
-            color = color_from_state(state);
+            color = from_uniform(state.color);
         } else {
             color = u8vec4(0);
         }
