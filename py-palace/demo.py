@@ -8,7 +8,7 @@ ram_size = 8 << 30
 vram_size = 10 << 30
 disk_cache_size = 20 << 30
 
-parser = argparse.ArgumentParser(prog='palace demo')
+parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 args = parser.parse_args()
 
