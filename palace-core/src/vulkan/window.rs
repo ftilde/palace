@@ -152,8 +152,8 @@ fn select_swap_surface_format(available: &[vk::SurfaceFormatKHR]) -> vk::Surface
     available
         .iter()
         .find(|f| {
-            f.format == vk::Format::B8G8R8A8_SRGB
-                && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            f.format == vk::Format::R8G8B8A8_UNORM
+                && f.color_space == vk::ColorSpaceKHR::PASS_THROUGH_EXT
         })
         .cloned()
         .unwrap_or_else(|| available[0])
