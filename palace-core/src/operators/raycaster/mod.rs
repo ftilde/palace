@@ -522,11 +522,28 @@ impl TransFuncOperator {
         let table = super::array::from_rc(std::rc::Rc::from(vals));
         Self { table, min, max }
     }
+    pub fn gen_normalized(
+        min: f32,
+        max: f32,
+        len: usize,
+        mut g: impl FnMut(f32) -> Vector<D4, u8>,
+    ) -> Self {
+        let vals = (0..len)
+            .map(|i| g(i as f32 / len as f32))
+            .collect::<Vec<_>>();
+        let table = super::array::from_rc(std::rc::Rc::from(vals));
+        Self { table, min, max }
+    }
     pub fn grey_ramp(min: f32, max: f32) -> Self {
         Self::gen(min, max, 256, |i| Vector::fill(i as u8))
     }
     pub fn red_ramp(min: f32, max: f32) -> Self {
         Self::gen(min, max, 256, |i| Vector::from([i as u8, 0, 0, i as u8]))
+    }
+    pub fn normalized(mut self) -> Self {
+        self.min = 0.0;
+        self.max = 1.0;
+        self
     }
 }
 

@@ -213,6 +213,11 @@ impl<D: Dimension> Vector<D, u32> {
         self.map(|v| v as f32)
     }
 }
+impl<D: Dimension> Vector<D, u8> {
+    pub fn f32(self) -> Vector<D, f32> {
+        self.map(|v| v as f32)
+    }
+}
 impl<T: Copy> std::ops::Deref for Vector<D1, T> {
     type Target = T;
 

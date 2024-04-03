@@ -10,6 +10,7 @@ use palace_core::{
     operator::OperatorDescriptor,
     operators::{
         raw::RawVolumeSourceState,
+        raycaster::TransFuncOperator,
         tensor::TensorOperator,
         volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
     },
@@ -135,6 +136,79 @@ impl VvdVolumeSourceState {
             raw,
             metadata,
             embedding_data,
+            rwm_scale,
+            rwm_offset,
         })
     }
+}
+
+pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {
+    let content = std::fs::read_to_string(path)?;
+    let package = parser::parse(&content)?;
+    let document = package.as_document();
+
+    let domain_low =
+        evaluate_xpath(&document, "/VoreenData/TransFuncIntensity/domain/@x")?.number() as f32;
+    let domain_high =
+        evaluate_xpath(&document, "/VoreenData/TransFuncIntensity/domain/@y")?.number() as f32;
+
+    let sxd_xpath::Value::Nodeset(keys) =
+        evaluate_xpath(&document, "/VoreenData/TransFuncIntensity/Keys/key")?
+    else {
+        return Err("Did not find keys".into());
+    };
+
+    let parser = sxd_xpath::Factory::new();
+    let ctx = sxd_xpath::Context::new();
+    let mut keys = keys
+        .into_iter()
+        .map(|n| {
+            let intensity = parser
+                .build("intensity/@value")?
+                .unwrap()
+                .evaluate(&ctx, n)?
+                .number() as f32;
+
+            let mut color = Vector::<D4, u8>::fill(0);
+            for (i, c) in ["r", "g", "b", "a"].iter().enumerate() {
+                let val = parser
+                    .build(&format!("colorL/@{}", c))?
+                    .unwrap()
+                    .evaluate(&ctx, n)?
+                    .number() as u8;
+                color[i] = val;
+            }
+
+            Ok((intensity, color))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    keys.sort_by(|l, r| l.0.partial_cmp(&r.0).unwrap());
+
+    let mut ri = 0;
+
+    Ok(TransFuncOperator::gen_normalized(
+        domain_low,
+        domain_high,
+        256,
+        |intensity| {
+            while ri < keys.len() && intensity > keys[ri].0 {
+                ri += 1;
+            }
+            let li = ri.saturating_sub(1);
+            let ri = ri.min(keys.len() - 1);
+
+            let l = keys[li];
+            let r = keys[ri];
+
+            let ret = if li != ri {
+                let alpha = (intensity - l.0) / (r.0 - l.0);
+
+                (l.1.f32().scale(1.0 - alpha) + r.1.f32().scale(alpha)).map(|v| v as u8)
+            } else {
+                l.1
+            };
+            dbg!(ret[3]);
+            ret
+        },
+    ))
 }
