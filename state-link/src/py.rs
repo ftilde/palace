@@ -124,8 +124,8 @@ impl NodeHandleU32 {
 #[pyclass]
 #[derive(Clone)]
 pub struct NodeHandleString {
-    inner: <String as super::State>::NodeHandle,
-    store: Py<Store>,
+    pub inner: <String as super::State>::NodeHandle,
+    pub store: Py<Store>,
 }
 
 #[pymethods]
