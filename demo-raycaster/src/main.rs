@@ -17,7 +17,7 @@ use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 use palace_hdf5::Hdf5VolumeSourceState;
 use palace_nifti::NiftiVolumeSourceState;
-use palace_vvd::VvdVolumeSourceState;
+use palace_vvd::{load_tfi, VvdVolumeSourceState};
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -66,6 +66,10 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
+
+    /// Transfer function (voreen .tfi file)
+    #[arg(short, long)]
+    transfunc_path: Option<PathBuf>,
 
     /// Use the vulkan device with the specified id
     #[arg(long, default_value = "0")]
@@ -160,7 +164,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev = 1.0;
-    let mut tf = TransFuncOperator::red_ramp(0.0, 1.0);
+
+    let mut tf = if let Some(path) = args.transfunc_path {
+        load_tfi(&path).unwrap()
+    } else {
+        TransFuncOperator::red_ramp(0.0, 1.0)
+    };
 
     let mut event_loop = winit::event_loop::EventLoop::new();
 
