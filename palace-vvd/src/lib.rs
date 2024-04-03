@@ -201,7 +201,7 @@ pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {
             Ok((intensity, color))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    keys.sort_by(|l, r| l.0.partial_cmp(&r.0).unwrap());
+    keys.sort_by(|l, r| l.0.total_cmp(&r.0));
 
     let mut ri = 0;
 
