@@ -435,11 +435,12 @@ pub fn entry_exit_points(
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy)]
+#[derive(state_link::State, Clone, Copy, Debug, Hash)]
 pub enum CompositingMode {
     MIP,
     DVR,
 }
+crate::id::impl_hash!(CompositingMode);
 
 impl CompositingMode {
     fn define_name(&self) -> &'static str {
@@ -451,7 +452,7 @@ impl CompositingMode {
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy)]
+#[derive(state_link::State, Clone, Copy, Debug)]
 pub struct RaycasterConfig {
     #[pyo3(get, set)]
     pub lod_coarseness: f32,
@@ -475,7 +476,11 @@ impl RaycasterConfig {
 
 impl Identify for RaycasterConfig {
     fn id(&self) -> Id {
-        Id::combine(&[self.lod_coarseness.id(), self.oversampling_factor.id()])
+        Id::combine(&[
+            self.lod_coarseness.id(),
+            self.oversampling_factor.id(),
+            self.compositing_mode.id(),
+        ])
     }
 }
 
@@ -573,8 +578,12 @@ pub fn raycast(
 
                 let request_table_size = 256;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&input.levels.len())
+                        .dependent_on(&config.compositing_mode),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -587,7 +596,8 @@ pub fn raycast(
                             ),
                             false,
                         )
-                    });
+                    },
+                );
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
