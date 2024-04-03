@@ -112,7 +112,6 @@ u8vec4 classify(float val) {
 #ifdef COMPOSITING_MIP
 void update_state(inout State state, float intensity, float step_size) {
     state.intensity = max(state.intensity, intensity);
-    return false;
 }
 
 u8vec4 color_from_state(State state) {
