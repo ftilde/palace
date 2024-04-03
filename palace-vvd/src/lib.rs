@@ -13,6 +13,7 @@ use palace_core::{
         raycaster::TransFuncOperator,
         tensor::TensorOperator,
         volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
+        volume_gpu::linear_rescale,
     },
     Error,
 };
@@ -22,6 +23,8 @@ pub struct VvdVolumeSourceState {
     raw: RawVolumeSourceState,
     metadata: VolumeMetaData,
     embedding_data: TensorEmbeddingData<D3>,
+    rwm_offset: f32,
+    rwm_scale: f32,
 }
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {
@@ -47,7 +50,7 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
 
 impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
     fn operate(&self) -> EmbeddedVolumeOperator<f32> {
-        TensorOperator::with_state(
+        let vol = TensorOperator::with_state(
             OperatorDescriptor::new("VvdVolumeSourceState::operate")
                 .dependent_on_data(self.raw.path.to_string_lossy().as_bytes()),
             self.metadata,
@@ -60,8 +63,10 @@ impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
                 }
                 .into()
             },
-        )
-        .embedded(self.embedding_data)
+        );
+
+        let vol = linear_rescale(vol, self.rwm_scale, self.rwm_offset);
+        vol.embedded(self.embedding_data)
     }
 }
 
@@ -101,6 +106,20 @@ impl VvdVolumeSourceState {
         if !is_valid(spacing_x) || !is_valid(spacing_y) || !is_valid(spacing_z) {
             return Err(format!("Spacing is not valid: {:?}", spacing).into());
         }
+
+        let rwm_offset = evaluate_xpath(
+            &document,
+            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@offset",
+        )
+        .map(|v| v.number() as f32)
+        .unwrap_or(0.0);
+
+        let rwm_scale = evaluate_xpath(
+            &document,
+            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@scale",
+        )
+        .map(|v| v.number() as f32)
+        .unwrap_or(1.0);
 
         let embedding_data = TensorEmbeddingData { spacing };
 
@@ -207,7 +226,6 @@ pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {
             } else {
                 l.1
             };
-            dbg!(ret[3]);
             ret
         },
     ))
