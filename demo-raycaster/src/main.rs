@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq) > 0.4 ? 0.0 : 0.99;
+                result = clamp(10*(0.4 - sqrt(d_sq)), 0.0, 1.0);
             }"#
                 .to_owned(),
             },
