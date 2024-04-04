@@ -1,14 +1,11 @@
-use crate::{map_err, types::*};
-use pyo3::{exceptions::PyException, prelude::*};
+use crate::types::*;
 use palace_core::dim::*;
 use palace_core::operators::raycaster::{RaycasterConfig, TransFuncOperator};
-use palace_core::operators::volume::EmbeddedVolumeOperatorState;
 use palace_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
 };
-use palace_hdf5::Hdf5VolumeSourceState;
-use palace_vvd::VvdVolumeSourceState;
+use pyo3::{exceptions::PyException, prelude::*};
 
 #[pyfunction]
 pub fn rechunk(
@@ -171,37 +168,14 @@ pub fn open_volume(
     brick_size_hint: Option<u32>,
     volume_path_hint: Option<String>,
 ) -> PyResult<EmbeddedTensorOperator> {
-    let brick_size_hint = LocalVoxelPosition::fill(brick_size_hint.unwrap_or(64).into());
+    let brick_size_hint = brick_size_hint.map(|h| LocalVoxelPosition::fill(h.into()));
 
-    let Some(file) = path.file_name() else {
-        return map_err(Err("No file name in path".into()));
+    let hints = palace_volume::Hints {
+        brick_size: brick_size_hint,
+        location: volume_path_hint,
+        ..Default::default()
     };
-    let file = file.to_string_lossy();
-    let segments = file.split('.').collect::<Vec<_>>();
-
-    let vol_source: Box<dyn EmbeddedVolumeOperatorState> = match segments[..] {
-        [.., "vvd"] => Box::new(map_err(VvdVolumeSourceState::open(&path, brick_size_hint))?),
-        //[.., "nii"] | [.., "nii", "gz"] => {
-        //    Box::new(map_err(NiftiVolumeSourceState::open_single(path)?))
-        //}
-        //[.., "hdr"] => {
-        //    let data = path.with_extension("img");
-        //    Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
-        //}
-        [.., "h5"] => Box::new(map_err(Hdf5VolumeSourceState::open(
-            path,
-            volume_path_hint.unwrap_or_else(|| "/volume".to_string()),
-        ))?),
-        _ => {
-            return map_err(Err(format!(
-                "Unknown volume format for file {}",
-                path.to_string_lossy()
-            )
-            .into()))
-        }
-    };
-
-    let vol = vol_source.operate();
+    let vol = crate::map_err(palace_volume::open(path, hints))?;
 
     vol.try_into()
 }

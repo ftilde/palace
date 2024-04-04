@@ -9,14 +9,11 @@ use palace_core::event::{
 };
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::tensor::FrameOperator;
-use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
-//use palace_hdf5::Hdf5VolumeSourceState;
-use palace_nifti::NiftiVolumeSourceState;
-use palace_vvd::VvdVolumeSourceState;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -70,25 +67,23 @@ struct CliArgs {
 fn open_volume(
     path: PathBuf,
     brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn EmbeddedVolumeOperatorState>, Box<dyn std::error::Error>> {
+) -> Result<EmbeddedVolumeOperator<f32>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
     let file = file.to_string_lossy();
     let segments = file.split('.').collect::<Vec<_>>();
 
-    Ok(match segments[..] {
-        [.., "vvd"] => Box::new(VvdVolumeSourceState::open(&path, brick_size_hint)?),
-        [.., "nii"] | [.., "nii", "gz"] => Box::new(NiftiVolumeSourceState::open_single(path)?),
+    match segments[..] {
+        [.., "vvd"] => palace_vvd::open(&path, brick_size_hint),
+        [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path),
         [.., "hdr"] => {
             let data = path.with_extension("img");
-            Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
+            palace_nifti::open_separate(path, data)
         }
-        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
-        _ => {
-            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
-        }
-    })
+        [.., "h5"] => palace_hdf5::open(path, "/volume".to_string()),
+        _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -109,44 +104,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
-    let vol_state = match args.input {
+    let vol = match args.input {
         Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::SyntheticCpu(args) => Box::new((
-            operators::rasterize_function::normalized(
-                VoxelPosition::fill(args.size.into()),
-                brick_size,
-                |v| {
-                    let r2 = v
-                        .map(|v| v - 0.5)
-                        .map(|v| v * v)
-                        .fold(0.0f32, std::ops::Add::add);
-                    r2.sqrt()
-                },
-            ),
-            VolumeEmbeddingData {
-                spacing: Vector::fill(1.0),
+        Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
+            VoxelPosition::fill(args.size.into()),
+            brick_size,
+            |v| {
+                let r2 = v
+                    .map(|v| v - 0.5)
+                    .map(|v| v * v)
+                    .fold(0.0f32, std::ops::Add::add);
+                r2.sqrt()
             },
-        )),
-        Input::Synthetic(args) => Box::new((
-            operators::volume_gpu::VoxelRasterizerGLSL {
-                metadata: array::VolumeMetaData {
-                    dimensions: VoxelPosition::fill(args.size.into()),
-                    chunk_size: brick_size,
-                },
-                body: r#"{
+        )
+        .embedded(VolumeEmbeddingData {
+            spacing: Vector::fill(1.0),
+        }),
+        Input::Synthetic(args) => operators::volume_gpu::rasterize(
+            array::VolumeMetaData {
+                dimensions: VoxelPosition::fill(args.size.into()),
+                chunk_size: brick_size,
+            },
+            r#"{
 
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
-
-                }"#
-                .to_owned(),
-            },
-            VolumeEmbeddingData {
-                spacing: Vector::fill(1.0),
-            },
-        )),
+                result = clamp(10*(0.4 - sqrt(d_sq)), 0.0, 1.0);
+            }"#,
+        )
+        .embedded(VolumeEmbeddingData {
+            spacing: Vector::fill(1.0),
+        }),
     };
 
     let mut angle: f32 = 0.0;
@@ -201,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let version = eval_network(
                     &mut runtime,
                     &mut window,
-                    &*vol_state,
+                    vol.clone(),
                     &mut angle,
                     &mut slice_num,
                     &mut slice_offset,
@@ -313,7 +302,7 @@ fn slice_viewer_rot(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: &dyn EmbeddedVolumeOperatorState,
+    vol: EmbeddedVolumeOperator<f32>,
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<D2, f32>,
@@ -366,8 +355,6 @@ fn eval_network(
             });
         });
     });
-
-    let vol = vol.operate();
 
     let vol = vol.map_inner(|vol| {
         //let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());

@@ -11,7 +11,7 @@ members = [
     "demo-large",
     "state-link",
     "state-link-derive",
-    "py-palace",
+    "py-palace", "palace-volume",
 ]
 
 resolver = "2"

@@ -10,10 +10,7 @@ use crate::{
     Error,
 };
 
-use super::{
-    tensor::TensorOperator,
-    volume::{VolumeOperator, VolumeOperatorState},
-};
+use super::{tensor::TensorOperator, volume::VolumeOperator};
 
 #[derive(Clone)]
 pub struct VoxelPosRasterizer<F> {
@@ -21,25 +18,26 @@ pub struct VoxelPosRasterizer<F> {
     metadata: VolumeMetaData,
 }
 
-pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
+pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone>(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
     f: F,
-) -> VoxelPosRasterizer<F> {
-    VoxelPosRasterizer {
+) -> VolumeOperator<f32> {
+    let r = VoxelPosRasterizer {
         function: f,
         metadata: VolumeMetaData {
             dimensions,
             chunk_size: brick_size,
         },
-    }
+    };
+    r.operate()
 }
 
 pub fn normalized(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
     f: impl 'static + Fn(Vector<D3, f32>) -> f32 + Sync + Clone,
-) -> VoxelPosRasterizer<impl 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> {
+) -> VolumeOperator<f32> {
     let dim_f = dimensions.map(|v| v.raw as f32);
     voxel(dimensions, brick_size, move |pos: VoxelPosition| {
         f(pos.map(|v| v.raw as f32) / dim_f)
@@ -88,9 +86,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     Ok(())
 }
 
-impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VolumeOperatorState
-    for VoxelPosRasterizer<F>
-{
+impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F> {
     fn operate(&self) -> VolumeOperator<f32> {
         TensorOperator::with_state(
             OperatorDescriptor::new("ImplicitFunctionRasterizer::operate")

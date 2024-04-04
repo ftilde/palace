@@ -8,13 +8,16 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     dim::D3,
-    operator::{Operator, OperatorDescriptor},
+    operator::OperatorDescriptor,
+    operators::tensor::TensorOperator,
     storage::DataLocation,
     task::{RequestStream, TaskContext},
     util::Map,
     vec::Vector,
     Error,
 };
+
+use super::volume::VolumeOperator;
 
 #[derive(Clone, Deref)]
 pub struct RawVolumeSourceState(Rc<RawVolumeSourceStateInner>);
@@ -79,6 +82,39 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
     }
 }
 
+pub fn open(path: PathBuf, metadata: VolumeMetaData) -> Result<VolumeOperator<f32>, Error> {
+    let file = File::open(&path)?;
+    let mmap = unsafe { memmap::Mmap::map(&file)? };
+
+    let size = metadata.dimensions;
+    let byte_size = size.hmul() * std::mem::size_of::<f32>();
+    assert_eq!(file.metadata()?.len(), byte_size as u64);
+
+    let state = RawVolumeSourceState(Rc::new(RawVolumeSourceStateInner {
+        path,
+        _file: file,
+        mmap,
+        size,
+    }));
+
+    let vol = TensorOperator::with_state(
+        OperatorDescriptor::new("raw_volume::open")
+            .dependent_on_data(state.path.to_string_lossy().as_bytes()),
+        metadata,
+        (state, metadata),
+        move |ctx, positions, (state, metadata)| {
+            async move {
+                state
+                    .load_raw_bricks(metadata.chunk_size, ctx, positions)
+                    .await
+            }
+            .into()
+        },
+    );
+
+    Ok(vol)
+}
+
 impl RawVolumeSourceState {
     pub fn open(path: PathBuf, size: VoxelPosition) -> Result<Self, Error> {
         let file = File::open(&path)?;
@@ -94,6 +130,7 @@ impl RawVolumeSourceState {
             size,
         })))
     }
+
     pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
         brick_size: LocalVoxelPosition,
@@ -292,17 +329,5 @@ impl RawVolumeSourceState {
         }
 
         Ok(())
-    }
-
-    #[allow(unused)] // We probably will use it directly at some point
-    pub fn operate(&self, brick_size: LocalVoxelPosition) -> Operator<BrickPosition, f32> {
-        Operator::with_state(
-            OperatorDescriptor::new("RawVolumeSourceState::operate")
-                .dependent_on_data(self.0.path.to_string_lossy().as_bytes()),
-            self.clone(),
-            move |ctx, positions, this| {
-                async move { this.load_raw_bricks(brick_size, ctx, positions).await }.into()
-            },
-        )
     }
 }

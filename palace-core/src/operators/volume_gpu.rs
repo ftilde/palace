@@ -1031,7 +1031,7 @@ void main()
     )
 }
 
-pub fn rasterize_gpu(metadata: VolumeMetaData, body: &str) -> VolumeOperator<f32> {
+pub fn rasterize(metadata: VolumeMetaData, body: &str) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         offset: cgmath::Vector3<u32>,
@@ -1153,17 +1153,6 @@ void main()
             .into()
         },
     )
-}
-
-pub struct VoxelRasterizerGLSL {
-    pub body: String,
-    pub metadata: VolumeMetaData,
-}
-
-impl super::volume::VolumeOperatorState for VoxelRasterizerGLSL {
-    fn operate(&self) -> VolumeOperator<f32> {
-        rasterize_gpu(self.metadata, &self.body)
-    }
 }
 
 #[cfg(test)]

@@ -3,13 +3,12 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, VoxelPosition};
 use palace_core::dim::D3;
-use palace_core::operators::{self, volume::VolumeOperatorState};
+use palace_core::operators;
+use palace_core::operators::volume::VolumeOperator;
 use palace_core::runtime::RunTime;
 use palace_core::vec::Vector;
 use palace_core::{array, operators::volume_gpu};
-//use palace_hdf5::Hdf5VolumeSourceState;
-use palace_nifti::NiftiVolumeSourceState;
-use palace_vvd::VvdVolumeSourceState;
+use palace_volume::Hints;
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
@@ -62,30 +61,6 @@ struct CliArgs {
     device: usize,
 }
 
-fn open_volume(
-    path: PathBuf,
-    brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn VolumeOperatorState>, Box<dyn std::error::Error>> {
-    let Some(file) = path.file_name() else {
-        return Err("No file name in path".into());
-    };
-    let file = file.to_string_lossy();
-    let segments = file.split('.').collect::<Vec<_>>();
-
-    Ok(match segments[..] {
-        [.., "vvd"] => Box::new(VvdVolumeSourceState::open(&path, brick_size_hint)?),
-        [.., "nii"] | [.., "nii", "gz"] => Box::new(NiftiVolumeSourceState::open_single(path)?),
-        [.., "hdr"] => {
-            let data = path.with_extension("img");
-            Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
-        }
-        //[.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
-        _ => {
-            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
-        }
-    })
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
@@ -104,9 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
-    let vol_state = match args.input {
-        Input::File(path) => open_volume(path.vol, brick_size)?,
-        Input::SyntheticCpu(args) => Box::new(operators::rasterize_function::normalized(
+    let vol = match args.input {
+        Input::File(path) => {
+            palace_volume::open(path.vol, Hints::new().brick_size(brick_size))?.inner
+        }
+        Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
             brick_size,
             |v| {
@@ -116,34 +93,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .fold(0.0f32, std::ops::Add::add);
                 r2.sqrt()
             },
-        )),
-        Input::Synthetic(args) => Box::new(operators::volume_gpu::VoxelRasterizerGLSL {
-            metadata: array::VolumeMetaData {
+        ),
+        Input::Synthetic(args) => operators::volume_gpu::rasterize(
+            array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             },
-            body: r#"{
+            r#"{
 
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
                 result = sqrt(d_sq);
-
-            }"#
-            .to_owned(),
-        }),
+            }"#,
+        ),
     };
 
-    eval_network(&mut runtime, &*vol_state, args.factor)
+    eval_network(&mut runtime, vol, args.factor)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
-    vol: &dyn VolumeOperatorState,
+    vol: VolumeOperator<f32>,
     factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let vol = vol.operate();
-
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
     let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);

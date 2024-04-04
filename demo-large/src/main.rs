@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use palace_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
+use palace_core::data::{GlobalCoordinate, Vector};
 use palace_core::dim::*;
 use palace_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
@@ -11,14 +11,11 @@ use palace_core::operators::raycaster::{
 };
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::FrameOperator;
-use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
-use palace_hdf5::Hdf5VolumeSourceState;
-use palace_nifti::NiftiVolumeSourceState;
-use palace_vvd::{load_tfi, VvdVolumeSourceState};
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -62,30 +59,6 @@ struct CliArgs {
     /// Stop after rendering a complete frame
     #[arg(short, long)]
     bench: bool,
-}
-
-fn open_volume(
-    path: PathBuf,
-    brick_size_hint: LocalVoxelPosition,
-) -> Result<Box<dyn EmbeddedVolumeOperatorState>, Box<dyn std::error::Error>> {
-    let Some(file) = path.file_name() else {
-        return Err("No file name in path".into());
-    };
-    let file = file.to_string_lossy();
-    let segments = file.split('.').collect::<Vec<_>>();
-
-    Ok(match segments[..] {
-        [.., "vvd"] => Box::new(VvdVolumeSourceState::open(&path, brick_size_hint)?),
-        [.., "nii"] | [.., "nii", "gz"] => Box::new(NiftiVolumeSourceState::open_single(path)?),
-        [.., "hdr"] => {
-            let data = path.with_extension("img");
-            Box::new(NiftiVolumeSourceState::open_separate(path, data)?)
-        }
-        [.., "h5"] => Box::new(Hdf5VolumeSourceState::open(path, "/volume".to_string())?),
-        _ => {
-            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
-        }
-    })
 }
 
 struct VesselnessState {
@@ -144,11 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(32.into());
+    let vol = palace_volume::open(args.vol, palace_volume::Hints::new())?;
 
-    let vol_state = open_volume(args.vol, brick_size)?;
-
-    let vol = vol_state.operate();
     let vol = &vol;
 
     let vol_diag = vol.real_dimensions().length();
@@ -167,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
             config: RaycasterConfig::default(),
             tf: if let Some(path) = args.transfunc_path {
-                load_tfi(&path).unwrap()
+                palace_vvd::load_tfi(&path).unwrap()
             } else {
                 TransFuncOperator::grey_ramp(0.0, 1.0)
             },
@@ -222,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let version = eval_network(
                     &mut runtime,
                     &mut window,
-                    &*vol_state,
+                    vol.clone(),
                     &mut state,
                     events.current_batch(),
                     next_timeout,
@@ -393,7 +363,7 @@ fn raycaster(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: &dyn EmbeddedVolumeOperatorState,
+    vol: EmbeddedVolumeOperator<f32>,
     app_state: &mut State,
     mut events: EventStream,
     deadline: Instant,
@@ -408,8 +378,6 @@ fn eval_network(
     //        .chain(OnKeyPress(Key::Plus, || *stddev *= 1.10))
     //        .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
     //});
-
-    let vol = vol.operate();
 
     let volume_diag = vol.real_dimensions().length();
     let voxel_diag = vol.embedding_data.spacing.length();

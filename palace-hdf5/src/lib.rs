@@ -1,17 +1,14 @@
-use std::path::PathBuf;
-use std::rc::Rc;
 use palace_core::array::VolumeEmbeddingData;
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
+use std::path::PathBuf;
+use std::rc::Rc;
 
 use palace_core::{
     array::VolumeMetaData,
     data::{self, LocalVoxelPosition, Vector, VoxelPosition},
     operator::OperatorDescriptor,
-    operators::{
-        tensor::TensorOperator,
-        volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
-    },
+    operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
     Error,
 };
 
@@ -34,7 +31,9 @@ fn to_size_vector<C: CoordinateType>(
     to_vector(value.into_iter().map(|v| v as u32).collect())
 }
 
-fn to_vector<I: Copy, O: From<I> + Copy>(value: Vec<I>) -> Result<Vector<D3, O>, palace_core::Error> {
+fn to_vector<I: Copy, O: From<I> + Copy>(
+    value: Vec<I>,
+) -> Result<Vector<D3, O>, palace_core::Error> {
     match *value {
         [z, y, x] => Ok([z, y, x].into()),
         _ => Err("Invalid number of dimensions".into()),
@@ -52,50 +51,9 @@ fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hypersla
     (begin[0]..end[0], begin[1]..end[1], begin[2]..end[2]).into()
 }
 
-impl EmbeddedVolumeOperatorState for Hdf5VolumeSourceState {
-    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
-        TensorOperator::with_state(
-            OperatorDescriptor::new("Hdf5VolumeSourceState::operate")
-                .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
-                .dependent_on_data(self.inner.volume_location.as_bytes()),
-            self.inner.metadata,
-            self.clone(),
-            move |ctx, positions, this| {
-                async move {
-                    let metadata = this.inner.metadata;
-                    for (pos, _) in positions {
-                        let chunk = metadata.chunk_info(pos);
-
-                        let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());
-
-                        let num_voxels = this.inner.metadata.chunk_size.hmul();
-
-                        let mut brick_handle = ctx.submit(ctx.alloc_slot(pos, num_voxels)).await;
-                        let brick_data = &mut *brick_handle;
-                        let dataset = &this.inner.dataset;
-                        ctx.submit(ctx.spawn_io(|| {
-                            palace_core::data::init_non_full(brick_data, &chunk, f32::NAN);
-
-                            let out_info = metadata.chunk_info(pos);
-                            let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
-                            let in_chunk = dataset
-                                .read_slice::<f32, _, ndarray::Ix3>(selection)
-                                .unwrap();
-                            ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
-                        }))
-                        .await;
-
-                        // Safety: At this point the thread pool job above has finished and has initialized all bytes
-                        // in the brick.
-                        unsafe { brick_handle.initialized(*ctx) };
-                    }
-                    Ok(())
-                }
-                .into()
-            },
-        )
-        .embedded(self.inner.embedding_data)
-    }
+pub fn open(path: PathBuf, volume_location: String) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+    let state = Hdf5VolumeSourceState::open(path, volume_location)?;
+    Ok(state.operate())
 }
 
 impl Hdf5VolumeSourceState {
@@ -144,5 +102,49 @@ impl Hdf5VolumeSourceState {
                 volume_location,
             }),
         })
+    }
+
+    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
+        TensorOperator::with_state(
+            OperatorDescriptor::new("Hdf5VolumeSourceState::operate")
+                .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
+                .dependent_on_data(self.inner.volume_location.as_bytes()),
+            self.inner.metadata,
+            self.clone(),
+            move |ctx, positions, this| {
+                async move {
+                    let metadata = this.inner.metadata;
+                    for (pos, _) in positions {
+                        let chunk = metadata.chunk_info(pos);
+
+                        let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());
+
+                        let num_voxels = this.inner.metadata.chunk_size.hmul();
+
+                        let mut brick_handle = ctx.submit(ctx.alloc_slot(pos, num_voxels)).await;
+                        let brick_data = &mut *brick_handle;
+                        let dataset = &this.inner.dataset;
+                        ctx.submit(ctx.spawn_io(|| {
+                            palace_core::data::init_non_full(brick_data, &chunk, f32::NAN);
+
+                            let out_info = metadata.chunk_info(pos);
+                            let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
+                            let in_chunk = dataset
+                                .read_slice::<f32, _, ndarray::Ix3>(selection)
+                                .unwrap();
+                            ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
+                        }))
+                        .await;
+
+                        // Safety: At this point the thread pool job above has finished and has initialized all bytes
+                        // in the brick.
+                        unsafe { brick_handle.initialized(*ctx) };
+                    }
+                    Ok(())
+                }
+                .into()
+            },
+        )
+        .embedded(self.inner.embedding_data)
     }
 }

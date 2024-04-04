@@ -7,10 +7,7 @@ use palace_core::{
     data::{self, LocalCoordinate, Vector, VoxelPosition},
     dim::*,
     operator::OperatorDescriptor,
-    operators::{
-        tensor::TensorOperator,
-        volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
-    },
+    operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
     Error,
 };
 
@@ -68,6 +65,19 @@ fn read_metadata(header: &NiftiHeader) -> Result<(VolumeMetaData, VolumeEmbeddin
     Ok((metadata, embedding_data))
 }
 
+pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+    let vol = NiftiVolumeSourceState::open_single(path)?;
+    Ok(vol.operate())
+}
+
+pub fn open_separate(
+    header_path: PathBuf,
+    data: PathBuf,
+) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+    let vol = NiftiVolumeSourceState::open_separate(header_path, data)?;
+    Ok(vol.operate())
+}
+
 impl NiftiVolumeSourceState {
     pub fn open_single(path: PathBuf) -> Result<Self, Error> {
         let obj = nifti::ReaderStreamedOptions::new().read_file(&path)?;
@@ -98,9 +108,7 @@ impl NiftiVolumeSourceState {
             header: header.clone(),
         })))
     }
-}
 
-impl EmbeddedVolumeOperatorState for NiftiVolumeSourceState {
     fn operate(&self) -> EmbeddedVolumeOperator<f32> {
         TensorOperator::with_state(
             match &self.0.type_ {

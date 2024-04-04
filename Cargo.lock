@@ -531,8 +531,7 @@ dependencies = [
  "bytesize",
  "clap",
  "palace-core",
- "palace-hdf5",
- "palace-nifti",
+ "palace-volume",
  "palace-vvd",
  "winit",
 ]
@@ -544,8 +543,7 @@ dependencies = [
  "bytesize",
  "clap",
  "palace-core",
- "palace-nifti",
- "palace-vvd",
+ "palace-volume",
 ]
 
 [[package]]
@@ -569,6 +567,7 @@ dependencies = [
  "bytesize",
  "clap",
  "palace-core",
+ "palace-hdf5",
  "palace-nifti",
  "palace-vvd",
  "winit",
@@ -1622,7 +1621,7 @@ dependencies = [
  "derive_more",
  "numpy",
  "palace-core",
- "palace-hdf5",
+ "palace-volume",
  "palace-vvd",
  "pyo3",
  "state-link",
@@ -1687,6 +1686,16 @@ dependencies = [
  "ndarray",
  "nifti",
  "palace-core",
+]
+
+[[package]]
+name = "palace-volume"
+version = "0.1.0"
+dependencies = [
+ "palace-core",
+ "palace-hdf5",
+ "palace-nifti",
+ "palace-vvd",
 ]
 
 [[package]]

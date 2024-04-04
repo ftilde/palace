@@ -7,25 +7,11 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    operator::OperatorDescriptor,
     operators::{
-        raw::RawVolumeSourceState,
-        raycaster::TransFuncOperator,
-        tensor::TensorOperator,
-        volume::{EmbeddedVolumeOperator, EmbeddedVolumeOperatorState},
-        volume_gpu::linear_rescale,
+        raycaster::TransFuncOperator, volume::EmbeddedVolumeOperator, volume_gpu::linear_rescale,
     },
     Error,
 };
-
-#[derive(Clone)]
-pub struct VvdVolumeSourceState {
-    raw: RawVolumeSourceState,
-    metadata: VolumeMetaData,
-    embedding_data: TensorEmbeddingData<D3>,
-    rwm_offset: f32,
-    rwm_scale: f32,
-}
 
 fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBuf> {
     let sxd_xpath::Value::Nodeset(set) = val else {
@@ -48,28 +34,6 @@ fn find_valid_path(base: Option<&Path>, val: &sxd_xpath::Value) -> Option<PathBu
     None
 }
 
-impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
-    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
-        let vol = TensorOperator::with_state(
-            OperatorDescriptor::new("VvdVolumeSourceState::operate")
-                .dependent_on_data(self.raw.path.to_string_lossy().as_bytes()),
-            self.metadata,
-            self.clone(),
-            move |ctx, positions, this| {
-                async move {
-                    this.raw
-                        .load_raw_bricks(this.metadata.chunk_size, ctx, positions)
-                        .await
-                }
-                .into()
-            },
-        );
-
-        let vol = linear_rescale(vol, self.rwm_scale, self.rwm_offset);
-        vol.embedded(self.embedding_data)
-    }
-}
-
 fn default_if_nan(v: f32, default: f32) -> f32 {
     if v.is_nan() {
         default
@@ -78,95 +42,90 @@ fn default_if_nan(v: f32, default: f32) -> f32 {
     }
 }
 
-impl VvdVolumeSourceState {
-    pub fn open(path: &Path, brick_size: LocalVoxelPosition) -> Result<Self, Error> {
-        let content = std::fs::read_to_string(path)?;
-        let package = parser::parse(&content)?;
-        let document = package.as_document();
+pub fn open(
+    path: &Path,
+    brick_size: LocalVoxelPosition,
+) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+    let content = std::fs::read_to_string(path)?;
+    let package = parser::parse(&content)?;
+    let document = package.as_document();
 
-        let x = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@x")?.number() as u32;
-        let y = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@y")?.number() as u32;
-        let z = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@z")?.number() as u32;
-        let format =
-            evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@format")?.string();
-        let size = VoxelPosition::from([z, y, x]);
+    let x = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@x")?.number() as u32;
+    let y = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@y")?.number() as u32;
+    let z = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@z")?.number() as u32;
+    let format = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@format")?.string();
+    let size = VoxelPosition::from([z, y, x]);
 
-        let spacing_x = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@x",
-        )?
-        .number() as f32;
-        let spacing_y = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@y",
-        )?
-        .number() as f32;
-        let spacing_z = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@z",
-        )?
-        .number() as f32;
+    let spacing_x = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@x",
+    )?
+    .number() as f32;
+    let spacing_y = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@y",
+    )?
+    .number() as f32;
+    let spacing_z = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='Spacing']/value/@z",
+    )?
+    .number() as f32;
 
-        let spacing = Vector::new([spacing_z, spacing_y, spacing_x]);
-        fn is_valid(f: f32) -> bool {
-            !f.is_nan() && f.is_finite() && f > 0.0
-        }
-        if !is_valid(spacing_x) || !is_valid(spacing_y) || !is_valid(spacing_z) {
-            return Err(format!("Spacing is not valid: {:?}", spacing).into());
-        }
-
-        let rwm_offset = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@offset",
-        )?
-        .number() as f32;
-        let rwm_offset = default_if_nan(rwm_offset, 0.0);
-
-        let rwm_scale = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@scale",
-        )?
-        .number() as f32;
-        let rwm_scale = default_if_nan(rwm_scale, 1.0);
-
-        let embedding_data = TensorEmbeddingData { spacing };
-
-        if format != "float" {
-            return Err(format!(
-                "Unsupported format '{}'. Only float volumes are supported currently",
-                format
-            )
-            .into());
-        }
-
-        let simple_path =
-            evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@filename")?;
-        let alternative_paths = evaluate_xpath(
-            &document,
-            "/VoreenData/Volumes/Volume/RawData/Paths/paths/item/@value",
-        )?;
-
-        let base = path.parent();
-        let Some(raw_path) = find_valid_path(base, &simple_path)
-            .or_else(|| find_valid_path(base, &alternative_paths))
-        else {
-            return Err("No valid .raw file path in file".into());
-        };
-
-        let metadata = VolumeMetaData {
-            dimensions: size,
-            chunk_size: brick_size,
-        };
-
-        let raw = RawVolumeSourceState::open(raw_path, size)?;
-        Ok(VvdVolumeSourceState {
-            raw,
-            metadata,
-            embedding_data,
-            rwm_scale,
-            rwm_offset,
-        })
+    let spacing = Vector::new([spacing_z, spacing_y, spacing_x]);
+    fn is_valid(f: f32) -> bool {
+        !f.is_nan() && f.is_finite() && f > 0.0
     }
+    if !is_valid(spacing_x) || !is_valid(spacing_y) || !is_valid(spacing_z) {
+        return Err(format!("Spacing is not valid: {:?}", spacing).into());
+    }
+
+    let rwm_offset = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@offset",
+    )?
+    .number() as f32;
+    let rwm_offset = default_if_nan(rwm_offset, 0.0);
+
+    let rwm_scale = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@scale",
+    )?
+    .number() as f32;
+    let rwm_scale = default_if_nan(rwm_scale, 1.0);
+
+    let embedding_data = TensorEmbeddingData { spacing };
+
+    if format != "float" {
+        return Err(format!(
+            "Unsupported format '{}'. Only float volumes are supported currently",
+            format
+        )
+        .into());
+    }
+
+    let simple_path = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@filename")?;
+    let alternative_paths = evaluate_xpath(
+        &document,
+        "/VoreenData/Volumes/Volume/RawData/Paths/paths/item/@value",
+    )?;
+
+    let base = path.parent();
+    let Some(raw_path) =
+        find_valid_path(base, &simple_path).or_else(|| find_valid_path(base, &alternative_paths))
+    else {
+        return Err("No valid .raw file path in file".into());
+    };
+
+    let metadata = VolumeMetaData {
+        dimensions: size,
+        chunk_size: brick_size,
+    };
+
+    let vol = palace_core::operators::raw::open(raw_path, metadata)?;
+
+    let vol = linear_rescale(vol, rwm_scale, rwm_offset);
+    Ok(vol.embedded(embedding_data))
 }
 
 pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {
