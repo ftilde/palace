@@ -76,7 +76,7 @@ pub fn smooth_downsample<'op, D: LargerDim>(
     resample(smoothed, output_size)
 }
 
-pub fn create_lod<'op, D: LargerDim>(
+pub fn create_lod<D: LargerDim>(
     input: EmbeddedTensorOperator<D, f32>,
     step_factor: f32,
 ) -> LODTensorOperator<D, f32> {
@@ -118,7 +118,7 @@ pub fn create_lod<'op, D: LargerDim>(
     LODTensorOperator { levels }
 }
 
-pub fn resample_transform<'op, D: LargerDim>(
+pub fn resample_transform<D: LargerDim>(
     input: TensorOperator<D, f32>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,

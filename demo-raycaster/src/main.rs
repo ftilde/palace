@@ -9,7 +9,7 @@ use palace_core::event::{
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
-use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
 use palace_core::operators::volume_gpu;
 use palace_core::operators::{self};
 use palace_core::runtime::RunTime;
@@ -114,7 +114,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let brick_size = LocalVoxelPosition::fill(64.into());
 
     let vol = match args.input {
-        Input::File(path) => open_volume(path.vol, brick_size)?,
+        Input::File(path) => {
+            let base = open_volume(path.vol, brick_size)?;
+            palace_core::operators::resample::create_lod(base, 2.0)
+        }
         Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
             brick_size,
@@ -128,26 +131,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .embedded(VolumeEmbeddingData {
             spacing: Vector::fill(1.0),
-        }),
-        Input::Synthetic(args) => operators::volume_gpu::rasterize(
-            array::VolumeMetaData {
-                dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
-            },
-            r#"{
-
-                vec3 centered = pos_normalized-vec3(0.5);
-                vec3 sq = centered*centered;
-                float d_sq = sq.x + sq.y + sq.z;
-                result = clamp(10*(0.4 - sqrt(d_sq)), 0.0, 1.0);
-            }"#,
-        )
-        .embedded(VolumeEmbeddingData {
-            spacing: Vector::fill(1.0),
+        })
+        .single_level_lod(),
+        Input::Synthetic(args) => operators::procedural::ball(array::VolumeMetaData {
+            dimensions: VoxelPosition::fill(args.size.into()),
+            chunk_size: brick_size,
         }),
     };
 
-    let mut camera_state = CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0);
+    let mut camera_state =
+        CameraState::for_volume(vol.fine_metadata(), vol.fine_embedding_data(), 30.0);
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev = 5.0;
@@ -227,7 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     camera_state: &mut CameraState,
     scale: &mut f32,
     offset: &mut f32,
@@ -252,34 +245,21 @@ fn eval_network(
             }))
     });
 
-    let vol = vol.map_inner(|vol| {
-        //volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
+    let vol = vol.map(|vol| {
+        vol.map_inner(|vol| {
+            //volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-        //let kernel = operators::kernels::gauss(*stddev);
-        //let after_kernel =
-        //    volume_gpu::separable_convolution(vol, Vector::from([&kernel, &kernel, &kernel]));
-        //let after_kernel = operators::vesselness::vesselness(vol, *stddev);
-        let after_kernel = vol;
+            //let kernel = operators::kernels::gauss(*stddev);
+            //let after_kernel =
+            //    volume_gpu::separable_convolution(vol, Vector::from([&kernel, &kernel, &kernel]));
+            //let after_kernel = operators::vesselness::vesselness(vol, *stddev);
+            let after_kernel = vol;
 
-        let scaled = volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
-        scaled
+            let scaled =
+                volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+            scaled
+        })
     });
-
-    //let gen = volume_gpu::rasterize_gpu(
-    //    vol.metadata.clone(),
-    //    r#"{
-    //        vec3 cs = pos_normalized-vec3(0.5);
-    //        float d_sq = dot(cs, cs);
-    //        result = sqrt(d_sq);
-    //        //result = pos_normalized.x;
-    //        //vec3 c = abs(cs);
-    //        //result = min(min(c.x, c.y), c.z);
-    //    }"#,
-    //);
-    //let vol = bin_ops::sub(vol, gen);
-
-    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
-    //let vol = vol.single_level_lod();
 
     let md = ImageMetaData {
         dimensions: window.size(),

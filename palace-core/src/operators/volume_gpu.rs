@@ -4,7 +4,6 @@ use futures::StreamExt;
 use itertools::Itertools;
 
 use crate::{
-    array::VolumeMetaData,
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
     operator::OperatorDescriptor,
@@ -1023,130 +1022,6 @@ void main()
                         },
                     )
                 };
-
-                Ok(())
-            }
-            .into()
-        },
-    )
-}
-
-pub fn rasterize(metadata: VolumeMetaData, body: &str) -> VolumeOperator<f32> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        offset: cgmath::Vector3<u32>,
-        mem_dim: cgmath::Vector3<u32>,
-        logical_dim: cgmath::Vector3<u32>,
-        vol_dim: cgmath::Vector3<u32>,
-    }
-
-    let shader = format!(
-        "{}{}{}",
-        r#"
-#version 450
-
-#include <util.glsl>
-
-layout (local_size_x = 256) in;
-
-layout(std430, binding = 0) buffer OutputBuffer{
-    float values[BRICK_MEM_SIZE];
-} outputData;
-
-declare_push_consts(consts);
-
-void main()
-{
-    uint gID = gl_GlobalInvocationID.x;
-
-    if(gID < BRICK_MEM_SIZE) {
-        uvec3 out_local = from_linear3(gID, consts.mem_dim);
-        float result = 0.0;
-        uvec3 pos_voxel = out_local + consts.offset;
-        vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
-
-        if(all(lessThan(out_local, consts.logical_dim))) {
-        "#,
-        body,
-        r#"
-        } else {
-            result = NaN;
-        }
-
-        outputData.values[gID] = result;
-    }
-}
-"#
-    );
-
-    TensorOperator::with_state(
-        OperatorDescriptor::new("rasterize_gpu")
-            .dependent_on_data(body)
-            .dependent_on_data(&metadata),
-        metadata,
-        (metadata, shader),
-        move |ctx, positions, (metadata, shader)| {
-            async move {
-                let device = ctx.preferred_device();
-
-                let m = metadata;
-
-                let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
-                        .of(ctx.current_op())
-                        .dependent_on(&m.chunk_size),
-                    || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                shader.as_str(),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
-                            ),
-                            true,
-                        )
-                    },
-                );
-
-                for (pos, _) in positions {
-                    let brick_info = m.chunk_info(pos);
-
-                    let gpu_brick_out = ctx
-                        .submit(ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements()))
-                        .await;
-                    device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
-
-                        let global_size = brick_info.mem_elements();
-
-                        unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
-
-                            pipeline.push_constant(PushConstants {
-                                offset: brick_info.begin.into_elem::<u32>().into(),
-                                logical_dim: brick_info
-                                    .logical_dimensions
-                                    .into_elem::<u32>()
-                                    .into(),
-                                mem_dim: m.chunk_size.into_elem::<u32>().into(),
-                                vol_dim: m.dimensions.into_elem::<u32>().into(),
-                            });
-                            pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
-                        }
-                    });
-
-                    unsafe {
-                        gpu_brick_out.initialized(
-                            *ctx,
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
-                            },
-                        )
-                    };
-                }
 
                 Ok(())
             }

@@ -105,7 +105,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let brick_size = LocalVoxelPosition::fill(64.into());
 
     let vol = match args.input {
-        Input::File(path) => open_volume(path.vol, brick_size)?,
+        Input::File(path) => {
+            let base = open_volume(path.vol, brick_size)?;
+            palace_core::operators::resample::create_lod(base, 2.0)
+        }
         Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
             brick_size,
@@ -119,22 +122,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .embedded(VolumeEmbeddingData {
             spacing: Vector::fill(1.0),
-        }),
-        Input::Synthetic(args) => operators::volume_gpu::rasterize(
-            array::VolumeMetaData {
-                dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
-            },
-            r#"{
-
-                vec3 centered = pos_normalized-vec3(0.5);
-                vec3 sq = centered*centered;
-                float d_sq = sq.x + sq.y + sq.z;
-                result = clamp(10*(0.4 - sqrt(d_sq)), 0.0, 1.0);
-            }"#,
-        )
-        .embedded(VolumeEmbeddingData {
-            spacing: Vector::fill(1.0),
+        })
+        .single_level_lod(),
+        Input::Synthetic(args) => operators::procedural::ball(array::VolumeMetaData {
+            dimensions: VoxelPosition::fill(args.size.into()),
+            chunk_size: brick_size,
         }),
     };
 
@@ -302,7 +294,7 @@ fn slice_viewer_rot(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: EmbeddedVolumeOperator<f32>,
+    vol: LODVolumeOperator<f32>,
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<D2, f32>,
@@ -356,16 +348,17 @@ fn eval_network(
         });
     });
 
-    let vol = vol.map_inner(|vol| {
-        //let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());
+    let vol = vol.map(|vol| {
+        vol.map_inner(|vol| {
+            //let vol = volume_gpu::rechunk(vol.into(), LocalVoxelPosition::fill(10.into()).into_elem());
 
-        //    let after_kernel =
-        //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
-        //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
-        let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
-        scaled
+            //    let after_kernel =
+            //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
+            //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
+            let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
+            scaled
+        })
     });
-    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
 
     let left = slice_viewer_z(
         vol.clone(),

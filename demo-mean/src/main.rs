@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 r2.sqrt()
             },
         ),
-        Input::Synthetic(args) => operators::volume_gpu::rasterize(
+        Input::Synthetic(args) => operators::procedural::rasterize(
             array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,

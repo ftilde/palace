@@ -582,6 +582,14 @@ impl<D: Dimension> Vector<D, f32> {
         self.fold(1.0, |a, b| a * b)
     }
 }
+impl<D: Dimension> Vector<D, bool> {
+    pub fn all(&self) -> bool {
+        self.fold(true, |a, b| a && b)
+    }
+    pub fn any(&self) -> bool {
+        self.fold(false, |a, b| a || b)
+    }
+}
 impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn hmul(&self) -> usize {
         self.into_iter().map(|v| v.raw as usize).product()
