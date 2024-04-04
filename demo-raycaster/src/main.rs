@@ -7,7 +7,7 @@ use palace_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
 use palace_core::operators::raycaster::{
-    CameraState, CompositingMode, RaycasterConfig, TransFuncOperator,
+    CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
 use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState};
 use palace_core::operators::volume_gpu;
@@ -147,8 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vec3 centered = pos_normalized-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq) * 0.5 + (centered.x*centered.x - abs(centered.z))*0.5;
-
+                result = sqrt(d_sq) > 0.4 ? 0.0 : 0.99;
             }"#
                 .to_owned(),
             },
@@ -163,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut camera_state = CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0);
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
-    let mut stddev = 1.0;
+    let mut stddev = 5.0;
 
     let mut tf = if let Some(path) = args.transfunc_path {
         load_tfi(&path).unwrap()
@@ -270,9 +269,9 @@ fn eval_network(
     let vol = vol.map_inner(|vol| {
         //volume_gpu::rechunk(vol.clone(), LocalVoxelPosition::fill(48.into()).into_elem());
 
-        //let kernel = operators::kernels::gauss(scalar::constant_pod(*stddev));
+        //let kernel = operators::kernels::gauss(*stddev);
         //let after_kernel =
-        //    volume_gpu::separable_convolution(vol, [kernel.clone(), kernel.clone(), kernel]);
+        //    volume_gpu::separable_convolution(vol, Vector::from([&kernel, &kernel, &kernel]));
         //let after_kernel = operators::vesselness::vesselness(vol, *stddev);
         let after_kernel = vol;
 
@@ -311,6 +310,7 @@ fn eval_network(
     );
     let mut config = RaycasterConfig::default();
     config.compositing_mode = CompositingMode::DVR;
+    config.shading = Shading::Phong;
     let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config);
     let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
 

@@ -30,6 +30,61 @@ const int SAMPLE_RES_FOUND = 0;
 const int SAMPLE_RES_OUTSIDE = 1;
 const int SAMPLE_RES_NOT_PRESENT = 2;
 
+/*
+//#define sample_local(brick, local, vm, o) {\
+//    uint local_index = to_linear((local), (vm).chunk_size);\
+//    (o) = (brick).values[local_index];\
+//}
+*/
+
+float sample_local(BrickType brick, uint[3] loc, TensorMetaData(3) vm) {
+    uint local_index = to_linear(loc, vm.chunk_size);
+    return brick.values[local_index];
+}
+
+//NO_PUSH_main try handle diff at border by scaling with 2
+uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end) {
+    pos[dim] = min(uint(max(int(pos[dim]) + by, 0)), end[dim]-1);
+    return pos;
+}
+
+#define try_sample_with_grad(N, sample_pos_in, vm, bricks, found, sample_brick_pos_linear, value, grad) {\
+    int[N] sample_pos_u = to_int(sample_pos_in);\
+\
+    if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
+\
+        uint[N] sample_pos = to_uint(sample_pos_u);\
+        uint[N] sample_brick = div(sample_pos, (vm).chunk_size);\
+        uint[N] dim_in_bricks = dim_in_bricks((vm));\
+\
+        (sample_brick_pos_linear) = to_linear(sample_brick, dim_in_bricks);\
+\
+        BrickType brick = (bricks)[(sample_brick_pos_linear)];\
+        float v = 0.0;\
+        if(uint64_t(brick) == 0) {\
+            (found) = SAMPLE_RES_NOT_PRESENT;\
+        } else {\
+            uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
+            uint[N] brick_end = min(mul(add(sample_brick, fill(sample_brick, 1)), (vm).chunk_size), (vm).dimensions);\
+            uint[N] local = sub(sample_pos, brick_begin);\
+            uint[N] local_end = sub(brick_end, brick_begin);\
+            /*uint local_index = to_linear(local, (vm).chunk_size);\
+            float v = brick.values[local_index];*/\
+            float v = sample_local(brick, local, vm);\
+\
+            for(int d = 0; d<N; ++d) {\
+                float p = sample_local(brick, offset_in_chunk(local, d,  1, local_end), vm);\
+                float m = sample_local(brick, offset_in_chunk(local, d, -1, local_end), vm);\
+                grad[d] = p-m;\
+            }\
+            (found) = SAMPLE_RES_FOUND;\
+            (value) = v;\
+        }\
+    } else {\
+        (found) = SAMPLE_RES_OUTSIDE;\
+    }\
+}
+
 #define try_sample(N, sample_pos_in, vm, bricks, found, sample_brick_pos_linear, value) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \

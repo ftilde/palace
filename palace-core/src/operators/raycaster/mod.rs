@@ -435,7 +435,7 @@ pub fn entry_exit_points(
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy, Debug, Hash)]
+#[derive(state_link::State, Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum CompositingMode {
     MOP,
     DVR,
@@ -452,6 +452,23 @@ impl CompositingMode {
 }
 
 #[cfg_attr(feature = "python", pyclass)]
+#[derive(state_link::State, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum Shading {
+    None,
+    Phong,
+}
+crate::id::impl_hash!(Shading);
+
+impl Shading {
+    fn define_name(&self) -> &'static str {
+        match self {
+            Shading::None => "SHADING_NONE",
+            Shading::Phong => "SHADING_PHONG",
+        }
+    }
+}
+
+#[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy, Debug)]
 pub struct RaycasterConfig {
     #[pyo3(get, set)]
@@ -460,6 +477,8 @@ pub struct RaycasterConfig {
     pub oversampling_factor: f32,
     #[pyo3(get, set)]
     pub compositing_mode: CompositingMode,
+    #[pyo3(get, set)]
+    pub shading: Shading,
 }
 
 #[cfg_attr(feature = "python", pymethods)]
@@ -480,6 +499,7 @@ impl Identify for RaycasterConfig {
             self.lod_coarseness.id(),
             self.oversampling_factor.id(),
             self.compositing_mode.id(),
+            self.shading.id(),
         ])
     }
 }
@@ -490,6 +510,7 @@ impl Default for RaycasterConfig {
             lod_coarseness: 1.0,
             oversampling_factor: 1.0,
             compositing_mode: CompositingMode::MOP,
+            shading: Shading::None,
         }
     }
 }
@@ -599,7 +620,8 @@ pub fn raycast(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&input.levels.len())
-                        .dependent_on(&config.compositing_mode),
+                        .dependent_on(&config.compositing_mode)
+                        .dependent_on(&config.shading),
                     || {
                         ComputePipeline::new(
                             device,
@@ -609,7 +631,8 @@ pub fn raycast(
                                     .push_const_block::<PushConstants>()
                                     .add("NUM_LEVELS", input.levels.len())
                                     .add("REQUEST_TABLE_SIZE", request_table_size)
-                                    .add(config.compositing_mode.define_name(), 1),
+                                    .add(config.compositing_mode.define_name(), 1)
+                                    .add(config.shading.define_name(), 1),
                             ),
                             false,
                         )

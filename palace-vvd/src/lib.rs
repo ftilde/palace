@@ -70,6 +70,14 @@ impl EmbeddedVolumeOperatorState for VvdVolumeSourceState {
     }
 }
 
+fn default_if_nan(v: f32, default: f32) -> f32 {
+    if v.is_nan() {
+        default
+    } else {
+        v
+    }
+}
+
 impl VvdVolumeSourceState {
     pub fn open(path: &Path, brick_size: LocalVoxelPosition) -> Result<Self, Error> {
         let content = std::fs::read_to_string(path)?;
@@ -110,16 +118,16 @@ impl VvdVolumeSourceState {
         let rwm_offset = evaluate_xpath(
             &document,
             "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@offset",
-        )
-        .map(|v| v.number() as f32)
-        .unwrap_or(0.0);
+        )?
+        .number() as f32;
+        let rwm_offset = default_if_nan(rwm_offset, 0.0);
 
         let rwm_scale = evaluate_xpath(
             &document,
             "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@scale",
-        )
-        .map(|v| v.number() as f32)
-        .unwrap_or(1.0);
+        )?
+        .number() as f32;
+        let rwm_scale = default_if_nan(rwm_scale, 1.0);
 
         let embedding_data = TensorEmbeddingData { spacing };
 

@@ -107,8 +107,7 @@ u8vec4 classify(float val) {
 }
 
 #ifdef COMPOSITING_MOP
-void update_state(inout State state, u8vec4 color8, float step_size) {
-    vec4 color = to_uniform(color8);
+void update_state(inout State state, vec4 color, float step_size) {
     if(state.color.a < color.a) {
         state.color = color;
     }
@@ -116,17 +115,8 @@ void update_state(inout State state, u8vec4 color8, float step_size) {
 #endif
 
 #ifdef COMPOSITING_DVR
-void update_state(inout State state, u8vec4 sample_u8, float step_size) {
-    vec4 sample_f = to_uniform(sample_u8);
-
-    // Welp, there appears to be another graphics driver bug. If the following
-    // (pretty much nonsensical) lines are removed, rendering is way slower and
-    // there are a few dark voxels in the volume.
-    if(sample_u8.a == 255 && sample_f.a != 0.0) {
-        sample_f.r *= 1.00001;
-    }
-
-    float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * 200.0);
+void update_state(inout State state, vec4 sample_f, float step_size) {
+    float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * 200.0); //NO_PUSH_main: this HAS to be adjusted per volume
 
     state.color.rgb = state.color.rgb + alpha * (1.0 - state.color.a) * sample_f.rgb;
     state.color.a   = state.color.a   + alpha * (1.0 - state.color.a);
@@ -137,6 +127,20 @@ void update_state(inout State state, u8vec4 sample_u8, float step_size) {
     }
 }
 #endif
+
+vec3 apply_phong_shading(vec3 color, vec3 normal, vec3 view, vec3 light) {
+    vec3 ambient_light = vec3(0.2);
+    vec3 diffuse_light = vec3(0.8);
+    vec3 specular_light = vec3(0.5);
+    float shininess = 60.0;
+
+    vec3 o;
+    o  = color * ambient_light;
+    o += color * diffuse_light * max(0.0, dot(normal, light));
+    o += color * specular_light * pow(max(0.0, dot(normal, normalize(light + view))), shininess);
+
+    return o;
+}
 
 void main()
 {
@@ -222,15 +226,40 @@ void main()
                     int res;
                     uint sample_brick_pos_linear;
                     float sampled_intensity;
+
+                    #ifdef SHADING_NONE
+                    try_sample(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
+                    #else
                     float[3] grad_f;
                     try_sample_with_grad(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity, grad_f);
-                    vec3 grad = to_glsl(grad_f);
+                    #endif
 
 
                     bool stop = false;
                     if(res == SAMPLE_RES_FOUND) {
-                        u8vec4 sampled_color = classify(sampled_intensity);
-                        update_state(state, sampled_color, step);
+
+
+                        u8vec4 sample_u8 = classify(sampled_intensity);
+                        vec4 sample_f = to_uniform(sample_u8);
+                        // Welp, there appears to be another graphics driver bug. If the following
+                        // (pretty much nonsensical) lines are removed, rendering is way slower and
+                        // there are a few dark voxels in the volume.
+                        if(sample_u8.a == 255 && sample_f.a != 0.0) {
+                            sample_f.r *= 1.00001;
+                        }
+
+
+                        #ifdef SHADING_PHONG
+                        vec3 grad = to_glsl(grad_f);
+                        if(length(grad) < 0.0001) {
+                            grad = normalize(vec3(1.0, 1.0, 1.0));
+                        } else {
+                            grad = normalize(to_glsl_vec3(level.spacing) * grad);
+                        }
+                        sample_f.rgb = apply_phong_shading(sample_f.rgb, grad, dir, dir);
+                        #endif
+
+                        update_state(state, sample_f, step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;

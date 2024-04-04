@@ -147,6 +147,7 @@ def render(size, events):
             widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 1.0, 10, logarithmic=True))
             widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.01, 10, logarithmic=True))
             widgets.append(pc.ComboBox("Compositing", raycaster_config.compositing_mode(), ["MOP", "DVR"]))
+            widgets.append(pc.ComboBox("Shading", raycaster_config.shading(), ["None", "Phong"]))
         case "x" | "y" | "z":
             pass
 

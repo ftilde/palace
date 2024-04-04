@@ -6,7 +6,9 @@ use palace_core::data::{GlobalCoordinate, LocalVoxelPosition, Vector};
 use palace_core::dim::*;
 use palace_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
-use palace_core::operators::raycaster::{CameraState, RaycasterConfig, TransFuncOperator};
+use palace_core::operators::raycaster::{
+    CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
+};
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperatorState, LODVolumeOperator};
@@ -16,7 +18,7 @@ use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 use palace_hdf5::Hdf5VolumeSourceState;
 use palace_nifti::NiftiVolumeSourceState;
-use palace_vvd::VvdVolumeSourceState;
+use palace_vvd::{load_tfi, VvdVolumeSourceState};
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -52,6 +54,10 @@ struct CliArgs {
     /// Use the vulkan device with the specified id
     #[arg(long, default_value = "0")]
     device: usize,
+
+    /// Transfer function (voreen .tfi file)
+    #[arg(short, long)]
+    transfunc_path: Option<PathBuf>,
 
     /// Stop after rendering a complete frame
     #[arg(short, long)]
@@ -151,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = State {
         gui: GuiState::on_device(args.device),
         process: ProcessState::PassThrough,
-        rendering: RenderingState::Slice,
+        rendering: RenderingState::Raycasting,
         vesselness: VesselnessState {
             min_rad: voxel_diag * 2.0,
             max_rad: vol_diag * 0.01,
@@ -160,7 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         raycasting: RaycastingState {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
             config: RaycasterConfig::default(),
-            tf: TransFuncOperator::grey_ramp(0.0, 1.0),
+            tf: if let Some(path) = args.transfunc_path {
+                load_tfi(&path).unwrap()
+            } else {
+                TransFuncOperator::grey_ramp(0.0, 1.0)
+            },
         },
         sliceview: SliceState {
             inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
@@ -534,6 +544,37 @@ fn eval_network(
                             .text("Oversampling factor")
                             .logarithmic(true),
                         );
+                        egui::ComboBox::from_label("Compositing")
+                            .selected_text(format!(
+                                "{:?}",
+                                app_state.raycasting.config.compositing_mode
+                            ))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut app_state.raycasting.config.compositing_mode,
+                                    CompositingMode::MOP,
+                                    "MOP",
+                                );
+                                ui.selectable_value(
+                                    &mut app_state.raycasting.config.compositing_mode,
+                                    CompositingMode::DVR,
+                                    "DVR",
+                                );
+                            });
+                        egui::ComboBox::from_label("Shading")
+                            .selected_text(format!("{:?}", app_state.raycasting.config.shading))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut app_state.raycasting.config.shading,
+                                    Shading::None,
+                                    "None",
+                                );
+                                ui.selectable_value(
+                                    &mut app_state.raycasting.config.shading,
+                                    Shading::Phong,
+                                    "Phong",
+                                );
+                            });
                     }
                 }
                 if ui.button("Save Screenshot").clicked() {
@@ -574,8 +615,12 @@ fn eval_network(
         runtime
             .resolve(Some(deadline), false, |ctx, _| {
                 async move {
-                    palace_core::operators::png_writer::write(ctx, slice_ref, "screenshot.png".into())
-                        .await
+                    palace_core::operators::png_writer::write(
+                        ctx,
+                        slice_ref,
+                        "screenshot.png".into(),
+                    )
+                    .await
                 }
                 .into()
             })
