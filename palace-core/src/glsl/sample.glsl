@@ -42,10 +42,11 @@ float sample_local(BrickType brick, uint[3] loc, TensorMetaData(3) vm) {
     return brick.values[local_index];
 }
 
-//NO_PUSH_main try handle diff at border by scaling with 2
-uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end) {
-    pos[dim] = min(uint(max(int(pos[dim]) + by, 0)), end[dim]-1);
-    return pos;
+uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool clamped) {
+    uint[3] o = pos;
+    o[dim] = min(uint(max(int(pos[dim]) + by, 0)), end[dim]-1);
+    clamped = clamped || pos[dim] == o[dim];
+    return o;
 }
 
 #define try_sample_with_grad(N, sample_pos_in, vm, bricks, found, sample_brick_pos_linear, value, grad) {\
@@ -73,9 +74,11 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end) {
             float v = sample_local(brick, local, vm);\
 \
             for(int d = 0; d<N; ++d) {\
-                float p = sample_local(brick, offset_in_chunk(local, d,  1, local_end), vm);\
-                float m = sample_local(brick, offset_in_chunk(local, d, -1, local_end), vm);\
-                grad[d] = p-m;\
+                bool clamped = false;\
+                float p = sample_local(brick, offset_in_chunk(local, d,  1, local_end, clamped), vm);\
+                float m = sample_local(brick, offset_in_chunk(local, d, -1, local_end, clamped), vm);\
+                float div_inv = clamped ? 1.0 : 0.5;\
+                grad[d] = (p-m)*div_inv;\
             }\
             (found) = SAMPLE_RES_FOUND;\
             (value) = v;\
