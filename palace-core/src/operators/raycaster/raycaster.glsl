@@ -116,7 +116,8 @@ void update_state(inout State state, vec4 color, float step_size) {
 
 #ifdef COMPOSITING_DVR
 void update_state(inout State state, vec4 sample_f, float step_size) {
-    float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * 200.0); //NO_PUSH_main: this HAS to be adjusted per volume
+    const float REFERENCE_STEP_SIZE_INV = 256.0;
+    float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * REFERENCE_STEP_SIZE_INV);
 
     state.color.rgb = state.color.rgb + alpha * (1.0 - state.color.a) * sample_f.rgb;
     state.color.a   = state.color.a   + alpha * (1.0 - state.color.a);
@@ -159,6 +160,8 @@ void main()
             State state = state_cache.values[gID];
 
             if(state.t != T_DONE) {
+
+                float diag = length(vec3(to_glsl_uvec3(root_level.dimensions)) * to_glsl_vec3(root_level.spacing));
 
                 EEPoint eep_x;
                 if(!sample_ee(out_pos + uvec2(1, 0), eep_x, root_level)) {
@@ -259,7 +262,8 @@ void main()
                         sample_f.rgb = apply_phong_shading(sample_f.rgb, grad, dir, dir);
                         #endif
 
-                        update_state(state, sample_f, step);
+                        float norm_step = step / diag;
+                        update_state(state, sample_f, norm_step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
