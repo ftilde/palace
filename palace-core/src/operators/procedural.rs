@@ -50,20 +50,19 @@ vec3 vec_pow(vec3 v, float n) {
 }
 
 float run(vec3 pos) {
-    vec3 centered = (pos-vec3(0.5)) * 3.0;
-    float outside_radius = 10.0;
+    float outside_radius = 2.3;
+    vec3 centered = (pos-vec3(0.5)) * outside_radius;
 
     vec3 v = vec3(centered);
     int i;
     int max_i = 10;
     int min_i = 2;
-    for(i=0; i<10; i++) {
-        v = vec_pow(v, 8.0) + centered;
-
+    for(i=0; i<max_i; i++) {
         if(length(v) > outside_radius) {
             break;
         }
 
+        v = vec_pow(v, 8.0) + centered;
     }
     return float(max(i-min_i, 0))/float(max_i-min_i);
 }
