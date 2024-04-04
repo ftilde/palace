@@ -554,8 +554,7 @@ dependencies = [
  "cgmath",
  "clap",
  "palace-core",
- "palace-hdf5",
- "palace-nifti",
+ "palace-volume",
  "palace-vvd",
  "winit",
 ]
@@ -567,9 +566,7 @@ dependencies = [
  "bytesize",
  "clap",
  "palace-core",
- "palace-hdf5",
- "palace-nifti",
- "palace-vvd",
+ "palace-volume",
  "winit",
 ]
 

@@ -5,9 +5,8 @@ edition = "2021"
 
 [dependencies]
 palace-core = { path = "../palace-core" }
-palace-hdf5 = { path = "../palace-hdf5" }
+palace-volume = { path = "../palace-volume" }
 palace-vvd = { path = "../palace-vvd" }
-palace-nifti = { path = "../palace-nifti" }
 winit = "0.28"
 clap = { version = "4.0", features = ["derive"] }
 cgmath = { version="0.18.0" }

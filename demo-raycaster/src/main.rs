@@ -9,7 +9,7 @@ use palace_core::event::{
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
-use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::volume_gpu;
 use palace_core::operators::{self};
 use palace_core::runtime::RunTime;
@@ -81,28 +81,6 @@ struct CliArgs {
     device: usize,
 }
 
-fn open_volume(
-    path: PathBuf,
-    brick_size_hint: LocalVoxelPosition,
-) -> Result<EmbeddedVolumeOperator<f32>, Box<dyn std::error::Error>> {
-    let Some(file) = path.file_name() else {
-        return Err("No file name in path".into());
-    };
-    let file = file.to_string_lossy();
-    let segments = file.split('.').collect::<Vec<_>>();
-
-    match segments[..] {
-        [.., "vvd"] => palace_vvd::open(&path, brick_size_hint),
-        [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path),
-        [.., "hdr"] => {
-            let data = path.with_extension("img");
-            palace_nifti::open_separate(path, data)
-        }
-        [.., "h5"] => palace_hdf5::open(path, "/volume".to_string()),
-        _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
@@ -123,7 +101,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = match args.input {
         Input::File(path) => {
-            let base = open_volume(path.vol, brick_size)?;
+            let base =
+                palace_volume::open(path.vol, palace_volume::Hints::new().brick_size(brick_size))?;
             palace_core::operators::resample::create_lod(base, 2.0)
         }
         Input::Synthetic(args) => {
