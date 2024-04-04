@@ -57,7 +57,7 @@ struct CliArgs {
     compute_pool_size: Option<usize>,
 
     /// Use the vulkan device with the specified id
-    #[arg(short, long, default_value = "0")]
+    #[arg(long, default_value = "0")]
     device: usize,
 }
 
@@ -99,12 +99,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             },
-            r#"{
-
-                vec3 centered = pos_normalized-vec3(0.5);
+            r#"float run(vec3 pos) {
+                vec3 centered = pos-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
-                result = sqrt(d_sq);
+                return sqrt(d_sq);
             }"#,
         ),
     };

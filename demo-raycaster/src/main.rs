@@ -18,12 +18,21 @@ use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
 
-use palace_core::array::{self, ImageMetaData, VolumeEmbeddingData};
+use palace_core::array::{self, ImageMetaData};
+
+#[derive(Subcommand, Clone)]
+enum Type {
+    Ball,
+    Full,
+    Mandelbulb,
+}
 
 #[derive(Parser, Clone)]
 struct SyntheticArgs {
     #[arg()]
     size: u32,
+    #[command(subcommand)]
+    scenario: Type,
 }
 
 #[derive(Parser, Clone)]
@@ -36,7 +45,6 @@ struct FileArgs {
 enum Input {
     File(FileArgs),
     Synthetic(SyntheticArgs),
-    SyntheticCpu(SyntheticArgs),
 }
 
 #[derive(Parser)]
@@ -118,25 +126,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let base = open_volume(path.vol, brick_size)?;
             palace_core::operators::resample::create_lod(base, 2.0)
         }
-        Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
-            VoxelPosition::fill(args.size.into()),
-            brick_size,
-            |v| {
-                let r2 = v
-                    .map(|v| v - 0.5)
-                    .map(|v| v * v)
-                    .fold(0.0f32, std::ops::Add::add);
-                r2.sqrt()
-            },
-        )
-        .embedded(VolumeEmbeddingData {
-            spacing: Vector::fill(1.0),
-        })
-        .single_level_lod(),
-        Input::Synthetic(args) => operators::procedural::ball(array::VolumeMetaData {
-            dimensions: VoxelPosition::fill(args.size.into()),
-            chunk_size: brick_size,
-        }),
+        Input::Synthetic(args) => {
+            let md = array::VolumeMetaData {
+                dimensions: VoxelPosition::fill(args.size.into()),
+                chunk_size: brick_size,
+            };
+            match args.scenario {
+                Type::Ball => operators::procedural::ball(md),
+                Type::Full => operators::procedural::full(md),
+                Type::Mandelbulb => operators::procedural::mandelbulb(md),
+            }
+        }
     };
 
     let mut camera_state =

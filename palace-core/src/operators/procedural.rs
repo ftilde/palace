@@ -19,12 +19,55 @@ use super::volume::{LODVolumeOperator, VolumeOperator};
 pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     rasterize_lod(
         base_metadata,
-        r#"{
-            vec3 centered = pos_normalized-vec3(0.5);
+        r#"float run(vec3 pos) {
+            vec3 centered = pos-vec3(0.5);
             vec3 sq = centered*centered;
             float d_sq = sq.x + sq.y + sq.z;
-            result = clamp(10*(0.5 - sqrt(d_sq)), 0.0, 1.0);
+            return clamp(10*(0.5 - sqrt(d_sq)), 0.0, 1.0);
         }"#,
+    )
+}
+
+pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
+    rasterize_lod(
+        base_metadata,
+        r#"float run(vec3 pos) {
+            return 1.0;
+        }"#,
+    )
+}
+
+pub fn mandelbulb(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
+    rasterize_lod(
+        base_metadata,
+        r#"
+vec3 vec_pow(vec3 v, float n) {
+    float r = length(v);
+    float p = atan(v.y, v.x);
+    float t = atan(length(v.xy), v.z);
+
+    return pow(r, n) * vec3(sin(n*t)*cos(n*p), sin(n*t)*sin(n*p), cos(n*t));
+}
+
+float run(vec3 pos) {
+    vec3 centered = (pos-vec3(0.5)) * 3.0;
+    float outside_radius = 10.0;
+
+    vec3 v = vec3(centered);
+    int i;
+    int max_i = 10;
+    int min_i = 2;
+    for(i=0; i<10; i++) {
+        v = vec_pow(v, 8.0) + centered;
+
+        if(length(v) > outside_radius) {
+            break;
+        }
+
+    }
+    return float(max(i-min_i, 0))/float(max_i-min_i);
+}
+        "#,
     )
 }
 
@@ -55,7 +98,7 @@ pub fn rasterize_lod(base_metadata: VolumeMetaData, body: &str) -> LODVolumeOper
     LODVolumeOperator { levels }
 }
 
-pub fn rasterize(metadata: VolumeMetaData, body: &str) -> VolumeOperator<f32> {
+pub fn rasterize(metadata: VolumeMetaData, gen_fn: &str) -> VolumeOperator<f32> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         offset: cgmath::Vector3<u32>,
@@ -79,6 +122,13 @@ layout(std430, binding = 0) buffer OutputBuffer{
 
 declare_push_consts(consts);
 
+//float run(vec3 pos) {
+//  ...
+//}
+"#,
+        gen_fn,
+        r#"
+
 void main()
 {
     uint gID = gl_GlobalInvocationID.x;
@@ -90,9 +140,7 @@ void main()
         vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
 
         if(all(lessThan(out_local, consts.logical_dim))) {
-        "#,
-        body,
-        r#"
+            result = run(pos_normalized);
         } else {
             result = NaN;
         }
@@ -105,7 +153,7 @@ void main()
 
     TensorOperator::with_state(
         OperatorDescriptor::new("rasterize_gpu")
-            .dependent_on_data(body)
+            .dependent_on_data(gen_fn)
             .dependent_on_data(&metadata),
         metadata,
         (metadata, shader),
