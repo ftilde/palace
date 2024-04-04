@@ -3,15 +3,17 @@ mod event;
 mod gui;
 mod splitter;
 mod tensor;
+mod transfer_function;
 
 pub use self::core::*;
 pub use self::event::*;
 pub use self::gui::*;
 pub use self::splitter::*;
 pub use self::tensor::*;
+pub use self::transfer_function::*;
 
-use pyo3::prelude::*;
 use palace_core::operators::volume::ChunkSize as CChunkSize;
+use pyo3::prelude::*;
 
 #[pyclass]
 #[derive(Clone)]

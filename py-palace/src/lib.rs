@@ -13,6 +13,7 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     use crate::types::*;
 
     m.add_function(wrap_pyfunction!(open_volume, m)?)?;
+    m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(mean, m)?)?;
     m.add_function(wrap_pyfunction!(linear_rescale, m)?)?;
     m.add_function(wrap_pyfunction!(threshold, m)?)?;

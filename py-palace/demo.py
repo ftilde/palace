@@ -10,11 +10,18 @@ disk_cache_size = 20 << 30
 
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
+parser.add_argument('-t', '--transfunc', type=str)
+
 args = parser.parse_args()
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 vol = pc.open_volume(args.volume_file)
+
+if args.transfunc:
+    tf = pc.load_tf(args.transfunc)
+else:
+    tf = None
 
 store = pc.Store()
 
@@ -79,7 +86,7 @@ def render_raycast(vol, camera_state):
 
         eep = pc.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
         conf = pc.RaycasterConfig()
-        frame = pc.raycast(vol, eep, raycaster_config.load())
+        frame = pc.raycast(vol, eep, raycaster_config.load(), tf)
         frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
 
         return frame

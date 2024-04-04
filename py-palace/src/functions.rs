@@ -1,6 +1,6 @@
 use crate::types::*;
 use palace_core::dim::*;
-use palace_core::operators::raycaster::{RaycasterConfig, TransFuncOperator};
+use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Matrix, Vector},
@@ -127,8 +127,11 @@ pub fn raycast(
     vol: LODTensorOperator,
     entry_exit_points: TensorOperator,
     config: Option<RaycasterConfig>,
+    tf: Option<TransFuncOperator>,
 ) -> PyResult<TensorOperator> {
-    let tf = TransFuncOperator::grey_ramp(0.0, 1.0); //TODO make configurable
+    let tf = tf
+        .map(|tf| tf.try_into())
+        .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
     palace_core::operators::raycaster::raycast(
         vol.try_into()?,
         entry_exit_points.try_into()?,
