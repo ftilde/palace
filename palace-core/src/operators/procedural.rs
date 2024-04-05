@@ -1,8 +1,8 @@
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{TensorEmbeddingData, VolumeMetaData},
+    array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
+    dim::Dimension,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     vec::Vector,
@@ -14,13 +14,16 @@ use crate::{
     },
 };
 
-use super::volume::{LODVolumeOperator, VolumeOperator};
+use super::{
+    tensor::{LODImageOperator, LODTensorOperator},
+    volume::LODVolumeOperator,
+};
 
 pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     rasterize_lod(
         base_metadata,
-        r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
-            vec3 centered = pos_normalized-vec3(0.5);
+        r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
+            vec3 centered = to_glsl(pos_normalized)-vec3(0.5);
             vec3 sq = centered*centered;
             float d_sq = sq.x + sq.y + sq.z;
             return clamp(10*(0.5 - sqrt(d_sq)), 0.0, 1.0);
@@ -31,7 +34,7 @@ pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
 pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     rasterize_lod(
         base_metadata,
-        r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
+        r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
             return 1.0;
         }"#,
     )
@@ -49,11 +52,11 @@ vec3 vec_pow(vec3 v, float n) {
     return pow(r, n) * vec3(sin(n*t)*cos(n*p), sin(n*t)*sin(n*p), cos(n*t));
 }
 
-float run(vec3 pos_normalized, uvec3 pos_voxel) {
+float run(float[3] pos_normalized, uint[3] pos_voxel) {
     float outside_radius = 2.3;
-    vec3 centered = (pos_normalized-vec3(0.5)) * outside_radius;
+    vec3 centered = (to_glsl(pos_normalized)-vec3(0.5)) * outside_radius;
 
-    vec3 v = vec3(centered);
+    vec3 v = centered;
     int i;
     int max_i = 10;
     int min_i = 2;
@@ -70,13 +73,44 @@ float run(vec3 pos_normalized, uvec3 pos_voxel) {
     )
 }
 
-pub fn rasterize_lod(base_metadata: VolumeMetaData, body: &str) -> LODVolumeOperator<f32> {
+pub fn mandelbrot(base_metadata: ImageMetaData) -> LODImageOperator<f32> {
+    rasterize_lod(
+        base_metadata,
+        r#"
+vec2 complex_square(vec2 v) {
+    return vec2(v.x*v.x - v.y*v.y, 2*v.x*v.y);
+}
+float run(float[2] pos_normalized, uint[2] pos_voxel) {
+    float outside_radius = 5;
+    vec2 centered = (to_glsl(pos_normalized)-vec2(0.8, 0.5)) * outside_radius;
+
+    vec2 v = centered;
+    int i;
+    int max_i = 50;
+    int min_i = 2;
+    for(i=0; i<max_i; i++) {
+        if(length(v) > outside_radius) {
+            break;
+        }
+
+        v = complex_square(v) + centered;
+    }
+    return float(max(i-min_i, 0))/float(max_i-min_i);
+}
+        "#,
+    )
+}
+
+pub fn rasterize_lod<D: Dimension>(
+    base_metadata: TensorMetaData<D>,
+    body: &str,
+) -> LODTensorOperator<D, f32> {
     let mut levels = Vec::new();
     let mut spacing = Vector::fill(1.0f32);
     //TODO: maybe we want to compute the spacing based on dimension reduction instead? could be
     //more accurate...
     loop {
-        let md = VolumeMetaData {
+        let md = TensorMetaData {
             dimensions: (base_metadata.dimensions.raw().f32() / spacing)
                 .map(|v| v.ceil() as u32)
                 .global(),
@@ -94,24 +128,42 @@ pub fn rasterize_lod(base_metadata: VolumeMetaData, body: &str) -> LODVolumeOper
         }
     }
 
-    LODVolumeOperator { levels }
+    LODTensorOperator { levels }
 }
 
-pub fn rasterize(metadata: VolumeMetaData, gen_fn: &str) -> VolumeOperator<f32> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        offset: cgmath::Vector3<u32>,
-        mem_dim: cgmath::Vector3<u32>,
-        logical_dim: cgmath::Vector3<u32>,
-        vol_dim: cgmath::Vector3<u32>,
+pub fn rasterize<D: Dimension>(
+    metadata: TensorMetaData<D>,
+    gen_fn: &str,
+) -> TensorOperator<D, f32> {
+    #[derive(Clone, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct PushConstants<D: Dimension> {
+        offset: Vector<D, u32>,
+        mem_dim: Vector<D, u32>,
+        logical_dim: Vector<D, u32>,
+        vol_dim: Vector<D, u32>,
     }
+
+    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
+    //TODO: This is fine for the current layout, but we really want a better general approach
+    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
 
     let shader = format!(
         "{}{}{}",
         r#"
 #version 450
 
+#extension GL_EXT_scalar_block_layout : require
+
 #include <util.glsl>
+#include <vec.glsl>
+
+layout(scalar, push_constant) uniform PushConsts {
+    uint[N] offset;
+    uint[N] mem_dim;
+    uint[N] logical_dim;
+    uint[N] vol_dim;
+} consts;
 
 layout (local_size_x = 256) in;
 
@@ -119,9 +171,7 @@ layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
 
-declare_push_consts(consts);
-
-//float run(vec3 pos_normalized, vec3 pos_voxel) {
+//float run(uint[N] pos_normalized, float[n] pos_voxel) {
 //  ...
 //}
 "#,
@@ -133,12 +183,12 @@ void main()
     uint gID = gl_GlobalInvocationID.x;
 
     if(gID < BRICK_MEM_SIZE) {
-        uvec3 out_local = from_linear3(gID, consts.mem_dim);
+        uint[N] out_local = from_linear(gID, consts.mem_dim);
         float result = 0.0;
-        uvec3 pos_voxel = out_local + consts.offset;
-        vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
+        uint[N] pos_voxel = add(out_local, consts.offset);
+        float[N] pos_normalized = div(to_float(pos_voxel),to_float(consts.vol_dim));
 
-        if(all(lessThan(out_local, consts.logical_dim))) {
+        if(all(less_than(out_local, consts.logical_dim))) {
             result = run(pos_normalized, pos_voxel);
         } else {
             result = NaN;
@@ -172,8 +222,8 @@ void main()
                             (
                                 shader.as_str(),
                                 ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("N", D::N),
                             ),
                             true,
                         )
@@ -194,14 +244,11 @@ void main()
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant(PushConstants {
-                                offset: brick_info.begin.into_elem::<u32>().into(),
-                                logical_dim: brick_info
-                                    .logical_dimensions
-                                    .into_elem::<u32>()
-                                    .into(),
-                                mem_dim: m.chunk_size.into_elem::<u32>().into(),
-                                vol_dim: m.dimensions.into_elem::<u32>().into(),
+                            pipeline.push_constant_pod(PushConstants {
+                                offset: brick_info.begin.into_elem::<u32>(),
+                                logical_dim: brick_info.logical_dimensions.into_elem::<u32>(),
+                                mem_dim: m.chunk_size.into_elem::<u32>(),
+                                vol_dim: m.dimensions.into_elem::<u32>(),
                             });
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);

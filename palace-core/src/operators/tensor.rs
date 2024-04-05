@@ -236,7 +236,10 @@ impl<D: Dimension, E: Element> EmbeddedTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
 
-    pub fn map_inner(self, f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, E>) -> Self {
+    pub fn map_inner<O: Element>(
+        self,
+        f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, O>,
+    ) -> EmbeddedTensorOperator<D, O> {
         EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,

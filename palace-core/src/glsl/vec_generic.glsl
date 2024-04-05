@@ -46,6 +46,54 @@ uint[_N] max(uint[_N] l, uint[_N] r) {
     return res;
 }
 
+float[_N] add(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] + r[i];
+    }
+    return res;
+}
+
+float[_N] sub(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] - r[i];
+    }
+    return res;
+}
+
+float[_N] mul(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] * r[i];
+    }
+    return res;
+}
+
+float[_N] div(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] / r[i];
+    }
+    return res;
+}
+
+float[_N] min(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = min(l[i], r[i]);
+    }
+    return res;
+}
+
+float[_N] max(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = max(l[i], r[i]);
+    }
+    return res;
+}
+
 uint[_N] fill(uint[_N] dummy, uint val) {
     uint[_N] res;
     for(int i=0; i<_N; i+=1) {

@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     array::ArrayOperator,
+    raycaster::TransFuncOperator,
     scalar::ScalarOperator,
     volume::{ChunkSize, VolumeOperator},
 };
@@ -139,6 +140,150 @@ void main()
 
                     unsafe {
                         inplace.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
+                    };
+                }
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
+pub fn apply_tf<'op, D: Dimension>(
+    input: TensorOperator<D, f32>,
+    tf: TransFuncOperator,
+) -> TensorOperator<D, Vector<D4, u8>> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        tf_min: f32,
+        tf_max: f32,
+        tf_len: u32,
+    }
+    const SHADER: &'static str = r#"
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+#include <util.glsl>
+
+layout (local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    float values[BRICK_MEM_SIZE];
+} sourceData;
+
+layout(std430, binding = 1) buffer TFTableBuffer {
+    u8vec4 values[];
+} tf_table;
+
+layout(std430, binding = 2) buffer OutputBuffer{
+    u8vec4 values[BRICK_MEM_SIZE];
+} outputData;
+
+declare_push_consts(consts);
+
+//TODO: deduplicate, move to module
+u8vec4 classify(float val) {
+    float norm = (val-consts.tf_min)/(consts.tf_max - consts.tf_min);
+    uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len - 1);
+    return tf_table.values[index];
+}
+
+void main()
+{
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < BRICK_MEM_SIZE) {
+        float v = sourceData.values[gID];
+        outputData.values[gID] = classify(v);
+    }
+}
+"#;
+
+    TensorOperator::with_state(
+        OperatorDescriptor::new("volume_scale_gpu")
+            .dependent_on(&input)
+            .dependent_on_data(&tf),
+        input.metadata,
+        (input, tf),
+        move |ctx, positions, (input, tf)| {
+            async move {
+                let device = ctx.preferred_device();
+
+                let access_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                };
+                let m = input.metadata;
+
+                assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
+                let tf_data_gpu = ctx
+                    .submit(
+                        tf.table
+                            .chunks
+                            .request_gpu(device.id, Vector::from([0]), access_info),
+                    )
+                    .await;
+
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new()
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .push_const_block::<PushConstants>(),
+                            ),
+                            true,
+                        )
+                    });
+
+                let mut brick_stream = ctx
+                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
+                        (input.chunks.request_gpu(device.id, *pos, access_info), *pos)
+                    }))
+                    .then_req_with_data(*ctx, |(input, pos)| {
+                        let brick_info = m.chunk_info(pos);
+
+                        let output = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
+                        (output, (input, brick_info))
+                    });
+
+                while let Some((output_chunk, (input_chunk, brick_info))) =
+                    brick_stream.next().await
+                {
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config =
+                            DescriptorConfig::new([&input_chunk, &tf_data_gpu, &output_chunk]);
+
+                        let global_size = brick_info.mem_elements();
+
+                        unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
+
+                            let tf_data = tf.data();
+                            let consts = PushConstants {
+                                tf_min: tf_data.min,
+                                tf_max: tf_data.max,
+                                tf_len: tf_data.len,
+                            };
+                            pipeline.push_constant(consts);
+
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch(global_size);
+                        }
+                    });
+
+                    unsafe {
+                        output_chunk.initialized(
                             *ctx,
                             SrcBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -898,7 +1043,7 @@ void main()
 
     float val;
 
-    uvec3 local = from_linear3(gID, consts.mem_dim);
+    uvec3 local = from_linear(gID, consts.mem_dim);
 
     if(all(lessThan(local, consts.logical_dim))) {
         val = sourceData.values[gID] * consts.norm_factor;
@@ -1176,7 +1321,7 @@ mod test {
                     dimensions: size,
                     chunk_size: chunk_size.into(),
                 },
-                r#"float run(vec3 pos_normalized, vec3 pos_voxel) { return float(pos_voxel.x + pos_voxel.y + pos_voxel.z); }"#,
+                r#"float run(float[3] pos_normalized, uint[3] pos_voxel) { return float(pos_voxel[0] + pos_voxel[1] + pos_voxel[2]); }"#,
             );
             let output = rechunk(input, LocalVoxelPosition::from(chunk_size).into_elem());
             compare_tensor_fn(output, fill_expected);

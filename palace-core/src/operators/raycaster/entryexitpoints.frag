@@ -14,7 +14,7 @@ declare_push_consts(consts);
 
 void main() {
     uvec2 pos = uvec2(gl_FragCoord.xy);
-    uint linear_pos = to_linear2(pos, consts.out_mem_dim);
+    uint linear_pos = to_linear(pos, consts.out_mem_dim);
 
     vec4 color = vec4(norm_pos, 1.0);
     if(gl_FrontFacing) {

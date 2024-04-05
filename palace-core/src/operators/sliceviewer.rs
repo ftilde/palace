@@ -588,7 +588,7 @@ mod test {
                     dimensions: vol_size,
                     chunk_size: (vol_size / Vector::fill(2u32)).local(),
                 },
-                r#"float run(vec3 pos_normalized, uvec3 pos_voxel) { return float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0; }"#,
+                r#"float run(float[3] pos_normalized, uint[3] pos_voxel) { return float(pos_voxel[0] + pos_voxel[1] + pos_voxel[2])/32.0; }"#,
             );
 
             let img_meta = ImageMetaData {

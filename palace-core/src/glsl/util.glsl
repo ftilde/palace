@@ -1,11 +1,11 @@
 #ifndef UTIL_GLSL
 #define UTIL_GLSL
 
-uint to_linear2(uvec2 vec_pos, uvec2 size) {
+uint to_linear(uvec2 vec_pos, uvec2 size) {
     return vec_pos.x + size.x*vec_pos.y;
 }
 
-uvec2 from_linear2(uint linear_pos, uvec2 size) {
+uvec2 from_linear(uint linear_pos, uvec2 size) {
     uvec2 vec_pos;
     vec_pos.x = linear_pos % size.x;
     linear_pos /= size.x;
@@ -14,11 +14,11 @@ uvec2 from_linear2(uint linear_pos, uvec2 size) {
     return vec_pos;
 }
 
-uint to_linear3(uvec3 vec_pos, uvec3 size) {
+uint to_linear(uvec3 vec_pos, uvec3 size) {
     return vec_pos.x + size.x*(vec_pos.y + size.y*vec_pos.z);
 }
 
-uvec3 from_linear3(uint linear_pos, uvec3 size) {
+uvec3 from_linear(uint linear_pos, uvec3 size) {
     uvec3 vec_pos;
     vec_pos.x = linear_pos % size.x;
     linear_pos /= size.x;

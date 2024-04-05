@@ -171,8 +171,8 @@ type CTensorDataOperator<D, T> = COperator<Vector<D, ChunkCoordinate>, T>;
 #[pyclass(unsendable)]
 #[derive(Clone, Debug)]
 pub struct TensorMetaData {
-    dimensions: Vec<u32>,
-    chunk_size: Vec<u32>,
+    pub dimensions: Vec<u32>,
+    pub chunk_size: Vec<u32>,
 }
 
 #[pymethods]
@@ -224,7 +224,7 @@ pub struct TensorOperator {
     #[pyo3(get)]
     pub dtype: DType,
     #[pyo3(get)]
-    metadata: TensorMetaData,
+    pub metadata: TensorMetaData,
     clone: fn(&Self) -> Self,
 }
 
@@ -424,7 +424,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
-#[derive(FromPyObject, Debug)]
+#[derive(FromPyObject, Debug, Clone)]
 pub enum MaybeEmbeddedTensorOperator {
     Not(TensorOperator),
     Embedded(EmbeddedTensorOperator),
@@ -437,20 +437,20 @@ impl MaybeEmbeddedTensorOperator {
             MaybeEmbeddedTensorOperator::Embedded(e) => e.inner,
         }
     }
-    pub fn try_map_inner<D: Dimension, T: Element + 'static>(
+    pub fn try_map_inner<D: Dimension, I: Element + 'static, O: Element + 'static>(
         self,
         py: Python,
-        f: impl FnOnce(CTensorOperator<D, T>) -> CTensorOperator<D, T>,
+        f: impl FnOnce(CTensorOperator<D, I>) -> CTensorOperator<D, O>,
     ) -> PyResult<PyObject> {
         Ok(match self {
             MaybeEmbeddedTensorOperator::Not(v) => {
-                let v: CTensorOperator<D, T> = v.try_into()?;
+                let v: CTensorOperator<D, I> = v.try_into()?;
                 let v = f(v);
                 let v: TensorOperator = v.try_into()?;
                 v.into_py(py)
             }
             MaybeEmbeddedTensorOperator::Embedded(v) => {
-                let v: CEmbeddedTensorOperator<D, T> = v.try_into()?;
+                let v: CEmbeddedTensorOperator<D, I> = v.try_into()?;
                 let v = v.map_inner(f);
                 let v: EmbeddedTensorOperator = v.try_into()?;
                 v.into_py(py)

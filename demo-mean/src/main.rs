@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             },
-            r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
-                vec3 centered = pos-vec3(0.5);
+            r#"float run(float[3] p, uint[3] pos_voxel) {
+                vec3 centered = vec3(p[2], p[1], p[0])-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;
                 return sqrt(d_sq);

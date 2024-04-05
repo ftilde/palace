@@ -197,3 +197,33 @@ pub fn view_image(
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
     crate::map_err(palace_core::operators::png_writer::read(path))?.try_into()
 }
+
+#[pyfunction]
+pub fn apply_tf(
+    py: Python,
+    input: MaybeEmbeddedTensorOperator,
+    tf: TransFuncOperator,
+) -> PyResult<PyObject> {
+    let nd = input.clone().inner().metadata.dimensions.len();
+    if nd != 2 {
+        return Err(PyErr::new::<PyException, _>(format!(
+            "apply_tf for dim {} not supported, yet",
+            nd
+        )));
+    }
+    let tf = tf.try_into()?;
+    input.try_map_inner(py, |input| {
+        palace_core::operators::volume_gpu::apply_tf::<D2>(input, tf)
+    })
+}
+
+#[pyfunction]
+pub fn mandelbrot(md: ImageMetaData) -> PyResult<LODTensorOperator> {
+    //let nd = md.dimensions.len();
+    //if nd != 2 {
+    //    return Err(PyErr::new::<PyException, _>(
+    //        format!("MetaData must be 2D",),
+    //    ));
+    //}
+    palace_core::operators::procedural::mandelbrot(md).try_into()
+}
