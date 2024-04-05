@@ -21,7 +21,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 let field_ids = fields.named.iter().map(|f| {
                     let name = &f.ident;
                     quote! {
-                        self.#name.id(),
+                        ::id::Identify::id(&self.#name),
                     }
                 });
 
@@ -35,7 +35,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 let field_ids = fields.unnamed.iter().enumerate().map(|(num, _f)| {
                     let num = syn::Index::from(num);
                     quote! {
-                        self.#num.id(),
+                        ::id::Identify::id(&self.#num),
                     }
                 });
                 quote! {
@@ -58,13 +58,13 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                         let field_names = f.named.iter().map(|v| &v.ident);
                         let field_ids = field_names.clone().map(|name| {
                             quote! {
-                                #name.id()
+                                ::id::Identify::id(#name)
                             }
                         });
                         quote! {
                             Self::#name { #(#field_names,)* } => {
                                 ::id::Id::combine(&[
-                                    #i.id(),
+                                    ::id::Identify::id(&#i),
                                     #(#field_ids,)*
                                 ])
                             }
@@ -77,20 +77,20 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                         });
                         let field_ids = field_names.clone().map(|name| {
                             quote! {
-                                #name.id()
+                                ::id::Identify::id(#name)
                             }
                         });
                         quote! {
                             Self::#name ( #(#field_names,)* ) => {
                                 ::id::Id::combine(&[
-                                    #i.id(),
+                                    ::id::Identify::id(&#i),
                                     #(#field_ids,)*
                                 ])
                             }
                         }
                     }
                     Fields::Unit => quote! {
-                        Self::#name => #i.id(),
+                        Self::#name => ::id::Identify::id(&#i),
                     },
                 }
             });

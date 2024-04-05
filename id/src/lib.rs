@@ -72,6 +72,12 @@ impl Identify for str {
     }
 }
 
+impl Identify for &str {
+    fn id(&self) -> Id {
+        Id::from_data(self.as_bytes())
+    }
+}
+
 impl Identify for String {
     fn id(&self) -> Id {
         self.as_str().id()

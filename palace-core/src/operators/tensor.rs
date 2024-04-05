@@ -15,7 +15,7 @@ use crate::{
 };
 use id::{Id, Identify};
 
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub struct TensorOperator<D: Dimension, E> {
     pub metadata: TensorMetaData<D>,
     pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,

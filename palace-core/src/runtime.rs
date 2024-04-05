@@ -65,7 +65,7 @@ struct OperatorBatches<'inv> {
 impl<'inv> OperatorBatches<'inv> {
     fn new(source: &'inv dyn OpaqueOperator) -> Self {
         let task_counter: crate::util::IdGenerator<u64> = Default::default();
-        let first_batch_id = TaskId::new(source.id(), task_counter.next() as _);
+        let first_batch_id = TaskId::new(source.op_id(), task_counter.next() as _);
         OperatorBatches {
             unfinished: Set::new(),
             unfinished_batch_id: first_batch_id,
@@ -80,7 +80,7 @@ impl<'inv> OperatorBatches<'inv> {
         let old_batch = std::mem::replace(&mut self.unfinished, items);
         let ret = (self.unfinished_batch_id, old_batch);
 
-        let new_batch_id = TaskId::new(self.op.id(), self.task_counter.next() as _);
+        let new_batch_id = TaskId::new(self.op.op_id(), self.task_counter.next() as _);
         self.unfinished_batch_id = new_batch_id;
 
         ret
@@ -105,7 +105,7 @@ impl<'inv> RequestBatcher<'inv> {
         from: TaskId,
     ) -> BatchAddResult {
         let source = &*request.source;
-        let op_id = source.id();
+        let op_id = source.op_id();
         let req_item = DataRequestItem {
             id: request.id,
             item: request.item,
@@ -804,7 +804,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 panic!("Ready request should never reach the executor");
             }
             RequestType::Data(data_request) => {
-                let op_id = data_request.source.id();
+                let op_id = data_request.source.op_id();
                 self.operator_info
                     .entry(op_id)
                     .or_insert(data_request.source.descriptor());

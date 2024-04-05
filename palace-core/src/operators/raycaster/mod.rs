@@ -19,7 +19,7 @@ use crate::{
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
-use id::{Id, Identify};
+use id::Identify;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -467,7 +467,7 @@ impl Shading {
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy, Debug)]
+#[derive(state_link::State, Clone, Copy, Debug, Identify)]
 pub struct RaycasterConfig {
     #[pyo3(get, set)]
     pub lod_coarseness: f32,
@@ -491,17 +491,6 @@ impl RaycasterConfig {
     }
 }
 
-impl Identify for RaycasterConfig {
-    fn id(&self) -> Id {
-        Id::combine(&[
-            self.lod_coarseness.id(),
-            self.oversampling_factor.id(),
-            self.compositing_mode.id(),
-            self.shading.id(),
-        ])
-    }
-}
-
 impl Default for RaycasterConfig {
     fn default() -> Self {
         RaycasterConfig {
@@ -515,17 +504,11 @@ impl Default for RaycasterConfig {
 
 pub type TransFuncTableOperator = ArrayOperator<Vector<D4, u8>>;
 
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub struct TransFuncOperator {
     pub table: TransFuncTableOperator,
     pub min: f32,
     pub max: f32,
-}
-
-impl Identify for TransFuncOperator {
-    fn id(&self) -> Id {
-        Id::combine(&[self.table.metadata.id(), self.min.id(), self.max.id()])
-    }
 }
 
 impl TransFuncOperator {
