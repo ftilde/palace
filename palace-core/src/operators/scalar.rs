@@ -3,7 +3,7 @@ use crate::{
     storage::Element,
     task::{Task, TaskContext},
 };
-use id::{Id, Identify};
+use id::Identify;
 
 pub type ScalarOperator<T> = Operator<(), T>;
 
@@ -32,7 +32,7 @@ impl<T: Element> ScalarOperator<T> {
             OperatorDescriptor::new("ScalarOperator::map")
                 .dependent_on(&self)
                 .dependent_on_data(&data)
-                .dependent_on_data(&Id::hash(&f)),
+                .dependent_on_data(&(f as usize)),
             (self, data, f),
             move |ctx, (s, data, f)| {
                 async move {

@@ -82,10 +82,8 @@ impl OperatorDescriptor {
 pub struct DataId(pub Id);
 
 impl DataId {
-    pub fn new(op: OperatorId, descriptor: &impl std::hash::Hash) -> Self {
-        let data_id = Id::hash(descriptor);
-
-        DataId(Id::combine(&[op.inner(), data_id]))
+    pub fn new(op: OperatorId, descriptor: &impl Identify) -> Self {
+        DataId(Id::combine(&[op.inner(), descriptor.id()]))
     }
 
     pub fn in_location(self, location: DataLocation) -> LocatedDataId {
@@ -103,7 +101,7 @@ pub struct DataDescriptor {
 }
 
 impl DataDescriptor {
-    pub fn new(op: OperatorDescriptor, data: &impl std::hash::Hash) -> Self {
+    pub fn new(op: OperatorDescriptor, data: &impl Identify) -> Self {
         Self {
             longevity: op.data_longevity,
             id: DataId::new(op.id, data),
@@ -225,7 +223,7 @@ impl<Output: Element> Operator<(), Output> {
     }
 }
 
-impl<ItemDescriptor: std::hash::Hash + 'static, Output: Element> Operator<ItemDescriptor, Output> {
+impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescriptor, Output> {
     pub fn new<
         F: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, ItemDescriptor, Output>,
@@ -477,9 +475,7 @@ impl<ItemDescriptor, Output> Identify for Operator<ItemDescriptor, Output> {
     }
 }
 
-impl<ItemDescriptor: std::hash::Hash, Output: Copy> OpaqueOperator
-    for Operator<ItemDescriptor, Output>
-{
+impl<ItemDescriptor: Identify, Output: Copy> OpaqueOperator for Operator<ItemDescriptor, Output> {
     fn op_id(&self) -> OperatorId {
         self.descriptor.id
     }

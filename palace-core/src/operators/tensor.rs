@@ -13,7 +13,7 @@ use crate::{
     },
     task::{RequestStream, Task, TaskContext},
 };
-use id::{Id, Identify};
+use id::Identify;
 
 #[derive(Clone, Identify)]
 pub struct TensorOperator<D: Dimension, E> {
@@ -251,7 +251,7 @@ pub fn map<D: Dimension, E: Element>(
     TensorOperator::with_state(
         OperatorDescriptor::new("tensor_map")
             .dependent_on(&input)
-            .dependent_on_data(&Id::hash(&f)),
+            .dependent_on_data(&(f as usize)),
         input.metadata,
         input,
         move |ctx, positions, input| {

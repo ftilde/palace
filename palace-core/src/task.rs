@@ -25,7 +25,7 @@ use crate::vulkan::{BarrierInfo, DeviceContext, DeviceId};
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
-use id::Id;
+use id::{Id, Identify};
 use pin_project::pin_project;
 
 use derive_more::{Constructor, Deref, DerefMut};
@@ -737,7 +737,7 @@ impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
         self.inner
     }
 }
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
+impl<'cref, 'inv, ItemDescriptor: Identify, Output: ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>) -> Self {
@@ -748,7 +748,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot<'req>(
@@ -761,7 +761,7 @@ impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: std::hash::Hash, Output: Element + ?Sized>
+impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
     TaskContext<'cref, 'inv, ItemDescriptor, Output>
 {
     pub fn alloc_slot_gpu<'a>(
