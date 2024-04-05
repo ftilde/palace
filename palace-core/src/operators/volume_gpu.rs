@@ -1035,7 +1035,6 @@ mod test {
     use super::*;
     use crate::{
         data::{GlobalCoordinate, LocalVoxelPosition, Vector, VoxelPosition},
-        operators::volume::VolumeOperatorState,
         test_util::*,
     };
 
@@ -1048,7 +1047,6 @@ mod test {
             let v = crate::vec::to_linear(v, size);
             v as f32
         });
-        let input = input.operate();
 
         let output = mean(input);
 
@@ -1099,8 +1097,7 @@ mod test {
         };
         let scale = (-2.0).into();
         let offset = (1.0).into();
-        let input = point_vol.operate();
-        let output = linear_rescale(input, scale, offset);
+        let output = linear_rescale(point_vol, scale, offset);
         compare_tensor_fn(output, fill_expected);
     }
 
@@ -1124,9 +1121,8 @@ mod test {
             }
             comp[center.as_index()] = -1.0;
         };
-        let input = point_vol.operate();
-        let l = linear_rescale(input.clone(), -2.0, 1.0);
-        let l2 = linear_rescale(input, -2.0, -10.0);
+        let l = linear_rescale(point_vol.clone(), -2.0, 1.0);
+        let l2 = linear_rescale(point_vol, -2.0, -10.0);
         let output = crate::operators::bin_ops::max(l, l2);
         compare_tensor_fn(output, fill_expected);
     }
@@ -1151,7 +1147,6 @@ mod test {
                 }
             }
         };
-        let input = input.operate();
         for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
             let output = rechunk(
                 input.clone(),
@@ -1176,26 +1171,24 @@ mod test {
             }
         };
         for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
-            let input = VoxelRasterizerGLSL {
-                metadata: crate::array::VolumeMetaData {
+            let input = crate::operators::procedural::rasterize(
+                crate::array::VolumeMetaData {
                     dimensions: size,
                     chunk_size: chunk_size.into(),
                 },
-                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z);"#.to_owned(),
-            };
-            let input = input.operate();
+                r#"float run(vec3 pos_normalized, vec3 pos_voxel) { return float(pos_voxel.x + pos_voxel.y + pos_voxel.z); }"#,
+            );
             let output = rechunk(input, LocalVoxelPosition::from(chunk_size).into_elem());
             compare_tensor_fn(output, fill_expected);
         }
     }
 
     fn compare_convolution_1d(
-        input: &dyn VolumeOperatorState,
+        input: VolumeOperator<f32>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
         dim: usize,
     ) {
-        let input = input.operate();
         let output = convolution_1d(input, crate::operators::array::from_rc(kernel.into()), dim);
         compare_tensor_fn(output, fill_expected);
     }
@@ -1207,7 +1200,7 @@ mod test {
 
         let (point_vol, center) = center_point_vol(size, brick_size);
         compare_convolution_1d(
-            &point_vol,
+            point_vol,
             &[1.0, -1.0, 2.0],
             |comp| {
                 comp[center.map_element(dim, |v| v - 1u32).as_index()] = 1.0;
@@ -1230,7 +1223,7 @@ mod test {
         kernel[kernel_size - 1] = 1.0;
         kernel[kernel_size - 2] = 2.0;
         compare_convolution_1d(
-            &point_vol,
+            point_vol,
             &kernel,
             |comp| {
                 comp[center.map_element(dim, |v| v - extent).as_index()] = -1.0;
@@ -1271,7 +1264,7 @@ mod test {
         });
 
         compare_convolution_1d(
-            &vol,
+            vol,
             &[7.0, 1.0, 3.0],
             |comp| {
                 comp[[0, 0, 0]] = 4.0;
@@ -1295,7 +1288,7 @@ mod test {
         let kernels: [_; 3] =
             std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
         let kernels = Vector::from_fn(|i| &kernels[i]);
-        let output = separable_convolution(point_vol.operate(), kernels);
+        let output = separable_convolution(point_vol, kernels);
         compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {

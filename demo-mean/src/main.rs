@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             },
-            r#"float run(vec3 pos) {
+            r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
                 vec3 centered = pos-vec3(0.5);
                 vec3 sq = centered*centered;
                 float d_sq = sq.x + sq.y + sq.z;

@@ -19,8 +19,8 @@ use super::volume::{LODVolumeOperator, VolumeOperator};
 pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     rasterize_lod(
         base_metadata,
-        r#"float run(vec3 pos) {
-            vec3 centered = pos-vec3(0.5);
+        r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
+            vec3 centered = pos_normalized-vec3(0.5);
             vec3 sq = centered*centered;
             float d_sq = sq.x + sq.y + sq.z;
             return clamp(10*(0.5 - sqrt(d_sq)), 0.0, 1.0);
@@ -31,7 +31,7 @@ pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
 pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     rasterize_lod(
         base_metadata,
-        r#"float run(vec3 pos) {
+        r#"float run(vec3 pos_normalized, uvec3 pos_voxel) {
             return 1.0;
         }"#,
     )
@@ -49,9 +49,9 @@ vec3 vec_pow(vec3 v, float n) {
     return pow(r, n) * vec3(sin(n*t)*cos(n*p), sin(n*t)*sin(n*p), cos(n*t));
 }
 
-float run(vec3 pos) {
+float run(vec3 pos_normalized, uvec3 pos_voxel) {
     float outside_radius = 2.3;
-    vec3 centered = (pos-vec3(0.5)) * outside_radius;
+    vec3 centered = (pos_normalized-vec3(0.5)) * outside_radius;
 
     vec3 v = vec3(centered);
     int i;
@@ -121,7 +121,7 @@ layout(std430, binding = 0) buffer OutputBuffer{
 
 declare_push_consts(consts);
 
-//float run(vec3 pos) {
+//float run(vec3 pos_normalized, vec3 pos_voxel) {
 //  ...
 //}
 "#,
@@ -139,7 +139,7 @@ void main()
         vec3 pos_normalized = vec3(pos_voxel)/vec3(consts.vol_dim);
 
         if(all(lessThan(out_local, consts.logical_dim))) {
-            result = run(pos_normalized);
+            result = run(pos_normalized, pos_voxel);
         } else {
             result = NaN;
         }

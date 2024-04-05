@@ -422,11 +422,10 @@ mod test {
     };
 
     fn compare_convolution_1d<const DIM: usize>(
-        input: &dyn VolumeOperatorState,
+        input: VolumeOperator<f32>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {
-        let input = input.operate();
         let kernel = crate::operators::array::from_rc(kernel.into());
         let output = convolution_1d::<DIM>(input, kernel);
         compare_tensor_fn(output, fill_expected);
@@ -438,7 +437,7 @@ mod test {
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let (point_vol, center) = center_point_vol(size, brick_size);
-        compare_convolution_1d::<DIM>(&point_vol, &[1.0, -1.0, 2.0], |comp| {
+        compare_convolution_1d::<DIM>(point_vol, &[1.0, -1.0, 2.0], |comp| {
             comp[center.map_element(DIM, |v| v - 1u32).as_index()] = 1.0;
             comp[center.map_element(DIM, |v| v).as_index()] = -1.0;
             comp[center.map_element(DIM, |v| v + 1u32).as_index()] = 2.0;
@@ -456,7 +455,7 @@ mod test {
         kernel[1] = -2.0;
         kernel[kernel_size - 1] = 1.0;
         kernel[kernel_size - 2] = 2.0;
-        compare_convolution_1d::<DIM>(&point_vol, &kernel, |comp| {
+        compare_convolution_1d::<DIM>(point_vol, &kernel, |comp| {
             comp[center.map_element(DIM, |v| v - extent).as_index()] = -1.0;
             comp[center.map_element(DIM, |v| v - extent + 1u32).as_index()] = -2.0;
             comp[center.map_element(DIM, |v| v + extent).as_index()] = 1.0;
@@ -486,7 +485,7 @@ mod test {
 
         let kernels = [&[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0], &[2.0, 1.0, 2.0]];
         let kernels = std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
-        let output = separable_convolution(point_vol.operate(), kernels);
+        let output = separable_convolution(point_vol, kernels);
         compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {

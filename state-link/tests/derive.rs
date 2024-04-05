@@ -66,7 +66,7 @@ enum Enum {
 
 #[test]
 fn derive_enum() {
-    let mut f = Enum::One;
+    let f = Enum::One;
 
     let mut store = state_link::Store::default();
 

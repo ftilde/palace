@@ -3,7 +3,7 @@ use crate::{
     dim::*,
     operators::{
         tensor::TensorOperator,
-        volume::{ChunkSize, VolumeOperatorState},
+        volume::{ChunkSize, VolumeOperator},
         volume_gpu::rechunk,
     },
     storage::Element,
@@ -82,7 +82,7 @@ pub fn compare_tensor<D: Dimension>(
 pub fn center_point_vol(
     size: VoxelPosition,
     brick_size: LocalVoxelPosition,
-) -> (impl VolumeOperatorState, VoxelPosition) {
+) -> (VolumeOperator<f32>, VoxelPosition) {
     let center = size.map(|v| v / 2u32);
 
     let point_vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {

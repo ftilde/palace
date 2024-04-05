@@ -552,7 +552,6 @@ mod test {
         array::ImageMetaData,
         data::{GlobalCoordinate, Vector},
         dim::*,
-        operators::{volume::VolumeOperatorState, volume_gpu::VoxelRasterizerGLSL},
         test_util::compare_tensor_fn,
     };
 
@@ -582,19 +581,18 @@ mod test {
                 }
             };
 
-            let input = VoxelRasterizerGLSL {
-                metadata: crate::array::VolumeMetaData {
+            let input = crate::operators::procedural::rasterize(
+                crate::array::VolumeMetaData {
                     dimensions: vol_size,
                     chunk_size: (vol_size / Vector::fill(2u32)).local(),
                 },
-                body: r#"result = float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0;"#.to_owned(),
-            };
+                r#"float run(vec3 pos_normalized, uvec3 pos_voxel) { return float(pos_voxel.x + pos_voxel.y + pos_voxel.z)/32.0; }"#,
+            );
 
             let img_meta = ImageMetaData {
                 dimensions: img_size,
                 chunk_size: (img_size / Vector::fill(3u32)).local(),
             };
-            let input = input.operate();
             let slice_proj = super::slice_projection_mat_z_scaled_fit(
                 input.metadata.clone(),
                 img_meta.into(),
