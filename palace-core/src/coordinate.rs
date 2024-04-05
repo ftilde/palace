@@ -1,6 +1,6 @@
 use std::ops::{Add, Div, Mul, Sub};
 
-use crate::id::{Id, Identify};
+use id::{Id, Identify};
 
 pub trait CoordinateType: Copy + Clone + PartialEq + Eq {}
 

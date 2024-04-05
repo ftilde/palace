@@ -5,7 +5,6 @@ pub mod coordinate;
 pub mod data;
 pub mod dim;
 pub mod event;
-pub mod id;
 pub mod mat;
 pub mod operator;
 pub mod operators;

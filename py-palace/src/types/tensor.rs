@@ -1,16 +1,16 @@
+use id::Identify;
 use numpy::PyArray1;
-use pyo3::types::PyFunction;
-use pyo3::{exceptions::PyException, prelude::*};
 use palace_core::array::TensorEmbeddingData as CTensorEmbeddingData;
 use palace_core::array::TensorMetaData as CTensorMetaData;
 use palace_core::{
     array::{ArrayMetaData, VolumeMetaData},
     data::{ChunkCoordinate, Vector},
     dim::*,
-    id::Identify,
     operator::Operator as COperator,
     storage::Element,
 };
+use pyo3::types::PyFunction;
+use pyo3::{exceptions::PyException, prelude::*};
 
 use palace_core::array::ImageMetaData;
 use palace_core::operators::scalar::ScalarOperator as CScalarOperator;

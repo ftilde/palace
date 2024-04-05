@@ -1,10 +1,7 @@
 use std::ops::{Add, Mul, Sub};
 
-use crate::{
-    dim::*,
-    id::{Id, Identify},
-    vec::Vector,
-};
+use crate::{dim::*, vec::Vector};
+use id::{Id, Identify};
 
 // A column major matrix
 #[repr(transparent)]

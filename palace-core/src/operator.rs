@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use crate::{
-    id::{Id, Identify},
     storage::{
         gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
     },
@@ -9,6 +8,7 @@ use crate::{
     task_graph::{LocatedDataId, VisibleDataId},
     vulkan::{DeviceId, DstBarrierInfo},
 };
+use id::{Id, Identify};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct OperatorId(Id, pub &'static str);

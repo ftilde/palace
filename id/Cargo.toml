@@ -1,0 +1,10 @@
+[package]
+name = "id"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+id-derive = { path = "../id-derive" }
+sha1_smol = "1.0.0"
+xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
+bytemuck = { version = "1.12" }

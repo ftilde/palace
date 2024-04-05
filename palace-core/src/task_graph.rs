@@ -1,7 +1,6 @@
 use std::{collections::VecDeque, hash::Hash};
 
 use crate::{
-    id::Id,
     operator::{DataId, OperatorId},
     storage::{DataLocation, VisibleDataLocation},
     task::AllocationId,
@@ -11,6 +10,7 @@ use crate::{
 };
 use ahash::HashMapExt;
 use gs_core::EventStreamBuilder;
+use id::Id;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct LocatedDataId {

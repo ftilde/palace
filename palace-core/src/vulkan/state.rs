@@ -4,11 +4,8 @@ use std::{
     cell::{RefCell, UnsafeCell},
 };
 
-use crate::{
-    id::{Id, Identify},
-    operator::OperatorId,
-    util::Map,
-};
+use crate::{operator::OperatorId, util::Map};
+use id::{Id, Identify};
 
 use super::DeviceContext;
 

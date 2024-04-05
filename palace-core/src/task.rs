@@ -9,7 +9,6 @@ use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 use std::time::Instant;
 
-use crate::id::Id;
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
@@ -26,6 +25,7 @@ use crate::vulkan::{BarrierInfo, DeviceContext, DeviceId};
 use crate::Error;
 use futures::stream::StreamExt;
 use futures::Stream;
+use id::Id;
 use pin_project::pin_project;
 
 use derive_more::{Constructor, Deref, DerefMut};

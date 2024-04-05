@@ -1,9 +1,9 @@
 use crate::{
-    id::{Id, Identify},
     operator::{Operator, OperatorDescriptor},
     storage::Element,
     task::{Task, TaskContext},
 };
+use id::{Id, Identify};
 
 pub type ScalarOperator<T> = Operator<(), T>;
 

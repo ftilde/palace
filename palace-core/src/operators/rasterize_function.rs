@@ -93,7 +93,7 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F>
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
                 //same type!
-                .dependent_on_data(&crate::id::func_id::<F>())
+                .dependent_on_data(&id::func_id::<F>())
                 .dependent_on_data(&self.metadata),
             self.metadata,
             self.clone(),

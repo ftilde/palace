@@ -69,14 +69,12 @@ pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
     )
 }
 
-#[derive(Copy, Clone, From, Hash, Debug)]
+#[derive(Copy, Clone, From, Hash, Debug, id::Identify)]
 pub enum ChunkSize {
     Fixed(LocalCoordinate),
     //Relative(f32),
     Full,
 }
-
-crate::id::impl_hash!(ChunkSize);
 
 impl ChunkSize {
     pub fn apply(self, global_size: GlobalCoordinate) -> LocalCoordinate {

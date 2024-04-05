@@ -989,6 +989,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
+name = "id"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "id-derive",
+ "sha1_smol",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "id-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.55",
+]
+
+[[package]]
 name = "im-rc"
 version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,6 +1635,7 @@ name = "palace"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "id",
  "numpy",
  "palace-core",
  "palace-volume",
@@ -1644,6 +1664,7 @@ dependencies = [
  "gpu-allocator",
  "graphviz-rust",
  "gs-core",
+ "id",
  "im-rc",
  "itertools",
  "memmap",
@@ -1656,7 +1677,6 @@ dependencies = [
  "png",
  "priority-queue",
  "pyo3",
- "sha1_smol",
  "spirq",
  "spirv",
  "spirv-compiler",

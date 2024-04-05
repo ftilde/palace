@@ -8,7 +8,6 @@ use crate::{
     chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
-    id::{Id, Identify},
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -20,6 +19,7 @@ use crate::{
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
+use id::{Id, Identify};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -435,12 +435,11 @@ pub fn entry_exit_points(
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum CompositingMode {
     MOP,
     DVR,
 }
-crate::id::impl_hash!(CompositingMode);
 
 impl CompositingMode {
     fn define_name(&self) -> &'static str {
@@ -452,12 +451,11 @@ impl CompositingMode {
 }
 
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(state_link::State, Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum Shading {
     None,
     Phong,
 }
-crate::id::impl_hash!(Shading);
 
 impl Shading {
     fn define_name(&self) -> &'static str {

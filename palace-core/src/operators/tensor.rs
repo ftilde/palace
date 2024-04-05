@@ -6,7 +6,6 @@ use crate::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
-    id::{Id, Identify},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
@@ -14,6 +13,7 @@ use crate::{
     },
     task::{RequestStream, Task, TaskContext},
 };
+use id::{Id, Identify};
 
 #[derive(Clone)]
 pub struct TensorOperator<D: Dimension, E> {

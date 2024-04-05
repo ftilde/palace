@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sha1_smol = "1.0.0"
 memmap = "0.7.0"
 bytemuck = { version = "1.12", features = ["derive", "min_const_generics"] }
 itertools = "0.10"
@@ -35,6 +34,7 @@ im-rc = "15.1"
 egui = "0.22"
 array-init = "2.1.0"
 state-link = { path = "../state-link" }
+id = { path = "../id" }
 num = "0.4.1"
 pyo3 = { version = "0.19.1", features = [], optional = true }
 numpy = { version = "0.19.0", features = [], optional = true }

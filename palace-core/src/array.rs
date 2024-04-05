@@ -35,16 +35,10 @@ impl<D: Dimension> ChunkInfo<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern)]
+#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern, id::Identify)]
 pub struct TensorMetaData<D: Dimension> {
     pub dimensions: Vector<D, GlobalCoordinate>,
     pub chunk_size: Vector<D, LocalCoordinate>,
-}
-
-impl<D: Dimension> crate::id::Identify for TensorMetaData<D> {
-    fn id(&self) -> crate::id::Id {
-        crate::id::Id::hash(self)
-    }
 }
 
 // We have to do this manually since bytemuck cannot verify this in general due to the const
@@ -63,16 +57,10 @@ impl<D: LargerDim> TensorMetaData<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable, id::Identify)]
 pub struct TensorEmbeddingData<D: Dimension> {
     pub spacing: Vector<D, f32>,
     // NOTE: need to change identify impl if we want to add members
-}
-
-impl<D: Dimension> crate::id::Identify for TensorEmbeddingData<D> {
-    fn id(&self) -> crate::id::Id {
-        self.spacing.id()
-    }
 }
 
 impl<D: LargerDim> TensorEmbeddingData<D> {

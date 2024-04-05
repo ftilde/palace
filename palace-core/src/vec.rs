@@ -6,8 +6,8 @@ use std::{
 use crate::{
     coordinate::{ChunkCoordinate, Coordinate, CoordinateType, GlobalCoordinate, LocalCoordinate},
     dim::*,
-    id::{Id, Identify},
 };
+use id::{Id, Identify};
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]

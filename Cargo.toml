@@ -9,6 +9,8 @@ members = [
     "demo-mean",
     "demo-raycaster",
     "demo-large",
+    "id",
+    "id-derive",
     "state-link",
     "state-link-derive",
     "py-palace", "palace-volume",

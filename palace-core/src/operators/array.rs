@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
-use crate::{dim::*, id::Identify, storage::Element};
+use crate::{dim::*, storage::Element};
+use id::Identify;
 
 use super::tensor::TensorOperator;
 
