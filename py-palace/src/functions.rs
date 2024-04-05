@@ -144,8 +144,8 @@ pub fn raycast(
 #[pyfunction]
 pub fn render_slice(
     input: LODTensorOperator,
-    result_metadata: palace_core::array::ImageMetaData,
-    projection_mat: palace_core::data::Matrix<D4, f32>,
+    result_metadata: ImageMetaData,
+    projection_mat: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     palace_core::operators::sliceviewer::render_slice(
         input.try_into()?,
@@ -181,4 +181,19 @@ pub fn open_volume(
     let vol = crate::map_err(palace_volume::open(path, hints))?;
 
     vol.try_into()
+}
+
+#[pyfunction]
+pub fn view_image(
+    image: LODTensorOperator,
+    result_metadata: ImageMetaData,
+    view_state: palace_core::operators::imageviewer::ImageViewerState,
+) -> PyResult<TensorOperator> {
+    palace_core::operators::imageviewer::view_image(image.try_into()?, result_metadata, view_state)
+        .try_into()
+}
+
+#[pyfunction]
+pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
+    crate::map_err(palace_core::operators::png_writer::read(path))?.try_into()
 }

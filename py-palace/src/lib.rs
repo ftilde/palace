@@ -14,6 +14,7 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(open_volume, m)?)?;
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
+    m.add_function(wrap_pyfunction!(read_png, m)?)?;
     m.add_function(wrap_pyfunction!(mean, m)?)?;
     m.add_function(wrap_pyfunction!(linear_rescale, m)?)?;
     m.add_function(wrap_pyfunction!(threshold, m)?)?;
@@ -25,12 +26,15 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(gauss_kernel, m)?)?;
     m.add_function(wrap_pyfunction!(vesselness, m)?)?;
+    m.add_function(wrap_pyfunction!(view_image, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<palace_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<palace_core::operators::splitter::SplitDirection>()?;
     m.add_class::<palace_core::operators::raycaster::CameraState>()?;
     m.add_class::<palace_core::operators::raycaster::RaycasterConfig>()?;
     m.add_class::<palace_core::operators::raycaster::TrackballState>()?;
+    m.add_class::<palace_core::operators::imageviewer::ImageViewerState>()?;
+    m.add_class::<TensorEmbeddingData>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;
     m.add_class::<Events>()?;

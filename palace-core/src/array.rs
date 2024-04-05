@@ -46,6 +46,13 @@ pub struct TensorMetaData<D: Dimension> {
 //unsafe impl<D: Dimension> bytemuck::Pod for TensorMetaData<D> {}
 
 impl<D: LargerDim> TensorMetaData<D> {
+    pub fn single_chunk(dimensions: Vector<D, GlobalCoordinate>) -> Self {
+        Self {
+            dimensions,
+            chunk_size: dimensions.local(),
+        }
+    }
+
     pub fn norm_to_voxel(&self) -> Matrix<D::Larger, f32> {
         Matrix::from_translation(Vector::fill(-0.5))
             * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneous()

@@ -230,6 +230,8 @@ pub fn render_slice(
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
+#define ChunkValue float
+
 #include <util.glsl>
 #include <color.glsl>
 #include <hash.glsl>
@@ -242,7 +244,7 @@ layout(scalar, binding = 0) buffer OutputBuffer{
 } output_data;
 
 layout(std430, binding = 1) buffer RefBuffer {
-    BrickType values[NUM_BRICKS];
+    Chunk values[NUM_BRICKS];
 } bricks;
 
 layout(std430, binding = 2) buffer QueryTable {

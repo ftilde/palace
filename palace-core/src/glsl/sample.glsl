@@ -22,8 +22,8 @@
 #include <tensormetadata_generic.glsl>
 #undef _N
 
-layout(buffer_reference, std430) buffer BrickType {
-    float values[];
+layout(buffer_reference, std430) buffer Chunk {
+    ChunkValue values[];
 };
 
 const int SAMPLE_RES_FOUND = 0;
@@ -37,7 +37,7 @@ const int SAMPLE_RES_NOT_PRESENT = 2;
 //}
 */
 
-float sample_local(BrickType brick, uint[3] loc, TensorMetaData(3) vm) {
+ChunkValue sample_local(Chunk brick, uint[3] loc, TensorMetaData(3) vm) {
     uint local_index = to_linear(loc, vm.chunk_size);
     return brick.values[local_index];
 }
@@ -60,8 +60,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
 \
         (sample_brick_pos_linear) = to_linear(sample_brick, dim_in_bricks);\
 \
-        BrickType brick = (bricks)[(sample_brick_pos_linear)];\
-        float v = 0.0;\
+        Chunk brick = (bricks)[(sample_brick_pos_linear)];\
         if(uint64_t(brick) == 0) {\
             (found) = SAMPLE_RES_NOT_PRESENT;\
         } else {\
@@ -71,7 +70,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] local_end = sub(brick_end, brick_begin);\
             /*uint local_index = to_linear(local, (vm).chunk_size);\
             float v = brick.values[local_index];*/\
-            float v = sample_local(brick, local, vm);\
+            ChunkValue v = sample_local(brick, local, vm);\
 \
             for(int d = 0; d<N; ++d) {\
                 bool clamped = false;\
@@ -99,15 +98,14 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
 \
         (sample_brick_pos_linear) = to_linear(sample_brick, dim_in_bricks);\
 \
-        BrickType brick = (bricks)[(sample_brick_pos_linear)];\
-        float v = 0.0;\
+        Chunk brick = (bricks)[(sample_brick_pos_linear)];\
         if(uint64_t(brick) == 0) {\
             (found) = SAMPLE_RES_NOT_PRESENT;\
         } else {\
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] local = sub(sample_pos, brick_begin);\
             uint local_index = to_linear(local, (vm).chunk_size);\
-            float v = brick.values[local_index];\
+            ChunkValue v = brick.values[local_index];\
             (found) = SAMPLE_RES_FOUND;\
             (value) = v;\
         }\

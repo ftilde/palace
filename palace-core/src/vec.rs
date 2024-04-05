@@ -426,7 +426,7 @@ impl<T: Copy> From<cgmath::Vector4<T>> for Vector<D4, T> {
     }
 }
 
-impl Vector<D3, f32> {
+impl<D: Dimension> Vector<D, f32> {
     pub fn length(self) -> f32 {
         self.map(|v| v * v).fold(0.0, f32::add).sqrt()
     }
@@ -436,7 +436,9 @@ impl Vector<D3, f32> {
         let len_inv = 1.0 / len;
         self.map(|v| v * len_inv)
     }
+}
 
+impl Vector<D3, f32> {
     pub fn cross(self, other: Self) -> Self {
         let v1: cgmath::Vector3<f32> = self.into();
         let v2: cgmath::Vector3<f32> = other.into();

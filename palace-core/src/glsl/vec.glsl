@@ -46,6 +46,31 @@ uint[3] from_glsl(uvec3 v) {
     return o;
 }
 
+vec2 to_glsl(float[2] v) {
+    vec2 o;
+    o.x = v[1];
+    o.y = v[0];
+    return o;
+}
+uvec2 to_glsl(uint[2] v) {
+    uvec2 o;
+    o.x = v[1];
+    o.y = v[0];
+    return o;
+}
+float[2] from_glsl(vec2 v) {
+    float[2] o;
+    o[1] = v.x;
+    o[0] = v.y;
+    return o;
+}
+uint[2] from_glsl(uvec2 v) {
+    uint[2] o;
+    o[1] = v.x;
+    o[0] = v.y;
+    return o;
+}
+
 struct Vec3 {
     float vals[3];
 };

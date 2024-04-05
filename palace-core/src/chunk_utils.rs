@@ -3,8 +3,12 @@ use std::alloc::Layout;
 use ash::vk;
 
 use crate::{
-    operators::volume::VolumeOperator,
-    storage::gpu::{Allocation, IndexHandle},
+    dim::Dimension,
+    operators::tensor::TensorOperator,
+    storage::{
+        gpu::{Allocation, IndexHandle},
+        Element,
+    },
     task::{OpaqueTaskContext, Request},
     vulkan::{state::VulkanState, CommandBuffer, DeviceContext, DstBarrierInfo},
 };
@@ -98,11 +102,11 @@ impl VulkanState for ChunkRequestTable {
 
 pub struct Timeout;
 
-pub async fn request_to_index_with_timeout<'cref, 'inv>(
+pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
     to_request_linear: &mut [RTElement],
-    vol: &'inv VolumeOperator<f32>,
+    vol: &'inv TensorOperator<D, E>,
     index: &IndexHandle<'_>,
 ) -> Result<(), Timeout> {
     let dim_in_bricks = vol.metadata.dimension_in_chunks();

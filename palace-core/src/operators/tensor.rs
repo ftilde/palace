@@ -99,6 +99,104 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     }
 }
 
+impl<D: Dimension, E: Element + Identify> TensorOperator<D, E> {
+    pub fn from_static(
+        size: Vector<D, GlobalCoordinate>,
+        values: &'static [E],
+    ) -> Result<TensorOperator<D, E>, crate::Error> {
+        let m = TensorMetaData {
+            dimensions: size,
+            chunk_size: size.map(LocalCoordinate::interpret_as),
+        };
+        let n_elem = size.hmul();
+        if n_elem != values.len() {
+            return Err(format!(
+                "Tensor ({}) and data ({}) size do not match",
+                n_elem,
+                values.len()
+            )
+            .into());
+        }
+        Ok(TensorOperator::with_state(
+            OperatorDescriptor::new("tensor_from_static")
+                .dependent_on_data(&size)
+                .dependent_on_data(values), //TODO: this is a performance problem for
+            m,
+            values,
+            move |ctx, _, values| {
+                async move {
+                    let mut out =
+                        ctx.submit(ctx.alloc_slot(
+                            Vector::<D, ChunkCoordinate>::fill(0.into()),
+                            values.len(),
+                        ))
+                        .await;
+                    let mut out_data = &mut *out;
+                    let values: &[E] = &values;
+                    ctx.submit(ctx.spawn_compute(move || {
+                        crate::data::write_slice_uninit(&mut out_data, values);
+                    }))
+                    .await;
+
+                    // Safety: slot and values are of the exact same size. Thus all values are
+                    // initialized.
+                    unsafe { out.initialized(*ctx) };
+                    Ok(())
+                }
+                .into()
+            },
+        ))
+    }
+
+    pub fn from_rc(
+        size: Vector<D, GlobalCoordinate>,
+        values: Rc<[E]>,
+    ) -> Result<TensorOperator<D, E>, crate::Error> {
+        let m = TensorMetaData {
+            dimensions: size,
+            chunk_size: size.map(LocalCoordinate::interpret_as),
+        };
+        let n_elem = size.hmul();
+        if n_elem != values.len() {
+            return Err(format!(
+                "Tensor ({}) and data ({}) size do not match",
+                n_elem,
+                values.len()
+            )
+            .into());
+        }
+        Ok(TensorOperator::with_state(
+            OperatorDescriptor::new("tensor_from_static")
+                .dependent_on_data(&size)
+                .dependent_on_data(&values[..]), //TODO: this is a performance problem for large arrays
+            m,
+            values,
+            move |ctx, _, values| {
+                async move {
+                    let mut out =
+                        ctx.submit(ctx.alloc_slot(
+                            Vector::<D, ChunkCoordinate>::fill(0.into()),
+                            values.len(),
+                        ))
+                        .await;
+                    let mut out_data = &mut *out;
+                    let values: &[E] = &values;
+                    ctx.submit(ctx.spawn_compute(move || {
+                        crate::data::write_slice_uninit(&mut out_data, values);
+                    }))
+                    .await;
+
+                    // Safety: slot and values are of the exact same size. Thus all values are
+                    // initialized.
+                    unsafe { out.initialized(*ctx) };
+                    Ok(())
+                }
+                .into()
+            },
+        ))
+    }
+}
+
 #[derive(Clone)]
 pub struct EmbeddedTensorOperator<D: Dimension, E> {
     pub inner: TensorOperator<D, E>,
@@ -292,99 +390,6 @@ pub fn linear_rescale<D: Dimension>(
     )
 }
 
-pub fn from_static<D: Dimension, E: Element + Identify>(
-    size: Vector<D, GlobalCoordinate>,
-    values: &'static [E],
-) -> Result<TensorOperator<D, E>, crate::Error> {
-    let m = TensorMetaData {
-        dimensions: size,
-        chunk_size: size.map(LocalCoordinate::interpret_as),
-    };
-    let n_elem = size.hmul();
-    if n_elem != values.len() {
-        return Err(format!(
-            "Tensor ({}) and data ({}) size do not match",
-            n_elem,
-            values.len()
-        )
-        .into());
-    }
-    Ok(TensorOperator::with_state(
-        OperatorDescriptor::new("tensor_from_static")
-            .dependent_on_data(&size)
-            .dependent_on_data(values), //TODO: this is a performance problem for
-        m,
-        values,
-        move |ctx, _, values| {
-            async move {
-                let mut out = ctx
-                    .submit(
-                        ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len()),
-                    )
-                    .await;
-                let mut out_data = &mut *out;
-                let values: &[E] = &values;
-                ctx.submit(ctx.spawn_compute(move || {
-                    crate::data::write_slice_uninit(&mut out_data, values);
-                }))
-                .await;
-
-                // Safety: slot and values are of the exact same size. Thus all values are
-                // initialized.
-                unsafe { out.initialized(*ctx) };
-                Ok(())
-            }
-            .into()
-        },
-    ))
-}
-
-pub fn from_rc<D: Dimension, E: Element + Identify>(
-    size: Vector<D, GlobalCoordinate>,
-    values: Rc<[E]>,
-) -> Result<TensorOperator<D, E>, crate::Error> {
-    let m = TensorMetaData {
-        dimensions: size,
-        chunk_size: size.map(LocalCoordinate::interpret_as),
-    };
-    let n_elem = size.hmul();
-    if n_elem != values.len() {
-        return Err(format!(
-            "Tensor ({}) and data ({}) size do not match",
-            n_elem,
-            values.len()
-        )
-        .into());
-    }
-    Ok(TensorOperator::with_state(
-        OperatorDescriptor::new("tensor_from_static")
-            .dependent_on_data(&size)
-            .dependent_on_data(&values[..]), //TODO: this is a performance problem for large arrays
-        m,
-        values,
-        move |ctx, _, values| {
-            async move {
-                let mut out = ctx
-                    .submit(
-                        ctx.alloc_slot(Vector::<D, ChunkCoordinate>::fill(0.into()), values.len()),
-                    )
-                    .await;
-                let mut out_data = &mut *out;
-                let values: &[E] = &values;
-                ctx.submit(ctx.spawn_compute(move || {
-                    crate::data::write_slice_uninit(&mut out_data, values);
-                }))
-                .await;
-
-                // Safety: slot and values are of the exact same size. Thus all values are
-                // initialized.
-                unsafe { out.initialized(*ctx) };
-                Ok(())
-            }
-            .into()
-        },
-    ))
-}
-
 pub type ImageOperator<E> = TensorOperator<D2, E>;
+pub type LODImageOperator<E> = LODTensorOperator<D2, E>;
 pub type FrameOperator = ImageOperator<Vector<D4, u8>>;

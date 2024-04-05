@@ -279,6 +279,16 @@ impl<D: Dimension, T: std::any::Any> TryInto<CTensorOperator<D, T>> for TensorOp
     }
 }
 
+#[pymethods]
+impl TensorOperator {
+    fn embedded(&self, embedding_data: TensorEmbeddingData) -> EmbeddedTensorOperator {
+        EmbeddedTensorOperator {
+            inner: self.clone(),
+            embedding_data,
+        }
+    }
+}
+
 #[derive(FromPyObject)] //TODO: Derive macro appears to be broken when we use generics here??
 pub enum MaybeConstTensorOperator<'a> {
     ConstD1(numpy::borrow::PyReadonlyArray1<'a, f32>),
@@ -306,6 +316,11 @@ pub struct TensorEmbeddingData {
 
 #[pymethods]
 impl TensorEmbeddingData {
+    #[new]
+    fn new(value: Vec<f32>) -> Self {
+        Self { spacing: value }
+    }
+
     #[getter]
     fn get_spacing<'a>(&self, py: Python<'a>) -> &'a PyArray1<f32> {
         PyArray1::from_vec(py, self.spacing.clone())
@@ -382,9 +397,30 @@ impl<D: Dimension, T: std::any::Any> TryInto<CEmbeddedTensorOperator<D, T>>
 #[pymethods]
 impl EmbeddedTensorOperator {
     //TODO: Generalize for other dims and maybe datatypes
+    fn single_level_lod(&self) -> PyResult<LODTensorOperator> {
+        Ok(LODTensorOperator {
+            levels: vec![self.clone()],
+        })
+    }
     fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
-        let vol: CEmbeddedTensorOperator<D3, f32> = self.clone().try_into()?;
-        palace_core::operators::resample::create_lod(vol, step_factor).try_into()
+        let nd = self.inner.metadata.dimensions.len();
+
+        match nd {
+            2 => {
+                let vol: CEmbeddedTensorOperator<D2, f32> = self.clone().try_into()?;
+                palace_core::operators::resample::create_lod(vol, step_factor).try_into()
+            }
+            3 => {
+                let vol: CEmbeddedTensorOperator<D3, f32> = self.clone().try_into()?;
+                palace_core::operators::resample::create_lod(vol, step_factor).try_into()
+            }
+            n => {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "{}-dimensional operation not yet implemented.",
+                    n
+                )))
+            }
+        }
     }
 }
 

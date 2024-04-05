@@ -1,7 +1,5 @@
 import numpy as np
-import time
 import palace as pc
-import math
 import argparse
 
 ram_size = 8 << 30

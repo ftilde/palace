@@ -142,8 +142,10 @@ impl<D: Dimension, T: Copy + num::Zero + Add<Output = T> + Mul<Output = T>> Mul<
     }
 }
 
-impl<T: Copy + num::Zero + Add<Output = T> + Mul<Output = T> + num::One> Matrix<D4, T> {
-    pub fn transform(self, rhs: Vector<D3, T>) -> Vector<D3, T> {
+impl<D: SmallerDim, T: Copy + num::Zero + Add<Output = T> + Mul<Output = T> + num::One>
+    Matrix<D, T>
+{
+    pub fn transform(self, rhs: Vector<D::Smaller, T>) -> Vector<D::Smaller, T> {
         (self * rhs.to_homogeneous_coord()).to_non_homogeneous_coord()
     }
 }
@@ -172,6 +174,22 @@ impl<D: Dimension, T: Copy + Sub<Output = T>> Sub<Matrix<D, T>> for Matrix<D, T>
 
     fn sub(self, rhs: Matrix<D, T>) -> Self::Output {
         self.zip(&rhs, |l, r| *l - *r)
+    }
+}
+
+impl<T: Copy> From<Matrix<D3, T>> for cgmath::Matrix3<T> {
+    fn from(value: Matrix<D3, T>) -> Self {
+        cgmath::Matrix3 {
+            x: (*value.col(2)).into(),
+            y: (*value.col(1)).into(),
+            z: (*value.col(0)).into(),
+        }
+    }
+}
+
+impl<T: Copy> From<cgmath::Matrix3<T>> for Matrix<D3, T> {
+    fn from(value: cgmath::Matrix3<T>) -> Self {
+        Self::new([value.z.into(), value.y.into(), value.x.into()])
     }
 }
 

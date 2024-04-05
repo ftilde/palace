@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::rc::Rc;
+use std::{io::BufReader, path::PathBuf};
 
 use std::fs::File;
 use std::io::BufWriter;
 
 use crate::{data::Vector, dim::*, task::OpaqueTaskContext};
 
-use super::tensor::ImageOperator;
+use super::tensor::{FrameOperator, ImageOperator};
 
 pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
@@ -50,4 +51,39 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     writer.write_image_data(&data).unwrap();
 
     Ok(())
+}
+
+pub fn read<'cref, 'inv: 'cref, 'op: 'inv>(path: PathBuf) -> Result<FrameOperator, crate::Error> {
+    let file = File::open(path)?;
+    let r = BufReader::new(file);
+
+    let decoder = png::Decoder::new(r);
+    let mut reader = decoder.read_info().unwrap();
+
+    let mut buf = vec![0; reader.output_buffer_size()];
+
+    let info = reader.next_frame(&mut buf)?;
+    let dimensions = [info.height, info.width].into();
+
+    let bytes = &buf[..info.buffer_size()];
+    assert_eq!(info.bit_depth, png::BitDepth::Eight);
+
+    match info.color_type {
+        png::ColorType::Grayscale => todo!(),
+        png::ColorType::Indexed => todo!(),
+        png::ColorType::GrayscaleAlpha => todo!(),
+        png::ColorType::Rgb => {
+            assert_eq!(bytes.len() % 3, 0);
+            let pixels = bytes
+                .chunks(3)
+                .map(|v| Vector::<D4, u8>::from([v[0], v[1], v[2], 255]))
+                .collect::<Rc<[Vector<D4, u8>]>>();
+
+            FrameOperator::from_rc(dimensions, pixels)
+        }
+        png::ColorType::Rgba => {
+            let pixels = bytemuck::cast_slice::<_, Vector<D4, u8>>(bytes);
+            FrameOperator::from_rc(dimensions, pixels.into())
+        }
+    }
 }
