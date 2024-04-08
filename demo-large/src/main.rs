@@ -583,12 +583,8 @@ fn eval_network(
         runtime
             .resolve(Some(deadline), false, |ctx, _| {
                 async move {
-                    palace_core::operators::png_writer::write(
-                        ctx,
-                        slice_ref,
-                        "screenshot.png".into(),
-                    )
-                    .await
+                    palace_core::operators::png::write(ctx, slice_ref, "screenshot.png".into())
+                        .await
                 }
                 .into()
             })

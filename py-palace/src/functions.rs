@@ -195,7 +195,7 @@ pub fn view_image(
 
 #[pyfunction]
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
-    crate::map_err(palace_core::operators::png_writer::read(path))?.try_into()
+    crate::map_err(palace_core::operators::png::read(path))?.try_into()
 }
 
 #[pyfunction]

@@ -3,7 +3,7 @@ pub mod bin_ops;
 pub mod gui;
 pub mod imageviewer;
 pub mod kernels;
-pub mod png_writer;
+pub mod png;
 pub mod procedural;
 pub mod rasterize_function;
 pub mod raw;
