@@ -145,32 +145,13 @@ pub fn view_image(
                     view_state.zoom_level,
                 );
 
-                let center: Vector<D2, f32> = [0.0, 0.0].into();
-                let neighbors: [Vector<D2, f32>; 2] = [[0.0, 1.0].into(), [1.0, 0.0].into()];
-
                 let transform_rw = emd_0.voxel_to_physical() * out_to_pixel_in;
-                let projected_center = transform_rw.transform(center);
-                let projected_neighbors = neighbors.map(|v| transform_rw.transform(v));
 
-                let neighbor_dirs = projected_neighbors.map(|v| projected_center - v);
-                let mut selected_level = input.levels.len() - 1;
-
-                let coarse_lod_factor = 1.0; //TODO: make configurable
-                'outer: for (i, level) in input.levels.iter().enumerate() {
-                    let emd = level.embedding_data;
-
-                    for dir in neighbor_dirs {
-                        let abs_dir = dir.map(|v| v.abs()).normalized();
-                        let dir_spacing_dist = (abs_dir * emd.spacing).length();
-                        let pixel_dist = dir.length();
-                        if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
-                            selected_level = i;
-                            break 'outer;
-                        }
-                    }
-                }
-
-                let level = &input.levels[selected_level];
+                let level = crate::operators::sliceviewer::select_level(
+                    &input,
+                    transform_rw,
+                    &[[0.0, 1.0].into(), [1.0, 0.0].into()],
+                );
 
                 let m_in = level.metadata;
                 let emd_l = level.embedding_data;

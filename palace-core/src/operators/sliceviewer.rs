@@ -3,7 +3,10 @@ use std::alloc::Layout;
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
-use super::{tensor::FrameOperator, volume::LODVolumeOperator};
+use super::{
+    tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator},
+    volume::LODVolumeOperator,
+};
 
 use crate::{
     array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
@@ -207,6 +210,36 @@ pub fn slice_projection_mat_centered_rotate(
     out
 }
 
+pub fn select_level<'a, D: SmallerDim, T>(
+    lod: &'a LODTensorOperator<D::Smaller, T>,
+    transform_rw: Matrix<D, f32>,
+    neighbor_dirs: &[Vector<D::Smaller, f32>],
+) -> &'a EmbeddedTensorOperator<D::Smaller, T> {
+    let neighbor_dirs = neighbor_dirs
+        .iter()
+        .map(|p| (transform_rw * p.push_dim_large(0.0)).to_non_homogeneous_coord())
+        .collect::<Vec<_>>();
+
+    let mut selected_level = lod.levels.len() - 1;
+
+    let coarse_lod_factor = 1.0; //TODO: make configurable
+    'outer: for (i, level) in lod.levels.iter().enumerate() {
+        let emd = level.embedding_data;
+
+        for dir in &neighbor_dirs {
+            let abs_dir = dir.map(|v| v.abs()).normalized();
+            let dir_spacing_dist = (abs_dir * emd.spacing).length();
+            let pixel_dist = dir.length();
+            if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
+                selected_level = i;
+                break 'outer;
+            }
+        }
+    }
+
+    &lod.levels[selected_level]
+}
+
 pub fn render_slice(
     input: LODVolumeOperator<f32>,
     result_metadata: ImageMetaData,
@@ -341,33 +374,12 @@ void main()
                 let emd_0 = input.levels[0].embedding_data;
                 let pixel_to_voxel = projection_mat;
 
-                let center: Vector<D2, f32> = [0.0, 0.0].into();
-                let neighbors: [Vector<D2, f32>; 2] = [[0.0, 1.0].into(), [1.0, 0.0].into()];
-
                 let transform_rw = emd_0.voxel_to_physical() * *pixel_to_voxel;
-                let projected_center = transform_rw.transform(center.push_dim_large(0.0));
-                let projected_neighbors =
-                    neighbors.map(|v| transform_rw.transform(v.push_dim_large(0.0)));
-
-                let neighbor_dirs = projected_neighbors.map(|v| projected_center - v);
-                let mut selected_level = input.levels.len() - 1;
-
-                let coarse_lod_factor = 1.0; //TODO: make configurable
-                'outer: for (i, level) in input.levels.iter().enumerate() {
-                    let emd = level.embedding_data;
-
-                    for dir in neighbor_dirs {
-                        let abs_dir = dir.map(|v| v.abs()).normalized();
-                        let dir_spacing_dist = (abs_dir * emd.spacing).length();
-                        let pixel_dist = dir.length();
-                        if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
-                            selected_level = i;
-                            break 'outer;
-                        }
-                    }
-                }
-
-                let level = &input.levels[selected_level];
+                let level = select_level(
+                    &input,
+                    transform_rw,
+                    &[[0.0, 0.0, 1.0].into(), [0.0, 1.0, 0.0].into()],
+                );
 
                 let m_in = level.metadata;
                 let emd_l = level.embedding_data;
