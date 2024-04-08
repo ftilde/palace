@@ -22,6 +22,10 @@
 #include <tensormetadata_generic.glsl>
 #undef _N
 
+#ifndef ChunkValue
+#error ChunkValue is not defined
+#endif
+
 layout(buffer_reference, std430) buffer Chunk {
     ChunkValue values[];
 };

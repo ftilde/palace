@@ -149,6 +149,8 @@ pub fn resample_transform<D: LargerDim>(
 #include <vec.glsl>
 #include <util.glsl>
 
+#define ChunkValue float
+
 #define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
