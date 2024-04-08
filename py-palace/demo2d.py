@@ -15,8 +15,9 @@ args = parser.parse_args()
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 if args.img_file == "mandelbrot":
-    s = 1024*1024
-    md = pc.tensor_metadata([s, s], [256, 256])
+    b = 1024*2
+    s = b*1024*16
+    md = pc.tensor_metadata([s, s], [b, b])
     img = pc.mandelbrot(md)
     tf = pc.load_tf(args.transfunc)
     tf.min = 0.0;
