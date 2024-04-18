@@ -1,10 +1,8 @@
 use crate::types::*;
+use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
+use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
 use palace_core::operators::raycaster::RaycasterConfig;
-use palace_core::{
-    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
-    data::{LocalVoxelPosition, Matrix, Vector},
-};
 use pyo3::{exceptions::PyException, prelude::*};
 
 #[pyfunction]
@@ -108,15 +106,15 @@ pub fn vesselness<'py>(
 
 #[pyfunction]
 pub fn entry_exit_points(
-    input_md: VolumeMetaData,
-    embedding_data: VolumeEmbeddingData,
-    output_md: ImageMetaData,
+    input_md: PyTensorMetaData,
+    embedding_data: PyTensorEmbeddingData,
+    output_md: PyTensorMetaData,
     projection: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     palace_core::operators::raycaster::entry_exit_points(
-        input_md,
-        embedding_data,
-        output_md,
+        input_md.try_into()?,
+        embedding_data.try_into()?,
+        output_md.try_into()?,
         projection,
     )
     .try_into()
@@ -144,7 +142,7 @@ pub fn raycast(
 #[pyfunction]
 pub fn render_slice(
     input: LODTensorOperator,
-    result_metadata: ImageMetaData,
+    result_metadata: PyTensorMetaData,
     projection_mat: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     palace_core::operators::sliceviewer::render_slice(
@@ -186,11 +184,15 @@ pub fn open_volume(
 #[pyfunction]
 pub fn view_image(
     image: LODTensorOperator,
-    result_metadata: ImageMetaData,
+    result_metadata: PyTensorMetaData,
     view_state: palace_core::operators::imageviewer::ImageViewerState,
 ) -> PyResult<TensorOperator> {
-    palace_core::operators::imageviewer::view_image(image.try_into()?, result_metadata, view_state)
-        .try_into()
+    palace_core::operators::imageviewer::view_image(
+        image.try_into()?,
+        result_metadata.try_into()?,
+        view_state,
+    )
+    .try_into()
 }
 
 #[pyfunction]
@@ -218,12 +220,6 @@ pub fn apply_tf(
 }
 
 #[pyfunction]
-pub fn mandelbrot(md: ImageMetaData) -> PyResult<LODTensorOperator> {
-    //let nd = md.dimensions.len();
-    //if nd != 2 {
-    //    return Err(PyErr::new::<PyException, _>(
-    //        format!("MetaData must be 2D",),
-    //    ));
-    //}
-    palace_core::operators::procedural::mandelbrot(md).try_into()
+pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
+    palace_core::operators::procedural::mandelbrot(md.try_into()?).try_into()
 }

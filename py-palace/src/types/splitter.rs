@@ -1,5 +1,5 @@
+use palace_core::{array::PyTensorMetaData, data::Vector, operators::splitter as c};
 use pyo3::prelude::*;
-use palace_core::{array::ImageMetaData, data::Vector, operators::splitter as c};
 
 use super::{Events, TensorOperator};
 
@@ -30,11 +30,11 @@ impl Splitter {
             .try_into()
     }
 
-    fn metadata_l(&self) -> ImageMetaData {
+    fn metadata_l(&self) -> PyTensorMetaData {
         self.0.metadata_first().into()
     }
 
-    fn metadata_r(&self) -> ImageMetaData {
+    fn metadata_r(&self) -> PyTensorMetaData {
         self.0.metadata_last().into()
     }
 }

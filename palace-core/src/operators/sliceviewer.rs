@@ -9,7 +9,9 @@ use super::{
 };
 
 use crate::{
-    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
+    array::{
+        ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
+    },
     chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
@@ -41,10 +43,7 @@ pub struct SliceviewState {
     pub dim_spacing: f32,
     pub dim_end: f32,
 }
-
-#[cfg_attr(feature = "python", pymethods)]
 impl SliceviewState {
-    #[staticmethod]
     pub fn for_volume(
         input_metadata: VolumeMetaData,
         embedding_data: VolumeEmbeddingData,
@@ -61,6 +60,39 @@ impl SliceviewState {
             zoom_level: 1.0,
             depth: dim_end * 0.5,
         }
+    }
+    pub fn projection_mat(
+        &self,
+        input_metadata: VolumeMetaData,
+        embedding_data: VolumeEmbeddingData,
+        output_size: Vector<D2, GlobalCoordinate>,
+    ) -> Matrix<D4, f32> {
+        slice_projection_mat(
+            self.dim as _,
+            input_metadata,
+            embedding_data,
+            output_size,
+            ((self.depth / self.dim_spacing).round() as u32).into(),
+            self.offset,
+            self.zoom_level,
+        )
+    }
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl SliceviewState {
+    #[staticmethod]
+    #[pyo3(name = "for_volume")]
+    pub fn for_volume_py(
+        input_metadata: PyTensorMetaData,
+        embedding_data: PyTensorEmbeddingData,
+        dim: u32,
+    ) -> PyResult<Self> {
+        Ok(Self::for_volume(
+            input_metadata.try_into()?,
+            embedding_data.try_into()?,
+            dim,
+        ))
     }
 
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
@@ -82,21 +114,19 @@ impl SliceviewState {
 
         self.offset = (self.offset - on) / Vector::fill(zoom_change) + on;
     }
-    pub fn projection_mat(
+
+    #[pyo3(name = "projection_mat")]
+    pub fn projection_mat_py(
         &self,
-        input_data: VolumeMetaData,
-        embedding_data: VolumeEmbeddingData,
+        input_metadata: PyTensorMetaData,
+        embedding_data: PyTensorEmbeddingData,
         output_size: Vector<D2, GlobalCoordinate>,
-    ) -> Matrix<D4, f32> {
-        slice_projection_mat(
-            self.dim as _,
-            input_data,
-            embedding_data,
+    ) -> PyResult<Matrix<D4, f32>> {
+        Ok(self.projection_mat(
+            input_metadata.try_into()?,
+            embedding_data.try_into()?,
             output_size,
-            ((self.depth / self.dim_spacing).round() as u32).into(),
-            self.offset,
-            self.zoom_level,
-        )
+        ))
     }
 }
 

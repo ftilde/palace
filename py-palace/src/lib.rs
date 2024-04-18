@@ -1,3 +1,4 @@
+use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use pyo3::{exceptions::PyException, prelude::*};
 
 mod functions;
@@ -23,7 +24,6 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
-    m.add_function(wrap_pyfunction!(tensor_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(gauss_kernel, m)?)?;
     m.add_function(wrap_pyfunction!(vesselness, m)?)?;
     m.add_function(wrap_pyfunction!(view_image, m)?)?;
@@ -36,7 +36,8 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<palace_core::operators::raycaster::RaycasterConfig>()?;
     m.add_class::<palace_core::operators::raycaster::TrackballState>()?;
     m.add_class::<palace_core::operators::imageviewer::ImageViewerState>()?;
-    m.add_class::<TensorEmbeddingData>()?;
+    m.add_class::<PyTensorMetaData>()?;
+    m.add_class::<PyTensorEmbeddingData>()?;
     m.add_class::<RunTime>()?;
     m.add_class::<Window>()?;
     m.add_class::<Events>()?;

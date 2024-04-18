@@ -97,62 +97,113 @@ pub fn physical_to_voxel<D: LargerDim>(
 unsafe impl<D: Dimension + bytemuck::Zeroable> bytemuck::Pod for TensorEmbeddingData<D> {}
 
 #[cfg(feature = "python")]
+pub use py::TensorEmbeddingData as PyTensorEmbeddingData;
+#[cfg(feature = "python")]
+pub use py::TensorMetaData as PyTensorMetaData;
+
+#[cfg(feature = "python")]
 mod py {
+    use numpy::PyArray1;
+    use pyo3::{exceptions::PyException, prelude::*};
+
     use super::*;
-    use pyo3::prelude::*;
 
-    impl<'source, D: Dimension> FromPyObject<'source> for TensorMetaData<D>
-    where
-        Vector<D, LocalCoordinate>: FromPyObject<'source>,
-        Vector<D, GlobalCoordinate>: FromPyObject<'source>,
-    {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            Ok(TensorMetaData {
-                dimensions: ob.getattr("dimensions")?.extract()?,
-                chunk_size: ob.getattr("chunk_size")?.extract()?,
+    #[pyclass(unsendable)]
+    #[derive(Clone, Debug)]
+    pub struct TensorMetaData {
+        pub dimensions: Vec<u32>,
+        pub chunk_size: Vec<u32>,
+    }
+
+    #[pymethods]
+    impl TensorMetaData {
+        #[getter]
+        fn dimensions<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
+            PyArray1::from_vec(py, self.dimensions.clone())
+        }
+        #[getter]
+        fn chunk_size<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
+            PyArray1::from_vec(py, self.chunk_size.clone())
+        }
+    }
+
+    impl<D: Dimension> From<super::TensorMetaData<D>> for TensorMetaData {
+        fn from(t: super::TensorMetaData<D>) -> Self {
+            Self {
+                dimensions: t.dimensions.raw().into_iter().collect(),
+                chunk_size: t.chunk_size.raw().into_iter().collect(),
+            }
+        }
+    }
+
+    impl<D: Dimension> TryInto<super::TensorMetaData<D>> for TensorMetaData {
+        type Error = PyErr;
+
+        fn try_into(self) -> Result<super::TensorMetaData<D>, Self::Error> {
+            if D::N != self.dimensions.len() {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "Expected TensorMetaData<{}>, but got TensorMetaData<{}>",
+                    D::N,
+                    self.dimensions.len()
+                )));
+            }
+
+            assert_eq!(self.dimensions.len(), self.chunk_size.len());
+
+            Ok(super::TensorMetaData {
+                dimensions: self.dimensions.try_into().unwrap(),
+                chunk_size: self.chunk_size.try_into().unwrap(),
             })
         }
     }
 
-    impl<D: Dimension> IntoPy<PyObject> for TensorMetaData<D> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            let m = py.import("collections").unwrap();
-            let ty = m
-                .getattr("namedtuple")
-                .unwrap()
-                .call(("TensorMetaData", ["dimensions", "chunk_size"]), None)
-                .unwrap();
-            let v = ty
-                .call(
-                    (self.dimensions.into_py(py), self.chunk_size.into_py(py)),
-                    None,
-                )
-                .unwrap();
-            v.into_py(py)
+    #[pyclass(unsendable)]
+    #[derive(Clone, Debug)]
+    pub struct TensorEmbeddingData {
+        spacing: Vec<f32>,
+    }
+
+    #[pymethods]
+    impl TensorEmbeddingData {
+        #[new]
+        fn new(value: Vec<f32>) -> Self {
+            Self { spacing: value }
+        }
+
+        #[getter]
+        fn get_spacing<'a>(&self, py: Python<'a>) -> &'a PyArray1<f32> {
+            PyArray1::from_vec(py, self.spacing.clone())
+        }
+
+        #[setter]
+        fn set_spacing(&mut self, value: &PyArray1<f32>) {
+            self.spacing = value.to_vec().unwrap();
         }
     }
 
-    impl<'source, D: Dimension> FromPyObject<'source> for TensorEmbeddingData<D>
-    where
-        Vector<D, f32>: FromPyObject<'source>,
-    {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            Ok(TensorEmbeddingData {
-                spacing: ob.getattr("spacing")?.extract()?,
+    impl<D: Dimension> From<super::TensorEmbeddingData<D>> for TensorEmbeddingData {
+        fn from(t: super::TensorEmbeddingData<D>) -> Self {
+            Self {
+                spacing: t.spacing.into_iter().collect(),
+            }
+        }
+    }
+
+    impl<D: Dimension> TryInto<super::TensorEmbeddingData<D>> for TensorEmbeddingData {
+        type Error = PyErr;
+
+        fn try_into(self) -> Result<super::TensorEmbeddingData<D>, Self::Error> {
+            if D::N != self.spacing.len() {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "Expected TensorEmbeddingData<{}>, but got TensorEmbeddingData<{}>",
+                    D::N,
+                    self.spacing.len()
+                )));
+            }
+
+            Ok(super::TensorEmbeddingData {
+                spacing: self.spacing.try_into().unwrap(),
             })
-        }
-    }
-
-    impl<D: Dimension> IntoPy<PyObject> for TensorEmbeddingData<D> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            let m = py.import("collections").unwrap();
-            let ty = m
-                .getattr("namedtuple")
-                .unwrap()
-                .call(("TensorEmbeddingData", ["spacing"]), None)
-                .unwrap();
-            let v = ty.call((self.spacing.into_py(py),), None).unwrap();
-            v.into_py(py)
         }
     }
 }

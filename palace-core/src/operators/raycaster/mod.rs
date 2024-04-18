@@ -4,7 +4,9 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{ImageMetaData, VolumeEmbeddingData, VolumeMetaData},
+    array::{
+        ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
+    },
     chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
@@ -94,20 +96,7 @@ pub struct CameraState {
     #[pyo3(get, set)]
     pub far_plane: f32,
 }
-
-#[cfg_attr(feature = "python", pymethods)]
 impl CameraState {
-    #[new]
-    pub fn new(trackball: TrackballState, fov: f32, near_plane: f32, far_plane: f32) -> Self {
-        Self {
-            trackball,
-            fov,
-            near_plane,
-            far_plane,
-        }
-    }
-
-    #[staticmethod]
     pub fn for_volume(
         input_metadata: VolumeMetaData,
         embedding_data: VolumeEmbeddingData,
@@ -130,6 +119,33 @@ impl CameraState {
             near_plane,
             far_plane,
         }
+    }
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl CameraState {
+    #[new]
+    pub fn new(trackball: TrackballState, fov: f32, near_plane: f32, far_plane: f32) -> Self {
+        Self {
+            trackball,
+            fov,
+            near_plane,
+            far_plane,
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "for_volume")]
+    pub fn for_volume_py(
+        input_metadata: PyTensorMetaData,
+        embedding_data: PyTensorEmbeddingData,
+        fov: f32,
+    ) -> PyResult<Self> {
+        Ok(Self::for_volume(
+            input_metadata.try_into()?,
+            embedding_data.try_into()?,
+            fov,
+        ))
     }
 
     fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
