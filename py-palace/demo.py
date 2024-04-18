@@ -79,7 +79,7 @@ def render_raycast(vol, camera_state):
             pc.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
         ]);
 
-        md = pc.tensor_metadata(size, size)
+        md = pc.TensorMetaData(size, size)
         proj = camera_state.load().projection_mat(size)
 
         eep = pc.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
@@ -99,7 +99,7 @@ def render_slice(vol, dim, slice_state):
             pc.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
         ]);
 
-        md = pc.tensor_metadata(size, size)
+        md = pc.TensorMetaData(size, size)
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 

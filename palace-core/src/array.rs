@@ -117,6 +117,20 @@ mod py {
 
     #[pymethods]
     impl TensorMetaData {
+        #[new]
+        fn new(dimensions: Vec<u32>, chunk_size: Vec<u32>) -> PyResult<Self> {
+            if dimensions.len() != chunk_size.len() {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "dimensions ({:?}) and chunk_size ({:?}) must be of the same length",
+                    dimensions, chunk_size,
+                )));
+            }
+            Ok(Self {
+                dimensions,
+                chunk_size,
+            })
+        }
+
         #[getter]
         fn dimensions<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
             PyArray1::from_vec(py, self.dimensions.clone())

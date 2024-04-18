@@ -17,7 +17,7 @@ rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 if args.img_file == "mandelbrot":
     b = 1024*2
     s = b*1024*16
-    md = pc.tensor_metadata([s, s], [b, b])
+    md = pc.TensorMetaData([s, s], [b, b])
     img = pc.mandelbrot(md)
     tf = pc.load_tf(args.transfunc)
     tf.min = 0.0;
@@ -37,7 +37,7 @@ def render(size, events):
         pc.OnWheelMove(lambda delta, pos: view_state.mutate(lambda s: s.zoom(delta, pos))),
     ]);
 
-    md = pc.tensor_metadata(size, size)
+    md = pc.TensorMetaData(size, size)
     frame = pc.view_image(img, md, view_state.load())
 
     return frame
