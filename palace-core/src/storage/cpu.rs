@@ -633,14 +633,62 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
             .map(|(d, v)| (d, DataLocation::CPU(Allocator::LOCATION), v))
     }
 
-    pub fn register_access(&self, id: DataId) -> AccessToken<Allocator> {
+    fn ensure_presence<'a>(
+        &self,
+        current_frame: FrameNumber,
+        entry: crate::util::MapEntry<'a, DataId, Entry>,
+    ) -> &'a mut Entry {
+        match entry {
+            crate::util::MapEntry::Occupied(mut e) => {
+                if let StorageEntryState::Initialized(_, version) = e.get().state {
+                    if version < DataVersion::Preview(current_frame) {
+                        let old = e.insert(Entry {
+                            state: StorageEntryState::Registered,
+                            access: AccessState::Some(0), // Will be overwritten immediately when generating token
+                        });
+                        match old.access {
+                            AccessState::Some(_) => {
+                                panic!(
+                                    "There should not be any readers left from the previous frame"
+                                );
+                            }
+                            AccessState::None(lru_index) => {
+                                let StorageEntryState::Initialized(info, _) = old.state else {
+                                    panic!("we just checked that");
+                                };
+                                if let Some(lru_index) = lru_index {
+                                    self.lru_manager.borrow_mut().remove(lru_index);
+                                }
+
+                                // Safety: all data ptrs in the index have been allocated with the allocator.
+                                // Deallocation only happens exactly here where the entry is also removed from the
+                                // index.
+                                unsafe { self.allocator.dealloc(info.data) };
+                                self.new_data.remove(*e.key());
+                            }
+                        }
+                    }
+                }
+                e.into_mut()
+            }
+            crate::util::MapEntry::Vacant(v) => {
+                v.insert(Entry {
+                    state: StorageEntryState::Registered,
+                    access: AccessState::Some(0), // Will be overwritten immediately when generating token
+                })
+            }
+        }
+    }
+
+    pub fn register_access(
+        &self,
+        current_frame: FrameNumber,
+        id: DataId,
+    ) -> AccessToken<Allocator> {
         {
             let mut index = self.index.borrow_mut();
-            index.entry(id).or_insert_with(|| Entry {
-                state: StorageEntryState::Registered,
-                access: AccessState::Some(0), // Will be overwritten immediately when generating
-                                              // the RamToken
-            });
+            let entry = index.entry(id);
+            self.ensure_presence(current_frame, entry);
         }
         AccessToken::new(self, id)
     }
@@ -785,10 +833,11 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
 
     pub fn request_alloc_raw<'req, 'inv>(
         &'req self,
+        current_frame: FrameNumber,
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, RawWriteHandleUninit<Allocator>> {
-        let mut access = Some(self.register_access(data_descriptor.id));
+        let mut access = Some(self.register_access(current_frame, data_descriptor.id));
 
         Request {
             type_: RequestType::Allocation(
@@ -810,11 +859,12 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
 
     pub fn request_alloc_slot<'req, 'inv, T: Element>(
         &'req self,
+        current_frame: FrameNumber,
         key: DataDescriptor,
         size: usize,
     ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<T>], Allocator>> {
         let layout = Layout::array::<T>(size).unwrap();
-        self.request_alloc_raw(key, layout)
+        self.request_alloc_raw(current_frame, key, layout)
             .map(move |v| v.transmute(size))
     }
 }
@@ -891,7 +941,7 @@ impl Storage<super::ram::RamAllocator> {
             // references to the slot since it has already been initialized.
             let t_ref = unsafe { std::slice::from_raw_parts(t_ptr, num_elements) };
 
-            let w = self.request_alloc_slot(new_desc, num_elements);
+            let w = self.request_alloc_slot(ctx.current_frame, new_desc, num_elements);
 
             let r = ReadHandle {
                 data: t_ref,

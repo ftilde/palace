@@ -196,7 +196,7 @@ impl<Output: Element> Operator<(), Output> {
                 item,
             )),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_access(id));
+                let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
                 Box::new(move || unsafe {
                     access = match ctx
                         .storage
@@ -308,7 +308,7 @@ impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescripto
                 item,
             )),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_access(id));
+                let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
                 Box::new(move || unsafe {
                     access = match ctx.storage.read(access.take().unwrap()) {
                         Ok(v) => return Some(v),
@@ -339,7 +339,7 @@ impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescripto
                 item,
             )),
             gen_poll: Box::new(move |ctx| {
-                let mut access = Some(ctx.storage.register_access(read_id));
+                let mut access = Some(ctx.storage.register_access(ctx.current_frame, read_id));
                 Box::new(move || unsafe {
                     access = match ctx.storage.try_update_inplace(
                         o_ctx,

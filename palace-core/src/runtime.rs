@@ -667,7 +667,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let transfer_task = match source {
                     CpuDataLocation::Ram => {
                         let s = self.data.storage;
-                        let access = s.register_access(id);
+                        let access = s.register_access(self.data.frame, id);
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in ram");
                         };
@@ -679,7 +679,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     CpuDataLocation::Disk => {
                         let s = self.data.disk_cache.unwrap();
-                        let access = s.register_access(id);
+                        let access = s.register_access(self.data.frame, id);
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in disk cache");
                         };
@@ -727,7 +727,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 let transfer_task = match source {
                     CpuDataLocation::Ram => {
                         let s = self.data.storage;
-                        let access = s.register_access(id);
+                        let access = s.register_access(self.data.frame, id);
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in ram");
                         };
@@ -736,7 +736,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     CpuDataLocation::Disk => {
                         let s = self.data.disk_cache.unwrap();
-                        let access = s.register_access(id);
+                        let access = s.register_access(self.data.frame, id);
                         let Ok(source) = s.read_raw(access) else {
                             panic!("Data should already be in disk cache");
                         };

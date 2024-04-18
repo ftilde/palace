@@ -377,7 +377,8 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, RawWriteHandleUninit> {
-        self.storage.request_alloc_raw(data_descriptor, layout)
+        self.storage
+            .request_alloc_raw(self.current_frame, data_descriptor, layout)
     }
 
     pub fn alloc_raw_disk<'req>(
@@ -387,7 +388,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
     ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit> {
         self.disk_cache
             .unwrap()
-            .request_alloc_raw(data_descriptor, layout)
+            .request_alloc_raw(self.current_frame, data_descriptor, layout)
     }
 
     pub fn alloc_raw_gpu<'req>(
@@ -757,7 +758,8 @@ impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
         size: usize,
     ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
-        self.storage.request_alloc_slot(id, size)
+        self.storage
+            .request_alloc_slot(self.current_frame, id, size)
     }
 }
 
