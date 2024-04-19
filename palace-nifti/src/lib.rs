@@ -6,9 +6,9 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
     data::{self, LocalCoordinate, Vector, VoxelPosition},
     dim::*,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
     operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
-    storage::StaticElementType,
     Error,
 };
 

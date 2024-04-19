@@ -6,9 +6,10 @@ use itertools::Itertools;
 use crate::{
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::{gpu, Element, StaticElementType},
+    storage::{gpu, Element},
     task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},

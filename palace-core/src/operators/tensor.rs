@@ -6,10 +6,11 @@ use crate::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
+    dtypes::{ElementType, StaticElementType},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
-        DataLocation, Element, ElementType, StaticElementType,
+        DataLocation, Element,
     },
     task::{RequestStream, Task, TaskContext},
 };

@@ -3,7 +3,7 @@ pub mod disk;
 pub mod gpu;
 pub mod ram;
 
-use std::{alloc::Layout, cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
     operator::DataId,
@@ -15,25 +15,6 @@ use crate::{
 pub trait Element: Send + Sync + bytemuck::AnyBitPattern {}
 
 impl<T: bytemuck::AnyBitPattern + Send + Sync> Element for T {}
-
-pub trait ElementType: Clone {
-    fn array_layout(&self, size: usize) -> Layout;
-}
-
-#[derive(Copy, Clone)]
-pub struct StaticElementType<T>(std::marker::PhantomData<T>);
-
-impl<T> Default for StaticElementType<T> {
-    fn default() -> Self {
-        StaticElementType(std::marker::PhantomData)
-    }
-}
-
-impl<T: Element> ElementType for StaticElementType<T> {
-    fn array_layout(&self, size: usize) -> Layout {
-        Layout::array::<Self>(size).unwrap()
-    }
-}
 
 #[derive(Copy, Clone, bytemuck::AnyBitPattern)]
 #[repr(C)]

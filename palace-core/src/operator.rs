@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use crate::{
+    dtypes::{ElementType, StaticElementType},
     storage::{
-        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, ElementType,
-        StaticElementType, VisibleDataLocation,
+        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
     },
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},

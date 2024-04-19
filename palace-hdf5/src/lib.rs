@@ -1,7 +1,7 @@
 use palace_core::array::VolumeEmbeddingData;
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
-use palace_core::storage::StaticElementType;
+use palace_core::dtypes::StaticElementType;
 use std::path::PathBuf;
 use std::rc::Rc;
 

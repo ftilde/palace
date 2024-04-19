@@ -4,7 +4,7 @@ use std::{io::BufReader, path::PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
 
-use crate::storage::StaticElementType;
+use crate::dtypes::StaticElementType;
 use crate::{data::Vector, dim::*, task::OpaqueTaskContext};
 
 use super::tensor::{FrameOperator, ImageOperator};

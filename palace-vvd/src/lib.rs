@@ -7,10 +7,10 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
+    dtypes::StaticElementType,
     operators::{
         raycaster::TransFuncOperator, volume::EmbeddedVolumeOperator, volume_gpu::linear_rescale,
     },
-    storage::StaticElementType,
     Error,
 };
 

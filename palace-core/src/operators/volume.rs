@@ -6,8 +6,9 @@ use crate::{
         chunk, chunk_mut, slice_range, BrickPosition, GlobalCoordinate, LocalCoordinate, Vector,
     },
     dim::*,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
-    storage::{Element, StaticElementType},
+    storage::Element,
     task::RequestStream,
 };
 

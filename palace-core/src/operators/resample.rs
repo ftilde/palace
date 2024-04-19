@@ -7,8 +7,8 @@ use crate::{
     coordinate::ChunkCoordinate,
     data::{Matrix, Vector, AABB},
     dim::*,
+    dtypes::StaticElementType,
     operator::{OpaqueOperator, OperatorDescriptor},
-    storage::StaticElementType,
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},

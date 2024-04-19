@@ -1,5 +1,5 @@
 use crate::map_err;
-use palace_core::{storage::StaticElementType, vec::Vector};
+use palace_core::{dtypes::StaticElementType, vec::Vector};
 use pyo3::{exceptions::PyException, prelude::*};
 use winit::{
     event::{Event, WindowEvent},

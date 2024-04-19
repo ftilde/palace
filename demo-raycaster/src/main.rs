@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
+use palace_core::dtypes::StaticElementType;
 use palace_core::event::{
     EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
 };
@@ -13,7 +14,7 @@ use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::volume_gpu;
 use palace_core::operators::{self};
 use palace_core::runtime::RunTime;
-use palace_core::storage::{DataVersionType, StaticElementType};
+use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;

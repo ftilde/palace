@@ -1,6 +1,7 @@
 use crate::{
+    dtypes::StaticElementType,
     operator::{Operator, OperatorDescriptor},
-    storage::{Element, StaticElementType},
+    storage::Element,
     task::{Task, TaskContext},
 };
 use id::Identify;

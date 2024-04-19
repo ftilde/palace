@@ -9,13 +9,14 @@ use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 use std::time::Instant;
 
+use crate::dtypes::{ElementType, StaticElementType};
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
-use crate::storage::{disk, CpuDataLocation, Element, ElementType, StaticElementType};
+use crate::storage::{disk, CpuDataLocation, Element};
 use crate::storage::{DataLocation, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;

@@ -4,8 +4,9 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
-    storage::{DataLocation, StaticElementType},
+    storage::DataLocation,
     task::{RequestStream, TaskContext},
     Error,
 };

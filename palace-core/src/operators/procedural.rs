@@ -3,9 +3,9 @@ use ash::vk;
 use crate::{
     array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
     dim::Dimension,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::StaticElementType,
     vec::Vector,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},

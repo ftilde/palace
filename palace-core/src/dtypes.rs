@@ -1,6 +1,25 @@
 use std::alloc::Layout;
 
-use crate::{dim::D4, storage::ElementType, vec::Vector};
+use crate::{dim::D4, storage::Element, vec::Vector};
+
+pub trait ElementType: Clone {
+    fn array_layout(&self, size: usize) -> Layout;
+}
+
+#[derive(Copy, Clone)]
+pub struct StaticElementType<T>(std::marker::PhantomData<T>);
+
+impl<T> Default for StaticElementType<T> {
+    fn default() -> Self {
+        StaticElementType(std::marker::PhantomData)
+    }
+}
+
+impl<T: Element> ElementType for StaticElementType<T> {
+    fn array_layout(&self, size: usize) -> Layout {
+        Layout::array::<T>(size).unwrap()
+    }
+}
 
 #[derive(Copy, Clone)]
 pub enum DType {

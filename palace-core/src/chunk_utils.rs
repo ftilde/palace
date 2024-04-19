@@ -4,10 +4,11 @@ use ash::vk;
 
 use crate::{
     dim::Dimension,
+    dtypes::StaticElementType,
     operators::tensor::TensorOperator,
     storage::{
         gpu::{Allocation, IndexHandle},
-        Element, StaticElementType,
+        Element,
     },
     task::{OpaqueTaskContext, Request},
     vulkan::{state::VulkanState, CommandBuffer, DeviceContext, DstBarrierInfo},

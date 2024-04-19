@@ -15,9 +15,10 @@ use crate::{
     chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
+    dtypes::StaticElementType,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::{DataVersionType, StaticElementType},
+    storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig},

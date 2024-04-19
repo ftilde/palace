@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use palace_core::data::{GlobalCoordinate, Vector};
 use palace_core::dim::*;
+use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::{
@@ -14,7 +15,7 @@ use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
-use palace_core::storage::{DataVersionType, StaticElementType};
+use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;

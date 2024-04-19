@@ -2,8 +2,8 @@ use crate::types::*;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
+use palace_core::dtypes::StaticElementType;
 use palace_core::operators::raycaster::RaycasterConfig;
-use palace_core::storage::StaticElementType;
 use pyo3::{exceptions::PyException, prelude::*};
 
 #[pyfunction]

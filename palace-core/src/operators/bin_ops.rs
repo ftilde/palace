@@ -3,8 +3,8 @@ use futures::StreamExt;
 
 use crate::{
     dim::*,
+    dtypes::StaticElementType,
     operator::OperatorDescriptor,
-    storage::StaticElementType,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,

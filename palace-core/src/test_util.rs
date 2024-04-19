@@ -6,7 +6,7 @@ use crate::{
         volume::{ChunkSize, VolumeOperator},
         volume_gpu::rechunk,
     },
-    storage::{Element, StaticElementType},
+    storage::Element,
 };
 
 pub fn compare_tensor_fn<

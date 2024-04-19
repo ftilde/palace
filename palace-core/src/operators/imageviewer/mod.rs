@@ -12,10 +12,11 @@ use crate::{
     coordinate::GlobalCoordinate,
     data::Vector,
     dim::*,
+    dtypes::StaticElementType,
     mat::Matrix,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::{DataVersionType, StaticElementType},
+    storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig},

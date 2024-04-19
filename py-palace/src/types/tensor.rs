@@ -1,6 +1,6 @@
 use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
-use palace_core::storage::StaticElementType;
+use palace_core::dtypes::StaticElementType;
 use palace_core::{
     data::{ChunkCoordinate, Vector},
     dim::*,

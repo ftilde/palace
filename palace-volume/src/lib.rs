@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    operators::volume::EmbeddedVolumeOperator, storage::StaticElementType, vec::LocalVoxelPosition,
+    dtypes::StaticElementType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
 };
 
 #[derive(Clone, Default)]

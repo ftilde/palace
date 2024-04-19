@@ -2,9 +2,9 @@ use ash::vk;
 use futures::StreamExt;
 
 use crate::dim::*;
+use crate::dtypes::StaticElementType;
 use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
-use crate::storage::StaticElementType;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
 use crate::vulkan::shader::ShaderDefines;

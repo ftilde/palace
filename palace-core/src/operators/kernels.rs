@@ -1,8 +1,6 @@
 use crate::{
-    array::ArrayMetaData,
-    data::Vector,
-    operator::OperatorDescriptor,
-    storage::{Element, StaticElementType},
+    array::ArrayMetaData, data::Vector, dtypes::StaticElementType, operator::OperatorDescriptor,
+    storage::Element,
 };
 
 use super::{array::ArrayOperator, tensor::TensorOperator};

@@ -1,9 +1,6 @@
 use std::rc::Rc;
 
-use crate::{
-    dim::*,
-    storage::{Element, StaticElementType},
-};
+use crate::{dim::*, dtypes::StaticElementType, storage::Element};
 use id::Identify;
 
 use super::tensor::TensorOperator;
