@@ -8,7 +8,7 @@ use crate::{
     dim::*,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::{gpu, Element},
+    storage::{gpu, Element, StaticElementType},
     task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
@@ -1004,7 +1004,7 @@ pub fn separable_convolution<D: Dimension>(
     v
 }
 
-pub fn mean<'op>(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
+pub fn mean<'op>(input: VolumeOperator<f32>) -> ScalarOperator<StaticElementType<f32>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,

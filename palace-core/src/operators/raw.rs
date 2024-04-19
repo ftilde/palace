@@ -10,7 +10,7 @@ use crate::{
     dim::D3,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::DataLocation,
+    storage::{DataLocation, StaticElementType},
     task::{RequestStream, TaskContext},
     util::Map,
     vec::Vector,
@@ -134,7 +134,7 @@ impl RawVolumeSourceState {
     pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
         brick_size: LocalVoxelPosition,
-        ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
+        ctx: TaskContext<'cref, 'inv, BrickPosition, StaticElementType<f32>>,
         mut positions: Vec<(BrickPosition, DataLocation)>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {

@@ -9,7 +9,7 @@ use crate::{
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
-        DataLocation, Element,
+        DataLocation, Element, StaticElementType,
     },
     task::{RequestStream, Task, TaskContext},
 };
@@ -18,7 +18,7 @@ use id::Identify;
 #[derive(Clone, Identify)]
 pub struct TensorOperator<D: Dimension, E> {
     pub metadata: TensorMetaData<D>,
-    pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,
+    pub chunks: Operator<Vector<D, ChunkCoordinate>, StaticElementType<E>>,
 }
 
 impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {
@@ -30,7 +30,7 @@ impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {
 impl<D: Dimension, E: Element> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, StaticElementType<E>>,
                 Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
                 &'inv (),
             ) -> Task<'cref>
@@ -46,7 +46,7 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     pub fn with_state<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, StaticElementType<E>>,
                 Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
                 &'inv SB,
             ) -> Task<'cref>
@@ -59,14 +59,14 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     ) -> Self {
         Self {
             metadata,
-            chunks: Operator::with_state(descriptor, state_chunks, chunks),
+            chunks: Operator::with_state(descriptor, Default::default(), state_chunks, chunks),
         }
     }
 
     pub fn unbatched<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
+                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, StaticElementType<E>>,
                 Vector<D, ChunkCoordinate>,
                 DataLocation,
                 &'inv SB,
@@ -80,7 +80,7 @@ impl<D: Dimension, E: Element> TensorOperator<D, E> {
     ) -> Self {
         Self {
             metadata,
-            chunks: Operator::unbatched(descriptor, state_chunks, chunks),
+            chunks: Operator::unbatched(descriptor, Default::default(), state_chunks, chunks),
         }
     }
 
@@ -299,8 +299,8 @@ pub async fn map_values_inplace<
     F: Fn(E) -> E + Send + Copy + 'static,
     D: Dimension,
 >(
-    ctx: TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-    input: &'op Operator<Vector<D, ChunkCoordinate>, E>,
+    ctx: TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, StaticElementType<E>>,
+    input: &'op Operator<Vector<D, ChunkCoordinate>, StaticElementType<E>>,
     positions: Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
     f: F,
 ) where

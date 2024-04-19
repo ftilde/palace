@@ -1,6 +1,6 @@
 use crate::map_err;
+use palace_core::{storage::StaticElementType, vec::Vector};
 use pyo3::{exceptions::PyException, prelude::*};
-use palace_core::vec::Vector;
 use winit::{
     event::{Event, WindowEvent},
     platform::run_return::EventLoopExtRunReturn,
@@ -95,7 +95,8 @@ impl RunTime {
     }
 
     fn resolve_scalar(&mut self, v: ScalarOperator) -> PyResult<f32> {
-        let op: palace_core::operators::scalar::ScalarOperator<f32> = v.try_into()?;
+        let op: palace_core::operators::scalar::ScalarOperator<StaticElementType<f32>> =
+            v.try_into()?;
         let op_ref = &op;
         map_err(self.inner.resolve(None, false, |ctx, _| {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()

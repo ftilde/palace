@@ -2,7 +2,8 @@ use std::rc::Rc;
 
 use crate::{
     storage::{
-        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
+        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, ElementType,
+        StaticElementType, VisibleDataLocation,
     },
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
@@ -165,24 +166,26 @@ pub trait OpaqueOperator {
     ) -> Task<'cref>;
 }
 
-pub struct Operator<ItemDescriptor, Output: ?Sized> {
+pub struct Operator<ItemDescriptor, OutputType> {
     descriptor: OperatorDescriptor,
     state: Rc<TypeErased>,
     granularity: ItemGranularity,
-    compute: ComputeFunction<ItemDescriptor, Output>,
+    compute: ComputeFunction<ItemDescriptor, OutputType>,
+    dtype: OutputType,
 }
-impl<ItemDescriptor, Output: ?Sized> Clone for Operator<ItemDescriptor, Output> {
+impl<ItemDescriptor, OutputType: Clone> Clone for Operator<ItemDescriptor, OutputType> {
     fn clone(&self) -> Self {
         Self {
             descriptor: self.descriptor.clone(),
             state: self.state.clone(),
             granularity: self.granularity.clone(),
             compute: self.compute.clone(),
+            dtype: self.dtype.clone(),
         }
     }
 }
 
-impl<Output: Element> Operator<(), Output> {
+impl<Output: Element> Operator<(), StaticElementType<Output>> {
     #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
         let item = ();
@@ -223,76 +226,9 @@ impl<Output: Element> Operator<(), Output> {
     }
 }
 
-impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescriptor, Output> {
-    pub fn new<
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
-                &'inv (),
-            ) -> Task<'cref>
-            + 'static,
-    >(
-        descriptor: OperatorDescriptor,
-        compute: F,
-    ) -> Self {
-        Self::with_state(descriptor, (), compute)
-    }
-
-    pub fn with_state<
-        S: 'static,
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
-                &'inv S,
-            ) -> Task<'cref>
-            + 'static,
-    >(
-        descriptor: OperatorDescriptor,
-        state: S,
-        compute: F,
-    ) -> Self {
-        Self {
-            descriptor,
-            state: Rc::new(TypeErased::pack(state)),
-            granularity: ItemGranularity::Batched,
-            compute: Rc::new(move |ctx, items, state| {
-                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
-                // then packed and then unpacked again here to `S: 'op`.
-                let state = unsafe { state.unpack_ref() };
-                compute(ctx, items, state)
-            }),
-        }
-    }
-
-    pub fn unbatched<
-        S: 'static,
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-                ItemDescriptor,
-                DataLocation, //DataLocation is only a hint
-                &'inv S,
-            ) -> Task<'cref>
-            + 'static,
-    >(
-        descriptor: OperatorDescriptor,
-        state: S,
-        compute: F,
-    ) -> Self {
-        Self {
-            descriptor,
-            state: Rc::new(TypeErased::pack(state)),
-            granularity: ItemGranularity::Single,
-            compute: Rc::new(move |ctx, items, state| {
-                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
-                // then packed and then unpacked again here to `S: 'op`.
-                let state = unsafe { state.unpack_ref() };
-                assert_eq!(items.len(), 1);
-                let item = items.into_iter().next().unwrap();
-                compute(ctx, item.0, item.1, state)
-            }),
-        }
-    }
-
+impl<ItemDescriptor: Identify + 'static, Output: Element>
+    Operator<ItemDescriptor, StaticElementType<Output>>
+{
     #[must_use]
     pub fn request<'req, 'inv: 'req>(
         &'inv self,
@@ -385,6 +321,84 @@ impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescripto
     //        _marker: Default::default(),
     //    }
     //}
+}
+
+impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
+    Operator<ItemDescriptor, OutputType>
+{
+    pub fn new<
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
+                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
+                &'inv (),
+            ) -> Task<'cref>
+            + 'static,
+    >(
+        descriptor: OperatorDescriptor,
+        dtype: OutputType,
+        compute: F,
+    ) -> Self {
+        Self::with_state(descriptor, dtype, (), compute)
+    }
+
+    pub fn with_state<
+        S: 'static,
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
+                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
+                &'inv S,
+            ) -> Task<'cref>
+            + 'static,
+    >(
+        descriptor: OperatorDescriptor,
+        dtype: OutputType,
+        state: S,
+        compute: F,
+    ) -> Self {
+        Self {
+            descriptor,
+            dtype,
+            state: Rc::new(TypeErased::pack(state)),
+            granularity: ItemGranularity::Batched,
+            compute: Rc::new(move |ctx, items, state| {
+                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
+                // then packed and then unpacked again here to `S: 'op`.
+                let state = unsafe { state.unpack_ref() };
+                compute(ctx, items, state)
+            }),
+        }
+    }
+
+    pub fn unbatched<
+        S: 'static,
+        F: for<'cref, 'inv> Fn(
+                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
+                ItemDescriptor,
+                DataLocation, //DataLocation is only a hint
+                &'inv S,
+            ) -> Task<'cref>
+            + 'static,
+    >(
+        descriptor: OperatorDescriptor,
+        dtype: OutputType,
+        state: S,
+        compute: F,
+    ) -> Self {
+        Self {
+            descriptor,
+            dtype,
+            state: Rc::new(TypeErased::pack(state)),
+            granularity: ItemGranularity::Single,
+            compute: Rc::new(move |ctx, items, state| {
+                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
+                // then packed and then unpacked again here to `S: 'op`.
+                let state = unsafe { state.unpack_ref() };
+                assert_eq!(items.len(), 1);
+                let item = items.into_iter().next().unwrap();
+                compute(ctx, item.0, item.1, state)
+            }),
+        }
+    }
 
     #[must_use]
     pub fn request_gpu<'req, 'inv: 'req>(
@@ -469,13 +483,15 @@ impl<ItemDescriptor: Identify + 'static, Output: Element> Operator<ItemDescripto
     }
 }
 
-impl<ItemDescriptor, Output> Identify for Operator<ItemDescriptor, Output> {
+impl<ItemDescriptor, OutputType> Identify for Operator<ItemDescriptor, OutputType> {
     fn id(&self) -> Id {
         self.descriptor.id.into()
     }
 }
 
-impl<ItemDescriptor: Identify, Output: Copy> OpaqueOperator for Operator<ItemDescriptor, Output> {
+impl<ItemDescriptor: Identify, OutputType: Clone> OpaqueOperator
+    for Operator<ItemDescriptor, OutputType>
+{
     fn op_id(&self) -> OperatorId {
         self.descriptor.id
     }
@@ -497,14 +513,14 @@ impl<ItemDescriptor: Identify, Output: Copy> OpaqueOperator for Operator<ItemDes
             .into_iter()
             .map(|v| unsafe { v.unpack() })
             .collect::<Vec<_>>();
-        let ctx = TaskContext::new(ctx);
+        let ctx = TaskContext::new(ctx, self.dtype.clone());
         (self.compute)(ctx, items, &self.state)
     }
 }
 
-pub fn cache<'op, D: std::hash::Hash + 'static, Output: Element>(
-    mut input: Operator<D, Output>,
-) -> Operator<D, Output> {
+pub fn cache<'op, D: std::hash::Hash + 'static, OutputType>(
+    mut input: Operator<D, OutputType>,
+) -> Operator<D, OutputType> {
     input.descriptor.cache_results = true;
     input
 }

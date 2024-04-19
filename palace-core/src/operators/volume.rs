@@ -7,7 +7,7 @@ use crate::{
     },
     dim::*,
     operator::OperatorDescriptor,
-    storage::Element,
+    storage::{Element, StaticElementType},
     task::RequestStream,
 };
 
@@ -22,7 +22,7 @@ pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<D3, E>;
 pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
 
 #[allow(unused)]
-pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<f32> {
+pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<StaticElementType<f32>> {
     crate::operators::scalar::scalar(
         OperatorDescriptor::new("volume_mean").dependent_on(&input),
         input,

@@ -1,6 +1,6 @@
 use crate::{
     operator::{Operator, OperatorDescriptor},
-    storage::Element,
+    storage::{Element, StaticElementType},
     task::{Task, TaskContext},
 };
 use id::Identify;
@@ -10,24 +10,28 @@ pub type ScalarOperator<T> = Operator<(), T>;
 pub fn scalar<
     T: Element,
     S: 'static,
-    F: for<'cref, 'inv> Fn(TaskContext<'cref, 'inv, (), T>, &'inv S) -> Task<'cref> + 'static,
+    F: for<'cref, 'inv> Fn(
+            TaskContext<'cref, 'inv, (), StaticElementType<T>>,
+            &'inv S,
+        ) -> Task<'cref>
+        + 'static,
 >(
     descriptor: OperatorDescriptor,
     state: S,
     compute: F,
-) -> ScalarOperator<T> {
-    Operator::with_state(descriptor, state, move |ctx, d, s| {
+) -> ScalarOperator<StaticElementType<T>> {
+    Operator::with_state(descriptor, Default::default(), state, move |ctx, d, s| {
         assert!(d.len() == 1);
         compute(ctx, s)
     })
 }
 
-impl<T: Element> ScalarOperator<T> {
+impl<T: Element> ScalarOperator<StaticElementType<T>> {
     pub fn map<D: Identify + 'static, O: Element>(
         self,
         data: D,
         f: fn(T, &D) -> O,
-    ) -> ScalarOperator<O> {
+    ) -> ScalarOperator<StaticElementType<O>> {
         scalar(
             OperatorDescriptor::new("ScalarOperator::map")
                 .dependent_on(&self)
@@ -49,13 +53,13 @@ impl<T: Element> ScalarOperator<T> {
         self,
         data: D,
         f: fn(T, &D) -> O,
-    ) -> ScalarOperator<O> {
+    ) -> ScalarOperator<StaticElementType<O>> {
         self.map(data, f)
     }
     pub fn zip<O: Element>(
         self,
-        other: ScalarOperator<O>,
-    ) -> ScalarOperator<crate::storage::P<T, O>> {
+        other: ScalarOperator<StaticElementType<O>>,
+    ) -> ScalarOperator<StaticElementType<crate::storage::P<T, O>>> {
         scalar(
             OperatorDescriptor::new("ScalarOperator::zip")
                 .dependent_on(&self)
@@ -76,7 +80,7 @@ impl<T: Element> ScalarOperator<T> {
     }
 }
 
-pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<T> {
+pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementType<T>> {
     let op_id = OperatorDescriptor::new(std::any::type_name::<T>()).dependent_on_data(&val);
     scalar(op_id, (), move |ctx, _| {
         async move {
@@ -87,7 +91,7 @@ pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<T> {
     })
 }
 
-impl<T: Element + Identify> From<T> for ScalarOperator<T> {
+impl<T: Element + Identify> From<T> for ScalarOperator<StaticElementType<T>> {
     fn from(value: T) -> Self {
         constant(value)
     }

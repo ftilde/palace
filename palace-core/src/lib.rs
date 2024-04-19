@@ -4,6 +4,7 @@ pub mod chunk_utils;
 pub mod coordinate;
 pub mod data;
 pub mod dim;
+pub mod dtypes;
 pub mod event;
 pub mod mat;
 pub mod operator;

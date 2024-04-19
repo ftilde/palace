@@ -15,8 +15,8 @@ use crate::operator::{
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
-use crate::storage::{disk, CpuDataLocation};
-use crate::storage::{DataLocation, Element, GarbageCollectId, VisibleDataLocation};
+use crate::storage::{disk, CpuDataLocation, Element, ElementType, StaticElementType};
+use crate::storage::{DataLocation, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
@@ -719,12 +719,13 @@ pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
 #[derive(Copy, Clone)]
-pub struct TaskContext<'cref, 'inv, ItemDescriptor, Output: ?Sized> {
+pub struct TaskContext<'cref, 'inv, ItemDescriptor, OutputType> {
     inner: OpaqueTaskContext<'cref, 'inv>,
-    _output_marker: std::marker::PhantomData<(ItemDescriptor, Output)>,
+    _output_marker: std::marker::PhantomData<ItemDescriptor>,
+    dtype: OutputType,
 }
 
-impl<'cref, 'inv, I, O: ?Sized> std::ops::Deref for TaskContext<'cref, 'inv, I, O> {
+impl<'cref, 'inv, I, O> std::ops::Deref for TaskContext<'cref, 'inv, I, O> {
     type Target = OpaqueTaskContext<'cref, 'inv>;
 
     fn deref(&self) -> &Self::Target {
@@ -738,19 +739,20 @@ impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
         self.inner
     }
 }
-impl<'cref, 'inv, ItemDescriptor: Identify, Output: ?Sized>
-    TaskContext<'cref, 'inv, ItemDescriptor, Output>
+impl<'cref, 'inv, ItemDescriptor: Identify, OutputType>
+    TaskContext<'cref, 'inv, ItemDescriptor, OutputType>
 {
-    pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>) -> Self {
+    pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>, dtype: OutputType) -> Self {
         Self {
             inner,
             _output_marker: Default::default(),
+            dtype,
         }
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
-    TaskContext<'cref, 'inv, ItemDescriptor, Output>
+impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element>
+    TaskContext<'cref, 'inv, ItemDescriptor, StaticElementType<Output>>
 {
     pub fn alloc_slot<'req>(
         &'req self,
@@ -763,8 +765,8 @@ impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
-    TaskContext<'cref, 'inv, ItemDescriptor, Output>
+impl<'cref, 'inv, ItemDescriptor: Identify, OutputType: ElementType>
+    TaskContext<'cref, 'inv, ItemDescriptor, OutputType>
 {
     pub fn alloc_slot_gpu<'a>(
         &'a self,
@@ -772,7 +774,7 @@ impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
         item: ItemDescriptor,
         size: usize,
     ) -> Request<'a, 'inv, WriteHandle<'a>> {
-        let layout = Layout::array::<Output>(size).unwrap();
+        let layout = self.dtype.array_layout(size);
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
         self.alloc_raw_gpu(device, id, layout)
     }
@@ -828,7 +830,7 @@ impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element + ?Sized>
     }
 }
 
-impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), StaticElementType<Output>> {
     pub fn write(&self, value: Output) -> Request<()> {
         self.alloc_slot((), 1).map(move |mut slot| {
             slot[0].write(value);
@@ -836,7 +838,7 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
         })
     }
 }
-impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), Output> {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), StaticElementType<Output>> {
     pub fn alloc_scalar_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,

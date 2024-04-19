@@ -1,5 +1,6 @@
 use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
+use palace_core::storage::StaticElementType;
 use palace_core::{
     data::{ChunkCoordinate, Vector},
     dim::*,
@@ -55,14 +56,14 @@ impl Clone for ScalarOperator {
     }
 }
 
-impl<T: 'static> From<CScalarOperator<T>> for ScalarOperator {
-    fn from(value: CScalarOperator<T>) -> Self {
+impl<T: 'static + Clone> From<CScalarOperator<StaticElementType<T>>> for ScalarOperator {
+    fn from(value: CScalarOperator<StaticElementType<T>>) -> Self {
         Self {
             inner: Box::new(value),
             clone: |i| Self {
                 inner: Box::new(
                     i.inner
-                        .downcast_ref::<CScalarOperator<T>>()
+                        .downcast_ref::<CScalarOperator<StaticElementType<T>>>()
                         .unwrap()
                         .clone(),
                 ),
@@ -72,18 +73,18 @@ impl<T: 'static> From<CScalarOperator<T>> for ScalarOperator {
     }
 }
 
-impl<T: 'static> TryInto<CScalarOperator<T>> for ScalarOperator {
+impl<T: 'static + Clone> TryInto<CScalarOperator<StaticElementType<T>>> for ScalarOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CScalarOperator<T>, Self::Error> {
+    fn try_into(self) -> Result<CScalarOperator<StaticElementType<T>>, Self::Error> {
         Ok(self.try_unpack()?.clone())
     }
 }
 
 impl ScalarOperator {
-    pub fn try_unpack<T: 'static>(&self) -> PyResult<&CScalarOperator<T>> {
+    pub fn try_unpack<T: 'static>(&self) -> PyResult<&CScalarOperator<StaticElementType<T>>> {
         self.inner
-            .downcast_ref::<CScalarOperator<T>>()
+            .downcast_ref::<CScalarOperator<StaticElementType<T>>>()
             .ok_or_else(|| {
                 PyErr::new::<PyException, _>(format!(
                     "Expected ScalarOperator<{}>, but got something else",
@@ -91,9 +92,11 @@ impl ScalarOperator {
                 ))
             })
     }
-    pub fn try_unpack_mut<T: 'static>(&mut self) -> PyResult<&mut CScalarOperator<T>> {
+    pub fn try_unpack_mut<T: 'static>(
+        &mut self,
+    ) -> PyResult<&mut CScalarOperator<StaticElementType<T>>> {
         self.inner
-            .downcast_mut::<CScalarOperator<T>>()
+            .downcast_mut::<CScalarOperator<StaticElementType<T>>>()
             .ok_or_else(|| {
                 PyErr::new::<PyException, _>(format!(
                     "Expected ScalarOperator<{}>, but got something else",
@@ -109,12 +112,12 @@ pub enum MaybeConstScalarOperator<T> {
     Operator(ScalarOperator),
 }
 
-impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<T>>
+impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<StaticElementType<T>>>
     for MaybeConstScalarOperator<T>
 {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CScalarOperator<T>, Self::Error> {
+    fn try_into(self) -> Result<CScalarOperator<StaticElementType<T>>, Self::Error> {
         match self {
             MaybeConstScalarOperator::Const(c) => Ok(palace_core::operators::scalar::constant(c)),
             MaybeConstScalarOperator::Operator(o) => o.try_into(),
@@ -139,7 +142,7 @@ impl Clone for TensorOperator {
     }
 }
 
-impl<D: Dimension, T: std::any::Any> TryFrom<CTensorOperator<D, T>> for TensorOperator {
+impl<D: Dimension, T: std::any::Any + Clone> TryFrom<CTensorOperator<D, T>> for TensorOperator {
     type Error = PyErr;
 
     fn try_from(t: CTensorOperator<D, T>) -> Result<Self, Self::Error> {
@@ -162,13 +165,13 @@ impl<D: Dimension, T: std::any::Any> TryFrom<CTensorOperator<D, T>> for TensorOp
     }
 }
 
-impl<D: Dimension, T: std::any::Any> TryInto<CTensorOperator<D, T>> for TensorOperator {
+impl<D: Dimension, T: std::any::Any + Element> TryInto<CTensorOperator<D, T>> for TensorOperator {
     type Error = PyErr;
 
     fn try_into(self) -> Result<CTensorOperator<D, T>, Self::Error> {
         let inner = self
             .inner
-            .downcast_ref::<COperator<Vector<D, ChunkCoordinate>, T>>()
+            .downcast_ref::<COperator<Vector<D, ChunkCoordinate>, StaticElementType<T>>>()
             .ok_or_else(|| {
                 PyErr::new::<PyException, _>(format!(
                     "Expected Operator<Vector<{}, ChunkCoordinate>, {}>, but got something else",
@@ -222,7 +225,7 @@ pub struct EmbeddedTensorOperator {
     pub embedding_data: PyTensorEmbeddingData,
 }
 
-impl<D: Dimension, T: std::any::Any> TryFrom<CEmbeddedTensorOperator<D, T>>
+impl<D: Dimension, T: std::any::Any + Clone> TryFrom<CEmbeddedTensorOperator<D, T>>
     for EmbeddedTensorOperator
 {
     type Error = PyErr;
@@ -235,7 +238,7 @@ impl<D: Dimension, T: std::any::Any> TryFrom<CEmbeddedTensorOperator<D, T>>
     }
 }
 
-impl<D: Dimension, T: std::any::Any> TryInto<CEmbeddedTensorOperator<D, T>>
+impl<D: Dimension, T: std::any::Any + Element> TryInto<CEmbeddedTensorOperator<D, T>>
     for EmbeddedTensorOperator
 {
     type Error = PyErr;
@@ -321,7 +324,9 @@ pub struct LODTensorOperator {
     pub levels: Vec<EmbeddedTensorOperator>,
 }
 
-impl<D: Dimension, T: std::any::Any> TryFrom<CLODTensorOperator<D, T>> for LODTensorOperator {
+impl<D: Dimension, T: std::any::Any + Clone> TryFrom<CLODTensorOperator<D, T>>
+    for LODTensorOperator
+{
     type Error = PyErr;
 
     fn try_from(t: CLODTensorOperator<D, T>) -> Result<Self, Self::Error> {
@@ -334,7 +339,9 @@ impl<D: Dimension, T: std::any::Any> TryFrom<CLODTensorOperator<D, T>> for LODTe
         })
     }
 }
-impl<D: Dimension, T: std::any::Any> TryInto<CLODTensorOperator<D, T>> for LODTensorOperator {
+impl<D: Dimension, T: std::any::Any + Element> TryInto<CLODTensorOperator<D, T>>
+    for LODTensorOperator
+{
     type Error = PyErr;
 
     fn try_into(self) -> Result<CLODTensorOperator<D, T>, Self::Error> {

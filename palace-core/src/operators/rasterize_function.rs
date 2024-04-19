@@ -5,7 +5,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     operator::OperatorDescriptor,
-    storage::DataLocation,
+    storage::{DataLocation, StaticElementType},
     task::{RequestStream, TaskContext},
     Error,
 };
@@ -47,7 +47,7 @@ pub fn normalized(
 async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     metadata: &VolumeMetaData,
     function: &F,
-    ctx: TaskContext<'cref, 'inv, BrickPosition, f32>,
+    ctx: TaskContext<'cref, 'inv, BrickPosition, StaticElementType<f32>>,
     positions: Vec<(BrickPosition, DataLocation)>,
 ) -> Result<(), Error> {
     let allocs = positions.into_iter().map(|(pos, _)| {
