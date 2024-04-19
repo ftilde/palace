@@ -4,6 +4,7 @@ use futures::StreamExt;
 use crate::dim::*;
 use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
+use crate::storage::StaticElementType;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
 use crate::vulkan::shader::ShaderDefines;
@@ -15,11 +16,11 @@ use super::volume::EmbeddedVolumeOperator;
 use super::{kernels::*, volume_gpu};
 
 pub fn multiscale_vesselness(
-    input: EmbeddedVolumeOperator<f32>,
+    input: EmbeddedVolumeOperator<StaticElementType<f32>>,
     min_scale: f32,
     max_scale: f32,
     num_steps: usize,
-) -> EmbeddedVolumeOperator<f32> {
+) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
     assert!(num_steps > 0);
 
     let step_scale = min_scale;
@@ -56,7 +57,10 @@ pub fn multiscale_vesselness(
     out
 }
 
-pub fn vesselness(input: EmbeddedVolumeOperator<f32>, scale: f32) -> EmbeddedVolumeOperator<f32> {
+pub fn vesselness(
+    input: EmbeddedVolumeOperator<StaticElementType<f32>>,
+    scale: f32,
+) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
     const SHADER: &'static str = r#"
 #version 450
 
@@ -118,7 +122,7 @@ void main() {
 }
 "#;
 
-    type Conv = fn(f32) -> ArrayOperator<f32>;
+    type Conv = fn(f32) -> ArrayOperator<StaticElementType<f32>>;
 
     let spacing = input.embedding_data.spacing;
     let g = |f1: Conv, f2: Conv, f3: Conv| {
@@ -143,6 +147,7 @@ void main() {
         OperatorDescriptor::new("vesselness")
             .dependent_on(&input)
             .dependent_on_data(&scale),
+        Default::default(),
         input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),
         move |ctx, positions, (input, hessian)| {

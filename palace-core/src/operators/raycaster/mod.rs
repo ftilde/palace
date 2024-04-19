@@ -12,7 +12,7 @@ use crate::{
     dim::*,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{DataVersionType, StaticElementType},
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
@@ -170,7 +170,7 @@ pub fn entry_exit_points(
     embedding_data: VolumeEmbeddingData,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
-) -> ImageOperator<[Vector<D4, f32>; 2]> {
+) -> ImageOperator<StaticElementType<[Vector<D4, f32>; 2]>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
@@ -183,6 +183,7 @@ pub fn entry_exit_points(
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&projection_mat)
             .unstable(),
+        Default::default(),
         result_metadata,
         (
             input_metadata,
@@ -518,7 +519,7 @@ impl Default for RaycasterConfig {
     }
 }
 
-pub type TransFuncTableOperator = ArrayOperator<Vector<D4, u8>>;
+pub type TransFuncTableOperator = ArrayOperator<StaticElementType<Vector<D4, u8>>>;
 
 #[derive(Clone, Identify)]
 pub struct TransFuncOperator {
@@ -573,8 +574,8 @@ pub struct TransFuncData {
 }
 
 pub fn raycast(
-    input: LODVolumeOperator<f32>,
-    entry_exit_points: ImageOperator<[Vector<D4, f32>; 2]>,
+    input: LODVolumeOperator<StaticElementType<f32>>,
+    entry_exit_points: ImageOperator<StaticElementType<[Vector<D4, f32>; 2]>>,
     tf: TransFuncOperator,
     config: RaycasterConfig,
 ) -> FrameOperator {
@@ -605,6 +606,7 @@ pub fn raycast(
             .dependent_on(&entry_exit_points)
             .dependent_on_data(&tf)
             .dependent_on_data(&config),
+        Default::default(),
         entry_exit_points.metadata,
         (input, entry_exit_points.clone(), tf),
         move |ctx, pos, _, (input, entry_exit_points, tf)| {

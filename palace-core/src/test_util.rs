@@ -6,14 +6,14 @@ use crate::{
         volume::{ChunkSize, VolumeOperator},
         volume_gpu::rechunk,
     },
-    storage::Element,
+    storage::{Element, StaticElementType},
 };
 
 pub fn compare_tensor_fn<
     D: Dimension,
     T: PartialEq + crate::operators::volume_gpu::GLSLType + Element + Default + std::fmt::Debug,
 >(
-    vol: TensorOperator<D, T>,
+    vol: TensorOperator<D, StaticElementType<T>>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
 ) {
     let mut runtime =
@@ -43,8 +43,8 @@ pub fn compare_tensor_fn<
 }
 
 pub fn compare_tensor<D: Dimension>(
-    result: TensorOperator<D, f32>,
-    expected: TensorOperator<D, f32>,
+    result: TensorOperator<D, StaticElementType<f32>>,
+    expected: TensorOperator<D, StaticElementType<f32>>,
 ) {
     let mut runtime =
         crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
@@ -82,7 +82,7 @@ pub fn compare_tensor<D: Dimension>(
 pub fn center_point_vol(
     size: VoxelPosition,
     brick_size: LocalVoxelPosition,
-) -> (VolumeOperator<f32>, VoxelPosition) {
+) -> (VolumeOperator<StaticElementType<f32>>, VoxelPosition) {
     let center = size.map(|v| v / 2u32);
 
     let point_vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {

@@ -8,6 +8,7 @@ use palace_core::{
     dim::*,
     operator::OperatorDescriptor,
     operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
+    storage::StaticElementType,
     Error,
 };
 
@@ -65,7 +66,7 @@ fn read_metadata(header: &NiftiHeader) -> Result<(VolumeMetaData, VolumeEmbeddin
     Ok((metadata, embedding_data))
 }
 
-pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
     let vol = NiftiVolumeSourceState::open_single(path)?;
     Ok(vol.operate())
 }
@@ -73,7 +74,7 @@ pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<f32>, Error> 
 pub fn open_separate(
     header_path: PathBuf,
     data: PathBuf,
-) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
     let vol = NiftiVolumeSourceState::open_separate(header_path, data)?;
     Ok(vol.operate())
 }
@@ -109,7 +110,7 @@ impl NiftiVolumeSourceState {
         })))
     }
 
-    fn operate(&self) -> EmbeddedVolumeOperator<f32> {
+    fn operate(&self) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
         TensorOperator::with_state(
             match &self.0.type_ {
                 Type::Single(path) => OperatorDescriptor::new("NiftiVolumeSourceState::operate")
@@ -120,6 +121,7 @@ impl NiftiVolumeSourceState {
                         .dependent_on_data(data.to_string_lossy().as_bytes())
                 }
             },
+            Default::default(),
             self.0.metadata,
             self.clone(),
             move |ctx, mut positions, this| {

@@ -22,7 +22,9 @@ pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<D3, E>;
 pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
 
 #[allow(unused)]
-pub fn mean(input: VolumeOperator<f32>) -> ScalarOperator<StaticElementType<f32>> {
+pub fn mean(
+    input: VolumeOperator<StaticElementType<f32>>,
+) -> ScalarOperator<StaticElementType<f32>> {
     crate::operators::scalar::scalar(
         OperatorDescriptor::new("volume_mean").dependent_on(&input),
         input,
@@ -88,13 +90,14 @@ impl ChunkSize {
 
 #[allow(unused)]
 pub fn rechunk<E: Element>(
-    input: VolumeOperator<E>,
+    input: VolumeOperator<StaticElementType<E>>,
     brick_size: Vector<D3, ChunkSize>,
-) -> VolumeOperator<E> {
+) -> VolumeOperator<StaticElementType<E>> {
     TensorOperator::with_state(
         OperatorDescriptor::new("volume_rechunk")
             .dependent_on(&input)
             .dependent_on_data(&brick_size),
+        Default::default(),
         {
             let mut m = input.metadata;
             m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -214,13 +217,14 @@ pub fn rechunk<E: Element>(
 /// only supported (and thus always applied) border handling routine.
 #[allow(unused)]
 pub fn convolution_1d<const DIM: usize>(
-    input: VolumeOperator<f32>,
-    kernel: ArrayOperator<f32>,
-) -> VolumeOperator<f32> {
+    input: VolumeOperator<StaticElementType<f32>>,
+    kernel: ArrayOperator<StaticElementType<f32>>,
+) -> VolumeOperator<StaticElementType<f32>> {
     TensorOperator::with_state(
         OperatorDescriptor::new("convolution_1d")
             .dependent_on(&input)
             .dependent_on(&kernel),
+        Default::default(),
         input.metadata,
         (input, kernel),
         move |ctx, positions, (input, kernel)| {
@@ -404,9 +408,9 @@ pub fn convolution_1d<const DIM: usize>(
 
 #[allow(unused)]
 pub fn separable_convolution(
-    v: VolumeOperator<f32>,
-    [k0, k1, k2]: [ArrayOperator<f32>; 3],
-) -> VolumeOperator<f32> {
+    v: VolumeOperator<StaticElementType<f32>>,
+    [k0, k1, k2]: [ArrayOperator<StaticElementType<f32>>; 3],
+) -> VolumeOperator<StaticElementType<f32>> {
     let v = convolution_1d::<2>(v, k2);
     let v = convolution_1d::<1>(v, k1);
     let v = convolution_1d::<0>(v, k0);
@@ -422,7 +426,7 @@ mod test {
     };
 
     fn compare_convolution_1d<const DIM: usize>(
-        input: VolumeOperator<f32>,
+        input: VolumeOperator<StaticElementType<f32>>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
     ) {

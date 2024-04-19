@@ -12,7 +12,7 @@ use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
-use palace_core::storage::DataVersionType;
+use palace_core::storage::{DataVersionType, StaticElementType};
 use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -191,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     md: ImageMetaData,
     slice_num: &mut i32,
     offset: &mut Vector<D2, f32>,
@@ -240,7 +240,7 @@ fn slice_viewer_z(
 }
 
 fn slice_viewer_rot(
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     md: ImageMetaData,
     angle: &mut f32,
     mut events: EventStream,
@@ -273,7 +273,7 @@ fn slice_viewer_rot(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<D2, f32>,

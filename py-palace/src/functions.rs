@@ -3,6 +3,7 @@ use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
 use palace_core::operators::raycaster::RaycasterConfig;
+use palace_core::storage::StaticElementType;
 use pyo3::{exceptions::PyException, prelude::*};
 
 #[pyfunction]
@@ -20,7 +21,10 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<D2, Vector<D4, u8>>| {
+                |vol: palace_core::operators::tensor::TensorOperator<
+                    D2,
+                    StaticElementType<Vector<D4, u8>>,
+                >| {
                     palace_core::operators::volume_gpu::rechunk(vol, size).into()
                 },
             )
@@ -30,7 +34,10 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<D3, f32>| {
+                |vol: palace_core::operators::tensor::TensorOperator<
+                    D3,
+                    StaticElementType<f32>,
+                >| {
                     palace_core::operators::volume_gpu::rechunk(vol, size).into()
                 },
             )
@@ -51,7 +58,7 @@ pub fn linear_rescale(
 ) -> PyResult<PyObject> {
     vol.try_map_inner(
         py,
-        |vol: palace_core::operators::volume::VolumeOperator<f32>| {
+        |vol: palace_core::operators::volume::VolumeOperator<StaticElementType<f32>>| {
             //TODO: ndim -> static dispatch
             palace_core::operators::volume_gpu::linear_rescale(vol, scale, offset)
         },
@@ -66,7 +73,7 @@ pub fn threshold(
 ) -> PyResult<PyObject> {
     vol.try_map_inner(
         py,
-        |vol: palace_core::operators::volume::VolumeOperator<f32>| {
+        |vol: palace_core::operators::volume::VolumeOperator<StaticElementType<f32>>| {
             //TODO: ndim -> static dispatch
             palace_core::operators::volume_gpu::threshold(vol, threshold)
         },

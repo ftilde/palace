@@ -22,7 +22,7 @@ pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone>(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
     f: F,
-) -> VolumeOperator<f32> {
+) -> VolumeOperator<StaticElementType<f32>> {
     let r = VoxelPosRasterizer {
         function: f,
         metadata: VolumeMetaData {
@@ -37,7 +37,7 @@ pub fn normalized(
     dimensions: VoxelPosition,
     brick_size: LocalVoxelPosition,
     f: impl 'static + Fn(Vector<D3, f32>) -> f32 + Sync + Clone,
-) -> VolumeOperator<f32> {
+) -> VolumeOperator<StaticElementType<f32>> {
     let dim_f = dimensions.map(|v| v.raw as f32);
     voxel(dimensions, brick_size, move |pos: VoxelPosition| {
         f(pos.map(|v| v.raw as f32) / dim_f)
@@ -87,7 +87,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 }
 
 impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F> {
-    fn operate(&self) -> VolumeOperator<f32> {
+    fn operate(&self) -> VolumeOperator<StaticElementType<f32>> {
         TensorOperator::with_state(
             OperatorDescriptor::new("ImplicitFunctionRasterizer::operate")
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
@@ -95,6 +95,7 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F>
                 //same type!
                 .dependent_on_data(&id::func_id::<F>())
                 .dependent_on_data(&self.metadata),
+            Default::default(),
             self.metadata,
             self.clone(),
             move |ctx, positions, this| {

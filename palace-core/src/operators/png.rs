@@ -4,13 +4,14 @@ use std::{io::BufReader, path::PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
 
+use crate::storage::StaticElementType;
 use crate::{data::Vector, dim::*, task::OpaqueTaskContext};
 
 use super::tensor::{FrameOperator, ImageOperator};
 
 pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
-    input: &'inv ImageOperator<Vector<D4, u8>>,
+    input: &'inv ImageOperator<StaticElementType<Vector<D4, u8>>>,
     path: PathBuf,
 ) -> Result<(), crate::Error> {
     let m = input.metadata;

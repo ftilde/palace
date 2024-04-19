@@ -10,6 +10,7 @@ use palace_core::{
     operators::{
         raycaster::TransFuncOperator, volume::EmbeddedVolumeOperator, volume_gpu::linear_rescale,
     },
+    storage::StaticElementType,
     Error,
 };
 
@@ -45,7 +46,7 @@ fn default_if_nan(v: f32, default: f32) -> f32 {
 pub fn open(
     path: &Path,
     brick_size: LocalVoxelPosition,
-) -> Result<EmbeddedVolumeOperator<f32>, Error> {
+) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
     let content = std::fs::read_to_string(path)?;
     let package = parser::parse(&content)?;
     let document = package.as_document();

@@ -4,6 +4,7 @@ use futures::StreamExt;
 use crate::{
     dim::*,
     operator::OperatorDescriptor,
+    storage::StaticElementType,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
         shader::ShaderDefines,
@@ -15,10 +16,10 @@ use crate::{
 use super::tensor::TensorOperator;
 
 fn bin_op<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
     body: &'static str,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     let shader = format!(
         "{}{}{}",
         r#"
@@ -64,6 +65,7 @@ void main()
             .dependent_on(&input1)
             .dependent_on(&input2)
             .dependent_on_data(body),
+        Default::default(),
         {
             let m1 = input1.metadata;
             let m2 = input2.metadata;
@@ -147,37 +149,37 @@ void main()
 }
 
 pub fn add<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
-) -> TensorOperator<D, f32> {
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     bin_op(input1, input2, "res = v1 + v2;")
 }
 
 pub fn sub<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
-) -> TensorOperator<D, f32> {
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     bin_op(input1, input2, "res = v1 - v2;")
 }
 
 pub fn mul<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
-) -> TensorOperator<D, f32> {
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     bin_op(input1, input2, "res = v1 * v2;")
 }
 
 pub fn min<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
-) -> TensorOperator<D, f32> {
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     bin_op(input1, input2, "res = min(v1, v2);")
 }
 
 pub fn max<D: Dimension>(
-    input1: TensorOperator<D, f32>,
-    input2: TensorOperator<D, f32>,
-) -> TensorOperator<D, f32> {
+    input1: TensorOperator<D, StaticElementType<f32>>,
+    input2: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     bin_op(input1, input2, "res = max(v1, v2);")
 }
 

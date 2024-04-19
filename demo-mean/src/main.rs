@@ -6,6 +6,7 @@ use palace_core::dim::D3;
 use palace_core::operators;
 use palace_core::operators::volume::VolumeOperator;
 use palace_core::runtime::RunTime;
+use palace_core::storage::StaticElementType;
 use palace_core::vec::Vector;
 use palace_core::{array, operators::volume_gpu};
 use palace_volume::Hints;
@@ -113,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn eval_network(
     runtime: &mut RunTime,
-    vol: VolumeOperator<f32>,
+    vol: VolumeOperator<StaticElementType<f32>>,
     factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());

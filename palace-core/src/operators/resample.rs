@@ -8,6 +8,7 @@ use crate::{
     data::{Matrix, Vector, AABB},
     dim::*,
     operator::{OpaqueOperator, OperatorDescriptor},
+    storage::StaticElementType,
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -34,9 +35,9 @@ pub fn resample_rescale_mat<'op, D: LargerDim>(
 }
 
 pub fn resample<'op, D: LargerDim>(
-    input: EmbeddedTensorOperator<D, f32>,
+    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, f32> {
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size, mat.clone());
     let mut embedding_data = input.embedding_data;
@@ -54,9 +55,9 @@ pub fn resample<'op, D: LargerDim>(
 }
 
 pub fn smooth_downsample<'op, D: LargerDim>(
-    input: EmbeddedTensorOperator<D, f32>,
+    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, f32> {
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
         let s_out = output_size.dimensions.raw().f32();
@@ -77,9 +78,9 @@ pub fn smooth_downsample<'op, D: LargerDim>(
 }
 
 pub fn create_lod<D: LargerDim>(
-    input: EmbeddedTensorOperator<D, f32>,
+    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     step_factor: f32,
-) -> LODTensorOperator<D, f32> {
+) -> LODTensorOperator<D, StaticElementType<f32>> {
     assert!(step_factor > 1.0);
 
     let mut levels = Vec::new();
@@ -119,10 +120,10 @@ pub fn create_lod<D: LargerDim>(
 }
 
 pub fn resample_transform<D: LargerDim>(
-    input: TensorOperator<D, f32>,
+    input: TensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
     struct PushConstants<D: LargerDim> {
@@ -236,6 +237,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on_data(&output_size)
             .dependent_on_data(&element_out_to_in),
+        Default::default(),
         output_size,
         (input, output_size, element_out_to_in),
         move |ctx, mut positions, (input, output_size, element_out_to_in)| {

@@ -15,7 +15,7 @@ use crate::{
     mat::Matrix,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{DataVersionType, StaticElementType},
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -105,7 +105,7 @@ fn projection_mat(
 }
 
 pub fn view_image(
-    input: LODImageOperator<Vector<D4, u8>>,
+    input: LODImageOperator<StaticElementType<Vector<D4, u8>>>,
     result_metadata: ImageMetaData,
     view_state: ImageViewerState,
 ) -> FrameOperator {
@@ -124,6 +124,7 @@ pub fn view_image(
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&view_state)
             .unstable(),
+        Default::default(),
         result_metadata,
         (input, result_metadata, view_state),
         move |ctx, pos, _, (input, result_metadata, view_state)| {

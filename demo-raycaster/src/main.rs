@@ -13,7 +13,7 @@ use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::volume_gpu;
 use palace_core::operators::{self};
 use palace_core::runtime::RunTime;
-use palace_core::storage::DataVersionType;
+use palace_core::storage::{DataVersionType, StaticElementType};
 use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -199,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     camera_state: &mut CameraState,
     scale: &mut f32,
     offset: &mut f32,

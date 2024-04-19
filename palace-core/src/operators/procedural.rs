@@ -5,6 +5,7 @@ use crate::{
     dim::Dimension,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
+    storage::StaticElementType,
     vec::Vector,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -19,7 +20,7 @@ use super::{
     volume::LODVolumeOperator,
 };
 
-pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
+pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
         r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
@@ -31,7 +32,7 @@ pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     )
 }
 
-pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
+pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
         r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
@@ -40,7 +41,7 @@ pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
     )
 }
 
-pub fn mandelbulb(base_metadata: VolumeMetaData) -> LODVolumeOperator<f32> {
+pub fn mandelbulb(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
         r#"
@@ -73,7 +74,7 @@ float run(float[3] pos_normalized, uint[3] pos_voxel) {
     )
 }
 
-pub fn mandelbrot(base_metadata: ImageMetaData) -> LODImageOperator<f32> {
+pub fn mandelbrot(base_metadata: ImageMetaData) -> LODImageOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
         r#"
@@ -104,7 +105,7 @@ float run(float[2] pos_normalized, uint[2] pos_voxel) {
 pub fn rasterize_lod<D: Dimension>(
     base_metadata: TensorMetaData<D>,
     body: &str,
-) -> LODTensorOperator<D, f32> {
+) -> LODTensorOperator<D, StaticElementType<f32>> {
     let mut levels = Vec::new();
     let mut spacing = Vector::fill(1.0f32);
     //TODO: maybe we want to compute the spacing based on dimension reduction instead? could be
@@ -134,7 +135,7 @@ pub fn rasterize_lod<D: Dimension>(
 pub fn rasterize<D: Dimension>(
     metadata: TensorMetaData<D>,
     gen_fn: &str,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
     struct PushConstants<D: Dimension> {
@@ -204,6 +205,7 @@ void main()
         OperatorDescriptor::new("rasterize_gpu")
             .dependent_on_data(gen_fn)
             .dependent_on_data(&metadata),
+        Default::default(),
         metadata,
         (metadata, shader),
         move |ctx, positions, (metadata, shader)| {

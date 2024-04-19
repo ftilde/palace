@@ -82,7 +82,10 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
     }
 }
 
-pub fn open(path: PathBuf, metadata: VolumeMetaData) -> Result<VolumeOperator<f32>, Error> {
+pub fn open(
+    path: PathBuf,
+    metadata: VolumeMetaData,
+) -> Result<VolumeOperator<StaticElementType<f32>>, Error> {
     let file = File::open(&path)?;
     let mmap = unsafe { memmap::Mmap::map(&file)? };
 
@@ -100,6 +103,7 @@ pub fn open(path: PathBuf, metadata: VolumeMetaData) -> Result<VolumeOperator<f3
     let vol = TensorOperator::with_state(
         OperatorDescriptor::new("raw_volume::open")
             .dependent_on_data(state.path.to_string_lossy().as_bytes()),
+        Default::default(),
         metadata,
         (state, metadata),
         move |ctx, positions, (state, metadata)| {

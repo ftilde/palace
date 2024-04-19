@@ -17,7 +17,7 @@ use crate::{
     dim::*,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{DataVersionType, StaticElementType},
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipeline, DescriptorConfig},
@@ -271,7 +271,7 @@ pub fn select_level<'a, D: SmallerDim, T>(
 }
 
 pub fn render_slice(
-    input: LODVolumeOperator<f32>,
+    input: LODVolumeOperator<StaticElementType<f32>>,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
 ) -> FrameOperator {
@@ -389,6 +389,7 @@ void main()
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&projection_mat)
             .unstable(),
+        Default::default(),
         result_metadata,
         (input, result_metadata, projection_mat),
         move |ctx, pos, _, (input, result_metadata, projection_mat)| {

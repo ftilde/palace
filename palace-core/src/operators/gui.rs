@@ -572,6 +572,7 @@ void main() {
                 .dependent_on(&input)
                 .dependent_on_data(&version)
                 .ephemeral(),
+            Default::default(),
             {
                 let m = input.metadata;
                 assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));

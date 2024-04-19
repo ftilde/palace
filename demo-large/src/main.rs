@@ -14,7 +14,7 @@ use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
-use palace_core::storage::DataVersionType;
+use palace_core::storage::{DataVersionType, StaticElementType};
 use palace_core::vulkan::window::Window;
 use winit::event::{Event, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -220,7 +220,7 @@ pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
     runtime: &mut RunTime,
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     size: Vector<D2, GlobalCoordinate>,
     state: &mut SliceState,
     events: &mut EventStream,
@@ -330,7 +330,7 @@ fn slice_viewer_z(
 }
 
 fn raycaster(
-    vol: LODVolumeOperator<f32>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     size: Vector<D2, GlobalCoordinate>,
     state: &mut RaycastingState,
     mut events: EventStream,
@@ -363,7 +363,7 @@ fn raycaster(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: EmbeddedVolumeOperator<f32>,
+    vol: EmbeddedVolumeOperator<StaticElementType<f32>>,
     app_state: &mut State,
     mut events: EventStream,
     deadline: Instant,

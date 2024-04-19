@@ -172,6 +172,7 @@ void main()
             OperatorDescriptor::new("splitter")
                 .dependent_on(&input_l)
                 .dependent_on(&input_r),
+            Default::default(),
             self.metadata_out(),
             (input_l, input_r, self),
             move |ctx, positions, (input_l, input_r, this)| {

@@ -26,10 +26,10 @@ use super::{
 };
 
 pub fn linear_rescale<'op, D: Dimension>(
-    input: TensorOperator<D, f32>,
+    input: TensorOperator<D, StaticElementType<f32>>,
     scale: f32,
     offset: f32,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         scale: f32,
@@ -69,6 +69,7 @@ void main()
             .dependent_on(&input)
             .dependent_on_data(&scale)
             .dependent_on_data(&offset),
+        Default::default(),
         input.metadata,
         (input, scale, offset),
         move |ctx, positions, (input, scale, offset)| {
@@ -157,9 +158,9 @@ void main()
 }
 
 pub fn apply_tf<'op, D: Dimension>(
-    input: TensorOperator<D, f32>,
+    input: TensorOperator<D, StaticElementType<f32>>,
     tf: TransFuncOperator,
-) -> TensorOperator<D, Vector<D4, u8>> {
+) -> TensorOperator<D, StaticElementType<Vector<D4, u8>>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         tf_min: f32,
@@ -211,6 +212,7 @@ void main()
         OperatorDescriptor::new("volume_scale_gpu")
             .dependent_on(&input)
             .dependent_on_data(&tf),
+        Default::default(),
         input.metadata,
         (input, tf),
         move |ctx, positions, (input, tf)| {
@@ -301,9 +303,9 @@ void main()
 }
 
 pub fn threshold<'op, D: Dimension>(
-    input: TensorOperator<D, f32>,
+    input: TensorOperator<D, StaticElementType<f32>>,
     threshold: f32,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         threshold: f32,
@@ -341,6 +343,7 @@ void main()
         OperatorDescriptor::new("threshold_gpu")
             .dependent_on(&input)
             .dependent_on_data(&threshold),
+        Default::default(),
         input.metadata,
         (input, threshold),
         move |ctx, positions, (input, threshold)| {
@@ -440,9 +443,9 @@ impl GLSLType for Vector<D4, u8> {
 }
 
 pub fn rechunk<D: Dimension, T: Element + GLSLType>(
-    input: TensorOperator<D, T>,
+    input: TensorOperator<D, StaticElementType<T>>,
     chunk_size: Vector<D, ChunkSize>,
-) -> TensorOperator<D, T> {
+) -> TensorOperator<D, StaticElementType<T>> {
     // Early return in case of matched sizes
     if input.metadata.chunk_size == chunk_size.zip(input.metadata.dimensions, |b, d| b.apply(d)) {
         return input;
@@ -512,6 +515,7 @@ void main() {
             .dependent_on_data(&chunk_size)
             .dependent_on_data(T::TYPE_NAME)
             .dependent_on_data(&D::N),
+        Default::default(),
         {
             let mut m = input.metadata;
             m.chunk_size = chunk_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -659,10 +663,10 @@ void main() {
 /// supported (and thus always applied) border handling routine.
 //TODO It should be relatively easy to support other strategies now
 pub fn convolution_1d<D: Dimension>(
-    input: TensorOperator<D, f32>,
-    kernel: ArrayOperator<f32>,
+    input: TensorOperator<D, StaticElementType<f32>>,
+    kernel: ArrayOperator<StaticElementType<f32>>,
     dim: usize,
-) -> TensorOperator<D, f32> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     assert!(dim < D::N);
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
@@ -804,6 +808,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on(&kernel)
             .dependent_on_data(&dim),
+        Default::default(),
         input.metadata,
         (input, kernel),
         move |ctx, mut positions, (input, kernel)| {
@@ -995,16 +1000,18 @@ void main() {
 
 //TODO: kind of annoying that we have to use a reference to the operator here, but that is the only way it is copy...
 pub fn separable_convolution<D: Dimension>(
-    mut v: TensorOperator<D, f32>,
-    kernels: Vector<D, &ArrayOperator<f32>>,
-) -> TensorOperator<D, f32> {
+    mut v: TensorOperator<D, StaticElementType<f32>>,
+    kernels: Vector<D, &ArrayOperator<StaticElementType<f32>>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     for dim in (0..D::N).rev() {
         v = convolution_1d(v, kernels[dim].clone(), dim);
     }
     v
 }
 
-pub fn mean<'op>(input: VolumeOperator<f32>) -> ScalarOperator<StaticElementType<f32>> {
+pub fn mean<'op>(
+    input: VolumeOperator<StaticElementType<f32>>,
+) -> ScalarOperator<StaticElementType<f32>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -1329,7 +1336,7 @@ mod test {
     }
 
     fn compare_convolution_1d(
-        input: VolumeOperator<f32>,
+        input: VolumeOperator<StaticElementType<f32>>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
         dim: usize,

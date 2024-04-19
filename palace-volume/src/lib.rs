@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use palace_core::{operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition};
+use palace_core::{
+    operators::volume::EmbeddedVolumeOperator, storage::StaticElementType, vec::LocalVoxelPosition,
+};
 
 #[derive(Clone, Default)]
 pub struct Hints {
@@ -27,7 +29,7 @@ impl Hints {
 pub fn open(
     path: PathBuf,
     hints: Hints,
-) -> Result<EmbeddedVolumeOperator<f32>, Box<dyn std::error::Error>> {
+) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
