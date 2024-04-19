@@ -6,6 +6,8 @@ pub trait ElementType: Clone {
     fn array_layout(&self, size: usize) -> Layout;
 }
 
+/// Static ---------------------------------------------------------------------
+
 #[derive(Copy, Clone)]
 pub struct StaticElementType<T>(std::marker::PhantomData<T>);
 
@@ -21,6 +23,42 @@ impl<T: Element> ElementType for StaticElementType<T> {
     }
 }
 
+macro_rules! impl_conversion {
+    ($ty:ty, $variant:ident) => {
+        impl TryFrom<DType> for StaticElementType<$ty> {
+            type Error = ConversionError;
+
+            fn try_from(value: DType) -> Result<Self, Self::Error> {
+                if let DType::$variant = value {
+                    Ok(Default::default())
+                } else {
+                    Err(ConversionError {
+                        from: value.pretty_type(),
+                        to: stringify!($ty),
+                    })
+                }
+            }
+        }
+
+        impl From<StaticElementType<$ty>> for DType {
+            fn from(_value: StaticElementType<$ty>) -> Self {
+                DType::$variant
+            }
+        }
+    };
+}
+
+impl_conversion!(f32, F32);
+impl_conversion!(u32, U32);
+impl_conversion!(Vector<D4, u8>, U8Vec4);
+
+pub struct ConversionError {
+    pub from: &'static str,
+    pub to: &'static str,
+}
+
+/// Dynamic --------------------------------------------------------------------
+
 #[derive(Copy, Clone)]
 pub enum DType {
     F32,
@@ -29,6 +67,14 @@ pub enum DType {
 }
 
 impl DType {
+    pub fn pretty_type(&self) -> &'static str {
+        match self {
+            DType::F32 => "f32",
+            DType::U32 => "u32",
+            DType::U8Vec4 => "u8vec4",
+        }
+    }
+
     pub fn glsl_type(&self) -> &str {
         match self {
             DType::F32 => "float",
@@ -55,6 +101,7 @@ impl ElementType for DType {
     }
 }
 
+/// Some specialized types -----------------------------------------------------
 pub enum Scalar {
     F32,
     U32,

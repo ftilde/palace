@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 use std::time::Instant;
 
-use crate::dtypes::{ElementType, StaticElementType};
+use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
@@ -743,12 +743,25 @@ impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
 impl<'cref, 'inv, ItemDescriptor: Identify, OutputType>
     TaskContext<'cref, 'inv, ItemDescriptor, OutputType>
 {
-    pub(crate) fn new(inner: OpaqueTaskContext<'cref, 'inv>, dtype: OutputType) -> Self {
+    pub(crate) unsafe fn new(inner: OpaqueTaskContext<'cref, 'inv>, dtype: OutputType) -> Self {
         Self {
             inner,
             _output_marker: Default::default(),
             dtype,
         }
+    }
+}
+
+impl<'cref, 'inv, I, T> TaskContext<'cref, 'inv, I, T>
+where
+    T: TryFrom<DType, Error = ConversionError>,
+{
+    pub fn try_from(value: TaskContext<'cref, 'inv, I, DType>) -> Result<Self, ConversionError> {
+        Ok(Self {
+            inner: value.inner,
+            _output_marker: Default::default(),
+            dtype: value.dtype.try_into()?,
+        })
     }
 }
 

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
-    dtypes::{ElementType, StaticElementType},
+    dtypes::{ConversionError, DType, ElementType, StaticElementType},
     storage::{
         gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
     },
@@ -486,6 +486,25 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
 impl<ItemDescriptor, OutputType> Identify for Operator<ItemDescriptor, OutputType> {
     fn id(&self) -> Id {
         self.descriptor.id.into()
+    }
+}
+
+impl<I: Identify + 'static, T> Operator<I, T>
+where
+    T: TryFrom<DType, Error = ConversionError>,
+{
+    pub fn try_from(value: Operator<I, DType>) -> Result<Self, ConversionError> {
+        let new_dtype: T = value.dtype.try_into()?;
+        let old_dtype = value.dtype;
+        Ok(Operator {
+            descriptor: value.descriptor,
+            state: value.state,
+            granularity: value.granularity,
+            compute: Rc::new(move |ctx, items, tr| {
+                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            }),
+            dtype: new_dtype,
+        })
     }
 }
 
