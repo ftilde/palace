@@ -2,7 +2,7 @@ use crate::types::*;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::{DType, StaticElementType};
 use palace_core::operators::raycaster::RaycasterConfig;
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -21,11 +21,12 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<
-                    D2,
-                    StaticElementType<Vector<D4, u8>>,
-                >| {
-                    palace_core::operators::volume_gpu::rechunk(vol, size).into()
+                |vol: palace_core::operators::tensor::TensorOperator<D2, DType>| {
+                    let vol: palace_core::operators::tensor::TensorOperator<
+                        D2,
+                        StaticElementType<Vector<D4, u8>>,
+                    > = vol.try_into()?;
+                    Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into())
                 },
             )
         }
@@ -34,11 +35,12 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<
-                    D3,
-                    StaticElementType<f32>,
-                >| {
-                    palace_core::operators::volume_gpu::rechunk(vol, size).into()
+                |vol: palace_core::operators::tensor::TensorOperator<D3, DType>| {
+                    let vol: palace_core::operators::tensor::TensorOperator<
+                        D3,
+                        StaticElementType<f32>,
+                    > = vol.try_into()?; //TODO
+                    Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into())
                 },
             )
         }
@@ -58,9 +60,12 @@ pub fn linear_rescale(
 ) -> PyResult<PyObject> {
     vol.try_map_inner(
         py,
-        |vol: palace_core::operators::volume::VolumeOperator<StaticElementType<f32>>| {
+        |vol: palace_core::operators::volume::VolumeOperator<DType>| {
             //TODO: ndim -> static dispatch
-            palace_core::operators::volume_gpu::linear_rescale(vol, scale, offset)
+            Ok(
+                palace_core::operators::volume_gpu::linear_rescale(vol.try_into()?, scale, offset)
+                    .into(),
+            )
         },
     )
 }
@@ -73,9 +78,9 @@ pub fn threshold(
 ) -> PyResult<PyObject> {
     vol.try_map_inner(
         py,
-        |vol: palace_core::operators::volume::VolumeOperator<StaticElementType<f32>>| {
+        |vol: palace_core::operators::volume::VolumeOperator<DType>| {
             //TODO: ndim -> static dispatch
-            palace_core::operators::volume_gpu::threshold(vol, threshold)
+            Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
         },
     )
 }
@@ -88,10 +93,17 @@ pub fn separable_convolution<'py>(
 ) -> PyResult<PyObject> {
     let [z, y, x] = zyx;
 
-    let kernels = [z.try_into()?, y.try_into()?, x.try_into()?];
+    let kernels = [
+        z.try_into_core()?.try_into()?,
+        y.try_into_core()?.try_into()?,
+        x.try_into_core()?.try_into()?,
+    ];
     let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
     vol.try_map_inner(py, |vol| {
-        palace_core::operators::volume_gpu::separable_convolution(vol, kernel_refs)
+        Ok(
+            palace_core::operators::volume_gpu::separable_convolution(vol.try_into()?, kernel_refs)
+                .into(),
+        )
     })
 }
 
@@ -222,7 +234,7 @@ pub fn apply_tf(
     }
     let tf = tf.try_into()?;
     input.try_map_inner(py, |input| {
-        palace_core::operators::volume_gpu::apply_tf::<D2>(input, tf)
+        Ok(palace_core::operators::volume_gpu::apply_tf::<D2>(input.try_into()?, tf).into())
     })
 }
 

@@ -7,7 +7,7 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::DType,
     operators::{
         raycaster::TransFuncOperator, volume::EmbeddedVolumeOperator, volume_gpu::linear_rescale,
     },
@@ -46,7 +46,7 @@ fn default_if_nan(v: f32, default: f32) -> f32 {
 pub fn open(
     path: &Path,
     brick_size: LocalVoxelPosition,
-) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
+) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let content = std::fs::read_to_string(path)?;
     let package = parser::parse(&content)?;
     let document = package.as_document();
@@ -126,7 +126,7 @@ pub fn open(
     let vol = palace_core::operators::raw::open(raw_path, metadata)?;
 
     let vol = linear_rescale(vol, rwm_scale, rwm_offset);
-    Ok(vol.embedded(embedding_data))
+    Ok(vol.embedded(embedding_data).into())
 }
 
 pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {

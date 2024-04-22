@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    dtypes::StaticElementType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
+    dtypes::DType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
 };
 
 #[derive(Clone, Default)]
@@ -29,7 +29,7 @@ impl Hints {
 pub fn open(
     path: PathBuf,
     hints: Hints,
-) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Box<dyn std::error::Error>> {
+) -> Result<EmbeddedVolumeOperator<DType>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };

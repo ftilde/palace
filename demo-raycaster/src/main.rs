@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::File(path) => {
             let base =
                 palace_volume::open(path.vol, palace_volume::Hints::new().brick_size(brick_size))?;
-            palace_core::operators::resample::create_lod(base, 2.0)
+            palace_core::operators::resample::create_lod(base.try_into()?, 2.0)
         }
         Input::Synthetic(args) => {
             let md = array::VolumeMetaData {

@@ -184,6 +184,11 @@ impl<ItemDescriptor, OutputType: Clone> Clone for Operator<ItemDescriptor, Outpu
         }
     }
 }
+impl<ItemDescriptor, OutputType: Copy> Operator<ItemDescriptor, OutputType> {
+    pub fn dtype(&self) -> OutputType {
+        self.dtype
+    }
+}
 
 impl<Output: Element> Operator<(), StaticElementType<Output>> {
     #[must_use]

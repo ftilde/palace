@@ -94,7 +94,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .fold(0.0f32, std::ops::Add::add);
                 r2.sqrt()
             },
-        ),
+        )
+        .into(),
         Input::Synthetic(args) => operators::procedural::rasterize(
             array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
@@ -106,8 +107,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 float d_sq = sq.x + sq.y + sq.z;
                 return sqrt(d_sq);
             }"#,
-        ),
+        )
+        .into(),
     };
+
+    let vol = vol.try_into().unwrap();
 
     eval_network(&mut runtime, vol, args.factor)
 }

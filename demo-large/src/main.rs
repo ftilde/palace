@@ -118,7 +118,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let vol = palace_volume::open(args.vol, palace_volume::Hints::new())?;
+    let vol: EmbeddedVolumeOperator<StaticElementType<f32>> =
+        palace_volume::open(args.vol, palace_volume::Hints::new())?.try_into()?;
 
     let vol = &vol;
 

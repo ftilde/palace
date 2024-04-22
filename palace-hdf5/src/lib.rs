@@ -1,7 +1,7 @@
 use palace_core::array::VolumeEmbeddingData;
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::DType;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -55,7 +55,7 @@ fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hypersla
 pub fn open(
     path: PathBuf,
     volume_location: String,
-) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
+) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let state = Hdf5VolumeSourceState::open(path, volume_location)?;
     Ok(state.operate())
 }
@@ -108,7 +108,7 @@ impl Hdf5VolumeSourceState {
         })
     }
 
-    fn operate(&self) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
+    fn operate(&self) -> EmbeddedVolumeOperator<DType> {
         TensorOperator::with_state(
             OperatorDescriptor::new("Hdf5VolumeSourceState::operate")
                 .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
@@ -151,5 +151,6 @@ impl Hdf5VolumeSourceState {
             },
         )
         .embedded(self.inner.embedding_data)
+        .into()
     }
 }

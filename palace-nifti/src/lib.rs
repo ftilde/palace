@@ -6,7 +6,7 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
     data::{self, LocalCoordinate, Vector, VoxelPosition},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{DType, StaticElementType},
     operator::OperatorDescriptor,
     operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
     Error,
@@ -66,17 +66,17 @@ fn read_metadata(header: &NiftiHeader) -> Result<(VolumeMetaData, VolumeEmbeddin
     Ok((metadata, embedding_data))
 }
 
-pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
+pub fn open_single(path: PathBuf) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let vol = NiftiVolumeSourceState::open_single(path)?;
-    Ok(vol.operate())
+    Ok(vol.operate().into())
 }
 
 pub fn open_separate(
     header_path: PathBuf,
     data: PathBuf,
-) -> Result<EmbeddedVolumeOperator<StaticElementType<f32>>, Error> {
+) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let vol = NiftiVolumeSourceState::open_separate(header_path, data)?;
-    Ok(vol.operate())
+    Ok(vol.operate().into())
 }
 
 impl NiftiVolumeSourceState {

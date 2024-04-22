@@ -1,5 +1,8 @@
 use std::alloc::Layout;
 
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
 use crate::{dim::D4, storage::Element, vec::Vector};
 
 pub trait ElementType: Clone {
@@ -39,8 +42,8 @@ macro_rules! impl_conversion {
                     Ok(Default::default())
                 } else {
                     Err(ConversionError {
-                        from: value.pretty_type(),
-                        to: stringify!($ty),
+                        actual: value.pretty_type(),
+                        expected: stringify!($ty),
                     })
                 }
             }
@@ -57,19 +60,46 @@ macro_rules! impl_conversion {
 impl_conversion!(f32, F32);
 impl_conversion!(u32, U32);
 impl_conversion!(Vector<D4, u8>, U8Vec4);
+impl_conversion!([Vector<D4, f32>; 2], F32Vec4A2);
 
+#[derive(Debug)]
 pub struct ConversionError {
-    pub from: &'static str,
-    pub to: &'static str,
+    pub expected: &'static str,
+    pub actual: &'static str,
+}
+
+impl std::error::Error for ConversionError {}
+impl std::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Failed dynamic type conversion, expected {}, but got {}",
+            self.expected, self.actual
+        )
+    }
+}
+
+#[cfg(feature = "python")]
+mod py {
+    use super::*;
+    use pyo3::{exceptions::PyException, PyErr};
+
+    impl From<ConversionError> for PyErr {
+        fn from(e: ConversionError) -> PyErr {
+            PyErr::new::<PyException, _>(format!("{}", e))
+        }
+    }
 }
 
 /// Dynamic --------------------------------------------------------------------
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "python", pyclass)]
 pub enum DType {
     F32,
     U32,
     U8Vec4,
+    F32Vec4A2,
 }
 
 impl DType {
@@ -78,6 +108,7 @@ impl DType {
             DType::F32 => "f32",
             DType::U32 => "u32",
             DType::U8Vec4 => "u8vec4",
+            DType::F32Vec4A2 => "[vec4; 2]",
         }
     }
 
@@ -86,6 +117,7 @@ impl DType {
             DType::F32 => "float",
             DType::U32 => "uint",
             DType::U8Vec4 => "u8vec4",
+            DType::F32Vec4A2 => "vec4[2]",
         }
     }
     pub fn glsl_ext(&self) -> Option<&str> {
@@ -93,16 +125,19 @@ impl DType {
             DType::F32 => None,
             DType::U32 => None,
             DType::U8Vec4 => Some("GL_EXT_shader_explicit_arithmetic_types_int8"),
+            DType::F32Vec4A2 => None,
         }
     }
 }
 
 impl ElementType for DType {
     fn array_layout(&self, size: usize) -> Layout {
+        // TODO: This is REALLY error prone...
         match self {
             DType::F32 => Layout::array::<f32>(size).unwrap(),
             DType::U32 => Layout::array::<u32>(size).unwrap(),
             DType::U8Vec4 => Layout::array::<Vector<D4, u8>>(size).unwrap(),
+            DType::F32Vec4A2 => Layout::array::<[Vector<D4, f32>; 2]>(size).unwrap(),
         }
     }
 }
