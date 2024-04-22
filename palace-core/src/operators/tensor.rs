@@ -6,7 +6,7 @@ use crate::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
-    dtypes::{ElementType, StaticElementType},
+    dtypes::{ConversionError, DType, ElementType, StaticElementType},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
@@ -99,6 +99,33 @@ impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
         Self {
             metadata: self.metadata,
             chunks: crate::operator::cache(self.chunks),
+        }
+    }
+}
+
+impl<D: Dimension, T> TryFrom<TensorOperator<D, DType>> for TensorOperator<D, StaticElementType<T>>
+where
+    StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
+{
+    fn try_from(value: TensorOperator<D, DType>) -> Result<Self, ConversionError> {
+        Ok(Self {
+            metadata: value.metadata,
+            chunks: value.chunks.try_into()?,
+        })
+    }
+
+    type Error = ConversionError;
+}
+
+impl<D: Dimension, T: 'static> From<TensorOperator<D, StaticElementType<T>>>
+    for TensorOperator<D, DType>
+where
+    DType: From<StaticElementType<T>>,
+{
+    fn from(value: TensorOperator<D, StaticElementType<T>>) -> Self {
+        Self {
+            metadata: value.metadata,
+            chunks: value.chunks.into(),
         }
     }
 }
@@ -237,6 +264,34 @@ impl<D: Dimension, E> Into<TensorOperator<D, E>> for EmbeddedTensorOperator<D, E
     }
 }
 
+impl<D: Dimension, T> TryFrom<EmbeddedTensorOperator<D, DType>>
+    for EmbeddedTensorOperator<D, StaticElementType<T>>
+where
+    StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
+{
+    fn try_from(value: EmbeddedTensorOperator<D, DType>) -> Result<Self, ConversionError> {
+        Ok(Self {
+            inner: value.inner.try_into()?,
+            embedding_data: value.embedding_data,
+        })
+    }
+
+    type Error = ConversionError;
+}
+
+impl<D: Dimension, T: 'static> From<EmbeddedTensorOperator<D, StaticElementType<T>>>
+    for EmbeddedTensorOperator<D, DType>
+where
+    DType: From<StaticElementType<T>>,
+{
+    fn from(value: EmbeddedTensorOperator<D, StaticElementType<T>>) -> Self {
+        Self {
+            inner: value.inner.into(),
+            embedding_data: value.embedding_data,
+        }
+    }
+}
+
 impl<D: Dimension, E: ElementType> EmbeddedTensorOperator<D, E> {
     pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
@@ -273,6 +328,36 @@ impl<D: Dimension, E> OperatorNetworkNode for LODTensorOperator<D, E> {
             d = d.dependent_on(l);
         }
         d
+    }
+}
+
+impl<D: Dimension, T> TryFrom<LODTensorOperator<D, DType>>
+    for LODTensorOperator<D, StaticElementType<T>>
+where
+    StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
+{
+    fn try_from(value: LODTensorOperator<D, DType>) -> Result<Self, ConversionError> {
+        Ok(Self {
+            levels: value
+                .levels
+                .into_iter()
+                .map(|v| v.try_into())
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    type Error = ConversionError;
+}
+
+impl<D: Dimension, T: 'static> From<LODTensorOperator<D, StaticElementType<T>>>
+    for LODTensorOperator<D, DType>
+where
+    DType: From<StaticElementType<T>>,
+{
+    fn from(value: LODTensorOperator<D, StaticElementType<T>>) -> Self {
+        Self {
+            levels: value.levels.into_iter().map(|v| v.into()).collect(),
+        }
     }
 }
 

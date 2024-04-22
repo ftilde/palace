@@ -8,7 +8,6 @@ pub trait ElementType: Clone {
 
 /// Static ---------------------------------------------------------------------
 
-#[derive(Copy, Clone)]
 pub struct StaticElementType<T>(std::marker::PhantomData<T>);
 
 impl<T> Default for StaticElementType<T> {
@@ -16,6 +15,13 @@ impl<T> Default for StaticElementType<T> {
         StaticElementType(std::marker::PhantomData)
     }
 }
+
+impl<T> Clone for StaticElementType<T> {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
+}
+impl<T> Copy for StaticElementType<T> {}
 
 impl<T: Element> ElementType for StaticElementType<T> {
     fn array_layout(&self, size: usize) -> Layout {

@@ -489,12 +489,12 @@ impl<ItemDescriptor, OutputType> Identify for Operator<ItemDescriptor, OutputTyp
     }
 }
 
-impl<I: Identify + 'static, T> Operator<I, T>
+impl<I: Identify + 'static, T> TryFrom<Operator<I, DType>> for Operator<I, StaticElementType<T>>
 where
-    T: TryFrom<DType, Error = ConversionError>,
+    StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
 {
-    pub fn try_from(value: Operator<I, DType>) -> Result<Self, ConversionError> {
-        let new_dtype: T = value.dtype.try_into()?;
+    fn try_from(value: Operator<I, DType>) -> Result<Self, ConversionError> {
+        let new_dtype = value.dtype.try_into()?;
         let old_dtype = value.dtype;
         Ok(Operator {
             descriptor: value.descriptor,
@@ -505,6 +505,28 @@ where
             }),
             dtype: new_dtype,
         })
+    }
+
+    type Error = ConversionError;
+}
+
+impl<I: Identify + 'static, T: 'static> From<Operator<I, StaticElementType<T>>>
+    for Operator<I, DType>
+where
+    DType: From<StaticElementType<T>>,
+{
+    fn from(value: Operator<I, StaticElementType<T>>) -> Self {
+        let new_dtype = value.dtype.into();
+        let old_dtype = value.dtype;
+        Operator {
+            descriptor: value.descriptor,
+            state: value.state,
+            granularity: value.granularity,
+            compute: Rc::new(move |ctx, items, tr| {
+                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            }),
+            dtype: new_dtype,
+        }
     }
 }
 
