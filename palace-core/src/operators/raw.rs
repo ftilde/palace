@@ -158,7 +158,7 @@ impl RawVolumeSourceState {
 
         let max_lin_len = 4096; //expected page size
 
-        let chunk_mem_size_x = m.chunk_size.x().raw as usize * std::mem::size_of::<f32>();
+        let chunk_mem_size_x = dtype.array_layout(m.chunk_size.x().raw as usize).size();
 
         let mut batches_cpu = Vec::new();
         let mut batches_gpus: Map<usize, Vec<Vec<Vector<D3, crate::coordinate::ChunkCoordinate>>>> =
@@ -286,7 +286,7 @@ impl RawVolumeSourceState {
                 .submit_unordered_with_data(requests)
                 .then_req_with_data(*ctx, |(brick_handles, positions)| {
                     let num_voxels = m.chunk_size.hmul();
-                    let layout = std::alloc::Layout::array::<f32>(num_voxels).unwrap();
+                    let layout = dtype.array_layout(num_voxels);
 
                     let staging_bufs =
                         (0..positions.len()).map(|_| device.staging_to_gpu.request(device, layout));
