@@ -97,12 +97,13 @@ pub fn open(
 
     let embedding_data = TensorEmbeddingData { spacing };
 
-    let dtype = match format.as_str() {
-        "float" => DType::F32,
-        "uint8" => DType::U8,
-        "uint16" => DType::U16,
+    let (dtype_mult, dtype) = match format.as_str() {
+        "float" => (1.0, DType::F32),
+        "uint8" => (1.0 / ((1 << 8) as f32), DType::U8),
+        "uint16" => (1.0 / ((1 << 16) as f32), DType::U16),
         f => return Err(format!("Unsupported format '{}'.", f).into()),
     };
+    let scale = rwm_scale * dtype_mult;
 
     let simple_path = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@filename")?;
     let alternative_paths = evaluate_xpath(
@@ -124,8 +125,12 @@ pub fn open(
 
     let vol = palace_core::operators::raw::open(raw_path, metadata, dtype)?;
     let vol = palace_core::operators::volume_gpu::cast(vol, DType::F32);
+    let mut vol = vol.try_into().unwrap();
 
-    let vol = linear_rescale(vol.try_into().unwrap(), rwm_scale, rwm_offset);
+    if scale != 1.0 && rwm_offset != 0.0 {
+        vol = linear_rescale(vol, scale, rwm_offset);
+    }
+
     Ok(vol.embedded(embedding_data).into())
 }
 
