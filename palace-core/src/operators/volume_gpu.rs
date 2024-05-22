@@ -6,14 +6,14 @@ use itertools::Itertools;
 use crate::{
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{DType, StaticElementType},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::{gpu, Element},
     task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        shader::{Config, ShaderDefines},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -104,6 +104,7 @@ void main()
                                 device.id,
                                 *pos,
                                 ctx.current_op_desc().unwrap(),
+                                DType::F32,
                                 access_info,
                             ),
                             *pos,
@@ -303,6 +304,132 @@ void main()
     )
 }
 
+pub fn cast<'op, D: Dimension>(
+    input: TensorOperator<D, DType>,
+    out_type: DType,
+) -> TensorOperator<D, DType> {
+    let in_dtype = input.chunks.dtype();
+
+    if in_dtype == out_type {
+        return input;
+    }
+
+    const SHADER: &'static str = r#"
+#include <util.glsl>
+
+layout (local_size_x = 256) in;
+
+// Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
+// outputData in the inplace update case.
+layout(std430, binding = 0) readonly buffer InputBuffer{
+    IN_TYPE values[BRICK_MEM_SIZE];
+} sourceData;
+
+layout(std430, binding = 1) buffer OutputBuffer{
+    OUT_TYPE values[BRICK_MEM_SIZE];
+} outputData;
+
+void main()
+{
+    uint gID = gl_GlobalInvocationID.x;
+
+    if(gID < BRICK_MEM_SIZE) {
+        outputData.values[gID] = OUT_TYPE(sourceData.values[gID]);
+    }
+}
+"#;
+
+    TensorOperator::with_state(
+        OperatorDescriptor::new("cast_gpu")
+            .dependent_on(&input)
+            .dependent_on_data(&out_type),
+        out_type,
+        input.metadata,
+        input,
+        move |ctx, positions, input| {
+            async move {
+                let device = ctx.preferred_device();
+
+                let access_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                };
+                let m = input.metadata;
+
+                let pipeline =
+                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                SHADER,
+                                ShaderDefines::new()
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("IN_TYPE", in_dtype.glsl_type())
+                                    .add("OUT_TYPE", out_type.glsl_type()),
+                                Config::new()
+                                    .ext(in_dtype.glsl_ext())
+                                    .ext(out_type.glsl_ext()),
+                            ),
+                            true,
+                        )
+                    });
+
+                let mut brick_stream = ctx
+                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
+                        (
+                            input.chunks.request_inplace_gpu(
+                                device.id,
+                                *pos,
+                                ctx.current_op_desc().unwrap(),
+                                out_type,
+                                access_info,
+                            ),
+                            *pos,
+                        )
+                    }))
+                    .then_req_with_data(*ctx, |(inplace, pos)| (inplace.alloc(), pos));
+
+                while let Some((inplace, pos)) = brick_stream.next().await {
+                    let brick_info = m.chunk_info(pos);
+
+                    let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
+                        match &inplace {
+                            gpu::InplaceHandle::Inplace(rw, _v) => (rw, rw),
+                            gpu::InplaceHandle::New(r, w) => (r, w),
+                        };
+
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config =
+                            DescriptorConfig::new([gpu_brick_in, gpu_brick_out]);
+
+                        let global_size = brick_info.mem_elements();
+
+                        unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
+
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch(global_size);
+                        }
+                    });
+
+                    unsafe {
+                        inplace.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
+                    };
+                }
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
+
 pub fn threshold<'op, D: Dimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     threshold: f32,
@@ -378,6 +505,7 @@ void main()
                                 device.id,
                                 *pos,
                                 ctx.current_op_desc().unwrap(),
+                                DType::F32,
                                 access_info,
                             ),
                             *pos,

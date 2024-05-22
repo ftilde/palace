@@ -110,6 +110,15 @@ impl<T: CoordinateType> TryFrom<i32> for Coordinate<T> {
         })
     }
 }
+impl<T: CoordinateType> TryFrom<usize> for Coordinate<T> {
+    type Error = <u32 as TryInto<usize>>::Error;
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        Ok(Coordinate {
+            raw: value.try_into()?,
+            type_: Default::default(),
+        })
+    }
+}
 impl<T: CoordinateType> Into<usize> for Coordinate<T> {
     fn into(self) -> usize {
         self.raw as usize

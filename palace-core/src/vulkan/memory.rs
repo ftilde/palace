@@ -319,7 +319,8 @@ impl TransferManager {
                     let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
 
                     unsafe {
-                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
+                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data_ptr())
+                            .await
                     };
 
                     // Safety: We have just written the complete buffer using a memcpy
@@ -331,7 +332,8 @@ impl TransferManager {
                     let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
 
                     unsafe {
-                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data).await
+                        copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data_ptr())
+                            .await
                     };
 
                     // Safety: We have just written the complete buffer using a memcpy
@@ -364,7 +366,9 @@ impl TransferManager {
 
                     // Safety: layout is taken from input, output was constructed with the very
                     // layout
-                    unsafe { copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data).await };
+                    unsafe {
+                        copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data_ptr()).await
+                    };
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {
@@ -376,7 +380,9 @@ impl TransferManager {
 
                     // Safety: layout is taken from input, output was constructed with the very
                     // layout
-                    unsafe { copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data).await };
+                    unsafe {
+                        copy_cpu_to_cpu(ctx, source.info.data, layout, out_buf.data_ptr()).await
+                    };
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {

@@ -393,13 +393,18 @@ impl DeviceContext {
                 .storage_buffer8_bit_access(true)
                 .shader_int8(true)
                 .build();
+            let mut enabled_features_11 =
+                vk::PhysicalDeviceVulkan11Features::builder().storage_buffer16_bit_access(true);
+
             let enabled_features = vk::PhysicalDeviceFeatures::builder()
                 .shader_int64(true)
+                .shader_int16(true)
                 .shader_float64(false);
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
                 .enabled_features(&enabled_features)
+                .push_next(&mut enabled_features_11)
                 .push_next(&mut enabled_features_12)
                 .push_next(&mut enabled_features_13);
             let device = instance

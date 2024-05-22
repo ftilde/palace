@@ -287,11 +287,6 @@ impl<T: ?Sized, D> std::ops::DerefMut for WriteHandle<'_, T, D> {
     }
 }
 
-pub struct RawWriteHandle<DropHandler> {
-    pub data: *mut MaybeUninit<u8>,
-    pub layout: Layout,
-    drop_handler: DropHandler,
-}
 pub struct ThreadMarkerInitialized {
     version: Option<DataVersionType>,
 }
@@ -348,6 +343,114 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerUninitialized> {
                     id: self.id,
                 },
             },
+            data: self.data,
+        }
+    }
+}
+
+pub struct RawWriteHandle<DropHandler> {
+    data: *mut MaybeUninit<u8>,
+    pub layout: Layout,
+    drop_handler: DropHandler,
+}
+// Safety: We never expose the data pointer (safely) to the outside
+impl<DropHandler> RawWriteHandle<DropHandler> {
+    pub unsafe fn data_ptr(&self) -> *mut MaybeUninit<u8> {
+        self.data
+    }
+}
+
+impl<D: Send> std::ops::Deref for RawWriteHandle<D> {
+    type Target = [MaybeUninit<u8>];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.data, self.layout.size()) }
+    }
+}
+impl<D: Send> std::ops::DerefMut for RawWriteHandle<D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.layout.size()) }
+    }
+}
+
+unsafe impl<D: Send> Send for RawThreadWriteHandle<D> {}
+impl<D: Send> std::ops::Deref for RawThreadWriteHandle<D> {
+    type Target = [MaybeUninit<u8>];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.data, self.layout.size()) }
+    }
+}
+impl<D: Send> std::ops::DerefMut for RawThreadWriteHandle<D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.layout.size()) }
+    }
+}
+
+impl<'a> RawWriteHandleUninit<'a, super::ram::RamAllocator> {
+    pub fn into_thread_handle(self) -> RawThreadWriteHandle<ThreadMarkerUninitialized> {
+        let id = self.drop_handler.access.id;
+        std::mem::forget(self.drop_handler);
+        RawThreadWriteHandle {
+            id,
+            data: self.data,
+            layout: self.layout,
+            _marker: ThreadMarkerUninitialized,
+            _panic_handle: Default::default(),
+        }
+    }
+}
+pub struct RawThreadWriteHandle<D: Send> {
+    id: DataId,
+    pub data: *mut MaybeUninit<u8>,
+    pub layout: Layout,
+    _marker: D,
+    _panic_handle: ThreadHandleDropPanic,
+}
+impl<DropHandler: Send> RawThreadWriteHandle<DropHandler> {
+    pub unsafe fn data_ptr(&self) -> *mut MaybeUninit<u8> {
+        self.data
+    }
+    pub fn data(&self) -> &mut [MaybeUninit<u8>] {
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.layout.size()) }
+    }
+}
+impl RawThreadWriteHandle<ThreadMarkerInitialized> {
+    pub fn into_main_handle<'a, 'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+    ) -> RawWriteHandleInit<'a, super::ram::RamAllocator> {
+        self._panic_handle.dismiss();
+        RawWriteHandle {
+            drop_handler: DropMarkInitialized {
+                access: AccessToken {
+                    storage: ctx.storage,
+                    id: self.id,
+                },
+                current_frame: ctx.current_frame,
+                current_task: ctx.current_task,
+                predicted_preview_tasks: ctx.predicted_preview_tasks,
+                version: self._marker.version,
+            },
+            layout: self.layout,
+            data: self.data,
+        }
+    }
+}
+impl RawThreadWriteHandle<ThreadMarkerUninitialized> {
+    pub fn into_main_handle<'a, Allocator>(
+        self,
+        storage: &'a Storage<Allocator>,
+    ) -> RawWriteHandleUninit<'a, Allocator> {
+        self._panic_handle.dismiss();
+        RawWriteHandle {
+            drop_handler: DropError {
+                access: AccessToken {
+                    storage,
+                    id: self.id,
+                },
+            },
+            layout: self.layout,
             data: self.data,
         }
     }

@@ -15,6 +15,7 @@ use ash::vk;
 use gpu_allocator::vulkan::AllocationScheme;
 
 use crate::{
+    dtypes::ElementType,
     operator::{DataDescriptor, DataId, OperatorDescriptor, OperatorId},
     runtime::FrameNumber,
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
@@ -1233,13 +1234,14 @@ impl Storage {
         })
     }
 
-    pub fn try_update_inplace<'b, 't: 'b, 'inv>(
+    pub fn try_update_inplace<'b, 't: 'b, 'inv, W: ElementType>(
         &'b self,
         device: &'b DeviceContext,
         current_frame: FrameNumber,
         old_access: AccessToken<'t>,
         new_desc: DataDescriptor,
         dst_info: DstBarrierInfo,
+        write_dtype: W,
     ) -> Result<InplaceResult<'b, 'inv>, AccessToken<'t>> {
         let old_key = old_access.id;
         let new_key = new_desc.id;
@@ -1259,8 +1261,10 @@ impl Storage {
             return Err(old_access);
         }
 
+        let out_layout = write_dtype.array_layout(info.layout.size());
+        let same_layout = info.layout == out_layout;
         // Only allow inplace if we are EXACTLY the one reader
-        let in_place_possible = matches!(entry.access, AccessState::Some(1));
+        let in_place_possible = matches!(entry.access, AccessState::Some(1)) && same_layout;
 
         Ok(if in_place_possible {
             let layout = info.layout;
@@ -1297,17 +1301,17 @@ impl Storage {
                 old_version,
             )
         } else {
-            let layout = info.layout;
+            let in_layout = info.layout;
             let buffer = info.allocation.buffer;
             let data_longevity = info.data_longevity;
 
             std::mem::drop(index); // Release borrow for alloc
 
-            let w = self.request_alloc_slot_raw(device, current_frame, new_desc, layout);
+            let w = self.request_alloc_slot_raw(device, current_frame, new_desc, out_layout);
 
             let r = ReadHandle {
                 buffer,
-                layout,
+                layout: in_layout,
                 access: old_access,
                 version: old_version,
                 data_longevity,

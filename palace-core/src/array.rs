@@ -256,6 +256,18 @@ impl<D: Dimension> TensorMetaData<D> {
         }
     }
 }
+impl<D: LargerDim> TensorMetaData<D> {
+    pub fn push_dim_small(
+        self,
+        dim: GlobalCoordinate,
+        chunk_size: LocalCoordinate,
+    ) -> TensorMetaData<D::Larger> {
+        TensorMetaData {
+            dimensions: self.dimensions.push_dim_small(dim),
+            chunk_size: self.chunk_size.push_dim_small(chunk_size),
+        }
+    }
+}
 
 pub type VolumeMetaData = TensorMetaData<D3>;
 pub type VolumeEmbeddingData = TensorEmbeddingData<D3>;

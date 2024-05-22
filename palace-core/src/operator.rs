@@ -448,6 +448,7 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
         gpu: DeviceId,
         item: ItemDescriptor,
         write_id: OperatorDescriptor,
+        write_dtype: DType,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::InplaceResult<'req, 'inv>> {
         let write_id = DataDescriptor::new(write_id, &item);
@@ -474,6 +475,7 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
                         access.take().unwrap(),
                         write_id,
                         dst_info,
+                        write_dtype,
                     ) {
                         Ok(r) => Some(r),
                         Err(t) => {

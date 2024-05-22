@@ -8,8 +8,8 @@ use crate::{
     array::VolumeMetaData,
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     dim::D3,
-    dtypes::StaticElementType,
-    operator::OperatorDescriptor,
+    dtypes::{DType, ElementType},
+    operator::{DataDescriptor, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataLocation,
     task::{RequestStream, TaskContext},
@@ -30,18 +30,21 @@ pub struct RawVolumeSourceStateInner {
     pub size: VoxelPosition,
 }
 
-fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
+fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
+    dtype: DType,
     m: VolumeMetaData,
-    in_: ndarray::ArrayView3<f32>,
+    in_: ndarray::ArrayView4<u8>,
     chunks_in_line: &mut [(BrickPosition, S)],
 ) {
-    let brick_size = m.chunk_size;
+    let elm_size = dtype.element_layout().size();
+    assert_eq!(elm_size, in_.shape()[3]);
+    let brick_size = m.chunk_size.push_dim_small(elm_size.try_into().unwrap());
 
     //dbg!(chunks_in_line.len());
 
     for (pos, ref mut buf) in &mut *chunks_in_line {
         let chunk_info = m.chunk_info(*pos);
-        crate::data::init_non_full(buf.as_mut(), &chunk_info, f32::NAN);
+        crate::data::init_non_full_raw(buf.as_mut(), &chunk_info, 0xff);
     }
 
     let first = chunks_in_line.first().unwrap();
@@ -58,26 +61,27 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
         for y in 0..strip_size_y.raw {
             // Note: This assumes that all bricks have the same memory size! This may
             // change in the future
-            let line_begin_brick =
-                crate::data::to_linear(LocalVoxelPosition::from([z, y, 0]), brick_size);
+            let line_begin_brick = crate::data::to_linear(Vector::from([z, y, 0, 0]), brick_size);
+            let line_size = brick_size[2].raw as usize * elm_size;
 
             let global_line = in_.slice(ndarray::s!(
                 (global_begin.z().raw + z) as usize,
                 (global_begin.y().raw + y) as usize,
                 global_begin.x().raw as usize..global_end.x().raw as usize,
+                ..,
             ));
             let global_line = global_line.as_slice().unwrap();
 
             let bricks = chunks_in_line
                 .iter_mut()
-                .map(|(_, handle)| &mut handle.as_mut()[line_begin_brick..]);
+                .map(|(_, handle)| &mut handle.as_mut()[line_begin_brick..][..line_size]);
             let mut global_brick_begin = 0;
             for brick_line in bricks {
                 let global_line_brick = &global_line[global_brick_begin..];
                 for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
                     o.write(*i);
                 }
-                global_brick_begin += brick_size.x().raw as usize;
+                global_brick_begin += line_size;
             }
         }
     }
@@ -86,12 +90,13 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<f32>]>>(
 pub fn open(
     path: PathBuf,
     metadata: VolumeMetaData,
-) -> Result<VolumeOperator<StaticElementType<f32>>, Error> {
+    dtype: DType,
+) -> Result<VolumeOperator<DType>, Error> {
     let file = File::open(&path)?;
     let mmap = unsafe { memmap::Mmap::map(&file)? };
 
     let size = metadata.dimensions;
-    let byte_size = size.hmul() * std::mem::size_of::<f32>();
+    let byte_size = dtype.array_layout(size.hmul()).size();
     assert_eq!(file.metadata()?.len(), byte_size as u64);
 
     let state = RawVolumeSourceState(Rc::new(RawVolumeSourceStateInner {
@@ -104,13 +109,13 @@ pub fn open(
     let vol = TensorOperator::with_state(
         OperatorDescriptor::new("raw_volume::open")
             .dependent_on_data(state.path.to_string_lossy().as_bytes()),
-        Default::default(),
+        dtype,
         metadata,
         (state, metadata),
         move |ctx, positions, (state, metadata)| {
             async move {
                 state
-                    .load_raw_bricks(metadata.chunk_size, ctx, positions)
+                    .load_raw_bricks(dtype, metadata.chunk_size, ctx, positions)
                     .await
             }
             .into()
@@ -138,8 +143,9 @@ impl RawVolumeSourceState {
 
     pub async fn load_raw_bricks<'cref, 'inv>(
         &self,
+        dtype: DType,
         brick_size: LocalVoxelPosition,
-        ctx: TaskContext<'cref, 'inv, BrickPosition, StaticElementType<f32>>,
+        ctx: TaskContext<'cref, 'inv, BrickPosition, DType>,
         mut positions: Vec<(BrickPosition, DataLocation)>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {
@@ -213,15 +219,30 @@ impl RawVolumeSourceState {
             }
         }
 
-        let in_: &[f32] = bytemuck::cast_slice(&self.0.mmap[..]);
-        let in_ = ndarray::ArrayView3::from_shape(crate::data::contiguous_shape(m.dimensions), in_)
-            .unwrap();
+        let element_layout = dtype.element_layout();
+        let in_: &[u8] = &self.0.mmap[..];
+        assert_eq!(
+            in_.as_ptr() as usize % element_layout.align(),
+            0,
+            "Slice must be aligned for type"
+        );
+        let in_ = ndarray::ArrayView4::from_shape(
+            crate::data::contiguous_shape(
+                m.dimensions
+                    .push_dim_small(element_layout.size().try_into().unwrap()),
+            ),
+            in_,
+        )
+        .unwrap();
 
         {
             let requests = batches_cpu.into_iter().map(|positions| {
                 let num_voxels = m.chunk_size.hmul();
 
-                let brick_handles = positions.iter().map(|pos| ctx.alloc_slot(*pos, num_voxels));
+                let brick_handles = positions.iter().map(|pos| {
+                    let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
+                    ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
+                });
 
                 (ctx.group(brick_handles), positions)
             });
@@ -235,7 +256,7 @@ impl RawVolumeSourceState {
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        copy_chunk_line(m, in_, &mut brick_handles);
+                        copy_chunk_line(dtype, m, in_, &mut brick_handles);
 
                         brick_handles
                     })
@@ -281,19 +302,15 @@ impl RawVolumeSourceState {
                         .iter()
                         .zip(positions.iter())
                         .map(|(buf, pos)| {
-                            let float_ptr = buf.mapped_ptr().unwrap().cast::<MaybeUninit<f32>>();
-                            let slice = unsafe {
-                                std::slice::from_raw_parts_mut(
-                                    float_ptr.as_ptr(),
-                                    buf.size as usize / std::mem::size_of::<MaybeUninit<f32>>(),
-                                )
-                            };
+                            let ptr = buf.mapped_ptr().unwrap().cast::<MaybeUninit<u8>>().as_ptr();
+                            let slice =
+                                unsafe { std::slice::from_raw_parts_mut(ptr, buf.size as usize) };
                             (*pos, slice)
                         })
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        copy_chunk_line(m, in_, &mut staging_bufs_cpu);
+                        copy_chunk_line(dtype, m, in_, &mut staging_bufs_cpu);
 
                         std::mem::drop(staging_bufs_cpu);
                         (staging_bufs, brick_handles)

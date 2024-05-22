@@ -4,7 +4,11 @@ use spirq::{EntryPoint, ReflectConfig};
 use spirv_compiler::ShaderKind;
 use std::{cell::RefCell, collections::BTreeMap};
 
-use crate::{data::Vector, dim::*, util::Map};
+use crate::{
+    data::Vector,
+    dim::*,
+    util::{Map, Set},
+};
 
 use super::{pipeline::DynamicDescriptorSetPool, state::VulkanState, DeviceFunctions};
 
@@ -35,9 +39,48 @@ impl ShaderDefines {
     }
 }
 
+pub mod ext {
+    pub const SCALAR_BLOCK_LAYOUT: &str = "GL_EXT_scalar_block_layout";
+    pub const BUFFER_REFERENCE: &str = "GL_EXT_buffer_reference";
+    pub const INT64_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int64";
+    pub const INT8_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int8";
+    pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
+}
+
 pub struct Shader {
     pub module: vk::ShaderModule,
     pub entry_points: Vec<EntryPoint>,
+}
+
+pub struct Config {
+    version: &'static str,
+    extensions: Set<&'static str>,
+}
+
+impl Config {
+    pub fn new() -> Self {
+        Self {
+            version: "450",
+            extensions: Set::default(),
+        }
+    }
+
+    pub fn ext(mut self, opt_ext: Option<&'static str>) -> Self {
+        if let Some(ext) = opt_ext {
+            self.extensions.insert(ext);
+        }
+        self
+    }
+}
+
+impl std::fmt::Display for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "#version {}", self.version)?;
+        for ext in &self.extensions {
+            writeln!(f, "#extension {} : require", ext)?;
+        }
+        Ok(())
+    }
 }
 
 pub trait ShaderSource {
@@ -46,6 +89,7 @@ pub trait ShaderSource {
 
 impl ShaderSource for (&str, ShaderDefines) {
     fn build(self, kind: ShaderKind) -> Vec<u32> {
+        //TODO: unify all shaders with using config
         let source = self.0;
         let defines = self.1;
 
@@ -66,8 +110,8 @@ impl ShaderSource for (&str, ShaderDefines) {
             Ok(r) => r,
             Err(CompilerError::Log(e)) => {
                 panic!(
-                    "Compilation error for shader (source {:?}):\n{}",
-                    e.file, e.description
+                    "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
+                    e.file, e.description, self.0,
                 )
             }
             Err(CompilerError::LoadError(e)) => panic!("Load error while compiling shader: {}", e),
@@ -75,6 +119,12 @@ impl ShaderSource for (&str, ShaderDefines) {
                 panic!("Write error while compiling shader: {}", e)
             }
         }
+    }
+}
+impl ShaderSource for (&str, ShaderDefines, Config) {
+    fn build(self, kind: ShaderKind) -> Vec<u32> {
+        let source = format!("{}{}", self.2, self.0);
+        (source.as_str(), self.1).build(kind)
     }
 }
 

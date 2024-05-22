@@ -91,6 +91,18 @@ pub fn init_non_full<D: Dimension, T: Clone>(
     }
 }
 
+pub fn init_non_full_raw<D: Dimension>(
+    data: &mut [std::mem::MaybeUninit<u8>],
+    chunk_info: &ChunkInfo<D>,
+    val: u8,
+) {
+    if !chunk_info.is_full() {
+        for v in data.iter_mut() {
+            v.write(val);
+        }
+    }
+}
+
 // Unstable function copied from stdlib:
 // https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#method.slice_assume_init_mut
 pub unsafe fn slice_assume_init_mut<T>(slice: &mut [MaybeUninit<T>]) -> &mut [T] {
