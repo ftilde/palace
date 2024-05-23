@@ -1,6 +1,7 @@
 use crate::{
     data::{from_linear, LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
+    dtypes::StaticElementType,
     operators::{
         tensor::TensorOperator,
         volume::{ChunkSize, VolumeOperator},
