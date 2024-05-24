@@ -19,6 +19,8 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use self::state::RessourceId;
@@ -49,6 +51,8 @@ const DEFAULT_LAYER_NAMES: &[&CStr] = &[cstr::cstr!("VK_LAYER_KHRONOS_validation
 #[cfg(not(debug_assertions))]
 const DEFAULT_LAYER_NAMES: &[&CStr] = &[];
 
+static ANY_DEBUG_FAILURES: AtomicBool = AtomicBool::new(false);
+
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -78,6 +82,10 @@ unsafe extern "system" fn vulkan_debug_callback(
         &message_id_number.to_string(),
         message
     );
+
+    if message_severity >= vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
+        ANY_DEBUG_FAILURES.store(true, Ordering::Relaxed);
+    }
 
     vk::FALSE
 }
@@ -218,6 +226,10 @@ impl Drop for VulkanContext {
                 .debug_utils_ext
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
+        }
+
+        if ANY_DEBUG_FAILURES.load(Ordering::Relaxed) == true {
+            panic!("There were vulkan validation failures!");
         }
     }
 }
