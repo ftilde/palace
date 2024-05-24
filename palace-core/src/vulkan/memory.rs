@@ -120,6 +120,15 @@ impl TempStates {
             }
         }
     }
+
+    pub unsafe fn deinitialize(&self, device: &DeviceContext) {
+        let returns = std::mem::take(&mut *self.returns.borrow_mut());
+        for states in returns.into_values() {
+            for mut state in states {
+                state.deinitialize(device);
+            }
+        }
+    }
 }
 
 pub struct BufferStash {

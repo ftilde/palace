@@ -867,8 +867,19 @@ impl DeviceContext {
 
 impl Drop for DeviceContext {
     fn drop(&mut self) {
-        // Try to return tmp buffers a final time
-        self.tmp_states.collect_returns(self);
+        // Try hard to release tmp_states
+        self.try_submit_and_cycle_command_buffer();
+        let mut tries_left = 1000;
+        while !self.waiting_command_buffers.borrow().is_empty() {
+            self.wait_for_cmd_buffers(Duration::from_millis(10));
+            tries_left -= 1;
+            if tries_left == 0 {
+                panic!("Unable to wait for all cmdbuffers");
+                //break;
+            }
+        }
+        // Safety: We have just waited for all cmdbuffers to finish
+        unsafe { self.tmp_states.deinitialize(self) };
 
         for mut vulkan_state in self.vulkan_states.drain() {
             unsafe { vulkan_state.deinitialize(self) };
