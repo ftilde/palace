@@ -42,5 +42,4 @@ def render(size, events):
 
     return frame
 
-window = pc.Window(rt)
-window.run(render, timeout_ms=10)
+rt.run_with_window(render, timeout_ms=10)

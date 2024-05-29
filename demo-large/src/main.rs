@@ -5,7 +5,7 @@ use clap::Parser;
 use palace_core::data::{GlobalCoordinate, Vector};
 use palace_core::dim::*;
 use palace_core::dtypes::StaticElementType;
-use palace_core::event::{EventSource, EventStream, MouseButton, OnMouseDrag, OnWheelMove};
+use palace_core::event::{EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
@@ -17,8 +17,6 @@ use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
-use winit::event::{Event, WindowEvent};
-use winit::platform::run_return::EventLoopExtRunReturn;
 
 use palace_core::array::ImageMetaData;
 
@@ -121,8 +119,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vol: EmbeddedVolumeOperator<StaticElementType<f32>> =
         palace_volume::open(args.vol, palace_volume::Hints::new())?.try_into()?;
 
-    let vol = &vol;
-
     let vol_diag = vol.real_dimensions().length();
     let voxel_diag = vol.embedding_data.spacing.length();
 
@@ -151,74 +147,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         smoothing_std: voxel_diag,
     };
 
-    let mut event_loop = EventLoop::new();
-
-    let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
-    let mut events = EventSource::default();
-
-    let mut next_timeout = Instant::now() + Duration::from_millis(10);
-
-    event_loop.run_return(|event, _, control_flow| {
-        control_flow.set_poll();
-
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                control_flow.set_exit();
+    let res = palace_winit::run_with_window(
+        &mut runtime,
+        Duration::from_millis(10),
+        |event_loop, window, rt, events, timeout| {
+            let version =
+                eval_network(rt, window, vol.clone(), &mut state, events, timeout).unwrap();
+            if args.bench && version == DataVersionType::Final {
+                event_loop.exit();
             }
-            Event::MainEventsCleared => {
-                // Application update code.
-                window.inner().request_redraw();
-            }
-            Event::WindowEvent {
-                window_id: _,
-                event: winit::event::WindowEvent::Resized(new_size),
-            } => {
-                window.resize(new_size, &runtime.vulkan);
-            }
-            Event::WindowEvent {
-                window_id: _,
-                event,
-            } => {
-                events.add(event);
-            }
-            Event::RedrawRequested(_) => {
-                // Redraw the application.
-                //
-                // It's preferable for applications that do not render continuously to render in
-                // this event rather than in MainEventsCleared, since rendering in here allows
-                // the program to gracefully handle redraws requested by the OS.
-                next_timeout = Instant::now() + Duration::from_millis(10);
-                let version = eval_network(
-                    &mut runtime,
-                    &mut window,
-                    vol.clone(),
-                    &mut state,
-                    events.current_batch(),
-                    next_timeout,
-                )
-                .unwrap();
-                if args.bench && version == DataVersionType::Final {
-                    control_flow.set_exit();
-                }
-                //std::thread::sleep(dbg!(
-                //    next_timeout.saturating_duration_since(std::time::Instant::now())
-                //));
-            }
-            _ => (),
-        }
-    });
+            Ok(version)
+        },
+    );
 
     state.sliceview.gui.destroy(&runtime);
     state.gui.destroy(&runtime);
-    unsafe { window.deinitialize(&runtime.vulkan) };
 
-    Ok(())
+    res
 }
-
-pub type EventLoop<T> = winit::event_loop::EventLoop<T>;
 
 fn slice_viewer_z(
     runtime: &mut RunTime,

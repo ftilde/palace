@@ -1,10 +1,8 @@
+use std::time::Duration;
+
 use crate::map_err;
 use palace_core::{dtypes::StaticElementType, vec::Vector};
 use pyo3::{exceptions::PyException, prelude::*};
-use winit::{
-    event::{Event, WindowEvent},
-    platform::run_return::EventLoopExtRunReturn,
-};
 
 use super::{Events, MaybeEmbeddedTensorOperator, ScalarOperator, TensorOperator};
 
@@ -103,112 +101,29 @@ impl RunTime {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
     }
-}
 
-#[pyclass(unsendable)]
-pub struct Window {
-    event_loop: winit::event_loop::EventLoop<()>,
-    window: palace_core::vulkan::window::Window,
-    runtime: Py<RunTime>,
-}
-
-impl Drop for Window {
-    fn drop(&mut self) {
-        Python::with_gil(|py| {
-            let rt = self.runtime.borrow(py);
-
-            unsafe { self.window.deinitialize(&rt.inner.vulkan) };
-        });
-    }
-}
-
-#[pymethods]
-impl Window {
-    #[new]
-    fn new(py: Python, runtime: Py<RunTime>) -> PyResult<Self> {
-        let event_loop = winit::event_loop::EventLoop::new();
-
-        let window = {
-            let rt = runtime.borrow(py);
-
-            map_err(palace_core::vulkan::window::Window::new(
-                &rt.inner.vulkan,
-                &event_loop,
-            ))?
-        };
-
-        Ok(Self {
-            event_loop,
-            window,
-            runtime,
-        })
-    }
-    fn run(
+    fn run_with_window(
         &mut self,
-        py: Python,
         gen_frame: &pyo3::types::PyFunction,
-        timeout_ms: Option<u64>,
+        timeout_ms: u64,
     ) -> PyResult<()> {
-        let mut events = palace_core::event::EventSource::default();
+        crate::map_err(palace_winit::run_with_window(
+            &mut self.inner,
+            Duration::from_millis(timeout_ms),
+            |_event_loop, window, rt, events, timeout| {
+                let size = window.size();
+                let size = [size.y().raw, size.x().raw];
+                let events = Events(events);
+                let frame = gen_frame.call((size, events), None)?;
+                let frame = frame.extract::<TensorOperator>()?.try_into()?;
 
-        let mut rt = self.runtime.borrow_mut(py);
+                let frame_ref = &frame;
+                let version = rt.resolve(Some(timeout), false, |ctx, _| {
+                    async move { window.render(ctx, frame_ref).await }.into()
+                })?;
 
-        let mut res = Ok(());
-        self.event_loop.run_return(|event, _, control_flow| {
-            let call_res: PyResult<()> = (|| {
-                control_flow.set_poll();
-
-                match event {
-                    Event::WindowEvent {
-                        event: WindowEvent::CloseRequested,
-                        ..
-                    } => {
-                        control_flow.set_exit();
-                    }
-                    Event::MainEventsCleared => {
-                        // Application update code.
-                        self.window.inner().request_redraw();
-                    }
-                    Event::WindowEvent {
-                        window_id: _,
-                        event: winit::event::WindowEvent::Resized(new_size),
-                    } => {
-                        self.window.resize(new_size, &rt.inner.vulkan);
-                    }
-                    Event::WindowEvent {
-                        window_id: _,
-                        event,
-                    } => {
-                        events.add(event);
-                    }
-                    Event::RedrawRequested(_) => {
-                        let end = timeout_ms.map(|to| {
-                            std::time::Instant::now() + std::time::Duration::from_millis(to)
-                        });
-                        let size = self.window.size();
-                        let size = [size.y().raw, size.x().raw];
-                        let events = Events(events.current_batch());
-                        let frame = gen_frame.call((size, events), None)?;
-                        let frame = frame.extract::<TensorOperator>()?.try_into()?;
-
-                        let frame_ref = &frame;
-                        let window = &mut self.window;
-                        rt.inner
-                            .resolve(end, false, |ctx, _| {
-                                async move { window.render(ctx, frame_ref).await }.into()
-                            })
-                            .unwrap();
-                    }
-                    _ => (),
-                }
-                Ok(())
-            })();
-
-            if call_res.is_err() {
-                res = call_res;
-                control_flow.set_exit();
-            }
-        });
-        res
+                Ok(version)
+            },
+        ))
     }
 }

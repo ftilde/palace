@@ -39,7 +39,6 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTensorMetaData>()?;
     m.add_class::<PyTensorEmbeddingData>()?;
     m.add_class::<RunTime>()?;
-    m.add_class::<Window>()?;
     m.add_class::<Events>()?;
     m.add_class::<MouseButton>()?;
     m.add_class::<OnMouseDrag>()?;

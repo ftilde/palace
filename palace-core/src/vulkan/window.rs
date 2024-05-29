@@ -1,14 +1,6 @@
-#[cfg(target_family = "unix")]
-use ash::extensions::khr::{WaylandSurface, XlibSurface};
-
-#[cfg(target_family = "windows")]
-use ash::extensions::khr::Win32Surface;
-
 use ash::vk;
 use crevice::glsl::GlslStruct;
 use crevice::std140::AsStd140;
-use winit::event_loop::EventLoopWindowTarget;
-use winit::window::WindowBuilder;
 
 use super::pipeline::{DescriptorConfig, GraphicsPipeline};
 use super::shader::ShaderDefines;
@@ -21,77 +13,6 @@ use crate::storage::DataVersionType;
 use crate::task::OpaqueTaskContext;
 
 type WindowSize = winit::dpi::PhysicalSize<u32>;
-
-#[cfg(target_family = "unix")]
-fn create_surface_wayland(
-    entry: &ash::Entry,
-    instance: &ash::Instance,
-    window: &winit::window::Window,
-) -> Option<vk::SurfaceKHR> {
-    use winit::platform::wayland::WindowExtWayland;
-    let loader = WaylandSurface::new(entry, instance);
-
-    let create_info = vk::WaylandSurfaceCreateInfoKHR::builder()
-        .display(window.wayland_display()?)
-        .surface(window.wayland_surface()?)
-        .build();
-
-    Some(unsafe { loader.create_wayland_surface(&create_info, None) }.unwrap())
-}
-
-#[cfg(target_family = "unix")]
-fn create_surface_x11(
-    entry: &ash::Entry,
-    instance: &ash::Instance,
-    window: &winit::window::Window,
-) -> Option<vk::SurfaceKHR> {
-    use winit::platform::x11::WindowExtX11;
-
-    let x11_display = window.xlib_display()?;
-    let x11_window = window.xlib_window()?;
-    let create_info = vk::XlibSurfaceCreateInfoKHR::builder()
-        .window(x11_window as vk::Window)
-        .dpy(x11_display as *mut vk::Display);
-
-    let xlib_surface_loader = XlibSurface::new(entry, instance);
-    Some(unsafe {
-        xlib_surface_loader
-            .create_xlib_surface(&create_info, None)
-            .unwrap()
-    })
-}
-
-#[cfg(target_family = "unix")]
-fn create_surface(
-    entry: &ash::Entry,
-    instance: &ash::Instance,
-    window: &winit::window::Window,
-) -> vk::SurfaceKHR {
-    if let Some(s) = create_surface_wayland(entry, instance, window) {
-        return s;
-    } else {
-        create_surface_x11(entry, instance, window).unwrap()
-    }
-}
-
-#[cfg(target_family = "windows")]
-fn create_surface(
-    entry: &ash::Entry,
-    instance: &ash::Instance,
-    window: &winit::window::Window,
-) -> vk::SurfaceKHR {
-    use std::os::raw::c_void;
-    use winit::platform::windows::WindowExtWindows;
-
-    let hinstance = window.hinstance();
-    let hwnd = window.hwnd();
-    let win32_create_info = vk::Win32SurfaceCreateInfoKHR::builder()
-        .hinstance(hinstance as *const c_void)
-        .hwnd(hwnd as *const c_void);
-
-    let win32_surface_loader = Win32Surface::new(entry, instance);
-    unsafe { win32_surface_loader.create_win32_surface(&win32_create_info, None) }.unwrap()
-}
 
 struct SwapChainSupportDetails {
     capabilities: vk::SurfaceCapabilitiesKHR,
@@ -401,7 +322,6 @@ impl SyncObjects {
 }
 
 pub struct Window {
-    winit_win: winit::window::Window,
     surface: vk::SurfaceKHR,
     device_id: DeviceId,
     pipeline: GraphicsPipeline,
@@ -457,15 +377,11 @@ impl Window {
             .destroy_surface(self.surface, None);
     }
 
-    pub fn new<T>(
+    pub fn new(
         ctx: &VulkanContext,
-        target: &EventLoopWindowTarget<T>,
+        surface: vk::SurfaceKHR,
+        initial_size: WindowSize,
     ) -> Result<Self, crate::Error> {
-        let winit_win = WindowBuilder::new()
-            .with_title("palace")
-            .build(&target)
-            .unwrap();
-        let surface = create_surface(&ctx.entry, &ctx.instance, &winit_win);
         let (device, swap_chain_support) = ctx
             .device_contexts
             .iter()
@@ -485,7 +401,7 @@ impl Window {
             &swap_chain_config,
             render_pass,
             surface,
-            winit_win.inner_size(),
+            initial_size,
         );
 
         let pipeline = GraphicsPipeline::new(
@@ -558,7 +474,6 @@ impl Window {
         let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
 
         Ok(Self {
-            winit_win,
             surface,
             device_id: device.id,
             swap_chain,
@@ -570,9 +485,6 @@ impl Window {
     }
     pub fn size(&self) -> Vector<D2, GlobalCoordinate> {
         [self.swap_chain.extent.height, self.swap_chain.extent.width].into()
-    }
-    pub fn inner(&self) -> &winit::window::Window {
-        &self.winit_win
     }
     pub fn resize(&mut self, size: WindowSize, ctx: &VulkanContext) {
         let device = &ctx.device_contexts[self.device_id];

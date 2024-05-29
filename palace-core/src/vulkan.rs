@@ -8,7 +8,7 @@ use ash::extensions::khr::Surface as SurfaceExt;
 use ash::extensions::khr::Swapchain;
 
 #[cfg(target_family = "unix")]
-use ash::extensions::khr::{WaylandSurface, XlibSurface};
+use ash::extensions::khr::{WaylandSurface, XcbSurface, XlibSurface};
 
 #[cfg(target_family = "windows")]
 use ash::extensions::khr::Win32Surface;
@@ -37,6 +37,8 @@ const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
     SurfaceExt::name().as_ptr(),
     #[cfg(target_family = "unix")]
     XlibSurface::name().as_ptr(),
+    #[cfg(target_family = "unix")]
+    XcbSurface::name().as_ptr(),
     #[cfg(target_family = "unix")]
     WaylandSurface::name().as_ptr(),
     #[cfg(target_family = "windows")]
@@ -98,11 +100,11 @@ pub struct GlobalFunctions {
 
 #[allow(dead_code)]
 pub struct VulkanContext {
-    entry: ash::Entry,
+    pub entry: ash::Entry,
 
-    instance: ash::Instance,
+    pub instance: ash::Instance,
     debug_callback: vk::DebugUtilsMessengerEXT,
-    functions: GlobalFunctions,
+    pub functions: GlobalFunctions,
 
     device_contexts: Vec<DeviceContext>,
 }

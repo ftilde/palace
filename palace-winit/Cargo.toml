@@ -1,0 +1,12 @@
+[package]
+name = "palace-winit"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+palace-core = {path= "../palace-core"}
+winit = "0.30"
+ash = "0.37"
+raw-window-handle = "0.6.2"

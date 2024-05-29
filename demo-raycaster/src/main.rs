@@ -4,9 +4,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::dtypes::StaticElementType;
-use palace_core::event::{
-    EventSource, EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove,
-};
+use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
@@ -16,8 +14,6 @@ use palace_core::operators::{self};
 use palace_core::runtime::RunTime;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
-use winit::event::{Event, WindowEvent};
-use winit::platform::run_return::EventLoopExtRunReturn;
 
 use palace_core::array::{self, ImageMetaData};
 
@@ -131,70 +127,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         TransFuncOperator::red_ramp(0.0, 1.0)
     };
 
-    let mut event_loop = winit::event_loop::EventLoop::new();
-
-    let mut window = Window::new(&runtime.vulkan, &event_loop).unwrap();
-    let mut events = EventSource::default();
-
-    let mut next_timeout = Instant::now() + Duration::from_millis(10);
-
-    event_loop.run_return(|event, _, control_flow| {
-        control_flow.set_poll();
-
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                control_flow.set_exit();
+    palace_winit::run_with_window(
+        &mut runtime,
+        Duration::from_millis(10),
+        |_event_loop, window, rt, events, timeout| {
+            let version = eval_network(
+                rt,
+                window,
+                vol.clone(),
+                &mut camera_state,
+                &mut scale,
+                &mut offset,
+                &mut stddev,
+                &mut tf,
+                events,
+                timeout,
+            )
+            .unwrap();
+            if args.bench && version == DataVersionType::Final {
+                _event_loop.exit();
             }
-            Event::MainEventsCleared => {
-                // Application update code.
-                window.inner().request_redraw();
-            }
-            Event::WindowEvent {
-                window_id: _,
-                event: winit::event::WindowEvent::Resized(new_size),
-            } => {
-                window.resize(new_size, &runtime.vulkan);
-            }
-            Event::WindowEvent {
-                window_id: _,
-                event,
-            } => {
-                events.add(event);
-            }
-            Event::RedrawRequested(_) => {
-                // Redraw the application.
-                //
-                // It's preferable for applications that do not render continuously to render in
-                // this event rather than in MainEventsCleared, since rendering in here allows
-                // the program to gracefully handle redraws requested by the OS.
-                next_timeout = Instant::now() + Duration::from_millis(10);
-                let version = eval_network(
-                    &mut runtime,
-                    &mut window,
-                    vol.clone(),
-                    &mut camera_state,
-                    &mut scale,
-                    &mut offset,
-                    &mut stddev,
-                    &mut tf,
-                    events.current_batch(),
-                    next_timeout,
-                )
-                .unwrap();
-                if args.bench && version == DataVersionType::Final {
-                    control_flow.set_exit();
-                }
-            }
-            _ => (),
-        }
-    });
-
-    unsafe { window.deinitialize(&runtime.vulkan) };
-
-    Ok(())
+            Ok(version)
+        },
+    )
 }
 
 fn eval_network(
@@ -210,11 +165,11 @@ fn eval_network(
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
     events.act(|c| {
-        c.chain(OnKeyPress(Key::Key1, || *scale *= 1.10))
-            .chain(OnKeyPress(Key::Key2, || *scale /= 1.10))
-            .chain(OnKeyPress(Key::Key3, || *offset += 0.01))
-            .chain(OnKeyPress(Key::Key4, || *offset -= 0.01))
-            .chain(OnKeyPress(Key::Plus, || *stddev *= 1.10))
+        c.chain(OnKeyPress(Key::Digit1, || *scale *= 1.10))
+            .chain(OnKeyPress(Key::Digit2, || *scale /= 1.10))
+            .chain(OnKeyPress(Key::Digit3, || *offset += 0.01))
+            .chain(OnKeyPress(Key::Digit4, || *offset -= 0.01))
+            .chain(OnKeyPress(Key::Equal, || *stddev *= 1.10))
             .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
             //.chain(OnWheelMove(|delta, _| *fov -= delta))
             .chain(OnWheelMove(|delta, _| {

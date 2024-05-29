@@ -1,12 +1,13 @@
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, WindowEvent},
+    keyboard::PhysicalKey,
 };
 
 use crate::data::Vector;
 use crate::dim::*;
 
-pub type Change = winit::event::WindowEvent<'static>;
+pub type Change = winit::event::WindowEvent;
 
 pub trait Behavior {
     fn input(&mut self, event: Event) -> EventChain;
@@ -18,15 +19,15 @@ impl<F: FnMut(Event) -> EventChain> Behavior for F {
     }
 }
 
-pub use winit::event::VirtualKeyCode as Key;
+pub use winit::keyboard::KeyCode as Key;
 
 pub struct OnKeyPress<F: FnMut()>(pub Key, pub F);
 
 impl<F: FnMut()> Behavior for OnKeyPress<F> {
     fn input(&mut self, event: Event) -> EventChain {
-        if let winit::event::WindowEvent::KeyboardInput { input, .. } = event.change {
-            if input.state == ElementState::Pressed {
-                if matches!(input.virtual_keycode, Some(v) if v == self.0) {
+        if let winit::event::WindowEvent::KeyboardInput { ref event, .. } = event.change {
+            if event.state == ElementState::Pressed {
+                if matches!(event.physical_key, PhysicalKey::Code(v) if v == self.0) {
                     (self.1)();
                     return EventChain::Consumed;
                 }
@@ -36,8 +37,8 @@ impl<F: FnMut()> Behavior for OnKeyPress<F> {
     }
 }
 
-pub use winit::event::ModifiersState;
 pub use winit::event::MouseButton;
+pub use winit::keyboard::ModifiersState;
 
 pub type MousePosition = Vector<D2, i32>;
 pub type MouseDelta = Vector<D2, i32>;
@@ -137,10 +138,10 @@ impl EventState {
         self.keys.get(&key).cloned().unwrap_or(ButtonState::Up)
     }
     pub fn shift_pressed(&self) -> bool {
-        self.key(Key::LShift).down() || self.key(Key::RShift).down()
+        self.key(Key::ShiftLeft).down() || self.key(Key::ShiftRight).down()
     }
     pub fn ctrl_pressed(&self) -> bool {
-        self.key(Key::LControl).down() || self.key(Key::RControl).down()
+        self.key(Key::ControlLeft).down() || self.key(Key::ControlRight).down()
     }
     pub fn mouse_button(&self, button: MouseButton) -> ButtonState {
         self.mouse_buttons
@@ -176,7 +177,6 @@ impl Event {
         if let WindowEvent::CursorMoved {
             device_id,
             position,
-            modifiers,
         } = self.change
         {
             self.change = WindowEvent::CursorMoved {
@@ -188,7 +188,6 @@ impl Event {
                         y: transformed.y() as _,
                     }
                 },
-                modifiers,
             };
         }
         self
@@ -202,11 +201,11 @@ pub struct EventSource {
 }
 
 impl EventSource {
-    pub fn add<'a>(&mut self, diff: WindowEvent<'a>) {
+    pub fn add<'a>(&mut self, diff: WindowEvent) {
         match diff {
-            WindowEvent::KeyboardInput { input, .. } => {
-                if let Some(code) = input.virtual_keycode {
-                    let state = match input.state {
+            WindowEvent::KeyboardInput { ref event, .. } => {
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    let state = match event.state {
                         ElementState::Pressed => ButtonState::Down,
                         ElementState::Released => ButtonState::Up,
                     };
@@ -244,12 +243,10 @@ impl EventSource {
             }
             _ => {}
         }
-        if let Some(diff) = diff.to_static() {
-            self.batch.push(Event {
-                change: diff,
-                state: self.current_state.clone(),
-            });
-        }
+        self.batch.push(Event {
+            change: diff,
+            state: self.current_state.clone(),
+        });
     }
 
     pub fn current_batch(&mut self) -> EventStream {

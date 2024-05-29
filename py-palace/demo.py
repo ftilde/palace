@@ -205,5 +205,4 @@ def render(size, events):
 # (And also currently only the conversion for f32 is implemented...)
 #print(rt.resolve(render([10, 10], pc.Events.none()), [0]*2))
 
-window = pc.Window(rt)
-window.run(render, timeout_ms=10)
+rt.run_with_window(render, timeout_ms=10)
