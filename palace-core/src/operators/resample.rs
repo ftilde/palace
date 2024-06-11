@@ -277,6 +277,7 @@ void main() {
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
+                    assert!(pos.zip(m_out.dimension_in_chunks(), |l, r| l < r).all());
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
 

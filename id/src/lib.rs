@@ -15,6 +15,9 @@ fn digest_to_u128(v: [u8; 20]) -> u128 {
 }
 
 impl Id {
+    pub fn raw(&self) -> u128 {
+        self.0
+    }
     pub fn from_data(data: &[u8]) -> Self {
         let sha = Sha1::from(data);
         Self(digest_to_u128(sha.digest().bytes()))

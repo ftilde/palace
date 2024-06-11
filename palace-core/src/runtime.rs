@@ -791,6 +791,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn enqueue(&mut self, from: TaskId, req: RequestInfo<'inv>) {
         let req_id = req.id();
         //TODO: We also want to increase the priority of a task if it was already requested...
+
         let already_requested = self.task_graph.already_requested(req_id);
         let req_prio = self.task_graph.get_priority(from);
         self.task_graph
@@ -811,44 +812,48 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
                 let data_id = data_request.id;
                 let data_req_loc = data_request.location;
-                if !already_requested {
-                    let fulfiller_task_id = if let Some(available) =
-                        self.find_available_location(data_id, data_req_loc.into())
-                    {
-                        // Data should not already be present => unwrap
-                        self.try_make_available(data_id, available, data_req_loc, req_prio)
-                            .unwrap()
-                    } else {
+
+                if let Some(available) = self.find_available_location(data_id, data_req_loc.into())
+                {
+                    // Data should not already be present => unwrap
+                    let fulfiller_task_id = self
+                        .try_make_available(data_id, available, data_req_loc, req_prio)
+                        .unwrap();
+                    self.task_graph
+                        .will_provide_data(fulfiller_task_id, data_id);
+                } else {
+                    let fullfillers = self.task_graph.who_will_provide_data(data_id);
+                    if fullfillers.is_empty() {
                         let batch_size = match data_request.source.granularity() {
                             crate::operator::ItemGranularity::Single => 1,
                             crate::operator::ItemGranularity::Batched => 128,
                         };
                         // Add item to batcher to spawn later
-                        match self.request_batcher.add(data_request, batch_size, from) {
-                            BatchAddResult::New(id) => {
-                                self.task_graph
-                                    .add_implied(id, req_prio.downstream(TaskClass::Data));
-                                id
-                            }
-                            BatchAddResult::Existing(id) => {
-                                assert_ne!(batch_size, 1);
-                                self.task_graph.try_increase_priority(
-                                    id,
-                                    req_prio.downstream(TaskClass::Data),
-                                );
-                                id
-                            }
-                        }
-                    };
-                    self.task_graph
-                        .will_provide_data(fulfiller_task_id, data_id);
-                } else {
-                    let s = self.task_graph.who_will_provide_data(data_id).clone();
-                    for fulfiller_task_id in s {
+                        let fulfiller_task_id =
+                            match self.request_batcher.add(data_request, batch_size, from) {
+                                BatchAddResult::New(id) => {
+                                    self.task_graph
+                                        .add_implied(id, req_prio.downstream(TaskClass::Data));
+                                    id
+                                }
+                                BatchAddResult::Existing(id) => {
+                                    assert_ne!(batch_size, 1);
+                                    self.task_graph.try_increase_priority(
+                                        id,
+                                        req_prio.downstream(TaskClass::Data),
+                                    );
+                                    id
+                                }
+                            };
                         self.task_graph
                             .will_provide_data(fulfiller_task_id, data_id);
+                    } else {
+                        for fulfiller_task_id in fullfillers {
+                            self.task_graph
+                                .will_provide_data(fulfiller_task_id, data_id);
+                        }
                     }
-                };
+                }
             }
             RequestType::Barrier(b_info) => {
                 let id = match self

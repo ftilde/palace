@@ -325,22 +325,29 @@ impl HighLevelGraph {
         //*edge_entry += 1;
     }
     fn remove_dependency(&mut self, from: TaskId, to: TaskId, req: RequestId) {
-        let (_pseudo, from) = pseudo_tid(from);
-        let (_pseudo, to) = pseudo_tid(to);
+        let (pseudo_to, from) = pseudo_tid(from);
+        let (pseudo_from, to) = pseudo_tid(to);
 
-        let edge_entry = self.depends_on.get_mut(&from).unwrap().get_mut(&to);
-        assert!(edge_entry.is_some(), "F {:?} T {:?}", from, to);
-        let edge_entry = edge_entry.unwrap();
-        if edge_entry.remove(&req) {
-            let len = edge_entry.len();
-            if len == 0 {
-                self.event_stream.edge_remove(from, to, 1);
-                //TODO: Do we need to remove from set?
-            } else {
-                self.event_stream.edge_update(from, to, len + 1, len);
+        let from_entry = self.depends_on.get_mut(&from).unwrap();
+        let edge_entry = from_entry.get_mut(&to);
+
+        if let Some(edge_entry) = edge_entry {
+            if edge_entry.remove(&req) {
+                let len = edge_entry.len();
+                if len == 0 {
+                    self.event_stream.edge_remove(from, to, 1);
+                    self.depends_on.get_mut(&from).unwrap().remove(&to).unwrap();
+                } else {
+                    self.event_stream.edge_update(from, to, len + 1, len);
+                }
+            }
+        } else {
+            if !pseudo_to && !pseudo_from {
+                // If any of the tasks are pseudotasks, there might be duplicate removals (which we
+                // just ignore)
+                panic!("{:?} should dep on {:?} for {:?}", from, to, req);
             }
         }
-
         //let edge_entry = self
         //    .provides_for
         //    .entry(to)
@@ -356,7 +363,7 @@ impl HighLevelGraph {
             let depends_on = self.depends_on.remove(&t).unwrap();
             //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
             for (dep, n) in depends_on {
-                assert!(n.is_empty(), "{:?} deps on {:?}", t, dep);
+                assert!(n.is_empty(), "{:?} deps on {:?} for {:?}", t, dep, n);
             }
             //let _provided = self.provides_for.remove(&t).unwrap();
             //for provided in provided.into_iter() {
@@ -405,7 +412,7 @@ impl EventStreamNode for TaskId {
         hasher.digest()
     }
     fn label(&self) -> String {
-        format!("{}{}", self.op.1, self.num)
+        format!("{}{}{:?}", self.op.1, self.num, self.op.inner())
     }
 }
 
@@ -479,8 +486,11 @@ impl TaskGraph {
         entry.insert(in_);
     }
 
-    pub fn who_will_provide_data(&self, data: DataId) -> &Set<TaskId> {
-        &self.data_provided_by[&data]
+    pub fn who_will_provide_data(&self, data: DataId) -> Set<TaskId> {
+        self.data_provided_by
+            .get(&data)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn will_provide_data(&mut self, task: TaskId, data: DataId) {
@@ -580,12 +590,14 @@ impl TaskGraph {
             let entry = self.requested_locations.get_mut(&d.id).unwrap();
             let fulfilled_locs = entry.remove(&d.location).unwrap();
 
-            let by = self.data_provided_by.remove(&d.id).unwrap();
+            let by = self.data_provided_by.get_mut(&d.id).unwrap();
+
             for from in fulfilled_locs {
-                for by in &by {
+                for by in by.iter() {
                     self.high_level.remove_dependency(from, *by, id);
                 }
             }
+
             if entry.is_empty() {
                 self.requested_locations.remove(&d.id);
             }
@@ -641,9 +653,12 @@ impl TaskGraph {
 
         let wpd = self.will_provide_data.remove(&id);
         for did in wpd.into_iter().flatten() {
-            self.data_provided_by
-                .get_mut(&did)
-                .and_then(|v| Some(v.remove(&id)));
+            if let Some(v) = self.data_provided_by.get_mut(&did) {
+                v.remove(&id);
+                if v.is_empty() {
+                    self.data_provided_by.remove(&did);
+                }
+            }
 
             if let Some(locations) = self.requested_locations.get_mut(&did) {
                 for (loc, tids) in locations {
