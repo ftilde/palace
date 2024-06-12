@@ -216,7 +216,6 @@ impl BarrierBatcher {
                         let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
                         //println!("barrier: {:?}, {:?}", t.src, t.dst);
                     });
-                    println!("barrier: {:?}, {:?}, num={}", t.src, t.dst, items.len());
                     for item in items {
                         ctx.completed_requests.add(item.into());
                     }
