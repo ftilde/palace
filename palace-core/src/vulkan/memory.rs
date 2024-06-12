@@ -196,7 +196,7 @@ impl Default for TransferManager {
     fn default() -> Self {
         Self {
             transfer_count: Cell::new(0),
-            op_id: OperatorId::new("builtin::TransferManager"),
+            op_id: OperatorId::new("builtin::transfer_mgr"),
             running: Default::default(),
         }
     }

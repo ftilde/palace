@@ -275,11 +275,12 @@ struct HighLevelGraph {
 
 fn pseudo_tid(t: TaskId) -> (bool, TaskId) {
     match t.op.1 {
-        "allocator_ram"
-        | "allocator_vram"
-        | "allocator_vram_raw"
-        | "allocator_vram_image"
-        | "builtin::TransferManager" => (true, TaskId::new(t.op, 0)),
+        "builtin::alloc_ram"
+        | "builtin::alloc_disk"
+        | "builtin::alloc_vram"
+        | "builtin::alloc_vram_raw"
+        | "builtin::alloc_vram_img"
+        | "builtin::transfer_mgr" => (true, TaskId::new(t.op, 0)),
         _ => (false, t),
     }
 }
@@ -412,7 +413,8 @@ impl EventStreamNode for TaskId {
         hasher.digest()
     }
     fn label(&self) -> String {
-        format!("{}{}{:?}", self.op.1, self.num, self.op.inner())
+        //format!("{}{}{:?}", self.op.1, self.num, self.op.inner())
+        format!("{}{}", self.op.1, self.num)
     }
 }
 

@@ -288,15 +288,22 @@ impl Graph {
             for n in &self.nodes {
                 let sp0 = ShapeKind::new_box(n.1);
                 let mut look = StyleAttr::simple();
-                let short_name = n.1.as_str().split('0').next().unwrap();
+                let short_name =
+                    n.1.as_str()
+                        .split(|ch| '0' <= ch && ch <= '9')
+                        .next()
+                        .unwrap();
                 let col_hex = match short_name {
-                    "allocator_ram" => 0xff0000ff,
-                    "allocator_vram" => 0xffff00ff,
-                    "allocator_vram_raw" => 0xffff00ff,
-                    "allocator_vram_image" => 0xffff00ff,
-                    "builtin::TransferManager" => 0x00ff00ff,
-                    "garbage_collect_ram" => 0x0000ffff,
-                    "garbage_collect_vram" => 0x0000ffff,
+                    "builtin::alloc_ram" => 0xff0000ff,
+                    "builtin::alloc_vram" => 0xffff00ff,
+                    "builtin::alloc_vram_raw" => 0xffff00ff,
+                    "builtin::alloc_vram_img" => 0xffff00ff,
+                    "builtin::alloc_disk" => 0xffff00ff,
+                    "builtin::transfer_mgr" => 0x00ff00ff,
+                    "builtin::barrier_bat" => 0x00ffffff,
+                    "builtin::gc_ram" => 0x0000ffff,
+                    "builtin::gc_vram" => 0x0000ffff,
+                    "builtin::gc_disk" => 0x0000ffff,
                     _ => 0x000000ff,
                 };
 

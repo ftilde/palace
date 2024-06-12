@@ -178,7 +178,7 @@ impl BarrierBatcher {
             pending: Map::new(),
             pending_inv: Map::new(),
             transfer_count: 0,
-            op_id: OperatorId::new("BarrierBatcher"),
+            op_id: OperatorId::new("builtin::barrier_bat"),
         }
     }
     fn add(&mut self, info: BarrierInfo, item: BarrierItem) -> BatchAddResult {
@@ -216,6 +216,7 @@ impl BarrierBatcher {
                         let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
                         //println!("barrier: {:?}, {:?}", t.src, t.dst);
                     });
+                    println!("barrier: {:?}, {:?}, num={}", t.src, t.dst, items.len());
                     for item in items {
                         ctx.completed_requests.add(item.into());
                     }
@@ -877,16 +878,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::Allocation(id, alloc) => {
                 let op_name = match alloc {
                     crate::task::AllocationRequest::Ram(_, _, CpuDataLocation::Ram) => {
-                        "allocator_ram"
+                        "builtin::alloc_ram"
                     }
                     crate::task::AllocationRequest::Ram(_, _, CpuDataLocation::Disk) => {
-                        "allocator_disk"
+                        "builtin::alloc_disk"
                     }
-                    crate::task::AllocationRequest::VRam(_, _, _) => "allocator_vram",
+                    crate::task::AllocationRequest::VRam(_, _, _) => "builtin::alloc_vram",
                     crate::task::AllocationRequest::VRamBufRaw(_, _, _, _, _) => {
-                        "allocator_vram_raw"
+                        "builtin::alloc_vram_raw"
                     }
-                    crate::task::AllocationRequest::VRamImageRaw(_, _, _) => "allocator_vram_image",
+                    crate::task::AllocationRequest::VRamImageRaw(_, _, _) => {
+                        "builtin::alloc_vram_img"
+                    }
                 };
                 let task_id = TaskId::new(OperatorId::new(op_name), id.inner() as _);
                 let ctx = self.context(task_id);
@@ -1009,12 +1012,12 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             RequestType::GarbageCollect(l) => {
                 let task_id = match l {
                     DataLocation::CPU(CpuDataLocation::Ram) => {
-                        TaskId::new(OperatorId::new("garbage_collect_ram"), 0)
+                        TaskId::new(OperatorId::new("builtin::gc_ram"), 0)
                     }
                     DataLocation::CPU(CpuDataLocation::Disk) => {
-                        TaskId::new(OperatorId::new("garbage_collect_disk"), 0)
+                        TaskId::new(OperatorId::new("builtin::gc_disk"), 0)
                     }
-                    DataLocation::GPU(d) => TaskId::new(OperatorId::new("garbage_collect_vram"), d),
+                    DataLocation::GPU(d) => TaskId::new(OperatorId::new("builtin::gc_vram"), d),
                 };
                 let already_queued = self.task_graph.has_task(task_id);
                 if !already_queued {
