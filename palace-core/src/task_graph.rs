@@ -559,6 +559,9 @@ impl TaskGraph {
             self.implied_ready.push(id, priority);
         }
     }
+    pub fn has_task(&self, id: TaskId) -> bool {
+        self.implied_tasks.contains_key(&id)
+    }
     pub fn try_increase_priority(&mut self, id: TaskId, origin: TaskOrigin) {
         // Note that this does not change the priority of downstream tasks recursively! This is
         // fine, however, and in practice only meant for batched tasks (barriers and operator
@@ -575,10 +578,6 @@ impl TaskGraph {
             .get(&id)
             .map(|m| m.priority)
             .unwrap_or(ROOT_PRIO)
-    }
-
-    pub fn already_requested(&self, rid: RequestId) -> bool {
-        self.required_by.contains_key(&rid)
     }
 
     pub fn dependents(&self, id: RequestId) -> &Set<TaskId> {

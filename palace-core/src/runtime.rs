@@ -792,7 +792,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let req_id = req.id();
         //TODO: We also want to increase the priority of a task if it was already requested...
 
-        let already_requested = self.task_graph.already_requested(req_id);
         let req_prio = self.task_graph.get_priority(from);
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
@@ -1017,7 +1016,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     DataLocation::GPU(d) => TaskId::new(OperatorId::new("garbage_collect_vram"), d),
                 };
-                if !already_requested {
+                let already_queued = self.task_graph.has_task(task_id);
+                if !already_queued {
                     let ctx = self.context(task_id);
 
                     let task = match l {
