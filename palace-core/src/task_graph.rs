@@ -185,8 +185,9 @@ impl Priority {
         let progress = self.total_progress();
         //(((1 << 8) - (self.origin.level as u64)) << 56) + ((progress as u64) << 32) + (1 << 32)
         //    - (self.ts as u64)
-        (self.origin.class as u8 as u64)
-            << 56 + (((1 << 8) - (self.origin.level as u64)) << 48) + ((progress as u64) << 32)
+        ((self.origin.class as u8 as u64) << 56)
+            + (((1 << 8) - (self.origin.level as u64)) << 48)
+            + ((progress as u64) << 32)
     }
 
     fn total_progress(&self) -> u32 {
