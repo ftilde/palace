@@ -32,6 +32,8 @@ struct LOD {
     uint _padding;
 };
 
+RAY_STATE_STRUCT_DEF
+
 layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(std430, binding = 0) buffer OutputBuffer{
@@ -46,14 +48,8 @@ layout(scalar, binding = 2) buffer LodBuffer {
     LOD levels[NUM_LEVELS];
 } vol;
 
-struct State {
-    float t;
-    float intensity;
-    vec4 color;
-};
-
-layout(std430, binding = 3) buffer StateBuffer {
-    State values[];
+layout(std430, binding = 3) buffer RayStateBuffer {
+    RayState values[];
 } state_cache;
 
 layout(std430, binding = 4) buffer TFTableBuffer {
@@ -109,7 +105,7 @@ u8vec4 classify(float val) {
 }
 
 #ifdef COMPOSITING_MOP
-void update_state(inout State state, vec4 color, float step_size) {
+void update_state(inout RayState state, vec4 color, float step_size) {
     if(state.color.a < color.a) {
         state.color = color;
     }
@@ -117,7 +113,7 @@ void update_state(inout State state, vec4 color, float step_size) {
 #endif
 
 #ifdef COMPOSITING_DVR
-void update_state(inout State state, vec4 sample_f, float step_size) {
+void update_state(inout RayState state, vec4 sample_f, float step_size) {
     const float REFERENCE_STEP_SIZE_INV = 256.0;
     float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * REFERENCE_STEP_SIZE_INV);
 
@@ -159,7 +155,7 @@ void main()
 
         u8vec4 color;
         if(valid) {
-            State state = state_cache.values[gID];
+            RayState state = state_cache.values[gID];
 
             if(state.t != T_DONE) {
 

@@ -1,7 +1,7 @@
 use std::alloc::Layout;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use crevice::{glsl::GlslStruct, std140::AsStd140, std430::AsStd430};
 
 use crate::{
     array::{
@@ -574,6 +574,20 @@ pub struct TransFuncData {
     pub max: f32,
 }
 
+#[derive(GlslStruct, AsStd430)]
+#[repr(C)]
+pub struct RayState {
+    t: f32,
+    color: cgmath::Vector4<f32>,
+}
+
+fn std_430_array_layout<T: AsStd430>(n: usize) -> Layout {
+    let size = RayState::std430_size_static();
+    let align = <<RayState as AsStd430>::Output as crevice::std430::Std430>::ALIGNMENT;
+    assert_eq!(size % align, 0);
+    Layout::from_size_align(size * n, align).unwrap()
+}
+
 pub fn raycast(
     input: LODVolumeOperator<StaticElementType<f32>>,
     entry_exit_points: ImageOperator<StaticElementType<[Vector<D4, f32>; 2]>>,
@@ -631,6 +645,10 @@ pub fn raycast(
                                     .push_const_block::<PushConstants>()
                                     .add("NUM_LEVELS", input.levels.len())
                                     .add("REQUEST_TABLE_SIZE", request_table_size)
+                                    .add(
+                                        "RAY_STATE_STRUCT_DEF",
+                                        RayState::glsl_definition().replace("\n", ""),
+                                    )
                                     .add(config.compositing_mode.define_name(), 1)
                                     .add(config.shading.define_name(), 1),
                             ),
@@ -752,7 +770,7 @@ pub fn raycast(
                         device,
                         pos,
                         "initialized",
-                        Layout::array::<(u32, f32)>(m_out.chunk_size.hmul()).unwrap(),
+                        std_430_array_layout::<RayState>(m_out.chunk_size.hmul()),
                     ))
                     .await;
                 let state_initialized = state_initialized.init(|v| {
