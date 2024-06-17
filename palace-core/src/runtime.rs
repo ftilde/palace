@@ -825,7 +825,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     if fullfillers.is_empty() {
                         let batch_size = match data_request.source.granularity() {
                             crate::operator::ItemGranularity::Single => 1,
-                            crate::operator::ItemGranularity::Batched => 128,
+                            crate::operator::ItemGranularity::Batched => 64,
                         };
                         // Add item to batcher to spawn later
                         let fulfiller_task_id =

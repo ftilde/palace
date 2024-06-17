@@ -5,7 +5,7 @@ use crate::{
     storage::{DataLocation, VisibleDataLocation},
     task::AllocationId,
     threadpool::JobId,
-    util::{Map, MapEntry, Set},
+    util::{Map, Set},
     vulkan::{BarrierInfo, CmdBufferSubmissionId},
 };
 use ahash::HashMapExt;
@@ -385,6 +385,13 @@ impl HighLevelGraph {
     }
 }
 
+const NUM_PARALLEL_TASKS_PER_OPERATOR: usize = 2;
+#[derive(Default)]
+struct PostponedOperatorTask {
+    queue: VecDeque<(TaskId, Priority)>,
+    num_active: usize,
+}
+
 #[derive(Default)]
 pub struct TaskGraph {
     implied_tasks: Map<TaskId, TaskMetadata>,
@@ -401,7 +408,7 @@ pub struct TaskGraph {
     requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
     high_level: HighLevelGraph,
     ts_counter: u32,
-    postponed_data_operator_tasks: Map<OperatorId, VecDeque<(TaskId, Priority)>>,
+    postponed_data_operator_tasks: Map<OperatorId, PostponedOperatorTask>,
 }
 
 trait EventStreamNode {
@@ -546,15 +553,16 @@ impl TaskGraph {
         self.high_level.add_task(id);
 
         let run_now = if origin.class == TaskClass::Data {
-            match self.postponed_data_operator_tasks.entry(id.operator()) {
-                MapEntry::Occupied(mut v) => {
-                    v.get_mut().push_back((id, priority));
-                    false
-                }
-                MapEntry::Vacant(v) => {
-                    v.insert(VecDeque::new());
-                    true
-                }
+            let entry = self
+                .postponed_data_operator_tasks
+                .entry(id.operator())
+                .or_default();
+            if entry.num_active < NUM_PARALLEL_TASKS_PER_OPERATOR {
+                entry.num_active += 1;
+                true
+            } else {
+                entry.queue.push_back((id, priority));
+                false
             }
         } else {
             true
@@ -687,10 +695,13 @@ impl TaskGraph {
 
         self.high_level.remove_task(id);
 
-        if let Some(postponed) = self.postponed_data_operator_tasks.get_mut(&id.operator()) {
-            if let Some((next_id, priority)) = postponed.pop_front() {
+        if let Some(entry) = self.postponed_data_operator_tasks.get_mut(&id.operator()) {
+            if let Some((next_id, priority)) = entry.queue.pop_front() {
                 self.implied_ready.push(next_id, priority);
             } else {
+                entry.num_active -= 1;
+            }
+            if entry.num_active == 0 {
                 self.postponed_data_operator_tasks.remove(&id.operator());
             }
         }
