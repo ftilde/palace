@@ -11,7 +11,10 @@ use std::{
 
 use crate::{
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
-    storage::{disk, ram, CpuDataLocation, DataLocation, DataVersionType, VisibleDataLocation},
+    storage::{
+        disk, gpu::BarrierEpoch, ram, CpuDataLocation, DataLocation, DataVersionType,
+        VisibleDataLocation,
+    },
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -153,14 +156,14 @@ impl<'inv> RequestBatcher<'inv> {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum BarrierItem {
     Data(VisibleDataId),
-    Barrier(BarrierInfo),
+    Barrier(BarrierInfo, BarrierEpoch),
 }
 
 impl Into<RequestId> for BarrierItem {
     fn into(self) -> RequestId {
         match self {
             BarrierItem::Data(d) => RequestId::Data(d),
-            BarrierItem::Barrier(info) => RequestId::Barrier(info),
+            BarrierItem::Barrier(info, e) => RequestId::Barrier(info, e),
         }
     }
 }
@@ -496,13 +499,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         assert!(self.data.request_queue.is_empty());
                         // Drain hints
                         self.data.hints.completed.replace(Set::new());
-                        self.register_produced_data(cache_results);
+                        self.register_produced_data(task_id, cache_results);
                         self.task_graph.task_done(task_id);
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
                     Poll::Ready(e) => {
-                        self.register_produced_data(cache_results);
+                        self.register_produced_data(task_id, cache_results);
                         println!("Execution errored, exporting task graph.");
                         crate::task_graph::export(&self.task_graph);
                         return e;
@@ -513,7 +516,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
                             *resolved_deps = old_hints;
                         }
-                        self.register_produced_data(cache_results);
+                        self.register_produced_data(task_id, cache_results);
                         self.enqueue_requested(task_id);
                     }
                 };
@@ -545,6 +548,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             //    }
                             //}
                             stuck_state = StuckState::Reported;
+                            self.task_graph.run_sanity_check();
                         } else {
                             stuck_state = StuckState::WaitingSince(stuck_time);
                         }
@@ -559,11 +563,14 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn register_produced_data_from(
         &mut self,
+        task_id: TaskId,
         items: impl Iterator<Item = (DataId, DataLocation, DataVersionType)>,
         and_cache: bool,
     ) {
         for (id, produced_loc, produced_ver) in items {
-            let mut requested_locations = self.task_graph.requested_locations(id);
+            self.task_graph.has_produced_data(task_id, id);
+
+            let mut requested_locations = self.task_graph.data_requests(id);
             if and_cache {
                 let e = requested_locations
                     .entry(VisibleDataLocation::CPU(CpuDataLocation::Disk))
@@ -571,42 +578,64 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 e.insert(TaskId::new(OperatorId::new("builtin::cacher"), 0));
             }
             for requested in requested_locations {
-                let r_id = VisibleDataId {
-                    id,
-                    location: requested.0,
-                }
-                .into();
-                if let DataVersionType::Preview = produced_ver {
-                    let mut m = self.data.predicted_preview_tasks.borrow_mut();
-                    for dependent in self.task_graph.dependents(r_id) {
-                        m.insert(*dependent);
-                    }
-                }
-                let req_prio = requested
-                    .1
-                    .iter()
-                    .map(|tid| self.task_graph.get_priority(*tid))
-                    .max()
-                    .unwrap();
-                if let Some(task_id) =
-                    self.try_make_available(id, produced_loc, requested.0, req_prio)
+                // Prefer the "best" available location for transfers
+                if self
+                    .find_available_location(id, requested.0.into())
+                    .unwrap()
+                    == produced_loc
                 {
-                    self.task_graph.will_provide_data(task_id, id);
-                } else {
-                    self.task_graph.resolved_implied(r_id);
+                    let r_id = VisibleDataId {
+                        id,
+                        location: requested.0,
+                    }
+                    .into();
+                    if let DataVersionType::Preview = produced_ver {
+                        let mut m = self.data.predicted_preview_tasks.borrow_mut();
+                        for dependent in self.task_graph.dependents(r_id) {
+                            m.insert(*dependent);
+                        }
+                    }
+                    let req_prio = requested
+                        .1
+                        .iter()
+                        .map(|tid| self.task_graph.get_priority(*tid))
+                        .max()
+                        .unwrap();
+
+                    let any_need_fulfillment = requested.1.iter().any(|requestor| {
+                        !self.task_graph.is_currently_being_fulfilled(*requestor, id)
+                    });
+
+                    if any_need_fulfillment {
+                        if let Some(task_id) =
+                            self.try_make_available(id, produced_loc, requested.0, req_prio)
+                        {
+                            for requestor in requested.1.iter() {
+                                if !self.task_graph.is_currently_being_fulfilled(*requestor, id) {
+                                    self.task_graph
+                                        .will_provide_data_for(task_id, id, *requestor);
+                                }
+                            }
+                        } else {
+                            self.task_graph.resolved_implied(r_id);
+                        }
+                    }
                 }
             }
         }
     }
-    fn register_produced_data(&mut self, and_cache: bool) {
-        self.register_produced_data_from(self.data.storage.newest_data(), and_cache);
+    fn register_produced_data(&mut self, from: TaskId, and_cache: bool) {
+        self.register_produced_data_from(from, self.data.storage.newest_data(), and_cache);
         if let Some(disk) = self.data.disk_cache {
-            self.register_produced_data_from(disk.newest_data(), false);
+            self.register_produced_data_from(from, disk.newest_data(), false);
         }
         for device in self.data.device_contexts {
-            self.register_produced_data_from(device.storage.newest_data(), and_cache);
+            self.register_produced_data_from(from, device.storage.newest_data(), and_cache);
         }
         for item in self.data.completed_requests.take() {
+            if let RequestId::Data(id) = item {
+                self.task_graph.has_produced_data(from, id.id);
+            }
             self.task_graph.resolved_implied(item.into());
         }
     }
@@ -804,60 +833,77 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 panic!("Ready request should never reach the executor");
             }
             RequestType::Data(data_request) => {
-                let op_id = data_request.source.op_id();
-                self.operator_info
-                    .entry(op_id)
-                    .or_insert(data_request.source.descriptor());
-
-                let data_id = data_request.id;
-                let data_req_loc = data_request.location;
-
-                if let Some(available) = self.find_available_location(data_id, data_req_loc.into())
+                // There is possibly a task running that fulfills this request. In that case we
+                // don't need to do anything
+                if !self
+                    .task_graph
+                    .is_currently_being_fulfilled(from, data_request.id)
                 {
-                    // Data should not already be present => unwrap
-                    let fulfiller_task_id = self
-                        .try_make_available(data_id, available, data_req_loc, req_prio)
-                        .unwrap();
-                    self.task_graph
-                        .will_provide_data(fulfiller_task_id, data_id);
-                } else {
-                    let fullfillers = self.task_graph.who_will_provide_data(data_id);
-                    if fullfillers.is_empty() {
-                        let batch_size = match data_request.source.granularity() {
-                            crate::operator::ItemGranularity::Single => 1,
-                            crate::operator::ItemGranularity::Batched => 64,
-                        };
-                        // Add item to batcher to spawn later
-                        let fulfiller_task_id =
-                            match self.request_batcher.add(data_request, batch_size, from) {
-                                BatchAddResult::New(id) => {
-                                    self.task_graph
-                                        .add_implied(id, req_prio.downstream(TaskClass::Data));
-                                    id
-                                }
-                                BatchAddResult::Existing(id) => {
-                                    assert_ne!(batch_size, 1);
-                                    self.task_graph.try_increase_priority(
-                                        id,
-                                        req_prio.downstream(TaskClass::Data),
-                                    );
-                                    id
-                                }
-                            };
+                    let op_id = data_request.source.op_id();
+                    self.operator_info
+                        .entry(op_id)
+                        .or_insert(data_request.source.descriptor());
+
+                    let data_id = data_request.id;
+                    let data_req_loc = data_request.location;
+
+                    if let Some(available) =
+                        self.find_available_location(data_id, data_req_loc.into())
+                    {
+                        // Data should not already be present => unwrap
+                        let fulfiller_task_id = self
+                            .try_make_available(data_id, available, data_req_loc, req_prio)
+                            .unwrap();
                         self.task_graph
-                            .will_provide_data(fulfiller_task_id, data_id);
+                            .will_provide_data_for(fulfiller_task_id, data_id, from);
                     } else {
-                        for fulfiller_task_id in fullfillers {
+                        let fullfillers = self.task_graph.who_will_provide_data(data_id);
+                        if fullfillers.is_empty() {
+                            let batch_size = match data_request.source.granularity() {
+                                crate::operator::ItemGranularity::Single => 1,
+                                crate::operator::ItemGranularity::Batched => 64,
+                            };
+                            // Add item to batcher to spawn later
+                            let fulfiller_task_id =
+                                match self.request_batcher.add(data_request, batch_size, from) {
+                                    BatchAddResult::New(id) => {
+                                        self.task_graph
+                                            .add_implied(id, req_prio.downstream(TaskClass::Data));
+                                        id
+                                    }
+                                    BatchAddResult::Existing(id) => {
+                                        assert_ne!(batch_size, 1);
+                                        self.task_graph.try_increase_priority(
+                                            id,
+                                            req_prio.downstream(TaskClass::Data),
+                                        );
+                                        id
+                                    }
+                                };
                             self.task_graph
-                                .will_provide_data(fulfiller_task_id, data_id);
+                                .will_provide_data_for(fulfiller_task_id, data_id, from);
+                        } else {
+                            assert_eq!(fullfillers.len(), 1);
+                            if !self
+                                .task_graph
+                                .is_currently_being_fulfilled(from, data_request.id)
+                            {
+                                for fulfiller_task_id in fullfillers {
+                                    self.task_graph.will_provide_data_for(
+                                        fulfiller_task_id,
+                                        data_id,
+                                        from,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
-            RequestType::Barrier(b_info) => {
+            RequestType::Barrier(b_info, e) => {
                 let id = match self
                     .barrier_batcher
-                    .add(b_info, BarrierItem::Barrier(b_info))
+                    .add(b_info, BarrierItem::Barrier(b_info, e))
                 {
                     BatchAddResult::New(id) => {
                         self.task_graph

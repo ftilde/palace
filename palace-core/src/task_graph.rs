@@ -2,7 +2,7 @@ use std::{collections::VecDeque, hash::Hash};
 
 use crate::{
     operator::{DataId, OperatorId},
-    storage::{DataLocation, VisibleDataLocation},
+    storage::{gpu::BarrierEpoch, DataLocation, VisibleDataLocation},
     task::AllocationId,
     threadpool::JobId,
     util::{Map, Set},
@@ -28,7 +28,7 @@ pub struct VisibleDataId {
 pub enum RequestId {
     CmdBufferCompletion(CmdBufferSubmissionId),
     CmdBufferSubmission(CmdBufferSubmissionId),
-    Barrier(BarrierInfo),
+    Barrier(BarrierInfo, BarrierEpoch),
     Allocation(AllocationId),
     Data(VisibleDataId),
     Job(JobId),
@@ -364,9 +364,13 @@ impl HighLevelGraph {
         let (pseudo, t) = pseudo_tid(t);
 
         if !pseudo {
+            //let depends_on = self.depends_on.get(&t).unwrap().clone();
             let depends_on = self.depends_on.remove(&t).unwrap();
             //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
             for (dep, n) in depends_on {
+                //for req in n {
+                //    self.remove_dependency(t, dep, req);
+                //}
                 assert!(n.is_empty(), "{:?} deps on {:?} for {:?}", t, dep, n);
             }
             //let _provided = self.provides_for.remove(&t).unwrap();
@@ -405,7 +409,8 @@ pub struct TaskGraph {
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
-    requested_locations: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
+    data_requests: Map<DataId, Map<VisibleDataLocation, Set<TaskId>>>,
+    request_to_active_fulfillers: Map<DataId, Map<TaskId /*req*/, TaskId /*fulfiller*/>>,
     high_level: HighLevelGraph,
     ts_counter: u32,
     postponed_data_operator_tasks: Map<OperatorId, PostponedOperatorTask>,
@@ -475,8 +480,8 @@ impl TaskGraph {
         self.implied_ready.remove(&wants);
 
         if let RequestId::Data(d) = wanted {
-            let entry = self.requested_locations.entry(d.id).or_default();
-            let e = entry.entry(d.location);
+            let entry = self.data_requests.entry(d.id).or_default();
+            let e = entry.entry(d.location.into());
 
             let loc = e.or_default();
             loc.insert(wants);
@@ -484,11 +489,16 @@ impl TaskGraph {
     }
 
     //TODO: Try to avoid clone
-    pub fn requested_locations(&self, id: DataId) -> Map<VisibleDataLocation, Set<TaskId>> {
-        self.requested_locations
+    pub fn data_requests(&self, id: DataId) -> Map<VisibleDataLocation, Set<TaskId>> {
+        // Note: May be None due to builtin::cacher
+        self.data_requests.get(&id).cloned().unwrap_or_default()
+    }
+
+    pub fn is_currently_being_fulfilled(&self, requestor: TaskId, id: DataId) -> bool {
+        self.request_to_active_fulfillers
             .get(&id)
-            .cloned()
-            .unwrap_or_default()
+            .map(|m| m.contains_key(&requestor))
+            .unwrap_or(false)
     }
 
     pub fn in_group(&mut self, in_: RequestId, group: GroupId) {
@@ -505,23 +515,88 @@ impl TaskGraph {
             .unwrap_or_default()
     }
 
-    pub fn will_provide_data(&mut self, task: TaskId, data: DataId) {
-        let entries = self.will_provide_data.entry(task).or_default();
+    pub fn who_will_fullfil_req(&self, req: RequestId) -> Option<TaskId> {
+        self.req_fullfil_by.get(&req).copied()
+    }
+
+    pub fn will_provide_data_for(&mut self, provider: TaskId, data: DataId, requestor: TaskId) {
+        let entries = self.will_provide_data.entry(provider).or_default();
         entries.insert(data);
         let entry = self.data_provided_by.entry(data).or_default();
-        entry.insert(task);
+        entry.insert(provider);
 
-        for (location, tasks) in &self.requested_locations[&data] {
-            for requestor in tasks {
-                self.high_level.add_dependency(
-                    *requestor,
-                    task,
-                    RequestId::Data(VisibleDataId {
-                        id: data,
-                        location: *location,
-                    }),
+        let prev = self
+            .request_to_active_fulfillers
+            .entry(data)
+            .or_default()
+            .insert(requestor, provider);
+        if let Some(prev) = prev {
+            panic!(
+                "{:?} for {:?} will now be provided by {:?}, but is already by {:?}",
+                data, requestor, provider, prev
+            );
+        }
+
+        if let Some(location) = self.data_requests.get(&data).and_then(|r| {
+            r.iter()
+                .filter_map(|v| {
+                    if v.1.contains(&requestor) {
+                        Some(v.0)
+                    } else {
+                        None
+                    }
+                })
+                .next()
+        }) {
+            self.high_level.add_dependency(
+                requestor,
+                provider,
+                RequestId::Data(VisibleDataId {
+                    id: data,
+                    location: *location,
+                }),
+            );
+        } else {
+            if requestor.operator().1 != "builtin::cacher" {
+                panic!(
+                    "Trying to create dependency from unknown task {:?}",
+                    requestor
                 );
             }
+        }
+    }
+    pub fn has_produced_data(&mut self, task: TaskId, data: DataId) {
+        assert!(self.data_provided_by.get_mut(&data).unwrap().remove(&task));
+
+        let entry = self.will_provide_data.get_mut(&task).unwrap();
+        assert!(entry.remove(&data));
+        if entry.is_empty() {
+            self.will_provide_data.remove(&task);
+        }
+
+        let fulfiller_entries = self.request_to_active_fulfillers.get_mut(&data).unwrap();
+
+        if let Some(data_request_entry) = self.data_requests.get(&data) {
+            // Note: May be none if builtin::cacher produced it
+            for loc in data_request_entry.iter() {
+                for requestor in loc.1 {
+                    if fulfiller_entries.get(requestor) == Some(&task) {
+                        self.high_level.remove_dependency(
+                            *requestor,
+                            task,
+                            RequestId::Data(VisibleDataId {
+                                id: data,
+                                location: *loc.0,
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+
+        fulfiller_entries.retain(|_k, v| *v != task);
+        if fulfiller_entries.is_empty() {
+            self.request_to_active_fulfillers.remove(&data);
         }
     }
 
@@ -599,19 +674,11 @@ impl TaskGraph {
 
     pub fn resolved_implied(&mut self, id: RequestId) {
         if let RequestId::Data(d) = id {
-            let entry = self.requested_locations.get_mut(&d.id).unwrap();
-            let fulfilled_locs = entry.remove(&d.location).unwrap();
-
-            let by = self.data_provided_by.get_mut(&d.id).unwrap();
-
-            for from in fulfilled_locs {
-                for by in by.iter() {
-                    self.high_level.remove_dependency(from, *by, id);
-                }
-            }
+            let entry = self.data_requests.get_mut(&d.id).unwrap();
+            let _fulfilled_locs = entry.remove(&d.location).unwrap();
 
             if entry.is_empty() {
-                self.requested_locations.remove(&d.id);
+                self.data_requests.remove(&d.id);
             }
         }
 
@@ -658,35 +725,48 @@ impl TaskGraph {
         }
     }
 
+    pub fn run_sanity_check(&mut self) {
+        assert!(self.implied_ready.is_empty());
+        for t in self.implied_tasks.keys() {
+            if let Some(waiting_for) = self.waits_on.get(t) {
+                if waiting_for.is_empty() {
+                    println!("Task {:?} waiting requests is empty", t);
+                    if let Some(post) = self.postponed_data_operator_tasks.get(&t.operator()) {
+                        println!(
+                            "Operator {:?} has postponed tasks, {} active",
+                            t.operator(),
+                            post.num_active
+                        );
+                        if post.queue.iter().find(|i| i.0 == *t).is_some() {
+                            println!("And its in the waiting queue");
+                        }
+                    }
+                } else {
+                    println!("Task {:?} waits on", t);
+                    for w in waiting_for {
+                        println!("\t{:?}", w.0);
+                        if let RequestId::Data(id) = w.0 {
+                            println!(
+                                "Will be provided by: {:?}",
+                                self.data_provided_by.get(&id.id)
+                            );
+                            println!("Requested at: {:?}", self.data_requests.get(&id.id));
+                        }
+                    }
+                }
+            } else {
+                println!("Task {:?} is not in 'waiting_for'", t);
+            }
+        }
+    }
+
     pub fn task_done(&mut self, id: TaskId) {
         self.implied_tasks.remove(&id);
         self.implied_ready.remove(&id);
         self.resolved_deps.remove(&id);
 
         let wpd = self.will_provide_data.remove(&id);
-        for did in wpd.into_iter().flatten() {
-            if let Some(v) = self.data_provided_by.get_mut(&did) {
-                v.remove(&id);
-                if v.is_empty() {
-                    self.data_provided_by.remove(&did);
-                }
-            }
-
-            if let Some(locations) = self.requested_locations.get_mut(&did) {
-                for (loc, tids) in locations {
-                    for tid in tids.iter() {
-                        self.high_level.remove_dependency(
-                            *tid,
-                            id,
-                            RequestId::Data(VisibleDataId {
-                                id: did,
-                                location: *loc,
-                            }),
-                        );
-                    }
-                }
-            }
-        }
+        assert!(wpd.is_none());
         let _wfr = self.will_fullfil_req.remove(&id);
 
         let deps = self.waits_on.remove(&id).unwrap();
@@ -784,7 +864,7 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
         .collect::<Map<_, _>>();
 
     let data_nodes = task_graph
-        .requested_locations
+        .data_requests
         .keys()
         .map(|k| {
             let label = format!("\"{:?}\"", k);
@@ -849,7 +929,7 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
         }
     }
 
-    for (d, l) in &task_graph.requested_locations {
+    for (d, l) in &task_graph.data_requests {
         for l in l.keys() {
             let mut attributes = Vec::new();
             attributes.push(color::default().into_attr());

@@ -583,7 +583,7 @@ pub async fn run() {
 
     let mut timeline = GraphTimeline::new(events, layout_config);
     println!("Loaded timeline with {} steps", timeline.events.len());
-    timeline.go_to_index(100);
+    timeline.go_to_index(0);
 
     let game = MyGame::make(timeline, layout_config);
 

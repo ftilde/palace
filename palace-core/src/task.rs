@@ -14,7 +14,7 @@ use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
-use crate::storage::gpu::{MemoryLocation, StateCacheResult, WriteHandle};
+use crate::storage::gpu::{BarrierEpoch, MemoryLocation, StateCacheResult, WriteHandle};
 use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{disk, CpuDataLocation, Element};
 use crate::storage::{DataLocation, GarbageCollectId, VisibleDataLocation};
@@ -125,7 +125,7 @@ pub enum RequestType<'inv> {
     ThreadPoolJob(ThreadPoolJob, JobType),
     CmdBufferCompletion(crate::vulkan::CmdBufferSubmissionId),
     CmdBufferSubmission(crate::vulkan::CmdBufferSubmissionId),
-    Barrier(BarrierInfo),
+    Barrier(BarrierInfo, BarrierEpoch),
     Group(RequestGroup<'inv>),
     GarbageCollect(DataLocation),
     Ready,
@@ -139,7 +139,7 @@ impl RequestType<'_> {
             RequestType::Allocation(id, ..) => RequestId::Allocation(*id),
             RequestType::CmdBufferCompletion(d) => RequestId::CmdBufferCompletion(*d),
             RequestType::CmdBufferSubmission(d) => RequestId::CmdBufferSubmission(*d),
-            RequestType::Barrier(i) => RequestId::Barrier(*i),
+            RequestType::Barrier(i, e) => RequestId::Barrier(*i, *e),
             RequestType::Data(d) => RequestId::Data(VisibleDataId {
                 id: d.id,
                 location: d.location,
@@ -423,7 +423,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 RequestId::Allocation(i) => ids.push(Id::hash(&i)),
                 RequestId::CmdBufferCompletion(i) => ids.push(Id::hash(&(0, i))),
                 RequestId::CmdBufferSubmission(i) => ids.push(Id::hash(&(1, i))),
-                RequestId::Barrier(b_info) => ids.push(Id::hash(&b_info)),
+                RequestId::Barrier(b_info, e) => ids.push([Id::hash(&b_info), Id::hash(&e)].id()),
                 RequestId::Group(g) => ids.push(g.0),
                 RequestId::GarbageCollect(g) => ids.push(Id::hash(&g)),
                 RequestId::Ready => {}

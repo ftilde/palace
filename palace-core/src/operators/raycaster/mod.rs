@@ -792,6 +792,7 @@ pub fn raycast(
 
                 // Actual rendering
                 let timed_out = 'outer: loop {
+                    let loop_start = std::time::Instant::now();
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -845,6 +846,7 @@ pub fn raycast(
                         if to_request_linear.is_empty() {
                             continue;
                         }
+                        println!("Draw time: {}ms", loop_start.elapsed().as_millis());
                         requested_anything = true;
 
                         if let Err(crate::chunk_utils::Timeout) =

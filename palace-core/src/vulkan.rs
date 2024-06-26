@@ -773,7 +773,7 @@ impl DeviceContext {
         };
         let initial_epoch = self.storage.barrier_manager.current_epoch();
         Request {
-            type_: crate::task::RequestType::Barrier(barrier_info),
+            type_: crate::task::RequestType::Barrier(barrier_info, initial_epoch),
             gen_poll: Box::new(move |_ctx| {
                 Box::new(move || {
                     if self
