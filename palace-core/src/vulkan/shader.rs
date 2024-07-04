@@ -1,6 +1,6 @@
 use ahash::HashMapExt;
 use ash::vk;
-use spirq::{EntryPoint, ReflectConfig};
+use spirq::ReflectConfig;
 use spirv_compiler::ShaderKind;
 use std::{cell::RefCell, collections::BTreeMap};
 
@@ -49,7 +49,7 @@ pub mod ext {
 
 pub struct Shader {
     pub module: vk::ShaderModule,
-    pub entry_points: Vec<EntryPoint>,
+    pub entry_points: Vec<spirq::entry_point::EntryPoint>,
 }
 
 pub struct Config {
@@ -254,24 +254,22 @@ impl Shader {
             .find(|e| e.name == entry_point_name)
             .expect("Shader does not have the expected entry point name");
 
+        use spirq::prelude::*;
+
         let stage = match entry_point.exec_model {
-            spirq::ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
-            spirq::ExecutionModel::TessellationControl => {
-                vk::ShaderStageFlags::TESSELLATION_CONTROL
-            }
-            spirq::ExecutionModel::TessellationEvaluation => {
-                vk::ShaderStageFlags::TESSELLATION_EVALUATION
-            }
-            spirq::ExecutionModel::Geometry => vk::ShaderStageFlags::GEOMETRY,
-            spirq::ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
-            spirq::ExecutionModel::GLCompute => vk::ShaderStageFlags::COMPUTE,
+            ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
+            ExecutionModel::TessellationControl => vk::ShaderStageFlags::TESSELLATION_CONTROL,
+            ExecutionModel::TessellationEvaluation => vk::ShaderStageFlags::TESSELLATION_EVALUATION,
+            ExecutionModel::Geometry => vk::ShaderStageFlags::GEOMETRY,
+            ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
+            ExecutionModel::GLCompute => vk::ShaderStageFlags::COMPUTE,
             o => panic!("Unhandled spir-v execution model {:?}", o),
         };
         for var in &entry_point.vars {
             match var {
-                spirq::Variable::Input { .. } => {}
-                spirq::Variable::Output { .. } => {}
-                spirq::Variable::Descriptor {
+                Variable::Input { .. } => {}
+                Variable::Output { .. } => {}
+                Variable::Descriptor {
                     name: _,
                     desc_bind,
                     desc_ty,
@@ -280,26 +278,24 @@ impl Shader {
                 } => {
                     assert!(*nbind > 0, "Dynamic SSBOs are currently not supported (since we are using push descriptors, see https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#VUID-VkDescriptorSetLayoutCreateInfo-flags-00280)");
                     let d_type = match desc_ty {
-                        spirq::DescriptorType::Sampler() => todo!(),
-                        spirq::DescriptorType::CombinedImageSampler() => {
+                        DescriptorType::Sampler() => todo!(),
+                        DescriptorType::CombinedImageSampler() => {
                             vk::DescriptorType::COMBINED_IMAGE_SAMPLER
                         }
-                        spirq::DescriptorType::SampledImage() => todo!(),
-                        spirq::DescriptorType::StorageImage(_) => todo!(),
-                        spirq::DescriptorType::UniformTexelBuffer() => todo!(),
-                        spirq::DescriptorType::StorageTexelBuffer(_) => todo!(),
-                        spirq::DescriptorType::UniformBuffer() => {
-                            vk::DescriptorType::UNIFORM_BUFFER
-                        }
-                        spirq::DescriptorType::StorageBuffer(_) => {
+                        DescriptorType::SampledImage() => todo!(),
+                        DescriptorType::StorageImage(_) => todo!(),
+                        DescriptorType::UniformTexelBuffer() => todo!(),
+                        DescriptorType::StorageTexelBuffer(_) => todo!(),
+                        DescriptorType::UniformBuffer() => vk::DescriptorType::UNIFORM_BUFFER,
+                        DescriptorType::StorageBuffer(_) => {
                             if *nbind > 0 {
                                 vk::DescriptorType::STORAGE_BUFFER
                             } else {
                                 vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
                             }
                         }
-                        spirq::DescriptorType::InputAttachment(_) => todo!(),
-                        spirq::DescriptorType::AccelStruct() => todo!(),
+                        DescriptorType::InputAttachment(_) => todo!(),
+                        DescriptorType::AccelStruct() => todo!(),
                     };
                     let binding = vk::DescriptorSetLayoutBinding::builder()
                         .binding(desc_bind.bind())
@@ -312,7 +308,7 @@ impl Shader {
                     let set_bindings = ret.descriptor_bindings.inner.entry(set).or_default();
                     set_bindings.inner.insert(desc_bind.bind(), binding);
                 }
-                spirq::Variable::PushConstant { name: _, ty } => {
+                Variable::PushConstant { name: _, ty } => {
                     let c = vk::PushConstantRange::builder()
                         .size(ty.nbyte().unwrap().try_into().unwrap())
                         .stage_flags(stage)
@@ -320,16 +316,24 @@ impl Shader {
                     let prev = ret.push_const.replace(c);
                     assert!(prev.is_none(), "Should only have on push constant");
                 }
-                spirq::Variable::SpecConstant { .. } => panic!("Unexpected spec constant"),
+                Variable::SpecConstant { .. } => panic!("Unexpected spec constant"),
+            }
+        }
+
+        fn unwrap_u32(v: &ConstantValue) -> u32 {
+            if let ConstantValue::U32(u) = v {
+                *u
+            } else {
+                panic!("Not a u32");
             }
         }
 
         for e in &entry_point.exec_modes {
             match e.exec_mode {
                 spirv::ExecutionMode::LocalSize => {
-                    let x = e.operands[0].value.to_u32();
-                    let y = e.operands[1].value.to_u32();
-                    let z = e.operands[2].value.to_u32();
+                    let x = unwrap_u32(&e.operands[0].value);
+                    let y = unwrap_u32(&e.operands[1].value);
+                    let z = unwrap_u32(&e.operands[2].value);
                     let prev = ret.local_size.replace([z, y, x].into());
                     assert!(prev.is_none());
                 }

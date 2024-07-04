@@ -6,6 +6,7 @@ pub mod data;
 pub mod dim;
 pub mod dtypes;
 pub mod event;
+pub mod jit;
 pub mod mat;
 pub mod operator;
 pub mod operators;
