@@ -336,11 +336,7 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
         self.cmd
     }
 
-    pub fn push_descriptor_set<const N: usize>(
-        &mut self,
-        bind_set: u32,
-        config: DescriptorConfig<N>,
-    ) {
+    pub fn push_descriptor_set(&mut self, bind_set: u32, config: DescriptorConfig) {
         let writes = config.writes_for_push();
         unsafe {
             let cmd_raw = self.cmd.raw();
@@ -357,11 +353,7 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
         }
     }
 
-    pub fn write_descriptor_set<const N: usize>(
-        &mut self,
-        bind_set: u32,
-        config: DescriptorConfig<N>,
-    ) {
+    pub fn write_descriptor_set(&mut self, bind_set: u32, config: DescriptorConfig) {
         let ds_pool = self.pipeline.ds_pools.get(bind_set as usize).unwrap();
         let mut ds_pool = ds_pool.borrow_mut();
         // Safety: We only use `ds` with the current cmdbuffer
@@ -518,35 +510,43 @@ impl<T: AsBufferDescriptor> AsDescriptors for &[&T] {
     }
 }
 
-pub struct DescriptorConfig<const N: usize> {
-    buffer_infos: [DescriptorInfos; N],
+pub struct DescriptorConfig {
+    buffer_infos: Vec<DescriptorInfos>,
 }
-impl<const N: usize> DescriptorConfig<N> {
-    pub fn new(buffers: [&dyn AsDescriptors; N]) -> Self {
-        let buffer_infos = std::array::from_fn(|i| buffers[i].gen_buffer_info());
+impl DescriptorConfig {
+    pub fn new<const N: usize>(buffers: [&dyn AsDescriptors; N]) -> Self {
+        let buffer_infos = buffers.into_iter().map(|b| b.gen_buffer_info()).collect();
         Self { buffer_infos }
     }
-    pub fn writes_for_push(&self) -> [vk::WriteDescriptorSet; N] {
+    pub fn from_vec(buffers: Vec<&dyn AsDescriptors>) -> Self {
+        let buffer_infos = buffers.into_iter().map(|b| b.gen_buffer_info()).collect();
+        Self { buffer_infos }
+    }
+    pub fn writes_for_push(&self) -> Vec<vk::WriteDescriptorSet> {
         self.writes_for_set(vk::DescriptorSet::null())
     }
 
-    pub fn writes_for_set(&self, set: vk::DescriptorSet) -> [vk::WriteDescriptorSet; N] {
-        std::array::from_fn(|i| match &self.buffer_infos[i] {
-            DescriptorInfos::Buffer(b) => vk::WriteDescriptorSet::builder()
-                .dst_binding(i as u32)
-                .dst_array_element(0)
-                .dst_set(set)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(b)
-                .build(),
-            DescriptorInfos::CombinedImageSampler(b) => vk::WriteDescriptorSet::builder()
-                .dst_binding(i as u32)
-                .dst_array_element(0)
-                .dst_set(set)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(b)
-                .build(),
-        })
+    pub fn writes_for_set(&self, set: vk::DescriptorSet) -> Vec<vk::WriteDescriptorSet> {
+        self.buffer_infos
+            .iter()
+            .enumerate()
+            .map(|(i, v)| match v {
+                DescriptorInfos::Buffer(b) => vk::WriteDescriptorSet::builder()
+                    .dst_binding(i as u32)
+                    .dst_array_element(0)
+                    .dst_set(set)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&b)
+                    .build(),
+                DescriptorInfos::CombinedImageSampler(b) => vk::WriteDescriptorSet::builder()
+                    .dst_binding(i as u32)
+                    .dst_array_element(0)
+                    .dst_set(set)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&b)
+                    .build(),
+            })
+            .collect()
     }
 }
 

@@ -69,6 +69,12 @@ impl<E: Identify> Identify for Vec<E> {
     }
 }
 
+impl<E: Identify> Identify for Box<E> {
+    fn id(&self) -> Id {
+        self.as_ref().id()
+    }
+}
+
 impl Identify for str {
     fn id(&self) -> Id {
         Id::from_data(self.as_bytes())
