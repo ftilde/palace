@@ -171,8 +171,9 @@ void main() {
                     (hessian_bricks, pos)
                 });
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -181,7 +182,8 @@ void main() {
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut stream = ctx.submit_unordered_with_data(requests);
                 while let Some((hessian_bricks, pos)) = stream.next().await {

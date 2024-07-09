@@ -525,8 +525,8 @@ impl DeviceContext {
     pub fn request_state<'a, T: VulkanState + 'static>(
         &'a self,
         identifier: RessourceId,
-        init: impl FnOnce() -> T + 'a,
-    ) -> &'a T {
+        init: impl FnOnce() -> Result<T, crate::Error> + 'a,
+    ) -> Result<&'a T, crate::Error> {
         self.vulkan_states.get(identifier, || init())
     }
 

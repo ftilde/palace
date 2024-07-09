@@ -84,11 +84,11 @@ impl std::fmt::Display for Config {
 }
 
 pub trait ShaderSource {
-    fn build(self, kind: ShaderKind) -> Vec<u32>;
+    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error>;
 }
 
 impl ShaderSource for (&str, ShaderDefines) {
-    fn build(self, kind: ShaderKind) -> Vec<u32> {
+    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
         //TODO: unify all shaders with using config
         let source = self.0;
         let defines = self.1;
@@ -106,23 +106,25 @@ impl ShaderSource for (&str, ShaderDefines) {
             compiler = compiler.with_macro(&k, Some(&v));
         }
         let mut compiler = compiler.build().unwrap();
-        match compiler.compile_from_string(&source, kind) {
-            Ok(r) => r,
-            Err(CompilerError::Log(e)) => {
-                panic!(
+        compiler
+            .compile_from_string(&source, kind)
+            .map_err(|e| match e {
+                CompilerError::Log(e) => format!(
                     "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
-                    e.file, e.description, self.0,
+                    e.file, e.description, self.0
                 )
-            }
-            Err(CompilerError::LoadError(e)) => panic!("Load error while compiling shader: {}", e),
-            Err(CompilerError::WriteError(e)) => {
-                panic!("Write error while compiling shader: {}", e)
-            }
-        }
+                .into(),
+                CompilerError::LoadError(e) => {
+                    format!("Load error while compiling shader: {}", e).into()
+                }
+                CompilerError::WriteError(e) => {
+                    format!("Write error while compiling shader: {}", e).into()
+                }
+            })
     }
 }
 impl ShaderSource for (&str, ShaderDefines, Config) {
-    fn build(self, kind: ShaderKind) -> Vec<u32> {
+    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
         let source = format!("{}{}", self.2, self.0);
         (source.as_str(), self.1).build(kind)
     }
@@ -216,7 +218,7 @@ pub struct ShaderBindingInfo {
 }
 
 impl ShaderSource for &str {
-    fn build(self, kind: ShaderKind) -> Vec<u32> {
+    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
         (self, ShaderDefines::new()).build(kind)
     }
 }
@@ -238,8 +240,12 @@ impl Shader {
             entry_points,
         }
     }
-    pub fn from_source(f: &DeviceFunctions, source: impl ShaderSource, kind: ShaderKind) -> Self {
-        Self::from_compiled(f, &source.build(kind))
+    pub fn from_source(
+        f: &DeviceFunctions,
+        source: impl ShaderSource,
+        kind: ShaderKind,
+    ) -> Result<Self, crate::Error> {
+        Ok(Self::from_compiled(f, &source.build(kind)?))
     }
 
     pub fn collect_info(&self, entry_point_name: &str) -> ShaderBindingInfo {

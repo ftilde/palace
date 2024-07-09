@@ -230,7 +230,7 @@ void main()
                             true,
                         )
                     },
-                );
+                )?;
 
                 for (pos, _) in positions {
                     let brick_info = m.chunk_info(pos);

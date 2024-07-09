@@ -178,8 +178,9 @@ pub fn view_image(
 
                 let request_table_size = 256;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -192,7 +193,8 @@ pub fn view_image(
                             ),
                             false,
                         )
-                    });
+                    },
+                )?;
 
                 let state_initialized = ctx
                     .submit(ctx.access_state_cache(

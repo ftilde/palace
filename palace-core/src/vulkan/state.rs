@@ -33,19 +33,22 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn get<'a, V: VulkanState, F: FnOnce() -> V>(
+    pub fn get<'a, V: VulkanState, F: FnOnce() -> Result<V, crate::Error>>(
         &'a self,
         id: RessourceId,
         generate: F,
-    ) -> &'a V {
+    ) -> Result<&'a V, crate::Error> {
         let mut m = self.values.borrow_mut();
-        let raw = m.entry(id).or_insert_with(|| {
-            let v = generate();
-            UnsafeCell::new(Box::new(v))
-        });
+        let raw = match m.entry(id) {
+            std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+            std::collections::hash_map::Entry::Vacant(o) => {
+                let v = generate()?;
+                o.insert(UnsafeCell::new(Box::new(v)))
+            }
+        };
         // Safety: We only ever hand out immutable references (thus no conflict with mutability)
         // and never allow removal of elements.
-        unsafe { (*raw.get()).downcast_ref().unwrap() }
+        Ok(unsafe { (*raw.get()).downcast_ref().unwrap() })
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = Box<dyn VulkanState>> {

@@ -469,7 +469,7 @@ impl Window {
                 build_pipeline(&info)
             },
             true,
-        );
+        )?;
 
         let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
 

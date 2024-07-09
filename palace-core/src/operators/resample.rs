@@ -271,7 +271,7 @@ void main() {
                             true,
                         )
                     },
-                );
+                )?;
                 let dim_in_bricks = m_in.dimension_in_chunks();
                 positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
 

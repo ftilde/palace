@@ -83,8 +83,9 @@ void main()
                 };
                 let m = input.metadata;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -95,7 +96,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut brick_stream = ctx
                     .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
@@ -236,8 +238,9 @@ void main()
                     )
                     .await;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -248,7 +251,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut brick_stream = ctx
                     .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
@@ -356,8 +360,9 @@ void main()
                 };
                 let m = input.metadata;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -372,7 +377,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut brick_stream = ctx
                     .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
@@ -484,8 +490,9 @@ void main()
                 };
                 let m = input.metadata;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -496,7 +503,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut brick_stream = ctx
                     .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
@@ -683,7 +691,7 @@ void main() {
                             true,
                         )
                     },
-                );
+                )?;
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
@@ -1034,7 +1042,7 @@ void main() {
                             true,
                         )
                     },
-                );
+                )?;
 
                 let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
                     *ctx,
@@ -1213,8 +1221,9 @@ void main()
                 let to_request = m.brick_positions().collect::<Vec<_>>();
                 let batch_size = 1024;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -1225,7 +1234,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let sum = ctx.submit(ctx.alloc_scalar_gpu(device)).await;
 

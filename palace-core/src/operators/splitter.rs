@@ -200,7 +200,7 @@ void main()
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                             ComputePipeline::new(device, (SHADER, ShaderDefines::new().push_const_block::<PushConstants>()), true)
-                        });
+                        })?;
 
                     assert!(positions.len() == 1);
                     let pos = positions.first().unwrap().0;

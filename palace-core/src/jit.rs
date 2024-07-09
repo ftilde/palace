@@ -346,7 +346,7 @@ impl<D: Dimension> TryInto<TensorOperator<D, DType>> for Node<D> {
                                 true,
                             )
                         },
-                    );
+                    )?;
 
                     let mut brick_stream = ctx
                         .submit_unordered_with_data(positions.iter().map(|(pos, _)| {

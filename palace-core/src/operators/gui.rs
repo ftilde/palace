@@ -616,14 +616,14 @@ void main() {
                                 .subpasses(subpasses)
                                 .dependencies(dependency_infos);
 
-                            unsafe {
+                            Ok(unsafe {
                                 device
                                     .functions()
                                     .create_render_pass(&render_pass_info, None)
                             }
-                            .unwrap()
+                            .unwrap())
                         },
-                    );
+                    )?;
                     let pipeline = device.request_state(
                         RessourceId::new("pipeline").of(ctx.current_op()),
                         || {
@@ -751,7 +751,7 @@ void main() {
                                 true,
                             )
                         },
-                    );
+                    )?;
                     let sampler = device.request_state(
                         RessourceId::new("sampler").of(ctx.current_op()),
                         || {
@@ -765,14 +765,14 @@ void main() {
                                 .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                                 .min_lod(0.0)
                                 .max_lod(vk::LOD_CLAMP_NONE);
-                            unsafe {
+                            Ok(unsafe {
                                 device
                                     .functions()
                                     .create_sampler(&create_info, None)
                                     .unwrap()
-                            }
+                            })
                         },
-                    );
+                    )?;
 
                     let out_dim = out_info.logical_dimensions;
                     let width = out_dim.x().into();

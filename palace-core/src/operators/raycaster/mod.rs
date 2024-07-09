@@ -226,16 +226,17 @@ pub fn entry_exit_points(
                             .subpasses(subpasses)
                             .dependencies(dependency_infos);
 
-                        unsafe {
+                        Ok(unsafe {
                             device
                                 .functions()
                                 .create_render_pass(&render_pass_info, None)
                         }
-                        .unwrap()
+                        .unwrap())
                     },
-                );
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                )?;
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         GraphicsPipeline::new(
                             device,
                             (
@@ -321,7 +322,8 @@ pub fn entry_exit_points(
                             },
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let out_dim = out_info.logical_dimensions;
                 let width = out_dim.x().into();
@@ -655,7 +657,7 @@ pub fn raycast(
                             false,
                         )
                     },
-                );
+                )?;
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

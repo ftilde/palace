@@ -47,9 +47,9 @@ impl ComputePipeline {
         device: &DeviceContext,
         shader: impl ShaderSource,
         use_push_descriptor: bool,
-    ) -> Self {
+    ) -> Result<Self, crate::Error> {
         let df = device.functions();
-        let mut shader = Shader::from_source(df, shader, spirv_compiler::ShaderKind::Compute);
+        let mut shader = Shader::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -102,13 +102,13 @@ impl ComputePipeline {
 
         let pipeline = pipelines[0];
 
-        Self {
+        Ok(Self {
             pipeline,
             pipeline_layout,
             ds_pools,
             push_constant_size,
             type_: ComputePipelineType { local_size },
-        }
+        })
     }
 }
 
@@ -152,12 +152,12 @@ impl GraphicsPipeline {
         fragment_shader: impl ShaderSource,
         build_info: B,
         use_push_descriptor: bool,
-    ) -> Self {
+    ) -> Result<Self, crate::Error> {
         let df = device.functions();
         let mut vertex_shader =
-            Shader::from_source(df, vertex_shader, spirv_compiler::ShaderKind::Vertex);
+            Shader::from_source(df, vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
         let mut fragment_shader =
-            Shader::from_source(df, fragment_shader, spirv_compiler::ShaderKind::Fragment);
+            Shader::from_source(df, fragment_shader, spirv_compiler::ShaderKind::Fragment)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -228,13 +228,13 @@ impl GraphicsPipeline {
         unsafe { vertex_shader.deinitialize(device) };
         unsafe { fragment_shader.deinitialize(device) };
 
-        Self {
+        Ok(Self {
             pipeline,
             pipeline_layout,
             ds_pools,
             push_constant_size,
             type_: GraphicsPipelineType,
-        }
+        })
     }
 }
 

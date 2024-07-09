@@ -83,8 +83,9 @@ void main()
                 };
                 let m = input1.metadata;
 
-                let pipeline =
-                    device.request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    || {
                         ComputePipeline::new(
                             device,
                             (
@@ -93,7 +94,8 @@ void main()
                             ),
                             true,
                         )
-                    });
+                    },
+                )?;
 
                 let mut brick_stream =
                     ctx.submit_unordered_with_data(positions.iter().map(|(pos, _)| {
