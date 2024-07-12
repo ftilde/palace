@@ -75,6 +75,15 @@ impl<E: Identify> Identify for Box<E> {
     }
 }
 
+impl<E: Identify> Identify for Option<E> {
+    fn id(&self) -> Id {
+        match self {
+            Some(n) => Id::combine_it([Id::from_data(&[1]), n.id()].into_iter()),
+            None => Id::from_data(&[0]),
+        }
+    }
+}
+
 impl Identify for str {
     fn id(&self) -> Id {
         Id::from_data(self.as_bytes())
