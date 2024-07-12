@@ -3,7 +3,7 @@ use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
 use palace_core::dtypes::{DType, StaticElementType};
-use palace_core::jit::JitTensorOperator;
+use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -70,11 +70,37 @@ pub fn linear_rescale(
         },
     )
 }
-#[pyfunction]
-pub fn abs(py: Python, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
+
+fn jit_unary(py: Python, op: UnaryOp, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     vol.try_map_inner_jit(py, |vol: JitTensorOperator<D3>| {
         //TODO: ndim -> static dispatch
-        Ok(crate::map_err(vol.abs())?.into())
+        Ok(crate::map_err(JitTensorOperator::<D3>::unary_op(op, vol))?.into())
+    })
+}
+
+#[pyfunction]
+pub fn abs(py: Python, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
+    jit_unary(py, UnaryOp::Abs, vol)
+}
+
+#[pyfunction]
+pub fn neg(py: Python, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
+    jit_unary(py, UnaryOp::Neg, vol)
+}
+
+fn jit_binary(
+    py: Python,
+    op: BinOp,
+    v1: MaybeEmbeddedTensorOperator,
+    v2: MaybeEmbeddedTensorOperator,
+) -> PyResult<PyObject> {
+    v1.try_map_inner_jit(py, |v1: JitTensorOperator<D3>| {
+        Ok(crate::map_err(JitTensorOperator::<D3>::bin_op(
+            op,
+            v1,
+            v2.inner().try_into_jit()?,
+        ))?
+        .into())
     })
 }
 
@@ -84,9 +110,16 @@ pub fn add(
     v1: MaybeEmbeddedTensorOperator,
     v2: MaybeEmbeddedTensorOperator,
 ) -> PyResult<PyObject> {
-    v1.try_map_inner_jit(py, |v1: JitTensorOperator<D3>| {
-        Ok(crate::map_err(v1.add(v2.inner().try_into_jit()?))?.into())
-    })
+    jit_binary(py, BinOp::Add, v1, v2)
+}
+
+#[pyfunction]
+pub fn mul(
+    py: Python,
+    v1: MaybeEmbeddedTensorOperator,
+    v2: MaybeEmbeddedTensorOperator,
+) -> PyResult<PyObject> {
+    jit_binary(py, BinOp::Mul, v1, v2)
 }
 
 #[pyfunction]

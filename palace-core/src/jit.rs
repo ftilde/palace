@@ -22,11 +22,20 @@ use crate::{
 #[derive(id::Identify, Clone, Copy)]
 pub enum UnaryOp {
     Abs,
+    Neg,
 }
 
 impl UnaryOp {
     fn dtype(&self, input: DType) -> Result<DType, crate::Error> {
-        Ok(input) //May be more complicated for other ops
+        Ok(match self {
+            UnaryOp::Abs => input,
+            UnaryOp::Neg => match input {
+                DType::U8 | DType::U16 | DType::U32 | DType::U8Vec4 => {
+                    return Err(format!("Value of type {:?} cannot be negated", input).into())
+                }
+                DType::F32 | DType::F32Vec4A2 => input,
+            },
+        })
     }
 }
 struct WriteUnary(UnaryOp, ValueId);
@@ -34,6 +43,7 @@ impl Display for WriteUnary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
             UnaryOp::Abs => write!(f, "abs({})", self.1),
+            UnaryOp::Neg => write!(f, "-{}", self.1),
         }
     }
 }
@@ -41,6 +51,7 @@ impl Display for WriteUnary {
 #[derive(id::Identify, Clone, Copy)]
 pub enum BinOp {
     Add,
+    Mul,
 }
 
 impl BinOp {
@@ -61,6 +72,7 @@ impl Display for WriteBin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
             BinOp::Add => write!(f, "{} + {}", self.1, self.2),
+            BinOp::Mul => write!(f, "{} * {}", self.1, self.2),
         }
     }
 }
@@ -160,7 +172,7 @@ impl<D: Dimension> JitTensorOperator<D> {
         };
         Ok(self)
     }
-    fn unary_op(op: UnaryOp, inner: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+    pub fn unary_op(op: UnaryOp, inner: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Ok({
             let dtype = op.dtype(inner.dtype)?;
             Self {
@@ -171,7 +183,7 @@ impl<D: Dimension> JitTensorOperator<D> {
             }
         })
     }
-    fn bin_op(
+    pub fn bin_op(
         op: BinOp,
         l: JitTensorOperator<D>,
         r: JitTensorOperator<D>,
