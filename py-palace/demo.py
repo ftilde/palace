@@ -117,7 +117,8 @@ def render(size, events):
     v = vol.create_lod(2.0)
     match processing.load():
         case "passthrough":
-            v
+            #v = v.map(lambda v: pc.add(v, v))
+            pass
         case "smooth":
             def smooth(evol, k):
                 return pc.separable_convolution(evol, [pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])

@@ -86,7 +86,7 @@ impl ConstValue {
     }
 }
 
-#[derive(id::Identify)]
+#[derive(id::Identify, Clone)]
 enum Node {
     Const(ConstValue),
     UnaryOp(DType, UnaryOp, Box<Node>),
@@ -94,6 +94,7 @@ enum Node {
     Read(DType, InputId),
 }
 
+#[derive(Clone)]
 struct OperatorSet<D: Dimension>(Vec<TensorOperator<D, DType>>);
 
 impl<D: Dimension> OperatorSet<D> {
@@ -121,6 +122,8 @@ impl<D: Dimension> OperatorSet<D> {
     }
 }
 
+//TODO: Rc for cheap clone?
+#[derive(Clone)]
 pub struct JitTensorOperator<D: Dimension> {
     node: Node,
     metadata: Option<TensorMetaData<D>>,
@@ -137,6 +140,26 @@ impl<D: Dimension> id::Identify for JitTensorOperator<D> {
 }
 
 impl<D: Dimension> JitTensorOperator<D> {
+    pub fn dtype(&self) -> DType {
+        self.dtype
+    }
+    pub fn metadata(&self) -> Option<TensorMetaData<D>> {
+        self.metadata
+    }
+    pub fn with_md(mut self, new_md: TensorMetaData<D>) -> Result<Self, crate::Error> {
+        self.metadata = if let Some(md) = self.metadata {
+            if new_md == md {
+                Some(md)
+            } else {
+                return Err(
+                    format!("Mismatch with existing metadata {:?}, {:?}", md, new_md,).into(),
+                );
+            }
+        } else {
+            Some(new_md)
+        };
+        Ok(self)
+    }
     fn unary_op(op: UnaryOp, inner: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Ok({
             let dtype = op.dtype(inner.dtype)?;
@@ -219,7 +242,7 @@ impl<D: Dimension> JitTensorOperator<D> {
     }
 }
 
-#[derive(id::Identify)]
+#[derive(id::Identify, Clone)]
 struct InputId(Id);
 impl Display for InputId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -357,10 +380,8 @@ fn compile<D: Dimension>(
 
     Ok(shader)
 }
-
-impl<D: Dimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D> {
-    type Error = crate::Error;
-    fn try_into(self) -> Result<TensorOperator<D, DType>, Self::Error> {
+impl<D: Dimension> JitTensorOperator<D> {
+    pub fn compile(self) -> Result<TensorOperator<D, DType>, crate::Error> {
         let dtype = self.dtype;
         let Some(metadata) = self.metadata else {
             return Err("No metadata information in JitOperator".into());
@@ -449,5 +470,12 @@ impl<D: Dimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D> {
                 .into()
             },
         ))
+    }
+}
+
+impl<D: Dimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D> {
+    type Error = crate::Error;
+    fn try_into(self) -> Result<TensorOperator<D, DType>, Self::Error> {
+        self.compile()
     }
 }
