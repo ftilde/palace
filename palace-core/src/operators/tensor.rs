@@ -1,3 +1,4 @@
+use std::hash::Hash;
 use std::rc::Rc;
 
 use futures::StreamExt;
@@ -20,6 +21,18 @@ use id::Identify;
 pub struct TensorOperator<D: Dimension, E> {
     pub metadata: TensorMetaData<D>,
     pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,
+}
+
+impl<D: Dimension, E> PartialEq for TensorOperator<D, E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.chunks.id() == other.chunks.id()
+    }
+}
+impl<D: Dimension, E> Eq for TensorOperator<D, E> {}
+impl<D: Dimension, E> Hash for TensorOperator<D, E> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u128(self.chunks.id().raw())
+    }
 }
 
 impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {

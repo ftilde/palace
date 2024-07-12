@@ -504,11 +504,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         self.task_manager.remove_task(task_id).unwrap();
                         self.statistics.tasks_executed += 1;
                     }
-                    Poll::Ready(e) => {
+                    Poll::Ready(Err(e)) => {
                         self.register_produced_data(task_id, cache_results);
-                        println!("Execution errored, exporting task graph.");
+                        println!("Execution errored {}", e);
                         crate::task_graph::export(&self.task_graph);
-                        return e;
+                        return Err(e);
                     }
                     Poll::Pending => {
                         // Return hints back to the task graph

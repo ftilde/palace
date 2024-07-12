@@ -334,7 +334,7 @@ fn eval_network(
 
     let vol = vol.map_inner(|v| {
         let v = palace_core::jit::jit(v.into());
-        //let v = v.add((-1.0).into()).abs();
+        //let v = v.add((-1.0).into()).unwrap().abs().unwrap();
         v.try_into().unwrap()
     });
 
