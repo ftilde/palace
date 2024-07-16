@@ -1,5 +1,8 @@
 use crate::{
-    array::ArrayMetaData, data::Vector, dtypes::StaticElementType, operator::OperatorDescriptor,
+    array::{ArrayMetaData, ChunkIndex},
+    data::Vector,
+    dtypes::StaticElementType,
+    operator::OperatorDescriptor,
     storage::Element,
 };
 
@@ -151,7 +154,7 @@ fn gen_kernel_operator<Params: Element>(
         },
         (params, get_size.clone(), gen_kernel),
         move |ctx, pos, _, (params, get_size, gen_kernel)| {
-            assert_eq!(pos.raw, 0);
+            assert_eq!(pos, ChunkIndex(0));
             async move {
                 let size = get_size(&params);
 

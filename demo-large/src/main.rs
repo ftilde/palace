@@ -213,10 +213,14 @@ fn slice_viewer_z(
                     let ret = if inside {
                         let vol_pos = vol_pos.map(|v| (v as u32)).global();
                         let chunk_pos = m_in.chunk_pos(vol_pos);
-                        let chunk_info = m_in.chunk_info(chunk_pos);
+                        let chunk_info = m_in.chunk_info_vec(chunk_pos);
 
                         let brick = ctx
-                            .submit(vol_ref.levels[0].chunks.request(chunk_pos))
+                            .submit(
+                                vol_ref.levels[0]
+                                    .chunks
+                                    .request(m_in.chunk_index(chunk_pos)),
+                            )
                             .await;
 
                         let local_pos = chunk_info.in_chunk(vol_pos);

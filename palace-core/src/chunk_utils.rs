@@ -3,6 +3,7 @@ use std::alloc::Layout;
 use ash::vk;
 
 use crate::{
+    array::ChunkIndex,
     dim::Dimension,
     dtypes::StaticElementType,
     operators::tensor::TensorOperator,
@@ -128,7 +129,7 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
             assert!(*v < num_bricks as _);
             vol.chunks.request_gpu(
                 device.id,
-                crate::vec::from_linear(*v as usize, dim_in_bricks),
+                ChunkIndex((*v).into()),
                 DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,

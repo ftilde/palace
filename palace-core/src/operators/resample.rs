@@ -272,12 +272,12 @@ void main() {
                         )
                     },
                 )?;
-                let dim_in_bricks = m_in.dimension_in_chunks();
-                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
+                positions.sort_by_key(|(v, _)| v.0);
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
-                    assert!(pos.zip(m_out.dimension_in_chunks(), |l, r| l < r).all());
+                    let pos_vec = m_out.chunk_pos_from_index(pos);
+                    assert!(pos_vec.zip(m_out.dimension_in_chunks(), |l, r| l < r).all());
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
 
@@ -307,7 +307,7 @@ void main() {
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
                             device.id,
-                            *pos,
+                            m_in.chunk_index(*pos),
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                 access: vk::AccessFlags2::SHADER_READ,

@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicU64;
 use std::task::Poll;
 use std::time::Instant;
 
+use crate::array::ChunkIndex;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
@@ -720,87 +721,75 @@ pub trait WeUseThisLifetime<'a> {}
 impl<'a, T: ?Sized> WeUseThisLifetime<'a> for T {}
 
 #[derive(Copy, Clone)]
-pub struct TaskContext<'cref, 'inv, ItemDescriptor, OutputType> {
+pub struct TaskContext<'cref, 'inv, OutputType> {
     inner: OpaqueTaskContext<'cref, 'inv>,
-    _output_marker: std::marker::PhantomData<ItemDescriptor>,
     dtype: OutputType,
 }
 
-impl<'cref, 'inv, I, O> std::ops::Deref for TaskContext<'cref, 'inv, I, O> {
+impl<'cref, 'inv, O> std::ops::Deref for TaskContext<'cref, 'inv, O> {
     type Target = OpaqueTaskContext<'cref, 'inv>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
-impl<'cref, 'inv, ItemDescriptor, Output> Into<OpaqueTaskContext<'cref, 'inv>>
-    for TaskContext<'cref, 'inv, ItemDescriptor, Output>
+impl<'cref, 'inv, Output> Into<OpaqueTaskContext<'cref, 'inv>>
+    for TaskContext<'cref, 'inv, Output>
 {
     fn into(self) -> OpaqueTaskContext<'cref, 'inv> {
         self.inner
     }
 }
-impl<'cref, 'inv, ItemDescriptor: Identify, OutputType>
-    TaskContext<'cref, 'inv, ItemDescriptor, OutputType>
-{
+impl<'cref, 'inv, OutputType> TaskContext<'cref, 'inv, OutputType> {
     pub(crate) unsafe fn new(inner: OpaqueTaskContext<'cref, 'inv>, dtype: OutputType) -> Self {
-        Self {
-            inner,
-            _output_marker: Default::default(),
-            dtype,
-        }
+        Self { inner, dtype }
     }
 }
 
-impl<'cref, 'inv, I, T> TaskContext<'cref, 'inv, I, T>
+impl<'cref, 'inv, T> TaskContext<'cref, 'inv, T>
 where
     T: TryFrom<DType, Error = ConversionError>,
 {
-    pub fn try_from(value: TaskContext<'cref, 'inv, I, DType>) -> Result<Self, ConversionError> {
+    pub fn try_from(value: TaskContext<'cref, 'inv, DType>) -> Result<Self, ConversionError> {
         Ok(Self {
             inner: value.inner,
-            _output_marker: Default::default(),
             dtype: value.dtype.try_into()?,
         })
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: Identify, Output: Element>
-    TaskContext<'cref, 'inv, ItemDescriptor, StaticElementType<Output>>
-{
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {
     pub fn alloc_slot<'req>(
         &'req self,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         size: usize,
     ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
-        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), item);
         self.storage
             .request_alloc_slot(self.current_frame, id, size)
     }
 }
 
-impl<'cref, 'inv, ItemDescriptor: Identify, OutputType: ElementType>
-    TaskContext<'cref, 'inv, ItemDescriptor, OutputType>
-{
+impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> {
     pub fn alloc_slot_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         size: usize,
     ) -> Request<'a, 'inv, WriteHandle<'a>> {
         let layout = self.dtype.array_layout(size);
-        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &item);
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), item);
         self.alloc_raw_gpu(device, id, layout)
     }
 
     pub fn access_state_cache<'a>(
         &'a self,
         device: &'a DeviceContext,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         name: &str,
         layout: Layout,
     ) -> Request<'a, 'inv, StateCacheResult<'a>> {
-        let base_id = DataId::new(self.current_op(), &item);
+        let base_id = DataId::new(self.current_op(), item);
         let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
 
         let data_descriptor = DataDescriptor {
@@ -844,21 +833,21 @@ impl<'cref, 'inv, ItemDescriptor: Identify, OutputType: ElementType>
     }
 }
 
-impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), StaticElementType<Output>> {
-    pub fn write(&self, value: Output) -> Request<()> {
-        self.alloc_slot((), 1).map(move |mut slot| {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {
+    pub fn write_scalar(&self, value: Output) -> Request<()> {
+        self.alloc_slot(ChunkIndex(0), 1).map(move |mut slot| {
             slot[0].write(value);
             unsafe { slot.initialized(**self) };
         })
     }
 }
-impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, (), StaticElementType<Output>> {
+impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {
     pub fn alloc_scalar_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,
     ) -> Request<'a, 'inv, WriteHandle<'a>> {
         let layout = Layout::new::<Output>();
-        let id = DataDescriptor::new(self.current_op_desc().unwrap(), &());
+        let id = DataDescriptor::new(self.current_op_desc().unwrap(), ChunkIndex(0));
         self.alloc_raw_gpu(device, id, layout)
     }
 }

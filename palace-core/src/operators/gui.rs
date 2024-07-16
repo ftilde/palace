@@ -13,6 +13,7 @@ pub use egui;
 use winit::keyboard::PhysicalKey;
 
 use crate::{
+    array::ChunkIndex,
     data::Vector,
     dim::*,
     event::{EventChain, EventStream},
@@ -841,7 +842,7 @@ void main() {
                         .unwrap(),
                     );
 
-                    assert_eq!(pos, Vector::fill(0.into()));
+                    assert_eq!(pos, ChunkIndex(0));
                     let gpu_brick_in = ctx
                         .submit(input.chunks.request_gpu(
                             device.id,

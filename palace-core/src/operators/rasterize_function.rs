@@ -1,9 +1,11 @@
+use std::mem::MaybeUninit;
+
 use futures::StreamExt;
 
 use crate::{
-    array::VolumeMetaData,
-    data::{BrickPosition, LocalVoxelPosition, Vector, VoxelPosition},
-    dim::*,
+    array::{ChunkIndex, VolumeMetaData},
+    data::{LocalVoxelPosition, Vector, VoxelPosition},
+    dim::{self, *},
     dtypes::StaticElementType,
     operator::OperatorDescriptor,
     storage::DataLocation,
@@ -48,8 +50,8 @@ pub fn normalized(
 async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     metadata: &VolumeMetaData,
     function: &F,
-    ctx: TaskContext<'cref, 'inv, BrickPosition, StaticElementType<f32>>,
-    positions: Vec<(BrickPosition, DataLocation)>,
+    ctx: TaskContext<'cref, 'inv, StaticElementType<f32>>,
+    positions: Vec<(ChunkIndex, DataLocation)>,
 ) -> Result<(), Error> {
     let allocs = positions.into_iter().map(|(pos, _)| {
         let brick_handle_req = ctx.alloc_slot(pos, metadata.num_chunk_elements());
@@ -65,7 +67,10 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 
                 crate::data::init_non_full(&mut brick_handle, &chunk_info, f32::NAN);
 
-                let mut out_chunk = crate::data::chunk_mut(&mut brick_handle, &chunk_info);
+                let mut out_chunk = crate::data::chunk_mut::<dim::D3, MaybeUninit<f32>>(
+                    &mut brick_handle,
+                    &chunk_info,
+                );
                 let begin = chunk_info.begin();
 
                 for ((z, y, x), v) in out_chunk.indexed_iter_mut() {

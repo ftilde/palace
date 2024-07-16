@@ -4,6 +4,7 @@ use std::{io::BufReader, path::PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
 
+use crate::array::ChunkIndex;
 use crate::dtypes::StaticElementType;
 use crate::{data::Vector, dim::*, task::OpaqueTaskContext};
 
@@ -20,9 +21,7 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
         return Err("Image must consist of a single chunk".into());
     }
 
-    let img = ctx
-        .submit(input.chunks.request(Vector::fill(0.into())))
-        .await;
+    let img = ctx.submit(input.chunks.request(ChunkIndex(0))).await;
 
     let file = File::create(path).unwrap();
     let ref mut w = BufWriter::new(file);

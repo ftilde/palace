@@ -5,7 +5,7 @@ use derive_more::Deref;
 use futures::StreamExt;
 
 use crate::{
-    array::VolumeMetaData,
+    array::{ChunkIndex, VolumeMetaData},
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     dim::D3,
     dtypes::{DType, ElementType},
@@ -43,16 +43,16 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
     //dbg!(chunks_in_line.len());
 
     for (pos, ref mut buf) in &mut *chunks_in_line {
-        let chunk_info = m.chunk_info(*pos);
+        let chunk_info = m.chunk_info_vec(*pos);
         crate::data::init_non_full_raw(buf.as_mut(), &chunk_info, 0xff);
     }
 
     let first = chunks_in_line.first().unwrap();
-    let first_info = m.chunk_info(first.0);
+    let first_info = m.chunk_info_vec(first.0);
     let global_begin = first_info.begin;
 
     let last = chunks_in_line.last().unwrap();
-    let last_info = m.chunk_info(last.0);
+    let last_info = m.chunk_info_vec(last.0);
     let global_end = last_info.end();
 
     let strip_size_z = first_info.logical_dimensions.z();
@@ -145,8 +145,8 @@ impl RawVolumeSourceState {
         &self,
         dtype: DType,
         brick_size: LocalVoxelPosition,
-        ctx: TaskContext<'cref, 'inv, BrickPosition, DType>,
-        mut positions: Vec<(BrickPosition, DataLocation)>,
+        ctx: TaskContext<'cref, 'inv, DType>,
+        mut positions: Vec<(ChunkIndex, DataLocation)>,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {
             dimensions: self.0.size,
@@ -154,7 +154,7 @@ impl RawVolumeSourceState {
         };
         let dim_in_bricks = m.dimension_in_chunks();
 
-        positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
+        positions.sort_by_key(|(v, _)| v.0);
 
         let max_lin_len = 4096; //expected page size
 
@@ -167,6 +167,7 @@ impl RawVolumeSourceState {
         let mut current_pos = 0;
         let mut current_loc = None;
         for (pos, loc) in positions {
+            let pos = m.chunk_pos_from_index(pos);
             if !(pos.x() < dim_in_bricks.x()
                 && pos.y() < dim_in_bricks.y()
                 && pos.z() < dim_in_bricks.z())
@@ -240,7 +241,8 @@ impl RawVolumeSourceState {
                 let num_voxels = m.chunk_size.hmul();
 
                 let brick_handles = positions.iter().map(|pos| {
-                    let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
+                    let data_id =
+                        DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(*pos));
                     ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
                 });
 
@@ -278,7 +280,7 @@ impl RawVolumeSourceState {
 
                 let brick_handles = positions
                     .iter()
-                    .map(|pos| ctx.alloc_slot_gpu(device, *pos, num_voxels));
+                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(*pos), num_voxels));
 
                 (ctx.group(brick_handles), positions)
             });

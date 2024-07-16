@@ -2,12 +2,7 @@ use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, StaticElementType};
 use palace_core::jit;
-use palace_core::{
-    data::{ChunkCoordinate, Vector},
-    dim::*,
-    operator::Operator as COperator,
-    storage::Element,
-};
+use palace_core::{dim::*, operator::Operator as COperator, storage::Element};
 use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -124,12 +119,7 @@ impl<D: Dimension> TryFrom<CTensorOperator<D, DType>> for TensorOperator {
             dtype,
             metadata: t.metadata.into(),
             clone: |i| Self {
-                inner: Box::new(
-                    i.inner
-                        .downcast_ref::<COperator<Vector<D, ChunkCoordinate>, DType>>()
-                        .unwrap()
-                        .clone(),
-                ),
+                inner: Box::new(i.inner.downcast_ref::<COperator<DType>>().unwrap().clone()),
                 dtype: i.dtype,
                 metadata: i.metadata.clone(),
                 clone: i.clone,
@@ -180,10 +170,7 @@ impl<D: Dimension> TryInto<CTensorOperator<D, DType>> for TensorOperator {
     type Error = PyErr;
 
     fn try_into(self) -> Result<CTensorOperator<D, DType>, Self::Error> {
-        if let Some(inner) = self
-            .inner
-            .downcast_ref::<COperator<Vector<D, ChunkCoordinate>, DType>>()
-        {
+        if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
             Ok(CTensorOperator {
                 chunks: inner.clone(),
                 metadata: self.metadata.try_into()?,
@@ -216,10 +203,7 @@ impl<D: Dimension> TryInto<jit::JitTensorOperator<D>> for TensorOperator {
     fn try_into(self) -> Result<jit::JitTensorOperator<D>, Self::Error> {
         if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<D>>() {
             Ok(inner.clone())
-        } else if let Some(inner) = self
-            .inner
-            .downcast_ref::<COperator<Vector<D, ChunkCoordinate>, DType>>()
-        {
+        } else if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
             Ok(CTensorOperator {
                 chunks: inner.clone(),
                 metadata: self.metadata.try_into()?,

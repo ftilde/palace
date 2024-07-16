@@ -4,6 +4,7 @@ use futures::StreamExt;
 use itertools::Itertools;
 
 use crate::{
+    array::ChunkIndex,
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
     dtypes::{DType, StaticElementType},
@@ -234,7 +235,7 @@ void main()
                     .submit(
                         tf.table
                             .chunks
-                            .request_gpu(device.id, Vector::from([0]), access_info),
+                            .request_gpu(device.id, ChunkIndex(0), access_info),
                     )
                     .await;
 
@@ -670,8 +671,7 @@ void main() {
                     m_out
                 };
 
-                let dim_in_bricks = m_in.dimension_in_chunks();
-                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
+                positions.sort_by_key(|(v, _)| v.0);
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
@@ -706,7 +706,9 @@ void main() {
                         .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
                         .multi_cartesian_product()
                         .map(|coordinates| {
-                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                            m_in.chunk_index(
+                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap(),
+                            )
                         })
                         .collect::<Vec<_>>();
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
@@ -957,7 +959,7 @@ void main() {
                 let kernel_handle = ctx
                     .submit(kernel.chunks.request_gpu(
                         device.id,
-                        [0].into(),
+                        ChunkIndex(0),
                         DstBarrierInfo {
                             stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             access: vk::AccessFlags2::SHADER_READ,
@@ -977,8 +979,7 @@ void main() {
                 assert!(kernel_size % 2 == 1, "Kernel size must be odd");
                 let extent = kernel_size / 2;
 
-                let dim_in_bricks = m_in.dimension_in_chunks();
-                positions.sort_by_key(|(v, _)| crate::data::to_linear(*v, dim_in_bricks));
+                positions.sort_by_key(|(v, _)| v.0);
 
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
@@ -1005,7 +1006,7 @@ void main() {
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
                             device.id,
-                            *pos,
+                            m_in.chunk_index(*pos),
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                 access: vk::AccessFlags2::SHADER_READ,
@@ -1265,16 +1266,17 @@ void main()
 
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
+                        let pos = m.chunk_index(*pos);
                         (
                             input.chunks.request_gpu(
                                 device.id,
-                                *pos,
+                                pos,
                                 DstBarrierInfo {
                                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                     access: vk::AccessFlags2::SHADER_READ,
                                 },
                             ),
-                            *pos,
+                            pos,
                         )
                     }));
                     while let Some((gpu_brick_in, pos)) = stream.next().await {

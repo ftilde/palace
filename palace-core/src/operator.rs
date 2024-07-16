@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
+    array::ChunkIndex,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
     storage::{
         gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
@@ -83,8 +84,8 @@ impl OperatorDescriptor {
 pub struct DataId(pub Id);
 
 impl DataId {
-    pub fn new(op: OperatorId, descriptor: &impl Identify) -> Self {
-        DataId(Id::combine(&[op.inner(), descriptor.id()]))
+    pub fn new(op: OperatorId, chunk: ChunkIndex) -> Self {
+        DataId(Id::combine(&[op.inner(), chunk.0.id()]))
     }
 
     pub fn in_location(self, location: DataLocation) -> LocatedDataId {
@@ -102,10 +103,10 @@ pub struct DataDescriptor {
 }
 
 impl DataDescriptor {
-    pub fn new(op: OperatorDescriptor, data: &impl Identify) -> Self {
+    pub fn new(op: OperatorDescriptor, chunk: ChunkIndex) -> Self {
         Self {
             longevity: op.data_longevity,
-            id: DataId::new(op.id, data),
+            id: DataId::new(op.id, chunk),
         }
     }
 }
@@ -123,10 +124,10 @@ impl TypeErased {
     }
 }
 
-pub type ComputeFunction<ItemDescriptor, Output> = Rc<
+pub type ComputeFunction<Output> = Rc<
     dyn for<'cref, 'inv> Fn(
-        TaskContext<'cref, 'inv, ItemDescriptor, Output>,
-        Vec<(ItemDescriptor, DataLocation)>,
+        TaskContext<'cref, 'inv, Output>,
+        Vec<(ChunkIndex, DataLocation)>,
         &'inv TypeErased,
     ) -> Task<'cref>,
 >;
@@ -141,7 +142,7 @@ pub trait OperatorNetworkNode {
     fn descriptor(&self) -> OperatorDescriptor;
 }
 
-impl<I, O> OperatorNetworkNode for Operator<I, O> {
+impl<O> OperatorNetworkNode for Operator<O> {
     fn descriptor(&self) -> OperatorDescriptor {
         self.descriptor
     }
@@ -166,14 +167,14 @@ pub trait OpaqueOperator {
     ) -> Task<'cref>;
 }
 
-pub struct Operator<ItemDescriptor, OutputType> {
+pub struct Operator<OutputType> {
     descriptor: OperatorDescriptor,
     state: Rc<TypeErased>,
     granularity: ItemGranularity,
-    compute: ComputeFunction<ItemDescriptor, OutputType>,
+    compute: ComputeFunction<OutputType>,
     dtype: OutputType,
 }
-impl<ItemDescriptor, OutputType: Clone> Clone for Operator<ItemDescriptor, OutputType> {
+impl<OutputType: Clone> Clone for Operator<OutputType> {
     fn clone(&self) -> Self {
         Self {
             descriptor: self.descriptor.clone(),
@@ -184,17 +185,17 @@ impl<ItemDescriptor, OutputType: Clone> Clone for Operator<ItemDescriptor, Outpu
         }
     }
 }
-impl<ItemDescriptor, OutputType: Copy> Operator<ItemDescriptor, OutputType> {
+impl<OutputType: Copy> Operator<OutputType> {
     pub fn dtype(&self) -> OutputType {
         self.dtype
     }
 }
 
-impl<Output: Element> Operator<(), StaticElementType<Output>> {
+impl<Output: Element> Operator<StaticElementType<Output>> {
     #[must_use]
     pub fn request_scalar<'req, 'inv: 'req>(&'inv self) -> Request<'req, 'inv, Output> {
-        let item = ();
-        let id = DataId::new(self.op_id(), &item);
+        let item = ChunkIndex(0);
+        let id = DataId::new(self.op_id(), item);
 
         Request {
             type_: RequestType::Data(DataRequest::new(
@@ -227,19 +228,17 @@ impl<Output: Element> Operator<(), StaticElementType<Output>> {
         gpu: DeviceId,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
-        self.request_gpu(gpu, (), dst_info)
+        self.request_gpu(gpu, ChunkIndex(0), dst_info)
     }
 }
 
-impl<ItemDescriptor: Identify + 'static, Output: Element>
-    Operator<ItemDescriptor, StaticElementType<Output>>
-{
+impl<Output: Element> Operator<StaticElementType<Output>> {
     #[must_use]
     pub fn request<'req, 'inv: 'req>(
         &'inv self,
-        item: ItemDescriptor,
+        item: ChunkIndex,
     ) -> Request<'req, 'inv, ram::ReadHandle<'req, [Output]>> {
-        let id = DataId::new(self.op_id(), &item);
+        let id = DataId::new(self.op_id(), item);
 
         Request {
             type_: RequestType::Data(DataRequest::new(
@@ -266,11 +265,11 @@ impl<ItemDescriptor: Identify + 'static, Output: Element>
     pub fn request_inplace<'req, 'inv: 'req>(
         &'inv self,
         o_ctx: OpaqueTaskContext<'req, 'inv>,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         write_id: OperatorDescriptor,
     ) -> Request<'req, 'inv, ram::InplaceResult<'req, 'inv, Output>> {
-        let read_id = DataId::new(self.op_id(), &item);
-        let write_desc = DataDescriptor::new(write_id, &item);
+        let read_id = DataId::new(self.op_id(), item);
+        let write_desc = DataDescriptor::new(write_id, item);
 
         Request {
             type_: RequestType::Data(DataRequest::new(
@@ -328,13 +327,11 @@ impl<ItemDescriptor: Identify + 'static, Output: Element>
     //}
 }
 
-impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
-    Operator<ItemDescriptor, OutputType>
-{
+impl<OutputType: ElementType> Operator<OutputType> {
     pub fn new<
         F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
-                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
+                TaskContext<'cref, 'inv, OutputType>,
+                Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
                 &'inv (),
             ) -> Task<'cref>
             + 'static,
@@ -349,8 +346,8 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
     pub fn with_state<
         S: 'static,
         F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
-                Vec<(ItemDescriptor, DataLocation)>, //DataLocation is only a hint
+                TaskContext<'cref, 'inv, OutputType>,
+                Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
                 &'inv S,
             ) -> Task<'cref>
             + 'static,
@@ -377,8 +374,8 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
     pub fn unbatched<
         S: 'static,
         F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, ItemDescriptor, OutputType>,
-                ItemDescriptor,
+                TaskContext<'cref, 'inv, OutputType>,
+                ChunkIndex,
                 DataLocation, //DataLocation is only a hint
                 &'inv S,
             ) -> Task<'cref>
@@ -409,10 +406,10 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
     pub fn request_gpu<'req, 'inv: 'req>(
         &'inv self,
         gpu: DeviceId,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::ReadHandle<'req>> {
-        let id = DataId::new(self.op_id(), &item);
+        let id = DataId::new(self.op_id(), item);
 
         Request {
             type_: RequestType::Data(DataRequest::new(
@@ -446,13 +443,13 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
     pub fn request_inplace_gpu<'req, 'inv: 'req>(
         &'inv self,
         gpu: DeviceId,
-        item: ItemDescriptor,
+        item: ChunkIndex,
         write_id: OperatorDescriptor,
         write_dtype: DType,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::InplaceResult<'req, 'inv>> {
-        let write_id = DataDescriptor::new(write_id, &item);
-        let read_id = DataId::new(self.op_id(), &item);
+        let write_id = DataDescriptor::new(write_id, item);
+        let read_id = DataId::new(self.op_id(), item);
 
         Request {
             type_: RequestType::Data(DataRequest::new(
@@ -490,17 +487,17 @@ impl<ItemDescriptor: Identify + 'static, OutputType: ElementType>
     }
 }
 
-impl<ItemDescriptor, OutputType> Identify for Operator<ItemDescriptor, OutputType> {
+impl<OutputType> Identify for Operator<OutputType> {
     fn id(&self) -> Id {
         self.descriptor.id.into()
     }
 }
 
-impl<I: Identify + 'static, T> TryFrom<Operator<I, DType>> for Operator<I, StaticElementType<T>>
+impl<T> TryFrom<Operator<DType>> for Operator<StaticElementType<T>>
 where
     StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
 {
-    fn try_from(value: Operator<I, DType>) -> Result<Self, ConversionError> {
+    fn try_from(value: Operator<DType>) -> Result<Self, ConversionError> {
         let new_dtype = value.dtype.try_into()?;
         let old_dtype = value.dtype;
         Ok(Operator {
@@ -517,12 +514,11 @@ where
     type Error = ConversionError;
 }
 
-impl<I: Identify + 'static, T: 'static> From<Operator<I, StaticElementType<T>>>
-    for Operator<I, DType>
+impl<T: 'static> From<Operator<StaticElementType<T>>> for Operator<DType>
 where
     DType: From<StaticElementType<T>>,
 {
-    fn from(value: Operator<I, StaticElementType<T>>) -> Self {
+    fn from(value: Operator<StaticElementType<T>>) -> Self {
         let new_dtype = value.dtype.into();
         let old_dtype = value.dtype;
         Operator {
@@ -537,9 +533,7 @@ where
     }
 }
 
-impl<ItemDescriptor: Identify, OutputType: Clone> OpaqueOperator
-    for Operator<ItemDescriptor, OutputType>
-{
+impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
     fn op_id(&self) -> OperatorId {
         self.descriptor.id
     }
@@ -566,9 +560,7 @@ impl<ItemDescriptor: Identify, OutputType: Clone> OpaqueOperator
     }
 }
 
-pub fn cache<'op, D: std::hash::Hash + 'static, OutputType>(
-    mut input: Operator<D, OutputType>,
-) -> Operator<D, OutputType> {
+pub fn cache<'op, OutputType>(mut input: Operator<OutputType>) -> Operator<OutputType> {
     input.descriptor.cache_results = true;
     input
 }

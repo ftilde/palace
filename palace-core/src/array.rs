@@ -46,13 +46,6 @@ pub struct TensorMetaData<D: Dimension> {
 //unsafe impl<D: Dimension> bytemuck::Pod for TensorMetaData<D> {}
 
 impl<D: LargerDim> TensorMetaData<D> {
-    pub fn single_chunk(dimensions: Vector<D, GlobalCoordinate>) -> Self {
-        Self {
-            dimensions,
-            chunk_size: dimensions.local(),
-        }
-    }
-
     pub fn norm_to_voxel(&self) -> Matrix<D::Larger, f32> {
         Matrix::from_translation(Vector::fill(-0.5))
             * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneous()
@@ -223,6 +216,16 @@ mod py {
 }
 
 impl<D: Dimension> TensorMetaData<D> {
+    pub fn single_chunk(dimensions: Vector<D, GlobalCoordinate>) -> Self {
+        Self {
+            dimensions,
+            chunk_size: dimensions.local(),
+        }
+    }
+
+    pub fn chunk_pos_from_index(&self, index: ChunkIndex) -> Vector<D, ChunkCoordinate> {
+        crate::vec::from_linear(index.0 as usize, self.dimension_in_chunks())
+    }
     pub fn num_tensor_elements(&self) -> usize {
         self.dimensions.hmul()
     }
@@ -245,7 +248,13 @@ impl<D: Dimension> TensorMetaData<D> {
         let raw_end = self.chunk_begin(next_pos);
         raw_end.zip(self.dimensions, std::cmp::min)
     }
-    pub fn chunk_info(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkInfo<D> {
+    pub fn chunk_index(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkIndex {
+        ChunkIndex(crate::vec::to_linear(pos, self.dimension_in_chunks()) as u64)
+    }
+    pub fn chunk_info(&self, index: ChunkIndex) -> ChunkInfo<D> {
+        self.chunk_info_vec(self.chunk_pos_from_index(index))
+    }
+    pub fn chunk_info_vec(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkInfo<D> {
         let begin = self.chunk_begin(pos);
         let end = self.chunk_end(pos);
         let logical_dim = (end - begin).map(LocalCoordinate::interpret_as);
@@ -268,6 +277,9 @@ impl<D: LargerDim> TensorMetaData<D> {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ChunkIndex(pub(crate) u64);
 
 pub type VolumeMetaData = TensorMetaData<D3>;
 pub type VolumeEmbeddingData = TensorEmbeddingData<D3>;

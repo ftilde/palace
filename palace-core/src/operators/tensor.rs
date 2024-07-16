@@ -4,8 +4,8 @@ use std::rc::Rc;
 use futures::StreamExt;
 
 use crate::{
-    array::{TensorEmbeddingData, TensorMetaData},
-    data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
+    array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
+    data::{GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
@@ -20,7 +20,7 @@ use id::Identify;
 #[derive(Clone, Identify)]
 pub struct TensorOperator<D: Dimension, E> {
     pub metadata: TensorMetaData<D>,
-    pub chunks: Operator<Vector<D, ChunkCoordinate>, E>,
+    pub chunks: Operator<E>,
 }
 
 impl<D: Dimension, E> PartialEq for TensorOperator<D, E> {
@@ -44,8 +44,8 @@ impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {
 impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-                Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
+                TaskContext<'cref, 'inv, E>,
+                Vec<(ChunkIndex, DataLocation)>,
                 &'inv (),
             ) -> Task<'cref>
             + 'static,
@@ -61,8 +61,8 @@ impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
     pub fn with_state<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-                Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
+                TaskContext<'cref, 'inv, E>,
+                Vec<(ChunkIndex, DataLocation)>,
                 &'inv SB,
             ) -> Task<'cref>
             + 'static,
@@ -82,8 +82,8 @@ impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
     pub fn unbatched<
         SB: 'static,
         B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, E>,
-                Vector<D, ChunkCoordinate>,
+                TaskContext<'cref, 'inv, E>,
+                ChunkIndex,
                 DataLocation,
                 &'inv SB,
             ) -> Task<'cref>
@@ -170,11 +170,8 @@ impl<D: Dimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>
             values,
             move |ctx, _, values| {
                 async move {
-                    let mut out =
-                        ctx.submit(ctx.alloc_slot(
-                            Vector::<D, ChunkCoordinate>::fill(0.into()),
-                            values.len(),
-                        ))
+                    let mut out = ctx
+                        .submit(ctx.alloc_slot(ChunkIndex(0), values.len()))
                         .await;
                     let mut out_data = &mut *out;
                     let values: &[E] = &values;
@@ -219,11 +216,8 @@ impl<D: Dimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>
             values,
             move |ctx, _, values| {
                 async move {
-                    let mut out =
-                        ctx.submit(ctx.alloc_slot(
-                            Vector::<D, ChunkCoordinate>::fill(0.into()),
-                            values.len(),
-                        ))
+                    let mut out = ctx
+                        .submit(ctx.alloc_slot(ChunkIndex(0), values.len()))
                         .await;
                     let mut out_data = &mut *out;
                     let values: &[E] = &values;
@@ -401,11 +395,10 @@ pub async fn map_values_inplace<
     'inv,
     E: Element,
     F: Fn(E) -> E + Send + Copy + 'static,
-    D: Dimension,
 >(
-    ctx: TaskContext<'cref, 'inv, Vector<D, ChunkCoordinate>, StaticElementType<E>>,
-    input: &'op Operator<Vector<D, ChunkCoordinate>, StaticElementType<E>>,
-    positions: Vec<(Vector<D, ChunkCoordinate>, DataLocation)>,
+    ctx: TaskContext<'cref, 'inv, StaticElementType<E>>,
+    input: &'op Operator<StaticElementType<E>>,
+    positions: Vec<(ChunkIndex, DataLocation)>,
     f: F,
 ) where
     'op: 'inv,

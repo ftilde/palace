@@ -2,7 +2,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
-    array::{ImageMetaData, TensorMetaData},
+    array::{ChunkIndex, ImageMetaData, TensorMetaData},
     data::{PixelPosition, Vector},
     dim::*,
     event::{EventChain, EventStream},
@@ -187,8 +187,8 @@ void main()
                     let m_l = input_l.metadata;
                     let m_r = input_r.metadata;
                     let (img_l, img_r) = futures::join! {
-                        ctx.submit(input_l.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
-                        ctx.submit(input_r.chunks.request_gpu(device.id, Vector::fill(0.into()), access_info)),
+                        ctx.submit(input_l.chunks.request_gpu(device.id, ChunkIndex(0), access_info)),
+                        ctx.submit(input_r.chunks.request_gpu(device.id, ChunkIndex(0), access_info)),
                     };
 
 
@@ -204,7 +204,7 @@ void main()
 
                     assert!(positions.len() == 1);
                     let pos = positions.first().unwrap().0;
-                    assert_eq!(pos, Vector::fill(0.into()));
+                    assert_eq!(pos, ChunkIndex(0));
 
                     let out_info = m.chunk_info(pos);
                     let gpu_brick_out = ctx.submit(ctx

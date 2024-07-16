@@ -6,7 +6,8 @@ use super::pipeline::{DescriptorConfig, GraphicsPipeline};
 use super::shader::ShaderDefines;
 use super::state::VulkanState;
 use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
-use crate::data::{ChunkCoordinate, GlobalCoordinate, Vector};
+use crate::array::ChunkIndex;
+use crate::data::{GlobalCoordinate, Vector};
 use crate::dim::*;
 use crate::operators::tensor::FrameOperator;
 use crate::storage::DataVersionType;
@@ -523,7 +524,7 @@ impl Window {
         let img = ctx
             .submit(input.chunks.request_gpu(
                 device.id,
-                Vector::<D2, ChunkCoordinate>::fill(0.into()),
+                ChunkIndex(0),
                 super::DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,

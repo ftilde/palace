@@ -6,15 +6,12 @@ use crate::{
 };
 use id::Identify;
 
-pub type ScalarOperator<T> = Operator<(), T>;
+pub type ScalarOperator<T> = Operator<T>;
 
 pub fn scalar<
     T: Element,
     S: 'static,
-    F: for<'cref, 'inv> Fn(
-            TaskContext<'cref, 'inv, (), StaticElementType<T>>,
-            &'inv S,
-        ) -> Task<'cref>
+    F: for<'cref, 'inv> Fn(TaskContext<'cref, 'inv, StaticElementType<T>>, &'inv S) -> Task<'cref>
         + 'static,
 >(
     descriptor: OperatorDescriptor,
@@ -42,7 +39,7 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
             move |ctx, (s, data, f)| {
                 async move {
                     let v = ctx.submit(s.request_scalar()).await;
-                    ctx.write(f(v, data));
+                    ctx.write_scalar(f(v, data));
                     Ok(())
                 }
                 .into()
@@ -72,7 +69,7 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
                         ctx.submit(s.request_scalar()),
                         ctx.submit(other.request_scalar()),
                     };
-                    ctx.write(crate::storage::P(l, r));
+                    ctx.write_scalar(crate::storage::P(l, r));
                     Ok(())
                 }
                 .into()
@@ -85,7 +82,7 @@ pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementTy
     let op_id = OperatorDescriptor::new(std::any::type_name::<T>()).dependent_on_data(&val);
     scalar(op_id, (), move |ctx, _| {
         async move {
-            ctx.write(val);
+            ctx.write_scalar(val);
             Ok(())
         }
         .into()

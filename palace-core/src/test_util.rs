@@ -1,5 +1,6 @@
 use crate::{
-    data::{from_linear, LocalVoxelPosition, Vector, VoxelPosition},
+    array::ChunkIndex,
+    data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     dtypes::StaticElementType,
     operators::{
@@ -26,7 +27,7 @@ pub fn compare_tensor_fn<
     runtime
         .resolve(None, false, |ctx, _| {
             async move {
-                let pos = Vector::fill(0.into());
+                let pos = ChunkIndex(0);
                 let m = full_vol.metadata;
                 let info = m.chunk_info(pos);
                 let vol = ctx.submit(full_vol.chunks.request(pos)).await;
@@ -66,7 +67,7 @@ pub fn compare_tensor<D: Dimension>(
                 let dib = m.dimension_in_chunks();
                 let n_chunks = dib.hmul();
                 for i in 0..n_chunks {
-                    let pos = from_linear(i, dib);
+                    let pos = ChunkIndex(i as _);
 
                     let b_l = ctx.submit(result.chunks.request(pos)).await;
                     let b_r = ctx.submit(expected.chunks.request(pos)).await;

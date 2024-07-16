@@ -124,7 +124,12 @@ impl NiftiVolumeSourceState {
             Default::default(),
             self.0.metadata,
             self.clone(),
-            move |ctx, mut positions, this| {
+            move |ctx, positions, this| {
+                let md = this.0.metadata;
+                let mut positions = positions
+                    .into_iter()
+                    .map(|(p, h)| (md.chunk_pos_from_index(p), h))
+                    .collect::<Vec<_>>();
                 positions.sort_by_key(|(p, _)| p.z());
                 async move {
                     let obj = match &this.0.type_ {
@@ -141,9 +146,10 @@ impl NiftiVolumeSourceState {
                     let mut vol = obj.into_volume();
                     for (pos, _) in positions {
                         let z = pos.z().raw as usize;
-                        let chunk = this.0.metadata.chunk_info(pos);
-                        let mut brick_handle =
-                            ctx.submit(ctx.alloc_slot(pos, chunk.mem_elements())).await;
+                        let chunk = this.0.metadata.chunk_info_vec(pos);
+                        let mut brick_handle = ctx
+                            .submit(ctx.alloc_slot(md.chunk_index(pos), chunk.mem_elements()))
+                            .await;
 
                         let brick_data = &mut *brick_handle;
                         ctx.submit(ctx.spawn_io(|| {
