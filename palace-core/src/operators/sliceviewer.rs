@@ -90,8 +90,8 @@ impl SliceviewState {
         dim: u32,
     ) -> PyResult<Self> {
         Ok(Self::for_volume(
-            input_metadata.try_into()?,
-            embedding_data.try_into()?,
+            input_metadata.try_into_dim()?,
+            embedding_data.try_into_dim()?,
             dim,
         ))
     }
@@ -124,8 +124,8 @@ impl SliceviewState {
         output_size: Vector<D2, GlobalCoordinate>,
     ) -> PyResult<Matrix<D4, f32>> {
         Ok(self.projection_mat(
-            input_metadata.try_into()?,
-            embedding_data.try_into()?,
+            input_metadata.try_into_dim()?,
+            embedding_data.try_into_dim()?,
             output_size,
         ))
     }

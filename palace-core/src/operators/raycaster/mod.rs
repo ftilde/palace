@@ -144,8 +144,8 @@ impl CameraState {
         fov: f32,
     ) -> PyResult<Self> {
         Ok(Self::for_volume(
-            input_metadata.try_into()?,
-            embedding_data.try_into()?,
+            input_metadata.try_into_dim()?,
+            embedding_data.try_into_dim()?,
             fov,
         ))
     }

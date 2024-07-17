@@ -7,10 +7,10 @@ use crate::{
     array::ChunkIndex,
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
-    dtypes::{DType, StaticElementType},
+    dtypes::{DType, ElementType, StaticElementType},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::{gpu, Element},
+    storage::gpu,
     task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
@@ -27,7 +27,7 @@ use super::{
     volume::{ChunkSize, VolumeOperator},
 };
 
-pub fn linear_rescale<'op, D: Dimension>(
+pub fn linear_rescale<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     scale: f32,
     offset: f32,
@@ -72,7 +72,7 @@ void main()
             .dependent_on_data(&scale)
             .dependent_on_data(&offset),
         Default::default(),
-        input.metadata,
+        input.metadata.clone(),
         (input, scale, offset),
         move |ctx, positions, (input, scale, offset)| {
             async move {
@@ -82,7 +82,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
-                let m = input.metadata;
+                let m = input.metadata.clone().into_dyn();
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline").of(ctx.current_op()),
@@ -92,7 +92,7 @@ void main()
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("BRICK_MEM_SIZE", m.num_chunk_elements())
                                     .push_const_block::<PushConstants>(),
                             ),
                             true,
@@ -101,23 +101,18 @@ void main()
                 )?;
 
                 let mut brick_stream = ctx
-                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
-                        (
-                            input.chunks.request_inplace_gpu(
-                                device.id,
-                                *pos,
-                                ctx.current_op_desc().unwrap(),
-                                DType::F32,
-                                access_info,
-                            ),
+                    .submit_unordered(positions.iter().map(|(pos, _)| {
+                        input.chunks.request_inplace_gpu(
+                            device.id,
                             *pos,
+                            ctx.current_op_desc().unwrap(),
+                            DType::F32,
+                            access_info,
                         )
                     }))
-                    .then_req_with_data(*ctx, |(inplace, pos)| (inplace.alloc(), pos));
+                    .then_req(*ctx, |inplace| inplace.alloc());
 
-                while let Some((inplace, pos)) = brick_stream.next().await {
-                    let brick_info = m.chunk_info(pos);
-
+                while let Some(inplace) = brick_stream.next().await {
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
                             gpu::InplaceHandle::Inplace(rw, _v) => (rw, rw),
@@ -128,7 +123,7 @@ void main()
                         let descriptor_config =
                             DescriptorConfig::new([gpu_brick_in, gpu_brick_out]);
 
-                        let global_size = brick_info.mem_elements();
+                        let global_size = m.num_chunk_elements();
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -162,7 +157,7 @@ void main()
     )
 }
 
-pub fn apply_tf<'op, D: Dimension>(
+pub fn apply_tf<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     tf: TransFuncOperator,
 ) -> TensorOperator<D, StaticElementType<Vector<D4, u8>>> {
@@ -218,7 +213,7 @@ void main()
             .dependent_on(&input)
             .dependent_on_data(&tf),
         Default::default(),
-        input.metadata,
+        input.metadata.clone(),
         (input, tf),
         move |ctx, positions, (input, tf)| {
             async move {
@@ -228,7 +223,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
-                let m = input.metadata;
+                let m = input.metadata.clone().into_dyn();
 
                 assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
                 let tf_data_gpu = ctx
@@ -247,7 +242,7 @@ void main()
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("BRICK_MEM_SIZE", m.num_chunk_elements())
                                     .push_const_block::<PushConstants>(),
                             ),
                             true,
@@ -260,20 +255,16 @@ void main()
                         (input.chunks.request_gpu(device.id, *pos, access_info), *pos)
                     }))
                     .then_req_with_data(*ctx, |(input, pos)| {
-                        let brick_info = m.chunk_info(pos);
-
-                        let output = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
-                        (output, (input, brick_info))
+                        let output = ctx.alloc_slot_gpu(device, pos, m.num_chunk_elements());
+                        (output, input)
                     });
 
-                while let Some((output_chunk, (input_chunk, brick_info))) =
-                    brick_stream.next().await
-                {
+                while let Some((output_chunk, input_chunk)) = brick_stream.next().await {
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config =
                             DescriptorConfig::new([&input_chunk, &tf_data_gpu, &output_chunk]);
 
-                        let global_size = brick_info.mem_elements();
+                        let global_size = m.num_chunk_elements();
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -437,7 +428,7 @@ void main()
     )
 }
 
-pub fn threshold<'op, D: Dimension>(
+pub fn threshold<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     threshold: f32,
 ) -> TensorOperator<D, StaticElementType<f32>> {
@@ -479,7 +470,7 @@ void main()
             .dependent_on(&input)
             .dependent_on_data(&threshold),
         Default::default(),
-        input.metadata,
+        input.metadata.clone(),
         (input, threshold),
         move |ctx, positions, (input, threshold)| {
             async move {
@@ -489,7 +480,7 @@ void main()
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
-                let m = input.metadata;
+                let m = input.metadata.clone().into_dyn();
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline").of(ctx.current_op()),
@@ -499,7 +490,7 @@ void main()
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("BRICK_MEM_SIZE", m.num_chunk_elements())
                                     .push_const_block::<PushConstants>(),
                             ),
                             true,
@@ -508,23 +499,18 @@ void main()
                 )?;
 
                 let mut brick_stream = ctx
-                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
-                        (
-                            input.chunks.request_inplace_gpu(
-                                device.id,
-                                *pos,
-                                ctx.current_op_desc().unwrap(),
-                                DType::F32,
-                                access_info,
-                            ),
+                    .submit_unordered(positions.iter().map(|(pos, _)| {
+                        input.chunks.request_inplace_gpu(
+                            device.id,
                             *pos,
+                            ctx.current_op_desc().unwrap(),
+                            DType::F32,
+                            access_info,
                         )
                     }))
-                    .then_req_with_data(*ctx, |(inplace, pos)| (inplace.alloc(), pos));
+                    .then_req(*ctx, |inplace| inplace.alloc());
 
-                while let Some((inplace, pos)) = brick_stream.next().await {
-                    let brick_info = m.chunk_info(pos);
-
+                while let Some(inplace) = brick_stream.next().await {
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
                             gpu::InplaceHandle::Inplace(rw, _v) => (rw, rw),
@@ -535,7 +521,7 @@ void main()
                         let descriptor_config =
                             DescriptorConfig::new([gpu_brick_in, gpu_brick_out]);
 
-                        let global_size = brick_info.mem_elements();
+                        let global_size = m.num_chunk_elements();
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -580,14 +566,16 @@ impl GLSLType for Vector<D4, u8> {
     const TYPE_NAME: &'static str = "uint8_t[4]";
 }
 
-pub fn rechunk<D: Dimension, T: Element + GLSLType>(
-    input: TensorOperator<D, StaticElementType<T>>,
+pub fn rechunk<D: Dimension, T: ElementType + Into<DType> + 'static>(
+    input: TensorOperator<D, T>,
     chunk_size: Vector<D, ChunkSize>,
-) -> TensorOperator<D, StaticElementType<T>> {
+) -> TensorOperator<D, T> {
     // Early return in case of matched sizes
     if input.metadata.chunk_size == chunk_size.zip(input.metadata.dimensions, |b, d| b.apply(d)) {
         return input;
     }
+
+    let dtype: DType = input.chunks.dtype().into();
 
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
@@ -604,11 +592,6 @@ pub fn rechunk<D: Dimension, T: Element + GLSLType>(
     //TODO: This is fine for the current layout, but we really want a better general approach
     unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
     const SHADER: &'static str = r#"
-#version 450
-
-#extension GL_EXT_scalar_block_layout : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
-
 #include <util.glsl>
 #include <vec.glsl>
 
@@ -651,9 +634,9 @@ void main() {
         OperatorDescriptor::new("volume_rechunk_gpu")
             .dependent_on(&input)
             .dependent_on_data(&chunk_size)
-            .dependent_on_data(T::TYPE_NAME)
+            .dependent_on_data(&dtype)
             .dependent_on_data(&D::N),
-        Default::default(),
+        input.chunks.dtype(),
         {
             let mut m = input.metadata;
             m.chunk_size = chunk_size.zip(m.dimensions, |v, d| v.apply(d));
@@ -676,7 +659,7 @@ void main() {
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(T::TYPE_NAME)
+                        .dependent_on(&dtype)
                         .dependent_on(&D::N),
                     || {
                         ComputePipeline::new(
@@ -686,7 +669,10 @@ void main() {
                                 ShaderDefines::new()
                                     .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
                                     .add("N", D::N)
-                                    .add("T", T::TYPE_NAME),
+                                    .add("T", dtype.glsl_type()),
+                                Config::new()
+                                    .ext(dtype.glsl_ext())
+                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                             ),
                             true,
                         )

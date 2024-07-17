@@ -1,7 +1,7 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::PyArray0;
-use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 use palace_core::operators::gui as c;
+use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 
@@ -69,7 +69,9 @@ pub struct GuiRenderState(Option<c::GuiRenderState>);
 impl GuiRenderState {
     pub fn render(&mut self, input: TensorOperator) -> PyResult<TensorOperator> {
         if let Some(grs) = self.0.take() {
-            grs.render(input.try_into()?).try_into()
+            grs.render(input.try_into_core_static()?.try_into()?)
+                .into_dyn()
+                .try_into()
         } else {
             Err(PyErr::new::<PyException, _>("GuiRenderState::render() was already called previously. Call GuiState::setup first to obtain a new GuiRenderState."))
         }

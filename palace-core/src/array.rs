@@ -35,10 +35,52 @@ impl<D: Dimension> ChunkInfo<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, bytemuck::AnyBitPattern, id::Identify)]
-pub struct TensorMetaData<D: Dimension> {
-    pub dimensions: Vector<D, GlobalCoordinate>,
-    pub chunk_size: Vector<D, LocalCoordinate>,
+#[derive(Copy, Hash, Debug, id::Identify)]
+pub struct TensorMetaData<D: DynDimension> {
+    pub dimensions: D::Vec<GlobalCoordinate>,
+    pub chunk_size: D::Vec<LocalCoordinate>,
+}
+
+//TODO: Why the hell do we need to do this manually?
+impl<D: DynDimension> Clone for TensorMetaData<D> {
+    fn clone(&self) -> Self {
+        Self {
+            dimensions: self.dimensions.clone(),
+            chunk_size: self.chunk_size.clone(),
+        }
+    }
+}
+
+impl<D: DynDimension> PartialEq for TensorMetaData<D>
+where
+    D::Vec<GlobalCoordinate>: PartialEq,
+    D::Vec<LocalCoordinate>: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.dimensions == other.dimensions && self.chunk_size == other.chunk_size
+    }
+}
+impl<D: DynDimension> Eq for TensorMetaData<D>
+where
+    D::Vec<GlobalCoordinate>: Eq,
+    D::Vec<LocalCoordinate>: Eq,
+{
+}
+
+impl<D: DynDimension> TensorMetaData<D> {
+    pub fn try_into_static<DF: Dimension>(self) -> Option<TensorMetaData<DF>> {
+        Some(TensorMetaData {
+            dimensions: D::try_into_dim::<DF, _>(self.dimensions)?,
+            chunk_size: D::try_into_dim::<DF, _>(self.chunk_size)?,
+        })
+    }
+
+    pub fn into_dyn(self) -> TensorMetaData<DDyn> {
+        TensorMetaData {
+            dimensions: D::into_dyn(self.dimensions),
+            chunk_size: D::into_dyn(self.chunk_size),
+        }
+    }
 }
 
 // We have to do this manually since bytemuck cannot verify this in general due to the const
@@ -57,10 +99,24 @@ impl<D: LargerDim> TensorMetaData<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, bytemuck::Zeroable, id::Identify)]
-pub struct TensorEmbeddingData<D: Dimension> {
-    pub spacing: Vector<D, f32>,
+#[derive(Copy, Clone, Debug, PartialEq, id::Identify)]
+pub struct TensorEmbeddingData<D: DynDimension> {
+    pub spacing: D::Vec<f32>,
     // NOTE: need to change identify impl if we want to add members
+}
+
+impl<D: DynDimension> TensorEmbeddingData<D> {
+    pub fn try_into_static<DF: Dimension>(self) -> Option<TensorEmbeddingData<DF>> {
+        Some(TensorEmbeddingData {
+            spacing: D::try_into_dim::<DF, f32>(self.spacing)?,
+        })
+    }
+
+    pub fn into_dyn(self) -> TensorEmbeddingData<DDyn> {
+        TensorEmbeddingData {
+            spacing: D::into_dyn(self.spacing),
+        }
+    }
 }
 
 impl<D: LargerDim> TensorEmbeddingData<D> {
@@ -87,7 +143,7 @@ pub fn physical_to_voxel<D: LargerDim>(
 }
 
 //TODO: Revisit this. This is definitely fine as long as we don't add other members
-unsafe impl<D: Dimension + bytemuck::Zeroable> bytemuck::Pod for TensorEmbeddingData<D> {}
+//unsafe impl<D: Dimension + bytemuck::Zeroable> bytemuck::Pod for TensorEmbeddingData<D> {}
 
 #[cfg(feature = "python")]
 pub use py::TensorEmbeddingData as PyTensorEmbeddingData;
@@ -134,6 +190,24 @@ mod py {
         }
     }
 
+    impl From<super::TensorMetaData<DDyn>> for TensorMetaData {
+        fn from(value: super::TensorMetaData<DDyn>) -> Self {
+            assert_eq!(value.dimensions.len(), value.chunk_size.len());
+            Self {
+                dimensions: value.dimensions.into_iter().map(|v| v.raw).collect(),
+                chunk_size: value.chunk_size.into_iter().map(|v| v.raw).collect(),
+            }
+        }
+    }
+    impl From<TensorMetaData> for super::TensorMetaData<DDyn> {
+        fn from(value: TensorMetaData) -> Self {
+            assert_eq!(value.dimensions.len(), value.chunk_size.len());
+            Self {
+                dimensions: value.dimensions.into_iter().map(|v| v.into()).collect(),
+                chunk_size: value.chunk_size.into_iter().map(|v| v.into()).collect(),
+            }
+        }
+    }
     impl<D: Dimension> From<super::TensorMetaData<D>> for TensorMetaData {
         fn from(t: super::TensorMetaData<D>) -> Self {
             Self {
@@ -142,24 +216,16 @@ mod py {
             }
         }
     }
-
-    impl<D: Dimension> TryInto<super::TensorMetaData<D>> for TensorMetaData {
-        type Error = PyErr;
-
-        fn try_into(self) -> Result<super::TensorMetaData<D>, Self::Error> {
-            if D::N != self.dimensions.len() {
-                return Err(PyErr::new::<PyException, _>(format!(
+    impl TensorMetaData {
+        pub fn try_into_dim<D: Dimension>(self) -> Result<super::TensorMetaData<D>, PyErr> {
+            let md: super::TensorMetaData<DDyn> = self.into();
+            let l = md.dimensions.len();
+            md.try_into_static().ok_or_else(|| {
+                PyErr::new::<PyException, _>(format!(
                     "Expected TensorMetaData<{}>, but got TensorMetaData<{}>",
                     D::N,
-                    self.dimensions.len()
-                )));
-            }
-
-            assert_eq!(self.dimensions.len(), self.chunk_size.len());
-
-            Ok(super::TensorMetaData {
-                dimensions: self.dimensions.try_into().unwrap(),
-                chunk_size: self.chunk_size.try_into().unwrap(),
+                    l,
+                ))
             })
         }
     }
@@ -188,30 +254,36 @@ mod py {
         }
     }
 
-    impl<D: Dimension> From<super::TensorEmbeddingData<D>> for TensorEmbeddingData {
-        fn from(t: super::TensorEmbeddingData<D>) -> Self {
-            Self {
-                spacing: t.spacing.into_iter().collect(),
-            }
+    impl From<super::TensorEmbeddingData<DDyn>> for TensorEmbeddingData {
+        fn from(t: super::TensorEmbeddingData<DDyn>) -> Self {
+            Self { spacing: t.spacing }
         }
     }
 
-    impl<D: Dimension> TryInto<super::TensorEmbeddingData<D>> for TensorEmbeddingData {
-        type Error = PyErr;
+    impl From<TensorEmbeddingData> for super::TensorEmbeddingData<DDyn> {
+        fn from(t: TensorEmbeddingData) -> Self {
+            Self { spacing: t.spacing }
+        }
+    }
 
-        fn try_into(self) -> Result<super::TensorEmbeddingData<D>, Self::Error> {
-            if D::N != self.spacing.len() {
-                return Err(PyErr::new::<PyException, _>(format!(
-                    "Expected TensorEmbeddingData<{}>, but got TensorEmbeddingData<{}>",
+    impl TensorEmbeddingData {
+        pub fn try_into_dim<D: Dimension>(self) -> Result<super::TensorEmbeddingData<D>, PyErr> {
+            let md: super::TensorEmbeddingData<DDyn> = self.into();
+            let l = md.spacing.len();
+            md.try_into_static().ok_or_else(|| {
+                PyErr::new::<PyException, _>(format!(
+                    "Expected TensorMetaData<{}>, but got TensorMetaData<{}>",
                     D::N,
-                    self.spacing.len()
-                )));
-            }
-
-            Ok(super::TensorEmbeddingData {
-                spacing: self.spacing.try_into().unwrap(),
+                    l,
+                ))
             })
         }
+    }
+}
+
+impl TensorMetaData<DDyn> {
+    pub fn num_chunk_elements(&self) -> usize {
+        self.chunk_size.iter().map(|v| v.raw as usize).product()
     }
 }
 

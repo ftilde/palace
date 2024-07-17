@@ -72,7 +72,7 @@ impl RunTime {
             pos.len(),
             || {
                 let op: palace_core::operators::tensor::TensorOperator<D, StaticElementType<f32>> =
-                    v.try_into()?;
+                    v.try_into_core_static()?.try_into()?;
                 let op_ref = &op;
                 map_err(self.inner.resolve(None, false, |ctx, _| {
                     async move {
@@ -116,7 +116,8 @@ impl RunTime {
                 let size = [size.y().raw, size.x().raw];
                 let events = Events(events);
                 let frame = gen_frame.call((size, events), None)?;
-                let frame = frame.extract::<TensorOperator>()?.try_into()?;
+                let frame = frame.extract::<TensorOperator>()?.try_into_core_static()?;
+                let frame = frame.try_into()?;
 
                 let frame_ref = &frame;
                 let version = rt.resolve(Some(timeout), false, |ctx, _| {

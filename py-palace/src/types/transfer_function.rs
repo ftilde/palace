@@ -21,7 +21,7 @@ impl TryFrom<CTransFuncOperator> for TransFuncOperator {
         Ok(TransFuncOperator {
             min: t.min,
             max: t.max,
-            table: t.table.try_into()?,
+            table: t.table.into_dyn().try_into()?,
         })
     }
 }
@@ -33,7 +33,7 @@ impl TryInto<CTransFuncOperator> for TransFuncOperator {
         Ok(CTransFuncOperator {
             min: self.min,
             max: self.max,
-            table: self.table.try_into()?,
+            table: self.table.try_into_core_static()?.try_into()?,
         })
     }
 }

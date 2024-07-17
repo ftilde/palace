@@ -1,6 +1,6 @@
 use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
-use palace_core::dtypes::{DType, StaticElementType};
+use palace_core::dtypes::{DType, ElementType, StaticElementType};
 use palace_core::jit;
 use palace_core::{dim::*, operator::Operator as COperator, storage::Element};
 use pyo3::types::PyFunction;
@@ -109,10 +109,10 @@ impl Clone for TensorOperator {
     }
 }
 
-impl<D: Dimension> TryFrom<CTensorOperator<D, DType>> for TensorOperator {
+impl TryFrom<CTensorOperator<DDyn, DType>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_from(t: CTensorOperator<D, DType>) -> Result<Self, Self::Error> {
+    fn try_from(t: CTensorOperator<DDyn, DType>) -> Result<Self, Self::Error> {
         let dtype = t.chunks.dtype();
         Ok(Self {
             inner: Box::new(t.chunks),
@@ -128,10 +128,10 @@ impl<D: Dimension> TryFrom<CTensorOperator<D, DType>> for TensorOperator {
     }
 }
 
-impl<D: Dimension> TryFrom<jit::JitTensorOperator<D>> for TensorOperator {
+impl TryFrom<jit::JitTensorOperator<DDyn>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_from(t: jit::JitTensorOperator<D>) -> Result<Self, Self::Error> {
+    fn try_from(t: jit::JitTensorOperator<DDyn>) -> Result<Self, Self::Error> {
         let dtype = t.dtype();
         let Some(metadata) = t.metadata() else {
             return crate::map_err(Err("Jit operator does not contain metadata".into()));
@@ -143,7 +143,7 @@ impl<D: Dimension> TryFrom<jit::JitTensorOperator<D>> for TensorOperator {
             clone: |i| Self {
                 inner: Box::new(
                     i.inner
-                        .downcast_ref::<jit::JitTensorOperator<D>>()
+                        .downcast_ref::<jit::JitTensorOperator<DDyn>>()
                         .unwrap()
                         .clone(),
                 ),
@@ -155,53 +155,52 @@ impl<D: Dimension> TryFrom<jit::JitTensorOperator<D>> for TensorOperator {
     }
 }
 
-impl<D: Dimension, T: 'static> TryFrom<CTensorOperator<D, StaticElementType<T>>> for TensorOperator
+impl<T: 'static> TryFrom<CTensorOperator<DDyn, StaticElementType<T>>> for TensorOperator
 where
     DType: From<StaticElementType<T>>,
 {
     type Error = PyErr;
 
-    fn try_from(t: CTensorOperator<D, StaticElementType<T>>) -> Result<Self, Self::Error> {
-        CTensorOperator::<D, DType>::from(t).try_into()
+    fn try_from(t: CTensorOperator<DDyn, StaticElementType<T>>) -> Result<Self, Self::Error> {
+        CTensorOperator::<DDyn, DType>::from(t).try_into()
     }
 }
 
-impl<D: Dimension> TryInto<CTensorOperator<D, DType>> for TensorOperator {
+impl TryInto<CTensorOperator<DDyn, DType>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CTensorOperator<D, DType>, Self::Error> {
+    fn try_into(self) -> Result<CTensorOperator<DDyn, DType>, Self::Error> {
         if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
             Ok(CTensorOperator {
                 chunks: inner.clone(),
                 metadata: self.metadata.try_into()?,
             })
-        } else if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<D>>() {
+        } else if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<DDyn>>() {
             Ok(inner.clone().compile().unwrap())
         } else {
             Err(PyErr::new::<PyException, _>(format!(
-                "Expected Operator<Vector<{}, ChunkCoordinate>>, but got something else",
-                D::N,
+                "Expected TensorOperator, but got something else",
             )))
         }
     }
 }
 
-impl<D: Dimension, T> TryInto<CTensorOperator<D, StaticElementType<T>>> for TensorOperator
+impl<T> TryInto<CTensorOperator<DDyn, StaticElementType<T>>> for TensorOperator
 where
     StaticElementType<T>: TryFrom<DType, Error = palace_core::dtypes::ConversionError>,
 {
     type Error = PyErr;
-    fn try_into(self) -> Result<CTensorOperator<D, StaticElementType<T>>, Self::Error> {
-        let t: CTensorOperator<D, DType> = self.try_into()?;
+    fn try_into(self) -> Result<CTensorOperator<DDyn, StaticElementType<T>>, Self::Error> {
+        let t: CTensorOperator<DDyn, DType> = self.try_into()?;
         Ok(t.try_into()?)
     }
 }
 
-impl<D: Dimension> TryInto<jit::JitTensorOperator<D>> for TensorOperator {
+impl TryInto<jit::JitTensorOperator<DDyn>> for TensorOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<jit::JitTensorOperator<D>, Self::Error> {
-        if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<D>>() {
+    fn try_into(self) -> Result<jit::JitTensorOperator<DDyn>, Self::Error> {
+        if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<DDyn>>() {
             Ok(inner.clone())
         } else if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
             Ok(CTensorOperator {
@@ -211,18 +210,30 @@ impl<D: Dimension> TryInto<jit::JitTensorOperator<D>> for TensorOperator {
             .into())
         } else {
             Err(PyErr::new::<PyException, _>(format!(
-                "Expected Operator<Vector<{}, ChunkCoordinate>>, but got something else",
-                D::N,
+                "Expected TensorOperator, but got something else",
             )))
         }
     }
 }
 
+pub fn try_into_static_err<D: Dimension, T: ElementType>(
+    vol: CTensorOperator<DDyn, T>,
+) -> Result<CTensorOperator<D, T>, PyErr> {
+    let n = vol.metadata.dimensions.len();
+    vol.try_into_static().ok_or_else(|| {
+        PyErr::new::<PyException, _>(format!("Conv for dim {} not supported, yet", n,))
+    })
+}
+
 impl TensorOperator {
-    pub fn try_into_core<D: Dimension>(self) -> Result<CTensorOperator<D, DType>, PyErr> {
+    pub fn try_into_core(self) -> Result<CTensorOperator<DDyn, DType>, PyErr> {
         self.try_into()
     }
-    pub fn try_into_jit<D: Dimension>(self) -> Result<jit::JitTensorOperator<D>, PyErr> {
+    pub fn try_into_core_static<D: Dimension>(self) -> Result<CTensorOperator<D, DType>, PyErr> {
+        let s = self.try_into_core()?;
+        try_into_static_err(s)
+    }
+    pub fn try_into_jit(self) -> Result<jit::JitTensorOperator<DDyn>, PyErr> {
         self.try_into()
     }
 }
@@ -251,7 +262,7 @@ impl<'a> TryInto<CTensorOperator<D1, DType>> for MaybeConstTensorOperator<'a> {
             MaybeConstTensorOperator::ConstD1(c) => {
                 Ok(palace_core::operators::array::from_rc(c.as_slice()?.into()).into())
             }
-            MaybeConstTensorOperator::Operator(o) => o.try_into(),
+            MaybeConstTensorOperator::Operator(o) => o.try_into_core_static(),
         }
     }
 }
@@ -271,32 +282,34 @@ pub struct EmbeddedTensorOperator {
     pub embedding_data: PyTensorEmbeddingData,
 }
 
-impl<D: Dimension> TryFrom<CEmbeddedTensorOperator<D, DType>> for EmbeddedTensorOperator {
+impl TryFrom<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
     type Error = PyErr;
 
-    fn try_from(t: CEmbeddedTensorOperator<D, DType>) -> Result<Self, Self::Error> {
+    fn try_from(t: CEmbeddedTensorOperator<DDyn, DType>) -> Result<Self, Self::Error> {
         Ok(Self {
             inner: t.inner.try_into()?,
             embedding_data: t.embedding_data.into(),
         })
     }
 }
-impl<D: Dimension, T: 'static> TryFrom<CEmbeddedTensorOperator<D, StaticElementType<T>>>
+impl<T: 'static> TryFrom<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>>
     for EmbeddedTensorOperator
 where
     DType: From<StaticElementType<T>>,
 {
     type Error = PyErr;
 
-    fn try_from(t: CEmbeddedTensorOperator<D, StaticElementType<T>>) -> Result<Self, Self::Error> {
-        CEmbeddedTensorOperator::<D, DType>::from(t).try_into()
+    fn try_from(
+        t: CEmbeddedTensorOperator<DDyn, StaticElementType<T>>,
+    ) -> Result<Self, Self::Error> {
+        CEmbeddedTensorOperator::<DDyn, DType>::from(t).try_into()
     }
 }
 
-impl<D: Dimension> TryInto<CEmbeddedTensorOperator<D, DType>> for EmbeddedTensorOperator {
+impl TryInto<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CEmbeddedTensorOperator<D, DType>, Self::Error> {
+    fn try_into(self) -> Result<CEmbeddedTensorOperator<DDyn, DType>, Self::Error> {
         let inner = self.inner.try_into()?;
         Ok(CEmbeddedTensorOperator {
             inner,
@@ -304,14 +317,13 @@ impl<D: Dimension> TryInto<CEmbeddedTensorOperator<D, DType>> for EmbeddedTensor
         })
     }
 }
-impl<D: Dimension, T> TryInto<CEmbeddedTensorOperator<D, StaticElementType<T>>>
-    for EmbeddedTensorOperator
+impl<T> TryInto<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>> for EmbeddedTensorOperator
 where
     StaticElementType<T>: TryFrom<DType, Error = palace_core::dtypes::ConversionError>,
 {
     type Error = PyErr;
-    fn try_into(self) -> Result<CEmbeddedTensorOperator<D, StaticElementType<T>>, Self::Error> {
-        let t: CEmbeddedTensorOperator<D, DType> = self.try_into()?;
+    fn try_into(self) -> Result<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>, Self::Error> {
+        let t: CEmbeddedTensorOperator<DDyn, DType> = self.try_into()?;
         Ok(t.try_into()?)
     }
 }
@@ -329,12 +341,14 @@ impl EmbeddedTensorOperator {
 
         match nd {
             2 => {
-                let vol: CEmbeddedTensorOperator<D2, DType> = self.clone().try_into()?;
+                let vol: CEmbeddedTensorOperator<D2, DType> =
+                    self.clone().try_into_core_static()?;
                 palace_core::operators::resample::create_lod(vol.try_into()?, step_factor)
                     .try_into()
             }
             3 => {
-                let vol: CEmbeddedTensorOperator<D3, DType> = self.clone().try_into()?;
+                let vol: CEmbeddedTensorOperator<D3, DType> =
+                    self.clone().try_into_core_static()?;
                 palace_core::operators::resample::create_lod(vol.try_into()?, step_factor)
                     .try_into()
             }
@@ -349,8 +363,14 @@ impl EmbeddedTensorOperator {
 }
 
 impl EmbeddedTensorOperator {
-    pub fn try_into_core<D: Dimension>(self) -> PyResult<CEmbeddedTensorOperator<D, DType>> {
+    pub fn try_into_core(self) -> PyResult<CEmbeddedTensorOperator<DDyn, DType>> {
         self.try_into()
+    }
+    pub fn try_into_core_static<D: Dimension>(self) -> PyResult<CEmbeddedTensorOperator<D, DType>> {
+        Ok(CEmbeddedTensorOperator {
+            inner: self.inner.try_into_core_static()?,
+            embedding_data: self.embedding_data.try_into_dim()?,
+        })
     }
 }
 
@@ -367,20 +387,20 @@ impl MaybeEmbeddedTensorOperator {
             MaybeEmbeddedTensorOperator::Embedded(e) => e.inner,
         }
     }
-    pub fn try_map_inner<D: Dimension>(
+    pub fn try_map_inner(
         self,
         py: Python,
-        f: impl FnOnce(CTensorOperator<D, DType>) -> PyResult<CTensorOperator<D, DType>>,
+        f: impl FnOnce(CTensorOperator<DDyn, DType>) -> PyResult<CTensorOperator<DDyn, DType>>,
     ) -> PyResult<PyObject> {
         Ok(match self {
             MaybeEmbeddedTensorOperator::Not(v) => {
-                let v: CTensorOperator<D, DType> = v.try_into_core()?.try_into()?;
+                let v: CTensorOperator<DDyn, DType> = v.try_into_core()?.try_into()?;
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
                 v.into_py(py)
             }
             MaybeEmbeddedTensorOperator::Embedded(orig) => {
-                let v: CTensorOperator<D, DType> = orig.inner.try_into_core()?.try_into()?;
+                let v: CTensorOperator<DDyn, DType> = orig.inner.try_into_core()?.try_into()?;
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
                 EmbeddedTensorOperator {
@@ -392,10 +412,10 @@ impl MaybeEmbeddedTensorOperator {
         })
     }
 
-    pub fn try_map_inner_jit<D: Dimension>(
+    pub fn try_map_inner_jit(
         self,
         py: Python,
-        f: impl FnOnce(jit::JitTensorOperator<D>) -> PyResult<jit::JitTensorOperator<D>>,
+        f: impl FnOnce(jit::JitTensorOperator<DDyn>) -> PyResult<jit::JitTensorOperator<DDyn>>,
     ) -> PyResult<PyObject> {
         Ok(match self {
             MaybeEmbeddedTensorOperator::Not(v) => {
@@ -432,7 +452,7 @@ impl<D: Dimension> TryFrom<CLODTensorOperator<D, DType>> for LODTensorOperator {
             levels: t
                 .levels
                 .into_iter()
-                .map(|v| v.try_into())
+                .map(|v| v.into_dyn().try_into())
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -450,7 +470,7 @@ where
             levels: t
                 .levels
                 .into_iter()
-                .map(|v| v.try_into())
+                .map(|v| v.into_dyn().try_into())
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -463,7 +483,7 @@ impl<D: Dimension> TryInto<CLODTensorOperator<D, DType>> for LODTensorOperator {
             levels: self
                 .levels
                 .into_iter()
-                .map(|v| v.try_into())
+                .map(|v| v.try_into_core_static())
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -480,7 +500,7 @@ where
             levels: self
                 .levels
                 .into_iter()
-                .map(|v| v.try_into())
+                .map(|v| v.try_into_core_static().and_then(|v| Ok(v.try_into()?)))
                 .collect::<Result<_, _>>()?,
         })
     }

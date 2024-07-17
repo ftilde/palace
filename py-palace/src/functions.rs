@@ -2,9 +2,10 @@ use crate::types::*;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
-use palace_core::dtypes::{DType, StaticElementType};
+use palace_core::dtypes::DType;
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
+use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use pyo3::{exceptions::PyException, prelude::*};
 
 #[pyfunction]
@@ -22,12 +23,14 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<D2, DType>| {
-                    let vol: palace_core::operators::tensor::TensorOperator<
-                        D2,
-                        StaticElementType<Vector<D4, u8>>,
-                    > = vol.try_into()?;
-                    Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into())
+                |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
+                    Ok(
+                        palace_core::operators::volume_gpu::rechunk(
+                            try_into_static_err(vol)?,
+                            size,
+                        )
+                        .into_dyn(),
+                    )
                 },
             )
         }
@@ -36,12 +39,14 @@ pub fn rechunk(
                 Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
             vol.try_map_inner(
                 py,
-                |vol: palace_core::operators::tensor::TensorOperator<D3, DType>| {
-                    let vol: palace_core::operators::tensor::TensorOperator<
-                        D3,
-                        StaticElementType<f32>,
-                    > = vol.try_into()?; //TODO
-                    Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into())
+                |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
+                    Ok(
+                        palace_core::operators::volume_gpu::rechunk(
+                            try_into_static_err(vol)?,
+                            size,
+                        )
+                        .into_dyn(),
+                    )
                 },
             )
         }
@@ -59,22 +64,18 @@ pub fn linear_rescale(
     scale: f32,
     offset: f32,
 ) -> PyResult<PyObject> {
-    vol.try_map_inner(
-        py,
-        |vol: palace_core::operators::volume::VolumeOperator<DType>| {
-            //TODO: ndim -> static dispatch
-            Ok(
-                palace_core::operators::volume_gpu::linear_rescale(vol.try_into()?, scale, offset)
-                    .into(),
-            )
-        },
-    )
+    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
+        Ok(
+            palace_core::operators::volume_gpu::linear_rescale(vol.try_into()?, scale, offset)
+                .into(),
+        )
+    })
 }
 
 fn jit_unary(py: Python, op: UnaryOp, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
-    vol.try_map_inner_jit(py, |vol: JitTensorOperator<D3>| {
+    vol.try_map_inner_jit(py, |vol: JitTensorOperator<DDyn>| {
         //TODO: ndim -> static dispatch
-        Ok(crate::map_err(JitTensorOperator::<D3>::unary_op(op, vol))?.into())
+        Ok(crate::map_err(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
     })
 }
 
@@ -94,8 +95,8 @@ fn jit_binary(
     v1: MaybeEmbeddedTensorOperator,
     v2: MaybeEmbeddedTensorOperator,
 ) -> PyResult<PyObject> {
-    v1.try_map_inner_jit(py, |v1: JitTensorOperator<D3>| {
-        Ok(crate::map_err(JitTensorOperator::<D3>::bin_op(
+    v1.try_map_inner_jit(py, |v1: JitTensorOperator<DDyn>| {
+        Ok(crate::map_err(JitTensorOperator::<DDyn>::bin_op(
             op,
             v1,
             v2.inner().try_into_jit()?,
@@ -128,13 +129,9 @@ pub fn threshold(
     vol: MaybeEmbeddedTensorOperator,
     threshold: f32,
 ) -> PyResult<PyObject> {
-    vol.try_map_inner(
-        py,
-        |vol: palace_core::operators::volume::VolumeOperator<DType>| {
-            //TODO: ndim -> static dispatch
-            Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
-        },
-    )
+    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
+        Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
+    })
 }
 
 #[pyfunction]
@@ -151,9 +148,11 @@ pub fn separable_convolution<'py>(
         x.try_into_core()?.try_into()?,
     ];
     let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-    vol.try_map_inner(py, |vol| {
+    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
+        let vol = try_into_static_err(vol)?;
         Ok(
             palace_core::operators::volume_gpu::separable_convolution(vol.try_into()?, kernel_refs)
+                .into_dyn()
                 .into(),
         )
     })
@@ -167,11 +166,12 @@ pub fn vesselness<'py>(
     steps: usize,
 ) -> PyResult<EmbeddedTensorOperator> {
     palace_core::operators::vesselness::multiscale_vesselness(
-        vol.try_into()?,
+        vol.try_into_core_static()?.try_into()?,
         min_scale,
         max_scale,
         steps,
     )
+    .into_dyn()
     .try_into()
 }
 
@@ -183,11 +183,12 @@ pub fn entry_exit_points(
     projection: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
     palace_core::operators::raycaster::entry_exit_points(
-        input_md.try_into()?,
-        embedding_data.try_into()?,
-        output_md.try_into()?,
+        input_md.try_into_dim()?,
+        embedding_data.try_into_dim()?,
+        output_md.try_into_dim()?,
         projection,
     )
+    .into_dyn()
     .try_into()
 }
 
@@ -201,12 +202,16 @@ pub fn raycast(
     let tf = tf
         .map(|tf| tf.try_into())
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
+
+    let eep = entry_exit_points.try_into_core()?;
+    let eep = try_into_static_err(eep)?;
     palace_core::operators::raycaster::raycast(
         vol.try_into()?,
-        entry_exit_points.try_into()?,
+        eep.try_into()?,
         tf,
         config.unwrap_or_default(),
     )
+    .into_dyn()
     .try_into()
 }
 
@@ -218,20 +223,26 @@ pub fn render_slice(
 ) -> PyResult<TensorOperator> {
     palace_core::operators::sliceviewer::render_slice(
         input.try_into()?,
-        result_metadata.try_into()?,
+        result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
     )
+    .into_dyn()
     .try_into()
 }
 
 #[pyfunction]
 pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
-    Ok(palace_core::operators::volume_gpu::mean(vol.inner().try_into()?).into())
+    let vol = vol.inner().try_into_core()?;
+    let vol = try_into_static_err(vol)?;
+    let vol = vol.try_into()?;
+    Ok(palace_core::operators::volume_gpu::mean(vol).into())
 }
 
 #[pyfunction]
 pub fn gauss_kernel(stddev: f32) -> PyResult<TensorOperator> {
-    palace_core::operators::kernels::gauss(stddev).try_into()
+    palace_core::operators::kernels::gauss(stddev)
+        .into_dyn()
+        .try_into()
 }
 
 #[pyfunction]
@@ -249,7 +260,7 @@ pub fn open_volume(
     };
     let vol = crate::map_err(palace_volume::open(path, hints))?;
 
-    vol.try_into()
+    vol.into_dyn().try_into()
 }
 
 #[pyfunction]
@@ -260,15 +271,18 @@ pub fn view_image(
 ) -> PyResult<TensorOperator> {
     palace_core::operators::imageviewer::view_image(
         image.try_into()?,
-        result_metadata.try_into()?,
+        result_metadata.try_into_dim()?,
         view_state,
     )
+    .into_dyn()
     .try_into()
 }
 
 #[pyfunction]
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
-    crate::map_err(palace_core::operators::png::read(path))?.try_into()
+    crate::map_err(palace_core::operators::png::read(path))?
+        .into_dyn()
+        .try_into()
 }
 
 #[pyfunction]
@@ -286,11 +300,11 @@ pub fn apply_tf(
     }
     let tf = tf.try_into()?;
     input.try_map_inner(py, |input| {
-        Ok(palace_core::operators::volume_gpu::apply_tf::<D2>(input.try_into()?, tf).into())
+        Ok(palace_core::operators::volume_gpu::apply_tf::<DDyn>(input.try_into()?, tf).into())
     })
 }
 
 #[pyfunction]
 pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
-    palace_core::operators::procedural::mandelbrot(md.try_into()?).try_into()
+    palace_core::operators::procedural::mandelbrot(md.try_into_dim()?).try_into()
 }

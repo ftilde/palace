@@ -18,30 +18,30 @@ use crate::{
 use id::Identify;
 
 #[derive(Clone, Identify)]
-pub struct TensorOperator<D: Dimension, E> {
+pub struct TensorOperator<D: DynDimension, E> {
     pub metadata: TensorMetaData<D>,
     pub chunks: Operator<E>,
 }
 
-impl<D: Dimension, E> PartialEq for TensorOperator<D, E> {
+impl<D: DynDimension, E> PartialEq for TensorOperator<D, E> {
     fn eq(&self, other: &Self) -> bool {
         self.chunks.id() == other.chunks.id()
     }
 }
-impl<D: Dimension, E> Eq for TensorOperator<D, E> {}
-impl<D: Dimension, E> Hash for TensorOperator<D, E> {
+impl<D: DynDimension, E> Eq for TensorOperator<D, E> {}
+impl<D: DynDimension, E> Hash for TensorOperator<D, E> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u128(self.chunks.id().raw())
     }
 }
 
-impl<D: Dimension, E> OperatorNetworkNode for TensorOperator<D, E> {
+impl<D: DynDimension, E> OperatorNetworkNode for TensorOperator<D, E> {
     fn descriptor(&self) -> OperatorDescriptor {
         self.chunks.descriptor().dependent_on_data(&self.metadata)
     }
 }
 
-impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
+impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
     pub fn new<
         B: for<'cref, 'inv> Fn(
                 TaskContext<'cref, 'inv, E>,
@@ -116,7 +116,24 @@ impl<D: Dimension, E: ElementType> TensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, T> TryFrom<TensorOperator<D, DType>> for TensorOperator<D, StaticElementType<T>>
+impl<D: DynDimension, E> TensorOperator<D, E> {
+    pub fn into_dyn(self) -> TensorOperator<DDyn, E> {
+        TensorOperator {
+            metadata: self.metadata.into_dyn(),
+            chunks: self.chunks,
+        }
+    }
+
+    pub fn try_into_static<DS: Dimension>(self) -> Option<TensorOperator<DS, E>> {
+        Some(TensorOperator {
+            metadata: self.metadata.try_into_static()?,
+            chunks: self.chunks,
+        })
+    }
+}
+
+impl<D: DynDimension, T> TryFrom<TensorOperator<D, DType>>
+    for TensorOperator<D, StaticElementType<T>>
 where
     StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
 {
@@ -130,7 +147,7 @@ where
     type Error = ConversionError;
 }
 
-impl<D: Dimension, T: 'static> From<TensorOperator<D, StaticElementType<T>>>
+impl<D: DynDimension, T: 'static> From<TensorOperator<D, StaticElementType<T>>>
     for TensorOperator<D, DType>
 where
     DType: From<StaticElementType<T>>,
@@ -238,12 +255,12 @@ impl<D: Dimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>
 }
 
 #[derive(Clone)]
-pub struct EmbeddedTensorOperator<D: Dimension, E> {
+pub struct EmbeddedTensorOperator<D: DynDimension, E> {
     pub inner: TensorOperator<D, E>,
     pub embedding_data: TensorEmbeddingData<D>,
 }
 
-impl<D: Dimension, E> OperatorNetworkNode for EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E> OperatorNetworkNode for EmbeddedTensorOperator<D, E> {
     fn descriptor(&self) -> OperatorDescriptor {
         self.chunks
             .descriptor()
@@ -251,7 +268,7 @@ impl<D: Dimension, E> OperatorNetworkNode for EmbeddedTensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, E> std::ops::Deref for EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E> std::ops::Deref for EmbeddedTensorOperator<D, E> {
     type Target = TensorOperator<D, E>;
 
     fn deref(&self) -> &Self::Target {
@@ -259,19 +276,19 @@ impl<D: Dimension, E> std::ops::Deref for EmbeddedTensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, E> std::ops::DerefMut for EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E> std::ops::DerefMut for EmbeddedTensorOperator<D, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<D: Dimension, E> Into<TensorOperator<D, E>> for EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E> Into<TensorOperator<D, E>> for EmbeddedTensorOperator<D, E> {
     fn into(self) -> TensorOperator<D, E> {
         self.inner
     }
 }
 
-impl<D: Dimension, T> TryFrom<EmbeddedTensorOperator<D, DType>>
+impl<D: DynDimension, T> TryFrom<EmbeddedTensorOperator<D, DType>>
     for EmbeddedTensorOperator<D, StaticElementType<T>>
 where
     StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
@@ -286,7 +303,7 @@ where
     type Error = ConversionError;
 }
 
-impl<D: Dimension, T: 'static> From<EmbeddedTensorOperator<D, StaticElementType<T>>>
+impl<D: DynDimension, T: 'static> From<EmbeddedTensorOperator<D, StaticElementType<T>>>
     for EmbeddedTensorOperator<D, DType>
 where
     DType: From<StaticElementType<T>>,
@@ -299,7 +316,7 @@ where
     }
 }
 
-impl<D: Dimension, E: ElementType> EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E: ElementType> EmbeddedTensorOperator<D, E> {
     pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
@@ -314,21 +331,39 @@ impl<D: Dimension, E: ElementType> EmbeddedTensorOperator<D, E> {
         }
     }
 
-    pub fn real_dimensions(&self) -> Vector<D, f32> {
-        self.embedding_data.spacing * self.metadata.dimensions.raw().f32()
-    }
-
     pub fn cache(self) -> Self {
         self.map_inner(|t| t.cache())
     }
 }
 
+impl<D: DynDimension, E> EmbeddedTensorOperator<D, E> {
+    pub fn into_dyn(self) -> EmbeddedTensorOperator<DDyn, E> {
+        EmbeddedTensorOperator {
+            inner: self.inner.into_dyn(),
+            embedding_data: self.embedding_data.into_dyn(),
+        }
+    }
+
+    pub fn try_into_static<DS: Dimension>(self) -> Option<EmbeddedTensorOperator<DS, E>> {
+        Some(EmbeddedTensorOperator {
+            inner: self.inner.try_into_static()?,
+            embedding_data: self.embedding_data.try_into_static()?,
+        })
+    }
+}
+
+impl<D: Dimension, E: ElementType> EmbeddedTensorOperator<D, E> {
+    pub fn real_dimensions(&self) -> Vector<D, f32> {
+        self.embedding_data.spacing * self.metadata.dimensions.raw().f32()
+    }
+}
+
 #[derive(Clone)]
-pub struct LODTensorOperator<D: Dimension, E> {
+pub struct LODTensorOperator<D: DynDimension, E> {
     pub levels: Vec<EmbeddedTensorOperator<D, E>>,
 }
 
-impl<D: Dimension, E> OperatorNetworkNode for LODTensorOperator<D, E> {
+impl<D: DynDimension, E> OperatorNetworkNode for LODTensorOperator<D, E> {
     fn descriptor(&self) -> OperatorDescriptor {
         let mut d = self.levels[0].descriptor();
         for l in &self.levels[1..] {
@@ -338,7 +373,7 @@ impl<D: Dimension, E> OperatorNetworkNode for LODTensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, T> TryFrom<LODTensorOperator<D, DType>>
+impl<D: DynDimension, T> TryFrom<LODTensorOperator<D, DType>>
     for LODTensorOperator<D, StaticElementType<T>>
 where
     StaticElementType<T>: TryFrom<DType, Error = ConversionError>,
@@ -356,7 +391,7 @@ where
     type Error = ConversionError;
 }
 
-impl<D: Dimension, T: 'static> From<LODTensorOperator<D, StaticElementType<T>>>
+impl<D: DynDimension, T: 'static> From<LODTensorOperator<D, StaticElementType<T>>>
     for LODTensorOperator<D, DType>
 where
     DType: From<StaticElementType<T>>,
@@ -368,7 +403,7 @@ where
     }
 }
 
-impl<D: Dimension, E> LODTensorOperator<D, E> {
+impl<D: DynDimension, E> LODTensorOperator<D, E> {
     pub fn fine_metadata(&self) -> TensorMetaData<D> {
         self.levels[0].metadata.clone()
     }
@@ -377,7 +412,7 @@ impl<D: Dimension, E> LODTensorOperator<D, E> {
     }
 }
 
-impl<D: Dimension, E> LODTensorOperator<D, E> {
+impl<D: DynDimension, E> LODTensorOperator<D, E> {
     pub fn map(
         self,
         f: impl FnMut(EmbeddedTensorOperator<D, E>) -> EmbeddedTensorOperator<D, E>,
@@ -442,7 +477,7 @@ pub async fn map_values_inplace<
 }
 
 #[allow(unused)]
-pub fn map<D: Dimension, E: Element>(
+pub fn map<D: DynDimension, E: Element>(
     input: TensorOperator<D, StaticElementType<E>>,
     f: fn(E) -> E,
 ) -> TensorOperator<D, StaticElementType<E>> {
@@ -451,7 +486,7 @@ pub fn map<D: Dimension, E: Element>(
             .dependent_on(&input)
             .dependent_on_data(&(f as usize)),
         Default::default(),
-        input.metadata,
+        input.metadata.clone(),
         input,
         move |ctx, positions, input| {
             async move {
@@ -465,7 +500,7 @@ pub fn map<D: Dimension, E: Element>(
 }
 
 #[allow(unused)]
-pub fn linear_rescale<D: Dimension>(
+pub fn linear_rescale<D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     factor: f32,
     offset: f32,
@@ -476,7 +511,7 @@ pub fn linear_rescale<D: Dimension>(
             .dependent_on_data(&factor)
             .dependent_on_data(&offset),
         Default::default(),
-        input.metadata,
+        input.metadata.clone(),
         (input, factor, offset),
         move |ctx, positions, (input, factor, offset)| {
             let factor = *factor;

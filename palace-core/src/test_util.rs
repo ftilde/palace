@@ -2,7 +2,7 @@ use crate::{
     array::ChunkIndex,
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{DType, StaticElementType},
     operators::{
         tensor::TensorOperator,
         volume::{ChunkSize, VolumeOperator},
@@ -17,7 +17,9 @@ pub fn compare_tensor_fn<
 >(
     vol: TensorOperator<D, StaticElementType<T>>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
-) {
+) where
+    StaticElementType<T>: Into<DType>,
+{
     let mut runtime =
         crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
 

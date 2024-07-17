@@ -185,9 +185,9 @@ impl<OutputType: Clone> Clone for Operator<OutputType> {
         }
     }
 }
-impl<OutputType: Copy> Operator<OutputType> {
+impl<OutputType: Clone> Operator<OutputType> {
     pub fn dtype(&self) -> OutputType {
-        self.dtype
+        self.dtype.clone()
     }
 }
 

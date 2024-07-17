@@ -1,3 +1,6 @@
+use std::fmt::Debug;
+use std::hash::Hash;
+
 pub trait Array<T: Sized + Copy>:
     std::ops::IndexMut<usize, Output = T>
     + std::ops::Index<usize, Output = T>
@@ -26,13 +29,58 @@ pub struct D4;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, bytemuck::Zeroable, Default)]
 pub struct D5;
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, bytemuck::Zeroable, Default)]
+pub struct DDyn;
+
 pub trait Dimension:
-    'static + Copy + bytemuck::Zeroable + Eq + PartialEq + std::fmt::Debug + std::hash::Hash + Default
+    'static + Copy + bytemuck::Zeroable + Eq + PartialEq + Debug + Hash + Default
 {
     const N: usize;
     type NDArrayDim: ndarray::Dimension;
     type Array<T: Copy>: Array<T>;
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim;
+}
+
+pub trait DynDimension: 'static + Debug + Clone {
+    type Vec<T: Copy + id::Identify + PartialEq + Debug>: id::Identify + Clone + PartialEq + Debug;
+    fn try_into_dim<D: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
+        v: Self::Vec<T>,
+    ) -> Option<crate::vec::Vector<D, T>>;
+
+    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T>;
+}
+impl<D: Dimension> DynDimension for D {
+    type Vec<T: Copy + id::Identify + PartialEq + Debug> = crate::vec::Vector<D, T>;
+    fn try_into_dim<D2: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
+        v: Self::Vec<T>,
+    ) -> Option<crate::vec::Vector<D2, T>> {
+        if D::N == D2::N {
+            Some(crate::vec::Vector::<D2, T>::from_fn(|i| v[i]))
+        } else {
+            None
+        }
+    }
+
+    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T> {
+        v.into_iter().collect()
+    }
+}
+
+impl DynDimension for DDyn {
+    type Vec<T: Copy + id::Identify + PartialEq + Debug> = Vec<T>;
+    fn try_into_dim<D2: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
+        v: Self::Vec<T>,
+    ) -> Option<crate::vec::Vector<D2, T>> {
+        if v.len() == D2::N {
+            Some(crate::vec::Vector::<D2, T>::from_fn(|i| v[i]))
+        } else {
+            None
+        }
+    }
+
+    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T> {
+        v
+    }
 }
 
 pub trait LargerDim: Dimension {

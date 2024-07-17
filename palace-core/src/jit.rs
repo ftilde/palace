@@ -6,7 +6,7 @@ use id::{Id, Identify};
 
 use crate::{
     array::TensorMetaData,
-    dim::Dimension,
+    dim::DynDimension,
     dtypes::DType,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
@@ -107,9 +107,9 @@ enum Node {
 }
 
 #[derive(Clone)]
-struct OperatorSet<D: Dimension>(Vec<TensorOperator<D, DType>>);
+struct OperatorSet<D: DynDimension>(Vec<TensorOperator<D, DType>>);
 
-impl<D: Dimension> OperatorSet<D> {
+impl<D: DynDimension> OperatorSet<D> {
     fn add(&mut self, op: TensorOperator<D, DType>) -> usize {
         let pos = if let Some(pos) = self
             .0
@@ -136,14 +136,14 @@ impl<D: Dimension> OperatorSet<D> {
 
 //TODO: Rc for cheap clone?
 #[derive(Clone)]
-pub struct JitTensorOperator<D: Dimension> {
+pub struct JitTensorOperator<D: DynDimension> {
     node: Node,
     metadata: Option<TensorMetaData<D>>,
     dtype: DType,
     operators: OperatorSet<D>,
 }
 
-impl<D: Dimension> id::Identify for JitTensorOperator<D> {
+impl<D: DynDimension> id::Identify for JitTensorOperator<D> {
     fn id(&self) -> Id {
         // Note: All information (including operators via there ids) is present in the operation
         // tree `node`
@@ -151,12 +151,12 @@ impl<D: Dimension> id::Identify for JitTensorOperator<D> {
     }
 }
 
-impl<D: Dimension> JitTensorOperator<D> {
+impl<D: DynDimension> JitTensorOperator<D> {
     pub fn dtype(&self) -> DType {
         self.dtype
     }
     pub fn metadata(&self) -> Option<TensorMetaData<D>> {
-        self.metadata
+        self.metadata.clone()
     }
     pub fn with_md(mut self, new_md: TensorMetaData<D>) -> Result<Self, crate::Error> {
         self.metadata = if let Some(md) = self.metadata {
@@ -211,7 +211,7 @@ impl<D: Dimension> JitTensorOperator<D> {
     }
 }
 
-impl<D: Dimension> From<ConstValue> for JitTensorOperator<D> {
+impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
     fn from(c: ConstValue) -> Self {
         Self {
             node: Node::Const(c),
@@ -222,17 +222,17 @@ impl<D: Dimension> From<ConstValue> for JitTensorOperator<D> {
     }
 }
 
-impl<D: Dimension> From<f32> for JitTensorOperator<D> {
+impl<D: DynDimension> From<f32> for JitTensorOperator<D> {
     fn from(value: f32) -> Self {
         ConstValue::F32(value).into()
     }
 }
 
-impl<D: Dimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
+impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
     fn from(c: TensorOperator<D, DType>) -> Self {
         let dtype = c.chunks.dtype();
         let id = c.chunks.id();
-        let metadata = Some(c.metadata);
+        let metadata = Some(c.metadata.clone());
         Self {
             metadata,
             dtype,
@@ -242,13 +242,13 @@ impl<D: Dimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
     }
 }
 
-impl<D: Dimension> JitTensorOperator<D> {
+impl<D: DynDimension> JitTensorOperator<D> {
     pub fn add(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Add, self, other)
     }
 }
 
-impl<D: Dimension> JitTensorOperator<D> {
+impl<D: DynDimension> JitTensorOperator<D> {
     pub fn abs(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Abs, self)
     }
@@ -319,11 +319,11 @@ fn translate(
     Ok(res_id)
 }
 
-pub fn jit<D: Dimension>(op: TensorOperator<D, DType>) -> JitTensorOperator<D> {
+pub fn jit<D: DynDimension>(op: TensorOperator<D, DType>) -> JitTensorOperator<D> {
     op.into()
 }
 
-fn compile<D: Dimension>(
+fn compile<D: DynDimension>(
     node: &Node,
     inputs: &Vec<TensorOperator<D, DType>>,
 ) -> Result<String, crate::Error> {
@@ -392,19 +392,19 @@ fn compile<D: Dimension>(
 
     Ok(shader)
 }
-impl<D: Dimension> JitTensorOperator<D> {
+impl<D: DynDimension> JitTensorOperator<D> {
     pub fn compile(self) -> Result<TensorOperator<D, DType>, crate::Error> {
         let dtype = self.dtype;
-        let Some(metadata) = self.metadata else {
+        let Some(metadata) = self.metadata.clone() else {
             return Err("No metadata information in JitOperator".into());
         };
 
         Ok(TensorOperator::with_state(
             OperatorDescriptor::new("jit").dependent_on_data(&self),
             dtype,
-            metadata,
-            self,
-            move |ctx, positions, jit_operator| {
+            metadata.clone(),
+            (self, metadata),
+            move |ctx, positions, (jit_operator, metadata)| {
                 async move {
                     let device = ctx.preferred_device();
 
@@ -412,7 +412,9 @@ impl<D: Dimension> JitTensorOperator<D> {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                     };
-                    let m = metadata;
+                    let m = metadata.clone().into_dyn();
+
+                    let num_chunk_elements = m.num_chunk_elements();
 
                     let pipeline = device.request_state(
                         RessourceId::new("pipeline").of(ctx.current_op()),
@@ -422,7 +424,7 @@ impl<D: Dimension> JitTensorOperator<D> {
                                 device,
                                 (
                                     shader.as_str(),
-                                    ShaderDefines::new().add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
+                                    ShaderDefines::new().add("BRICK_MEM_SIZE", num_chunk_elements),
                                 ),
                                 true,
                             )
@@ -439,15 +441,11 @@ impl<D: Dimension> JitTensorOperator<D> {
                             )
                         }))
                         .then_req_with_data(*ctx, |(input, pos)| {
-                            let brick_info = m.chunk_info(pos);
-
-                            let output = ctx.alloc_slot_gpu(device, pos, brick_info.mem_elements());
-                            (output, (input, brick_info))
+                            let output = ctx.alloc_slot_gpu(device, pos, num_chunk_elements);
+                            (output, input)
                         });
 
-                    while let Some((gpu_brick_out, (inputs, brick_info))) =
-                        brick_stream.next().await
-                    {
+                    while let Some((gpu_brick_out, inputs)) = brick_stream.next().await {
                         device.with_cmd_buffer(|cmd| {
                             let mut descriptors = inputs
                                 .iter()
@@ -456,7 +454,7 @@ impl<D: Dimension> JitTensorOperator<D> {
                             descriptors.push(&gpu_brick_out);
                             let descriptor_config = DescriptorConfig::from_vec(descriptors);
 
-                            let global_size = brick_info.mem_elements();
+                            let global_size = num_chunk_elements;
 
                             unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
@@ -485,7 +483,7 @@ impl<D: Dimension> JitTensorOperator<D> {
     }
 }
 
-impl<D: Dimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D> {
+impl<D: DynDimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D> {
     type Error = crate::Error;
     fn try_into(self) -> Result<TensorOperator<D, DType>, Self::Error> {
         self.compile()
