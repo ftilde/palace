@@ -13,6 +13,10 @@ pub trait ElementType: Clone {
     }
 }
 
+pub trait AsDynType {
+    const D_TYPE: DType;
+}
+
 /// Static ---------------------------------------------------------------------
 
 pub struct StaticElementType<T>(std::marker::PhantomData<T>);
@@ -53,12 +57,17 @@ macro_rules! impl_conversion {
             }
         }
 
-        impl From<StaticElementType<$ty>> for DType {
-            fn from(_value: StaticElementType<$ty>) -> Self {
-                DType::$variant
-            }
+        impl AsDynType for $ty {
+            const D_TYPE: DType = DType::$variant;
         }
     };
+}
+
+// TODO: Can we remove this?
+impl<T: AsDynType> From<StaticElementType<T>> for DType {
+    fn from(_value: StaticElementType<T>) -> Self {
+        T::D_TYPE
+    }
 }
 
 impl_conversion!(u8, U8);

@@ -10,52 +10,53 @@ use crate::{
 use id::{Id, Identify};
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-pub struct Vector<D: Dimension, T: Copy>(D::Array<T>);
+#[derive(Clone, Default)]
+pub struct Vector<D: DynDimension, T: Copy>(D::DynArray<T>);
 
-impl<D: Dimension, T: Copy + Identify> Identify for Vector<D, T> {
+impl<D: DynDimension, T: Copy + Identify> Identify for Vector<D, T> {
     fn id(&self) -> Id {
-        Id::combine_it(self.into_iter().map(|v| v.id()))
+        Id::combine_it(self.iter().map(|v| v.id()))
     }
 }
 
-unsafe impl<D: Dimension, T: Copy + bytemuck::Zeroable> bytemuck::Zeroable for Vector<D, T> {}
+unsafe impl<D: DynDimension, T: Copy + bytemuck::Zeroable> bytemuck::Zeroable for Vector<D, T> {}
 unsafe impl<D: Dimension, T: Copy + bytemuck::Pod> bytemuck::Pod for Vector<D, T> {}
+impl<D: Dimension, T: Copy> Copy for Vector<D, T> {}
 
-impl<D: Dimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
+impl<D: DynDimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
     fn eq(&self, other: &Self) -> bool {
-        Vector::zip(*self, *other, |l, r| l == r).hand()
+        Vector::zip(self, other, |l, r| l == r).hand()
     }
 }
-impl<D: Dimension, T: Copy + Eq> Eq for Vector<D, T> {}
+impl<D: DynDimension, T: Copy + Eq> Eq for Vector<D, T> {}
 
-impl<D: Dimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
+impl<D: DynDimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Vector::zip(*self, *other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
+        Vector::zip(self, other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
             (Some(l), Some(r)) => Some(l.then(r)),
             (Some(l), None) => Some(l),
             (None, o) => o,
         })
     }
 }
-impl<D: Dimension, T: Copy + Ord> Ord for Vector<D, T> {
+impl<D: DynDimension, T: Copy + Ord> Ord for Vector<D, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        Vector::zip(*self, *other, |l, r| l.cmp(&r)).fold(Ordering::Equal, Ordering::then)
+        Vector::zip(self, other, |l, r| l.cmp(&r)).fold(Ordering::Equal, Ordering::then)
     }
 }
-impl<D: Dimension, T: Copy + std::fmt::Debug> std::fmt::Debug for Vector<D, T> {
+impl<D: DynDimension, T: Copy + std::fmt::Debug> std::fmt::Debug for Vector<D, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut f = f.debug_list();
-        for v in *self {
+        for v in self.iter() {
             f.entry(&v);
         }
         f.finish()
     }
 }
-impl<D: Dimension, T: Copy + std::hash::Hash> std::hash::Hash for Vector<D, T> {
+impl<D: DynDimension, T: Copy + std::hash::Hash> std::hash::Hash for Vector<D, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        for v in *self {
+        for v in self.iter() {
             v.hash(state);
         }
     }
@@ -81,60 +82,76 @@ impl_array_ops!(D3, 3);
 impl_array_ops!(D4, 4);
 impl_array_ops!(D5, 5);
 
-impl<D: Dimension, T: Copy, I: Copy + Into<T>> TryFrom<Vec<I>> for Vector<D, T> {
+impl<D: DynDimension, T: Copy, I: Copy + Into<T>> TryFrom<Vec<I>> for Vector<D, T> {
     type Error = ();
 
     fn try_from(value: Vec<I>) -> Result<Self, Self::Error> {
-        if value.len() != D::N {
-            return Err(());
-        }
-        Ok(Self::from_fn(|i| value[i].into()))
+        Self::try_from_fn_and_len(|i| value[i].into(), value.len())
     }
 }
 
 impl<D: Dimension, T: Copy> Vector<D, T> {
     pub fn from_fn(f: impl FnMut(usize) -> T) -> Self {
-        Vector(D::Array::from_fn(f))
-    }
-    pub fn new(inner: D::Array<T>) -> Self {
-        Vector(inner)
-    }
-    pub fn dim() -> usize {
-        D::N
-    }
-    pub fn inner(self) -> D::Array<T> {
-        self.0
+        Self::try_from_fn_and_len(f, D::N).unwrap()
     }
 
     pub fn fill(val: T) -> Self {
         Self::from_fn(|_| val)
     }
-    pub fn map<U: Copy>(self, mut f: impl FnMut(T) -> U) -> Vector<D, U> {
-        Vector(D::Array::from_fn(|i| f(self.0[i])))
+}
+impl<D: DynDimension, T: Copy> Vector<D, T> {
+    pub fn into_dyn(self) -> Vector<DDyn, T> {
+        Vector(D::into_dyn(self.0))
+    }
+    pub fn try_into_static<D2: Dimension>(self) -> Option<Vector<D2, T>> {
+        D::try_into_dim::<D2, T>(self.0).map(Vector)
+    }
+    pub fn try_from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Result<Self, ()> {
+        Ok(Vector(D::DynArray::try_from_fn_and_len(f, size)?))
+    }
+    fn from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Self {
+        Self::try_from_fn_and_len(f, size).unwrap()
+    }
+    pub fn fill_with_len(val: T, len: usize) -> Self {
+        Self::from_fn_and_len(|_| val, len)
+    }
+    pub fn new(inner: D::DynArray<T>) -> Self {
+        Vector(inner)
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn inner(self) -> D::DynArray<T> {
+        self.0
+    }
+    pub fn map<U: Copy>(&self, mut f: impl FnMut(T) -> U) -> Vector<D, U> {
+        Vector::from_fn_and_len(|i| f(self.0[i]), self.len())
     }
     pub fn map_element(mut self, i: usize, f: impl FnOnce(T) -> T) -> Vector<D, T> {
         self.0[i] = f(self.0[i]);
         self
     }
-    pub fn fold<U>(self, mut state: U, mut f: impl FnMut(U, T) -> U) -> U {
-        for v in self.0 {
-            state = f(state, v);
+    pub fn fold<U>(&self, mut state: U, mut f: impl FnMut(U, T) -> U) -> U {
+        for v in self.iter() {
+            state = f(state, *v);
         }
         state
     }
     pub fn zip<U: Copy, V: Copy>(
-        self,
-        other: Vector<D, U>,
+        &self,
+        other: &Vector<D, U>,
         mut f: impl FnMut(T, U) -> V,
     ) -> Vector<D, V> {
-        Vector(D::Array::from_fn(|i| f(self.0[i], other.0[i])))
+        assert_eq!(self.len(), other.len());
+        Vector::from_fn_and_len(|i| f(self.0[i], other.0[i]), self.len())
     }
     pub fn zip_enumerate<U: Copy, V: Copy>(
-        self,
-        other: Vector<D, U>,
+        &self,
+        other: &Vector<D, U>,
         mut f: impl FnMut(usize, T, U) -> V,
     ) -> Vector<D, V> {
-        Vector(D::Array::from_fn(|i| f(i, self.0[i], other.0[i])))
+        assert_eq!(self.len(), other.len());
+        Vector::from_fn_and_len(|i| f(i, self.0[i], other.0[i]), self.len())
     }
     pub fn into_elem<U: Copy>(self) -> Vector<D, U>
     where
@@ -148,73 +165,73 @@ impl<D: Dimension, T: Copy> Vector<D, T> {
     {
         // Safety: Standard way to initialize an MaybeUninit array
         let mut out: Vector<D, MaybeUninit<U>> = unsafe { MaybeUninit::uninit().assume_init() };
-        for i in 0..D::N {
+        for i in 0..self.len() {
             out[i].write(T::try_into(self.0[i])?);
         }
         // Safety: We have just initialized all values in the loop above
         Ok(out.map(|v| unsafe { v.assume_init() }))
     }
     pub fn get(&self, index: usize) -> Option<&T> {
-        if index < D::N {
+        if index < self.len() {
             Some(&self.0[index])
         } else {
             None
         }
     }
 }
-impl<D: Dimension, T: std::ops::Mul<Output = T> + Copy> Vector<D, T> {
-    pub fn scale(self, v: T) -> Self {
+impl<D: DynDimension, T: std::ops::Mul<Output = T> + Copy> Vector<D, T> {
+    pub fn scale(&self, v: T) -> Self {
         self.map(|w| w * v)
     }
 }
-impl<D: Dimension, T: Copy> std::ops::Index<usize> for Vector<D, T> {
+impl<D: DynDimension, T: Copy> std::ops::Index<usize> for Vector<D, T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
     }
 }
-impl<D: Dimension, T: Copy> std::ops::IndexMut<usize> for Vector<D, T> {
+impl<D: DynDimension, T: Copy> std::ops::IndexMut<usize> for Vector<D, T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
     }
 }
-impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
-    pub fn as_index(self) -> D::Array<usize> {
+impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+    pub fn as_index(&self) -> D::DynArray<usize> {
         self.map(|v| v.raw as usize).0
     }
 }
 
-impl<D: Dimension> Vector<D, GlobalCoordinate> {
-    pub fn local(self) -> Vector<D, LocalCoordinate> {
+impl<D: DynDimension> Vector<D, GlobalCoordinate> {
+    pub fn local(&self) -> Vector<D, LocalCoordinate> {
         self.map(LocalCoordinate::interpret_as)
     }
 }
-impl<D: Dimension> Vector<D, LocalCoordinate> {
-    pub fn global(self) -> Vector<D, GlobalCoordinate> {
+impl<D: DynDimension> Vector<D, LocalCoordinate> {
+    pub fn global(&self) -> Vector<D, GlobalCoordinate> {
         self.map(GlobalCoordinate::interpret_as)
     }
 }
-impl<D: Dimension> Vector<D, u32> {
-    pub fn global(self) -> Vector<D, GlobalCoordinate> {
+impl<D: DynDimension> Vector<D, u32> {
+    pub fn global(&self) -> Vector<D, GlobalCoordinate> {
         self.map(|v| v.into())
     }
-    pub fn chunk(self) -> Vector<D, ChunkCoordinate> {
+    pub fn chunk(&self) -> Vector<D, ChunkCoordinate> {
         self.map(|v| v.into())
     }
 }
-impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
-    pub fn raw(self) -> Vector<D, u32> {
+impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+    pub fn raw(&self) -> Vector<D, u32> {
         self.map(|v| v.raw)
     }
 }
-impl<D: Dimension> Vector<D, u32> {
-    pub fn f32(self) -> Vector<D, f32> {
+impl<D: DynDimension> Vector<D, u32> {
+    pub fn f32(&self) -> Vector<D, f32> {
         self.map(|v| v as f32)
     }
 }
-impl<D: Dimension> Vector<D, u8> {
-    pub fn f32(self) -> Vector<D, f32> {
+impl<D: DynDimension> Vector<D, u8> {
+    pub fn f32(&self) -> Vector<D, f32> {
         self.map(|v| v as f32)
     }
 }
@@ -276,16 +293,16 @@ impl<D: SmallerDim, T: Copy> Vector<D, T> {
     }
 }
 
-pub struct VecIter<D: Dimension, T: Copy> {
+pub struct VecIter<D: DynDimension, T: Copy> {
     vec: Vector<D, T>,
     i: usize,
 }
 
-impl<D: Dimension, T: Copy> Iterator for VecIter<D, T> {
+impl<D: DynDimension, T: Copy> Iterator for VecIter<D, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i < D::N {
+        if self.i < self.vec.len() {
             let i = self.i;
             self.i += 1;
             Some(self.vec[i])
@@ -294,13 +311,13 @@ impl<D: Dimension, T: Copy> Iterator for VecIter<D, T> {
         }
     }
 }
-impl<D: Dimension, T: Copy> ExactSizeIterator for VecIter<D, T> {
+impl<D: DynDimension, T: Copy> ExactSizeIterator for VecIter<D, T> {
     fn len(&self) -> usize {
-        D::N - self.i
+        self.vec.len() - self.i
     }
 }
 
-impl<D: Dimension, T: Copy> IntoIterator for Vector<D, T> {
+impl<D: DynDimension, T: Copy> IntoIterator for Vector<D, T> {
     type Item = T;
 
     type IntoIter = VecIter<D, T>;
@@ -310,19 +327,26 @@ impl<D: Dimension, T: Copy> IntoIterator for Vector<D, T> {
     }
 }
 
-impl<D: Dimension, T: Copy> Vector<D, T> {
+impl<D: DynDimension, T: Copy> Vector<D, T> {
+    pub fn iter(&self) -> std::slice::Iter<T> {
+        self.0.as_slice().iter()
+    }
+}
+
+impl<D: DynDimension, T: Copy> Vector<D, T> {
     pub fn dot<O: num::Zero + Copy + Add<O, Output = O>, U: Copy + Mul<T, Output = O>>(
         &self,
         other: &Vector<D, U>,
     ) -> O {
+        assert_eq!(self.len(), other.len());
         let mut s = num::zero();
-        for i in 0..D::N {
+        for i in 0..self.len() {
             s = s + other.0[i] * self.0[i];
         }
         s
     }
 }
-impl<D: Dimension, T: Neg + Copy> Neg for Vector<D, T>
+impl<D: DynDimension, T: Neg + Copy> Neg for Vector<D, T>
 where
     T::Output: Copy,
 {
@@ -331,12 +355,46 @@ where
         self.map(|v| v.neg())
     }
 }
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<&Vector<D, U>>
+    for &Vector<D, T>
+{
+    type Output = Vector<D, O>;
+    fn add(self, rhs: &Vector<D, U>) -> Self::Output {
+        self.zip(rhs, Add::add)
+    }
+}
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<&Vector<D, U>>
+    for &Vector<D, T>
+{
+    type Output = Vector<D, O>;
+    fn sub(self, rhs: &Vector<D, U>) -> Self::Output {
+        self.zip(rhs, Sub::sub)
+    }
+}
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<&Vector<D, U>>
+    for &Vector<D, T>
+{
+    type Output = Vector<D, O>;
+    fn mul(self, rhs: &Vector<D, U>) -> Self::Output {
+        self.zip(rhs, Mul::mul)
+    }
+}
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<&Vector<D, U>>
+    for &Vector<D, T>
+{
+    type Output = Vector<D, O>;
+    fn div(self, rhs: &Vector<D, U>) -> Self::Output {
+        self.zip(rhs, Div::div)
+    }
+}
+
+// Add convenience versions without refs for Copy vectors
 impl<D: Dimension, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<Vector<D, U>>
     for Vector<D, T>
 {
     type Output = Vector<D, O>;
     fn add(self, rhs: Vector<D, U>) -> Self::Output {
-        self.zip(rhs, Add::add)
+        self.zip(&rhs, Add::add)
     }
 }
 impl<D: Dimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<Vector<D, U>>
@@ -344,7 +402,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<Vector<D,
 {
     type Output = Vector<D, O>;
     fn sub(self, rhs: Vector<D, U>) -> Self::Output {
-        self.zip(rhs, Sub::sub)
+        self.zip(&rhs, Sub::sub)
     }
 }
 impl<D: Dimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<Vector<D, U>>
@@ -352,7 +410,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<Vector<D,
 {
     type Output = Vector<D, O>;
     fn mul(self, rhs: Vector<D, U>) -> Self::Output {
-        self.zip(rhs, Mul::mul)
+        self.zip(&rhs, Mul::mul)
     }
 }
 impl<D: Dimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<D, U>>
@@ -360,7 +418,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<D,
 {
     type Output = Vector<D, O>;
     fn div(self, rhs: Vector<D, U>) -> Self::Output {
-        self.zip(rhs, Div::div)
+        self.zip(&rhs, Div::div)
     }
 }
 
@@ -426,8 +484,8 @@ impl<T: Copy> From<cgmath::Vector4<T>> for Vector<D4, T> {
     }
 }
 
-impl<D: Dimension> Vector<D, f32> {
-    pub fn length(self) -> f32 {
+impl<D: DynDimension> Vector<D, f32> {
+    pub fn length(&self) -> f32 {
         self.map(|v| v * v).fold(0.0, f32::add).sqrt()
     }
 
@@ -451,22 +509,22 @@ mod py {
     use super::*;
     use pyo3::{prelude::*, types::PyList};
 
-    impl<'source, D: Dimension, T: Copy> FromPyObject<'source> for Vector<D, T>
+    impl<'source, D: DynDimension, T: Copy> FromPyObject<'source> for Vector<D, T>
     where
-        D::Array<T>: FromPyObject<'source>,
+        D::DynArray<T>: FromPyObject<'source>,
     {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
-            ob.extract::<D::Array<T>>().map(Self)
+            ob.extract::<D::DynArray<T>>().map(Self)
         }
     }
 
-    impl<D: Dimension, T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Vector<D, T> {
+    impl<D: DynDimension, T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Vector<D, T> {
         fn into_py(self, py: Python<'_>) -> PyObject {
             PyList::new(py, self.into_iter().map(|v| v.into_py(py))).into()
         }
     }
 
-    //impl<D: Dimension, T: ToPyObject> ToPyObject for Vector<D, T> {
+    //impl<D: DynDimension, T: ToPyObject> ToPyObject for Vector<D, T> {
     //    fn to_object(&self, py: Python<'_>) -> PyObject {
     //        PyList::new(py, self.0.iter().map(|v| v.to_object(py))).into()
     //    }
@@ -563,14 +621,14 @@ pub mod state_link_impl {
             Ok(())
         }
     }
-    impl<D: Dimension, T: Copy + State> VecNodeHandle<D, T> {
+    impl<D: DynDimension, T: Copy + State> VecNodeHandle<D, T> {
         pub fn at(&self, i: usize) -> <T as State>::NodeHandle {
             <T as State>::NodeHandle::pack(self.inner.index(i))
         }
     }
 }
 
-impl<D: Dimension> Vector<D, f32> {
+impl<D: DynDimension> Vector<D, f32> {
     pub fn hmin(&self) -> f32 {
         self.fold(f32::INFINITY, |a, b| a.min(b))
     }
@@ -584,7 +642,7 @@ impl<D: Dimension> Vector<D, f32> {
         self.fold(1.0, |a, b| a * b)
     }
 }
-impl<D: Dimension> Vector<D, bool> {
+impl<D: DynDimension> Vector<D, bool> {
     pub fn all(&self) -> bool {
         self.fold(true, |a, b| a && b)
     }
@@ -592,16 +650,18 @@ impl<D: Dimension> Vector<D, bool> {
         self.fold(false, |a, b| a || b)
     }
 }
-impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn hmul(&self) -> usize {
-        self.into_iter().map(|v| v.raw as usize).product()
+        self.iter().map(|v| v.raw as usize).product()
     }
+}
 
+impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn to_ndarray_dim(self) -> D::NDArrayDim {
         D::to_ndarray_dim(self.as_index())
     }
 }
-impl<D: Dimension> Vector<D, bool> {
+impl<D: DynDimension> Vector<D, bool> {
     pub fn hand(self) -> bool {
         self.fold(true, |l, r| l && r)
     }
@@ -611,23 +671,24 @@ impl<D: Dimension> Vector<D, bool> {
     }
 }
 
-pub fn to_linear<D: Dimension, T: CoordinateType>(
-    pos: Vector<D, Coordinate<T>>,
-    dim: Vector<D, Coordinate<T>>,
+pub fn to_linear<D: DynDimension, T: CoordinateType>(
+    pos: &Vector<D, Coordinate<T>>,
+    dim: &Vector<D, Coordinate<T>>,
 ) -> usize {
+    assert_eq!(pos.len(), dim.len());
     let mut out = pos[0].raw as usize;
-    for i in 1..D::N {
+    for i in 1..pos.len() {
         out = out * dim[i].raw as usize + pos[i].raw as usize;
     }
     out
 }
 
-pub fn from_linear<D: Dimension, T: CoordinateType>(
+pub fn from_linear<D: DynDimension, T: CoordinateType>(
     mut linear_pos: usize,
-    dim: Vector<D, Coordinate<T>>,
+    dim: &Vector<D, Coordinate<T>>,
 ) -> Vector<D, Coordinate<T>> {
-    let mut out = Vector::<D, Coordinate<T>>::fill(0.into());
-    for i in (0..D::N).rev() {
+    let mut out = Vector::<D, Coordinate<T>>::from_fn_and_len(|_| 0.into(), dim.len());
+    for i in (0..dim.len()).rev() {
         let ddim = dim[i].raw as usize;
         out[i] = ((linear_pos % ddim) as u32).into();
         linear_pos /= ddim;

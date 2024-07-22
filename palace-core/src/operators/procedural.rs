@@ -121,7 +121,7 @@ pub fn rasterize_lod<D: Dimension>(
         spacing = spacing.scale(2.0);
         let chunk_size: Vector<D, _> = md.chunk_size;
         let dimensions: Vector<D, _> = md.dimensions;
-        if chunk_size.raw().zip(dimensions.raw(), |c, d| c >= d).all() {
+        if chunk_size.raw().zip(&dimensions.raw(), |c, d| c >= d).all() {
             break;
         }
     }

@@ -43,16 +43,16 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
     //dbg!(chunks_in_line.len());
 
     for (pos, ref mut buf) in &mut *chunks_in_line {
-        let chunk_info = m.chunk_info_vec(*pos);
+        let chunk_info = m.chunk_info_vec(pos);
         crate::data::init_non_full_raw(buf.as_mut(), &chunk_info, 0xff);
     }
 
     let first = chunks_in_line.first().unwrap();
-    let first_info = m.chunk_info_vec(first.0);
+    let first_info = m.chunk_info_vec(&first.0);
     let global_begin = first_info.begin;
 
     let last = chunks_in_line.last().unwrap();
-    let last_info = m.chunk_info_vec(last.0);
+    let last_info = m.chunk_info_vec(&last.0);
     let global_end = last_info.end();
 
     let strip_size_z = first_info.logical_dimensions.z();
@@ -61,7 +61,7 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
         for y in 0..strip_size_y.raw {
             // Note: This assumes that all bricks have the same memory size! This may
             // change in the future
-            let line_begin_brick = crate::data::to_linear(Vector::from([z, y, 0, 0]), brick_size);
+            let line_begin_brick = crate::data::to_linear(&Vector::from([z, y, 0, 0]), &brick_size);
             let line_size = brick_size[2].raw as usize * elm_size;
 
             let global_line = in_.slice(ndarray::s!(
@@ -242,7 +242,7 @@ impl RawVolumeSourceState {
 
                 let brick_handles = positions.iter().map(|pos| {
                     let data_id =
-                        DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(*pos));
+                        DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(pos));
                     ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
                 });
 
@@ -280,7 +280,7 @@ impl RawVolumeSourceState {
 
                 let brick_handles = positions
                     .iter()
-                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(*pos), num_voxels));
+                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(pos), num_voxels));
 
                 (ctx.group(brick_handles), positions)
             });

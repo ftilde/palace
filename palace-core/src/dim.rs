@@ -6,6 +6,7 @@ pub trait Array<T: Sized + Copy>:
     + std::ops::Index<usize, Output = T>
     + IntoIterator<Item = T>
     + Copy
+    + DynArray<T>
 {
     const N: usize;
     fn from_fn(f: impl FnMut(usize) -> T) -> Self;
@@ -15,6 +16,46 @@ impl<const N: usize, T: Copy> Array<T> for [T; N] {
     const N: usize = N;
     fn from_fn(f: impl FnMut(usize) -> T) -> Self {
         std::array::from_fn(f)
+    }
+}
+
+pub trait DynArray<T: Sized + Copy>:
+    std::ops::IndexMut<usize, Output = T>
+    + std::ops::Index<usize, Output = T>
+    + IntoIterator<Item = T>
+    + Clone
+{
+    fn try_from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Result<Self, ()>;
+    fn len(&self) -> usize;
+    fn as_slice(&self) -> &[T];
+}
+
+impl<const N: usize, T: Copy> DynArray<T> for [T; N] {
+    fn try_from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Result<Self, ()> {
+        if size == N {
+            Ok(std::array::from_fn(f))
+        } else {
+            Err(())
+        }
+    }
+    fn len(&self) -> usize {
+        N
+    }
+    fn as_slice(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+impl<T: Copy> DynArray<T> for Vec<T> {
+    fn try_from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Result<Self, ()> {
+        Ok((0..size).into_iter().map(f).collect())
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn as_slice(&self) -> &[T] {
+        self.as_slice()
     }
 }
 
@@ -30,7 +71,7 @@ pub struct D4;
 pub struct D5;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, bytemuck::Zeroable, Default)]
-pub struct DDyn;
+pub struct DDyn(usize);
 
 pub trait Dimension:
     'static + Copy + bytemuck::Zeroable + Eq + PartialEq + Debug + Hash + Default
@@ -42,43 +83,44 @@ pub trait Dimension:
 }
 
 pub trait DynDimension: 'static + Debug + Clone {
-    type Vec<T: Copy + id::Identify + PartialEq + Debug>: id::Identify + Clone + PartialEq + Debug;
-    fn try_into_dim<D: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
-        v: Self::Vec<T>,
-    ) -> Option<crate::vec::Vector<D, T>>;
+    type DynArray<T: Copy>: DynArray<T>;
+    fn n_dim(&self) -> usize;
+    fn try_into_dim<D: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D::Array<T>>;
 
-    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T>;
+    fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T>;
 }
 impl<D: Dimension> DynDimension for D {
-    type Vec<T: Copy + id::Identify + PartialEq + Debug> = crate::vec::Vector<D, T>;
-    fn try_into_dim<D2: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
-        v: Self::Vec<T>,
-    ) -> Option<crate::vec::Vector<D2, T>> {
+    type DynArray<T: Copy> = D::Array<T>;
+    fn n_dim(&self) -> usize {
+        D::N
+    }
+    fn try_into_dim<D2: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D2::Array<T>> {
         if D::N == D2::N {
-            Some(crate::vec::Vector::<D2, T>::from_fn(|i| v[i]))
+            Some(D2::Array::from_fn(|i| v[i]))
         } else {
             None
         }
     }
 
-    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T> {
+    fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T> {
         v.into_iter().collect()
     }
 }
 
 impl DynDimension for DDyn {
-    type Vec<T: Copy + id::Identify + PartialEq + Debug> = Vec<T>;
-    fn try_into_dim<D2: Dimension, T: Copy + id::Identify + PartialEq + Debug>(
-        v: Self::Vec<T>,
-    ) -> Option<crate::vec::Vector<D2, T>> {
+    type DynArray<T: Copy> = Vec<T>;
+    fn n_dim(&self) -> usize {
+        self.0
+    }
+    fn try_into_dim<D2: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D2::Array<T>> {
         if v.len() == D2::N {
-            Some(crate::vec::Vector::<D2, T>::from_fn(|i| v[i]))
+            Some(D2::Array::from_fn(|i| v[i]))
         } else {
             None
         }
     }
 
-    fn into_dyn<T: Copy + id::Identify + PartialEq + Debug>(v: Self::Vec<T>) -> Vec<T> {
+    fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T> {
         v
     }
 }

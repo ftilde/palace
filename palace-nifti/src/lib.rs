@@ -146,9 +146,9 @@ impl NiftiVolumeSourceState {
                     let mut vol = obj.into_volume();
                     for (pos, _) in positions {
                         let z = pos.z().raw as usize;
-                        let chunk = this.0.metadata.chunk_info_vec(pos);
+                        let chunk = this.0.metadata.chunk_info_vec(&pos);
                         let mut brick_handle = ctx
-                            .submit(ctx.alloc_slot(md.chunk_index(pos), chunk.mem_elements()))
+                            .submit(ctx.alloc_slot(md.chunk_index(&pos), chunk.mem_elements()))
                             .await;
 
                         let brick_data = &mut *brick_handle;

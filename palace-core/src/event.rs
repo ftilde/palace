@@ -223,7 +223,7 @@ impl EventSource {
                 let old_state = &self.current_state.mouse_state;
                 let new_pos = position.try_into().unwrap();
                 let delta = if let Some(old_state) = old_state {
-                    new_pos - old_state.pos
+                    &new_pos - &old_state.pos
                 } else {
                     [0, 0].into()
                 };
@@ -341,7 +341,7 @@ pub struct DragVec2<'a>(pub MouseButton, pub &'a mut Vector<D2, f32>);
 impl<'a> Behavior for DragVec2<'a> {
     fn input(&mut self, event: Event) -> EventChain {
         let mut f = OnMouseDrag(self.0, |_, delta| {
-            *self.1 = *self.1 + delta.map(|v| v as f32)
+            *self.1 = &*self.1 + &delta.map(|v| v as f32)
         });
         f.input(event)
     }

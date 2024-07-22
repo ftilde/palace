@@ -1,14 +1,14 @@
 use crate::data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
 use crate::dim::*;
 
-pub struct ChunkInfo<D: Dimension> {
+pub struct ChunkInfo<D: DynDimension> {
     pub mem_dimensions: Vector<D, LocalCoordinate>,
     pub logical_dimensions: Vector<D, LocalCoordinate>,
     pub begin: Vector<D, GlobalCoordinate>,
 }
-impl<D: Dimension> ChunkInfo<D> {
+impl<D: DynDimension> ChunkInfo<D> {
     pub fn is_contiguous(&self) -> bool {
-        for i in 1..D::N {
+        for i in 1..self.mem_dimensions.len() {
             if self.mem_dimensions[i] != self.logical_dimensions[i] {
                 return false;
             }
@@ -22,23 +22,23 @@ impl<D: Dimension> ChunkInfo<D> {
         self.mem_dimensions.hmul()
     }
 
-    pub fn in_chunk(&self, pos: Vector<D, GlobalCoordinate>) -> Vector<D, LocalCoordinate> {
-        (pos - self.begin).map(LocalCoordinate::interpret_as)
+    pub fn in_chunk(&self, pos: &Vector<D, GlobalCoordinate>) -> Vector<D, LocalCoordinate> {
+        (pos - &self.begin).map(LocalCoordinate::interpret_as)
     }
 
-    pub fn begin(&self) -> Vector<D, GlobalCoordinate> {
-        self.begin
+    pub fn begin(&self) -> &Vector<D, GlobalCoordinate> {
+        &self.begin
     }
     pub fn end(&self) -> Vector<D, GlobalCoordinate> {
-        self.begin + self.logical_dimensions
+        &self.begin + &self.logical_dimensions
     }
 }
 
 #[repr(C)]
-#[derive(Copy, Hash, Debug, id::Identify)]
+#[derive(Hash, Debug, id::Identify)]
 pub struct TensorMetaData<D: DynDimension> {
-    pub dimensions: D::Vec<GlobalCoordinate>,
-    pub chunk_size: D::Vec<LocalCoordinate>,
+    pub dimensions: Vector<D, GlobalCoordinate>,
+    pub chunk_size: Vector<D, LocalCoordinate>,
 }
 
 //TODO: Why the hell do we need to do this manually?
@@ -51,34 +51,27 @@ impl<D: DynDimension> Clone for TensorMetaData<D> {
     }
 }
 
-impl<D: DynDimension> PartialEq for TensorMetaData<D>
-where
-    D::Vec<GlobalCoordinate>: PartialEq,
-    D::Vec<LocalCoordinate>: PartialEq,
-{
+impl<D: Dimension> Copy for TensorMetaData<D> {}
+
+impl<D: DynDimension> PartialEq for TensorMetaData<D> {
     fn eq(&self, other: &Self) -> bool {
         self.dimensions == other.dimensions && self.chunk_size == other.chunk_size
     }
 }
-impl<D: DynDimension> Eq for TensorMetaData<D>
-where
-    D::Vec<GlobalCoordinate>: Eq,
-    D::Vec<LocalCoordinate>: Eq,
-{
-}
+impl<D: DynDimension> Eq for TensorMetaData<D> {}
 
 impl<D: DynDimension> TensorMetaData<D> {
     pub fn try_into_static<DF: Dimension>(self) -> Option<TensorMetaData<DF>> {
         Some(TensorMetaData {
-            dimensions: D::try_into_dim::<DF, _>(self.dimensions)?,
-            chunk_size: D::try_into_dim::<DF, _>(self.chunk_size)?,
+            dimensions: self.dimensions.try_into_static()?,
+            chunk_size: self.chunk_size.try_into_static()?,
         })
     }
 
     pub fn into_dyn(self) -> TensorMetaData<DDyn> {
         TensorMetaData {
-            dimensions: D::into_dyn(self.dimensions),
-            chunk_size: D::into_dyn(self.chunk_size),
+            dimensions: self.dimensions.into_dyn(),
+            chunk_size: self.chunk_size.into_dyn(),
         }
     }
 }
@@ -99,22 +92,24 @@ impl<D: LargerDim> TensorMetaData<D> {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, id::Identify)]
+#[derive(Clone, Debug, PartialEq, id::Identify)]
 pub struct TensorEmbeddingData<D: DynDimension> {
-    pub spacing: D::Vec<f32>,
+    pub spacing: Vector<D, f32>,
     // NOTE: need to change identify impl if we want to add members
 }
+
+impl<D: Dimension> Copy for TensorEmbeddingData<D> {}
 
 impl<D: DynDimension> TensorEmbeddingData<D> {
     pub fn try_into_static<DF: Dimension>(self) -> Option<TensorEmbeddingData<DF>> {
         Some(TensorEmbeddingData {
-            spacing: D::try_into_dim::<DF, f32>(self.spacing)?,
+            spacing: self.spacing.try_into_static()?,
         })
     }
 
     pub fn into_dyn(self) -> TensorEmbeddingData<DDyn> {
         TensorEmbeddingData {
-            spacing: D::into_dyn(self.spacing),
+            spacing: self.spacing.into_dyn(),
         }
     }
 }
@@ -203,8 +198,8 @@ mod py {
         fn from(value: TensorMetaData) -> Self {
             assert_eq!(value.dimensions.len(), value.chunk_size.len());
             Self {
-                dimensions: value.dimensions.into_iter().map(|v| v.into()).collect(),
-                chunk_size: value.chunk_size.into_iter().map(|v| v.into()).collect(),
+                dimensions: Vector::new(value.dimensions.into_iter().map(|v| v.into()).collect()),
+                chunk_size: Vector::new(value.chunk_size.into_iter().map(|v| v.into()).collect()),
             }
         }
     }
@@ -256,13 +251,17 @@ mod py {
 
     impl From<super::TensorEmbeddingData<DDyn>> for TensorEmbeddingData {
         fn from(t: super::TensorEmbeddingData<DDyn>) -> Self {
-            Self { spacing: t.spacing }
+            Self {
+                spacing: t.spacing.inner(),
+            }
         }
     }
 
     impl From<TensorEmbeddingData> for super::TensorEmbeddingData<DDyn> {
         fn from(t: TensorEmbeddingData) -> Self {
-            Self { spacing: t.spacing }
+            Self {
+                spacing: Vector::new(t.spacing),
+            }
         }
     }
 
@@ -281,22 +280,16 @@ mod py {
     }
 }
 
-impl TensorMetaData<DDyn> {
-    pub fn num_chunk_elements(&self) -> usize {
-        self.chunk_size.iter().map(|v| v.raw as usize).product()
-    }
-}
-
-impl<D: Dimension> TensorMetaData<D> {
+impl<D: DynDimension> TensorMetaData<D> {
     pub fn single_chunk(dimensions: Vector<D, GlobalCoordinate>) -> Self {
         Self {
-            dimensions,
+            dimensions: dimensions.clone(),
             chunk_size: dimensions.local(),
         }
     }
 
     pub fn chunk_pos_from_index(&self, index: ChunkIndex) -> Vector<D, ChunkCoordinate> {
-        crate::vec::from_linear(index.0 as usize, self.dimension_in_chunks())
+        crate::vec::from_linear(index.0 as usize, &self.dimension_in_chunks())
     }
     pub fn num_tensor_elements(&self) -> usize {
         self.dimensions.hmul()
@@ -305,33 +298,33 @@ impl<D: Dimension> TensorMetaData<D> {
         self.chunk_size.hmul()
     }
     pub fn dimension_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
-        self.dimensions.zip(self.chunk_size, |a, b| {
+        self.dimensions.zip(&self.chunk_size, |a, b| {
             crate::util::div_round_up(a.raw, b.raw).into()
         })
     }
-    pub fn chunk_pos(&self, pos: Vector<D, GlobalCoordinate>) -> Vector<D, ChunkCoordinate> {
-        pos.zip(self.chunk_size, |a, b| (a.raw / b.raw).into())
+    pub fn chunk_pos(&self, pos: &Vector<D, GlobalCoordinate>) -> Vector<D, ChunkCoordinate> {
+        pos.zip(&self.chunk_size, |a, b| (a.raw / b.raw).into())
     }
-    fn chunk_begin(&self, pos: Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
-        pos.zip(self.chunk_size, |a, b| (a.raw * b.raw).into())
+    fn chunk_begin(&self, pos: &Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
+        pos.zip(&self.chunk_size, |a, b| (a.raw * b.raw).into())
     }
-    fn chunk_end(&self, pos: Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
-        let next_pos = pos + Vector::fill(1u32);
-        let raw_end = self.chunk_begin(next_pos);
-        raw_end.zip(self.dimensions, std::cmp::min)
+    fn chunk_end(&self, pos: &Vector<D, ChunkCoordinate>) -> Vector<D, GlobalCoordinate> {
+        let next_pos = pos + &Vector::fill_with_len(1u32, pos.len());
+        let raw_end = self.chunk_begin(&next_pos);
+        raw_end.zip(&self.dimensions, std::cmp::min)
     }
-    pub fn chunk_index(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkIndex {
-        ChunkIndex(crate::vec::to_linear(pos, self.dimension_in_chunks()) as u64)
+    pub fn chunk_index(&self, pos: &Vector<D, ChunkCoordinate>) -> ChunkIndex {
+        ChunkIndex(crate::vec::to_linear(&pos, &self.dimension_in_chunks()) as u64)
     }
     pub fn chunk_info(&self, index: ChunkIndex) -> ChunkInfo<D> {
-        self.chunk_info_vec(self.chunk_pos_from_index(index))
+        self.chunk_info_vec(&self.chunk_pos_from_index(index))
     }
-    pub fn chunk_info_vec(&self, pos: Vector<D, ChunkCoordinate>) -> ChunkInfo<D> {
+    pub fn chunk_info_vec(&self, pos: &Vector<D, ChunkCoordinate>) -> ChunkInfo<D> {
         let begin = self.chunk_begin(pos);
         let end = self.chunk_end(pos);
-        let logical_dim = (end - begin).map(LocalCoordinate::interpret_as);
+        let logical_dim = (&end - &begin).map(LocalCoordinate::interpret_as);
         ChunkInfo {
-            mem_dimensions: self.chunk_size,
+            mem_dimensions: self.chunk_size.clone(),
             logical_dimensions: logical_dim,
             begin,
         }

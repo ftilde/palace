@@ -95,7 +95,7 @@ pub fn create_lod<D: LargerDim>(
 
             let new_spacing_raw = e.spacing * Vector::fill(step_factor);
             let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
-            let new_spacing = e.spacing.zip(Vector::fill(smallest_new), |a, b| a.max(b));
+            let new_spacing = e.spacing.zip(&Vector::fill(smallest_new), |a, b| a.max(b));
             let element_ratio = e.spacing / new_spacing;
             let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
                 .map(|v| v.ceil() as u32)
@@ -277,23 +277,25 @@ void main() {
                 let requests = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
                     let pos_vec = m_out.chunk_pos_from_index(pos);
-                    assert!(pos_vec.zip(m_out.dimension_in_chunks(), |l, r| l < r).all());
+                    assert!(pos_vec
+                        .zip(&m_out.dimension_in_chunks(), |l, r| l < r)
+                        .all());
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
 
                     let aabb = AABB::new(
-                        out_begin.map(|v| v.raw as f32),
-                        out_end.map(|v| (v.raw - 1) as f32),
+                        &out_begin.map(|v| v.raw as f32),
+                        &out_end.map(|v| (v.raw - 1) as f32),
                     );
                     let aabb = aabb.transform(&element_out_to_in);
 
                     let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
                     let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
 
-                    let in_begin_brick = m_in.chunk_pos(out_begin);
+                    let in_begin_brick = m_in.chunk_pos(&out_begin);
                     let in_end_brick = m_in
-                        .chunk_pos(out_end)
-                        .zip(m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
+                        .chunk_pos(&out_end)
+                        .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
 
                     let in_brick_positions = (0..D::N)
                         .into_iter()
@@ -307,7 +309,7 @@ void main() {
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
                             device.id,
-                            m_in.chunk_index(*pos),
+                            m_in.chunk_index(pos),
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                 access: vk::AccessFlags2::SHADER_READ,
@@ -354,7 +356,7 @@ void main() {
                         .zip(in_brick_positions.into_iter())
                     {
                         let brick_pos_linear =
-                            crate::data::to_linear(in_brick_pos, m_in.dimension_in_chunks());
+                            crate::data::to_linear(&in_brick_pos, &m_in.dimension_in_chunks());
                         chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
                     }
 

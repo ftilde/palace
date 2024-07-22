@@ -77,7 +77,7 @@ impl RunTime {
                 map_err(self.inner.resolve(None, false, |ctx, _| {
                     async move {
                         let pos: Vector<D, u32> = pos.try_into().unwrap();
-                        let pos = op.metadata.chunk_index(pos.chunk());
+                        let pos = op.metadata.chunk_index(&pos.chunk());
                         let chunk = ctx.submit(op_ref.chunks.request(pos)).await;
                         let chunk_info = op.metadata.chunk_info(pos);
                         let chunk = palace_core::data::chunk(&chunk, &chunk_info);

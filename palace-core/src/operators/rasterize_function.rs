@@ -75,7 +75,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 
                 for ((z, y, x), v) in out_chunk.indexed_iter_mut() {
                     let pos: LocalVoxelPosition = [z as u32, y as u32, x as u32].into();
-                    let pos = begin + pos;
+                    let pos = begin + &pos;
                     v.write(function(pos));
                 }
 

@@ -208,22 +208,22 @@ fn slice_viewer_z(
                     let dim = m_in.dimensions.raw();
 
                     let inside = vol_pos
-                        .zip(dim, |p, d| 0 <= p && p < d as i32)
+                        .zip(&dim, |p, d| 0 <= p && p < d as i32)
                         .fold(true, |a, b| a && b);
                     let ret = if inside {
                         let vol_pos = vol_pos.map(|v| (v as u32)).global();
-                        let chunk_pos = m_in.chunk_pos(vol_pos);
-                        let chunk_info = m_in.chunk_info_vec(chunk_pos);
+                        let chunk_pos = m_in.chunk_pos(&vol_pos);
+                        let chunk_info = m_in.chunk_info_vec(&chunk_pos);
 
                         let brick = ctx
                             .submit(
                                 vol_ref.levels[0]
                                     .chunks
-                                    .request(m_in.chunk_index(chunk_pos)),
+                                    .request(m_in.chunk_index(&chunk_pos)),
                             )
                             .await;
 
-                        let local_pos = chunk_info.in_chunk(vol_pos);
+                        let local_pos = chunk_info.in_chunk(&vol_pos);
                         let brick = palace_core::data::chunk(&brick, &chunk_info);
 
                         let val = *brick.get(local_pos.as_index()).unwrap();

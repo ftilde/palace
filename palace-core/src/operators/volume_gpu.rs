@@ -13,7 +13,7 @@ use crate::{
     storage::gpu,
     task::RequestStream,
     vulkan::{
-        pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
+        pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig, DynPushConstants},
         shader::{Config, ShaderDefines},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
@@ -566,31 +566,29 @@ impl GLSLType for Vector<D4, u8> {
     const TYPE_NAME: &'static str = "uint8_t[4]";
 }
 
-pub fn rechunk<D: Dimension, T: ElementType + Into<DType> + 'static>(
+pub fn rechunk<D: DynDimension, T: ElementType + Into<DType> + 'static>(
     input: TensorOperator<D, T>,
     chunk_size: Vector<D, ChunkSize>,
 ) -> TensorOperator<D, T> {
+    let md = &input.metadata;
+
     // Early return in case of matched sizes
-    if input.metadata.chunk_size == chunk_size.zip(input.metadata.dimensions, |b, d| b.apply(d)) {
+    if md.chunk_size == chunk_size.zip(&md.dimensions, |b, d| b.apply(d)) {
         return input;
     }
 
     let dtype: DType = input.chunks.dtype().into();
 
-    #[derive(Clone, bytemuck::Zeroable)]
-    #[repr(C)]
-    #[allow(dead_code)] //It says these fields are not read otherwise?? Why?
-    struct PushConstants<D: Dimension> {
-        mem_size_in: Vector<D, u32>,
-        mem_size_out: Vector<D, u32>,
-        begin_in: Vector<D, u32>,
-        begin_out: Vector<D, u32>,
-        region_size: Vector<D, u32>,
-        global_size: u32,
-    }
-    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
-    //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
+    let dim = md.chunk_size.len();
+
+    let push_constants = DynPushConstants::new()
+        .array::<u32>(dim, "mem_size_in")
+        .array::<u32>(dim, "mem_size_out")
+        .array::<u32>(dim, "begin_in")
+        .array::<u32>(dim, "begin_out")
+        .array::<u32>(dim, "region_size")
+        .scalar::<u32>("global_size");
+
     const SHADER: &'static str = r#"
 #include <util.glsl>
 #include <vec.glsl>
@@ -605,14 +603,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     T values[];
 } outputData;
 
-layout(scalar, push_constant) uniform PushConsts {
-    uint[N] mem_size_in;
-    uint[N] mem_size_out;
-    uint[N] begin_in;
-    uint[N] begin_out;
-    uint[N] region_size;
-    uint global_size;
-} constants;
+declare_push_consts(constants)
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
@@ -635,22 +626,24 @@ void main() {
             .dependent_on(&input)
             .dependent_on_data(&chunk_size)
             .dependent_on_data(&dtype)
-            .dependent_on_data(&D::N),
+            .dependent_on_data(&dim),
         input.chunks.dtype(),
         {
-            let mut m = input.metadata;
-            m.chunk_size = chunk_size.zip(m.dimensions, |v, d| v.apply(d));
+            let mut m = input.metadata.clone();
+            m.chunk_size = chunk_size.zip(&m.dimensions, |v, d| v.apply(d));
             m
         },
-        input,
-        move |ctx, mut positions, input| {
+        (input, chunk_size, push_constants),
+        move |ctx, mut positions, (input, chunk_size, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
-                let m_in = input.metadata;
+                let nd = input.metadata.dimensions.len();
+
+                let m_in = input.metadata.clone();
                 let m_out = {
-                    let mut m_out = m_in;
-                    m_out.chunk_size = chunk_size.zip(m_in.dimensions, |v, d| v.apply(d));
+                    let mut m_out = m_in.clone();
+                    m_out.chunk_size = chunk_size.zip(&m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
 
@@ -660,16 +653,20 @@ void main() {
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&dtype)
-                        .dependent_on(&D::N),
+                        .dependent_on(&dim),
                     || {
                         ComputePipeline::new(
                             device,
                             (
                                 SHADER,
                                 ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
-                                    .add("N", D::N)
-                                    .add("T", dtype.glsl_type()),
+                                    .add("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
+                                    .add("N", dim)
+                                    .add("T", dtype.glsl_type())
+                                    .add(
+                                        "declare_push_consts(__name)",
+                                        push_constants.glsl_definition(),
+                                    ),
                                 Config::new()
                                     .ext(dtype.glsl_ext())
                                     .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
@@ -685,15 +682,15 @@ void main() {
                     let out_end = out_info.end();
 
                     let in_begin_brick = m_in.chunk_pos(out_begin);
-                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
+                    let in_end_brick = m_in.chunk_pos(&out_end.map(|v| v - 1u32));
 
-                    let in_brick_positions = (0..D::N)
+                    let in_brick_positions = (0..nd)
                         .into_iter()
                         .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
                         .multi_cartesian_product()
                         .map(|coordinates| {
                             m_in.chunk_index(
-                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap(),
+                                &Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap(),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -735,13 +732,13 @@ void main() {
                             let in_end = in_info.end();
 
                             let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
-                            let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                            let overlap_end = in_end.zip(&out_end, |i, o| i.min(o));
                             let overlap_size =
-                                (overlap_end - overlap_begin).map(LocalCoordinate::interpret_as);
+                                (&overlap_end - &overlap_begin).map(LocalCoordinate::interpret_as);
 
-                            let in_chunk_begin = in_info.in_chunk(overlap_begin);
+                            let in_chunk_begin = in_info.in_chunk(&overlap_begin);
 
-                            let out_chunk_begin = out_info.in_chunk(overlap_begin);
+                            let out_chunk_begin = out_info.in_chunk(&overlap_begin);
 
                             let descriptor_config =
                                 DescriptorConfig::new([gpu_brick_in, &gpu_brick_out]);
@@ -752,15 +749,16 @@ void main() {
                             unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
 
-                                let consts = PushConstants {
-                                    mem_size_in: m_in.chunk_size.raw(),
-                                    mem_size_out: m_out.chunk_size.raw(),
-                                    begin_in: in_chunk_begin.raw(),
-                                    begin_out: out_chunk_begin.raw(),
-                                    region_size: overlap_size.raw(),
-                                    global_size: global_size as _,
-                                };
-                                pipeline.push_constant_pod(consts);
+                                pipeline.push_constant_dyn(&push_constants, |consts| {
+                                    consts.array(&m_in.chunk_size.raw())?;
+                                    consts.array(&m_out.chunk_size.raw())?;
+                                    consts.array(&in_chunk_begin.raw())?;
+                                    consts.array(&out_chunk_begin.raw())?;
+                                    consts.array(&overlap_size.raw())?;
+                                    consts.scalar(global_size as u32)?;
+                                    Ok(())
+                                });
+
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
                             }
@@ -977,8 +975,8 @@ void main() {
                     let in_end = out_end
                         .map_element(dim, |v| (v + extent as u32).min(m_out.dimensions[dim]));
 
-                    let in_begin_brick = m_in.chunk_pos(in_begin);
-                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
+                    let in_begin_brick = m_in.chunk_pos(&in_begin);
+                    let in_end_brick = m_in.chunk_pos(&in_end.map(|v| v - 1u32));
 
                     let in_brick_positions = (0..D::N)
                         .into_iter()
@@ -992,7 +990,7 @@ void main() {
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
                             device.id,
-                            m_in.chunk_index(*pos),
+                            m_in.chunk_index(pos),
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                 access: vk::AccessFlags2::SHADER_READ,
@@ -1252,7 +1250,7 @@ void main()
 
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
-                        let pos = m.chunk_index(*pos);
+                        let pos = m.chunk_index(pos);
                         (
                             input.chunks.request_gpu(
                                 device.id,
@@ -1323,7 +1321,7 @@ mod test {
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let input = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            let v = crate::vec::to_linear(v, size);
+            let v = crate::vec::to_linear(&v, &size);
             v as f32
         });
 
@@ -1412,7 +1410,7 @@ mod test {
         let brick_size = LocalVoxelPosition::fill(2.into());
 
         let input = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            crate::data::to_linear(v, size) as f32
+            crate::data::to_linear(&v, &size) as f32
         });
 
         let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
@@ -1420,7 +1418,7 @@ mod test {
                 for y in 0..size.y().raw {
                     for x in 0..size.x().raw {
                         let pos = VoxelPosition::from([z, y, x]);
-                        let val = crate::data::to_linear(pos, size) as f32;
+                        let val = crate::data::to_linear(&pos, &size) as f32;
                         comp[pos.as_index()] = val
                     }
                 }

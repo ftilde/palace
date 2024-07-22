@@ -21,7 +21,7 @@ fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
 }
 
 impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
-    pub fn new(p1: Vector<D, T>, p2: Vector<D, T>) -> Self {
+    pub fn new(p1: &Vector<D, T>, p2: &Vector<D, T>) -> Self {
         Self {
             min: p1.zip(p2, partial_ord_min),
             max: p1.zip(p2, partial_ord_max),
@@ -35,12 +35,12 @@ impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
             max: first,
         };
         for p in points {
-            s.add_point(p);
+            s.add_point(&p);
         }
         s
     }
 
-    pub fn add_point(&mut self, p: Vector<D, T>) {
+    pub fn add_point(&mut self, p: &Vector<D, T>) {
         self.min = self.min.zip(p, partial_ord_min);
         self.max = self.max.zip(p, partial_ord_max);
     }

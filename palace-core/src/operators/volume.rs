@@ -41,7 +41,7 @@ pub fn mean(
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx
                         .submit_unordered_with_data(chunk.iter().map(|pos| {
-                            let pos = md.chunk_index(*pos);
+                            let pos = md.chunk_index(pos);
                             (input.chunks.request(pos), pos)
                         }))
                         .then_req(ctx.into(), |(brick_handle, brick_pos)| {
@@ -74,7 +74,7 @@ pub fn mean(
     )
 }
 
-#[derive(Copy, Clone, From, Hash, Debug, id::Identify)]
+#[derive(Copy, Clone, From, Hash, Debug, id::Identify, PartialEq, Eq)]
 pub enum ChunkSize {
     Fixed(LocalCoordinate),
     //Relative(f32),
@@ -103,7 +103,7 @@ pub fn rechunk<E: Element>(
         Default::default(),
         {
             let mut m = input.metadata;
-            m.chunk_size = brick_size.zip(m.dimensions, |v, d| v.apply(d));
+            m.chunk_size = brick_size.zip(&m.dimensions, |v, d| v.apply(d));
             m
         },
         input,
@@ -113,7 +113,7 @@ pub fn rechunk<E: Element>(
                 let m_in = input.metadata;
                 let m_out = {
                     let mut m_out = m_in;
-                    m_out.chunk_size = brick_size.zip(m_in.dimensions, |v, d| v.apply(d));
+                    m_out.chunk_size = brick_size.zip(&m_in.dimensions, |v, d| v.apply(d));
                     m_out
                 };
 
@@ -122,8 +122,8 @@ pub fn rechunk<E: Element>(
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
 
-                    let in_begin_brick = m_in.chunk_pos(out_begin);
-                    let in_end_brick = m_in.chunk_pos(out_end.map(|v| v - 1u32));
+                    let in_begin_brick = m_in.chunk_pos(&out_begin);
+                    let in_end_brick = m_in.chunk_pos(&out_end.map(|v| v - 1u32));
 
                     let in_brick_positions = itertools::iproduct! {
                         in_begin_brick.z().raw..=in_end_brick.z().raw,
@@ -133,7 +133,7 @@ pub fn rechunk<E: Element>(
                     .map(|(z, y, x)| BrickPosition::from([z, y, x]))
                     .collect::<Vec<_>>();
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                        let pos = m_out.chunk_index(*pos);
+                        let pos = m_out.chunk_index(pos);
                         input.chunks.request(pos)
                     }));
 
@@ -172,21 +172,21 @@ pub fn rechunk<E: Element>(
                                     .zip(in_brick_positions.into_iter())
                                 {
                                     let in_data = &*in_data_handle;
-                                    let in_info = m_in.chunk_info_vec(in_brick_pos);
+                                    let in_info = m_in.chunk_info_vec(&in_brick_pos);
                                     let in_chunk = crate::data::chunk(in_data, &in_info);
 
                                     let in_begin = in_info.begin();
                                     let in_end = in_info.end();
 
-                                    let overlap_begin = in_begin.zip(out_begin, |i, o| i.max(o));
-                                    let overlap_end = in_end.zip(out_end, |i, o| i.min(o));
+                                    let overlap_begin = in_begin.zip(&out_begin, |i, o| i.max(o));
+                                    let overlap_end = in_end.zip(&out_end, |i, o| i.min(o));
                                     let overlap_size = (overlap_end - overlap_begin)
                                         .map(LocalCoordinate::interpret_as);
 
-                                    let in_chunk_begin = in_info.in_chunk(overlap_begin);
+                                    let in_chunk_begin = in_info.in_chunk(&overlap_begin);
                                     let in_chunk_end = in_chunk_begin + overlap_size;
 
-                                    let out_chunk_begin = out_info.in_chunk(overlap_begin);
+                                    let out_chunk_begin = out_info.in_chunk(&overlap_begin);
                                     let out_chunk_end = out_chunk_begin + overlap_size;
 
                                     let mut o = out_chunk
@@ -259,8 +259,8 @@ pub fn convolution_1d<const DIM: usize>(
                     let in_end = out_end
                         .map_element(DIM, |v| (v + extent as u32).min(m_out.dimensions[DIM]));
 
-                    let in_begin_brick = m_in.chunk_pos(in_begin);
-                    let in_end_brick = m_in.chunk_pos(in_end.map(|v| v - 1u32));
+                    let in_begin_brick = m_in.chunk_pos(&in_begin);
+                    let in_end_brick = m_in.chunk_pos(&in_end.map(|v| v - 1u32));
 
                     let in_brick_positions = itertools::iproduct! {
                         in_begin_brick.z().raw..=in_end_brick.z().raw,
@@ -272,7 +272,7 @@ pub fn convolution_1d<const DIM: usize>(
                     let intersecting_bricks = ctx.group(
                         in_brick_positions
                             .iter()
-                            .map(|pos| input.chunks.request(m_in.chunk_index(*pos))),
+                            .map(|pos| input.chunks.request(m_in.chunk_index(pos))),
                     );
 
                     (intersecting_bricks, (pos, in_brick_positions))
@@ -310,14 +310,14 @@ pub fn convolution_1d<const DIM: usize>(
                                     .zip(in_brick_positions.into_iter())
                                 {
                                     let in_data = &*in_data_handle;
-                                    let in_info = m_in.chunk_info_vec(in_brick_pos);
+                                    let in_info = m_in.chunk_info_vec(&in_brick_pos);
                                     let in_chunk = chunk(in_data, &in_info);
 
                                     // Logical dimensions should be equal except possibly in DIM (if we
                                     // are at the border)
                                     assert!(out_info
                                         .logical_dimensions
-                                        .zip_enumerate(in_info.logical_dimensions, |i, a, b| {
+                                        .zip_enumerate(&in_info.logical_dimensions, |i, a, b| {
                                             i == DIM || a.raw == b.raw
                                         })
                                         .fold(true, std::ops::BitAnd::bitand));

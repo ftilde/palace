@@ -122,7 +122,7 @@ impl Hdf5VolumeSourceState {
                     for (pos, _) in positions {
                         let chunk = metadata.chunk_info(pos);
 
-                        let selection = to_hdf5_hyperslab(chunk.begin(), chunk.end());
+                        let selection = to_hdf5_hyperslab(*chunk.begin(), chunk.end());
 
                         let num_voxels = this.inner.metadata.chunk_size.hmul();
 

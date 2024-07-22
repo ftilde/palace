@@ -143,7 +143,7 @@ pub fn slice_projection_mat_z_scaled_fit(
     let scale = Matrix::from_scale(
         vol_dim
             .drop_dim(0)
-            .zip(img_dim, |v, i| v / i)
+            .zip(&img_dim, |v, i| v / i)
             .push_dim_large(1.0),
     )
     .to_homogeneous();

@@ -14,47 +14,13 @@ pub fn rechunk(
     vol: MaybeEmbeddedTensorOperator,
     size: Vec<ChunkSize>,
 ) -> PyResult<PyObject> {
-    //TODO: We REALLY need to figure out the dispatch here...
-    //Macro and some for some selected types and dims?
-    //Otherwise code will blow up
-    match size.len() {
-        2 => {
-            let size =
-                Vector::from(<[ChunkSize; 2]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
-            vol.try_map_inner(
-                py,
-                |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
-                    Ok(
-                        palace_core::operators::volume_gpu::rechunk(
-                            try_into_static_err(vol)?,
-                            size,
-                        )
-                        .into_dyn(),
-                    )
-                },
-            )
-        }
-        3 => {
-            let size =
-                Vector::from(<[ChunkSize; 3]>::try_from(size).unwrap()).map(|s: ChunkSize| s.0);
-            vol.try_map_inner(
-                py,
-                |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
-                    Ok(
-                        palace_core::operators::volume_gpu::rechunk(
-                            try_into_static_err(vol)?,
-                            size,
-                        )
-                        .into_dyn(),
-                    )
-                },
-            )
-        }
-        n => Err(PyErr::new::<PyException, _>(format!(
-            "Rechunk for dim {} not supported, yet",
-            n
-        ))),
-    }
+    let size = Vector::<DDyn, _>::new(size).map(|s: ChunkSize| s.0);
+    vol.try_map_inner(
+        py,
+        |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
+            Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into_dyn())
+        },
+    )
 }
 
 #[pyfunction]

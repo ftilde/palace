@@ -1,8 +1,10 @@
+use std::fmt::Write;
 use std::{cell::RefCell, collections::VecDeque};
 
 use ash::vk;
 use crevice::std140::{AsStd140, Std140};
 
+use crate::dtypes::{AsDynType, DType, ElementType};
 use crate::{
     data::Vector,
     dim::*,
@@ -422,6 +424,16 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
         let bytes = bytemuck::bytes_of(&val);
         self.push_constant_bytes(bytes, vk::ShaderStageFlags::COMPUTE);
     }
+    pub fn push_constant_dyn<F: FnOnce(&mut DynPushConstantsWriter) -> Result<(), crate::Error>>(
+        &mut self,
+        p: &DynPushConstants,
+        write: F,
+    ) {
+        let mut writer = p.writer();
+        write(&mut writer).unwrap();
+        let bytes = writer.finish().unwrap();
+        self.push_constant_bytes(&bytes, vk::ShaderStageFlags::COMPUTE);
+    }
 }
 
 pub enum DescriptorInfos {
@@ -547,6 +559,215 @@ impl DescriptorConfig {
                     .build(),
             })
             .collect()
+    }
+}
+
+#[derive(Copy, Clone)]
+enum MemberSize {
+    Array(usize),
+    Scalar,
+}
+
+struct Member {
+    size: MemberSize,
+    type_: DType,
+    name: &'static str,
+}
+impl Member {
+    fn write(&self, o: &mut dyn Write) -> std::fmt::Result {
+        write!(o, "{}", self.type_.glsl_type())?;
+        if let MemberSize::Array(n) = self.size {
+            write!(o, "[{}]", n)?;
+        }
+        write!(o, " {};", self.name)
+    }
+}
+
+pub struct DynPushConstants {
+    members: Vec<Member>,
+}
+
+impl DynPushConstants {
+    pub fn new() -> Self {
+        DynPushConstants {
+            members: Vec::new(),
+        }
+    }
+    pub fn scalar<T: AsDynType>(mut self, name: &'static str) -> Self {
+        self.members.push(Member {
+            size: MemberSize::Scalar,
+            type_: T::D_TYPE,
+            name,
+        });
+        self
+    }
+
+    pub fn array<T: AsDynType>(mut self, size: usize, name: &'static str) -> Self {
+        self.members.push(Member {
+            size: MemberSize::Array(size),
+            type_: T::D_TYPE,
+            name,
+        });
+        self
+    }
+
+    pub fn glsl_definition(&self) -> String {
+        let mut out = String::new();
+        write!(
+            &mut out,
+            "layout(scalar, push_constant) uniform PushConsts {{"
+        )
+        .unwrap();
+
+        for member in &self.members {
+            member.write(&mut out).unwrap();
+        }
+        write!(&mut out, "}} __name;").unwrap();
+        out
+    }
+
+    pub fn writer(&self) -> DynPushConstantsWriter {
+        DynPushConstantsWriter {
+            consts: self,
+            pos: 0,
+            buf: Vec::new(),
+        }
+    }
+}
+
+pub struct DynPushConstantsWriter<'a> {
+    consts: &'a DynPushConstants,
+    pos: usize,
+    buf: Vec<u8>,
+}
+
+//pub trait PushConstValue {
+//    fn validate(&self, member: &Member) -> Result<(), crate::Error>;
+//    fn write(&self, buf: &mut Vec<u8>);
+//}
+//
+//impl<T> PushConstValue for T
+//where
+//    StaticElementType<T>: AsDynType,
+//{
+//    fn validate(&self, member: &Member) -> Result<(), crate::Error> {
+//        todo!()
+//    }
+//
+//    fn write(&self, buf: &mut Vec<u8>) {
+//        todo!()
+//    }
+//}
+//
+//impl<D: Dimension, T: Element> PushConstValue for Vector<D, T> {
+//    fn validate(&self, member: &Member) -> Result<(), crate::Error> {
+//        todo!()
+//    }
+//
+//    fn write(&self, buf: &mut Vec<u8>) {
+//        todo!()
+//    }
+//}
+
+impl<'a> DynPushConstantsWriter<'a> {
+    pub fn finish(self) -> Result<Vec<u8>, crate::Error> {
+        if self.pos < self.consts.members.len() {
+            Err(crate::Error::from(format!(
+                "Only {} of {} members written",
+                self.pos,
+                self.consts.members.len()
+            )))
+        } else {
+            assert_eq!(self.pos, self.consts.members.len());
+            Ok(self.buf)
+        }
+    }
+
+    pub fn scalar<V: bytemuck::Pod + AsDynType>(&mut self, v: V) -> Result<(), crate::Error> {
+        let member = self.consts.members.get(self.pos).ok_or_else(|| {
+            format!(
+                "Tried to write member {}, but definition has only {} members",
+                self.pos,
+                self.consts.members.len()
+            )
+        })?;
+
+        match member.size {
+            MemberSize::Array(n) => {
+                return Err(format!("Expected an array element of size {}", n).into())
+            }
+            MemberSize::Scalar => {}
+        }
+
+        if member.type_ != V::D_TYPE {
+            return Err(format!(
+                "Expected a scalar of type {:?}, but got {:?}",
+                member.type_,
+                V::D_TYPE
+            )
+            .into());
+        }
+
+        let layout = member.type_.element_layout();
+
+        while (self.buf.len() % layout.align()) != 0 {
+            self.buf.push(0);
+        }
+        self.buf.extend_from_slice(bytemuck::bytes_of(&v));
+
+        self.pos += 1;
+        Ok(())
+    }
+
+    pub fn array<D: DynDimension, V: bytemuck::Pod + AsDynType>(
+        &mut self,
+        v: &Vector<D, V>,
+    ) -> Result<(), crate::Error> {
+        let member = self.consts.members.get(self.pos).ok_or_else(|| {
+            format!(
+                "Tried to write member {}, but definition has only {} members",
+                self.pos,
+                self.consts.members.len()
+            )
+        })?;
+
+        match member.size {
+            MemberSize::Array(n) if n != v.len() => {
+                return Err(format!(
+                    "Expected an array element of size {}, but got one of size {}",
+                    n,
+                    v.len()
+                )
+                .into())
+            }
+            MemberSize::Array(_) => {}
+            MemberSize::Scalar => {
+                return Err(
+                    format!("Expected a scalar, but got an array of size {}", v.len()).into(),
+                )
+            }
+        }
+
+        if member.type_ != V::D_TYPE {
+            return Err(format!(
+                "Expected a scalar of type {:?}, but got {:?}",
+                member.type_,
+                V::D_TYPE
+            )
+            .into());
+        }
+
+        let layout = member.type_.array_layout(v.len());
+
+        for v in v.iter() {
+            while (self.buf.len() % layout.align()) != 0 {
+                self.buf.push(0);
+            }
+            self.buf.extend_from_slice(bytemuck::bytes_of(v));
+        }
+
+        self.pos += 1;
+        Ok(())
     }
 }
 
