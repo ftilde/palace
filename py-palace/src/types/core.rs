@@ -67,7 +67,7 @@ impl RunTime {
         v: MaybeEmbeddedTensorOperator,
         pos: Vec<u32>,
     ) -> PyResult<PyObject> {
-        let v = v.inner();
+        let v = v.into_inner();
         match_dim!(
             pos.len(),
             || {

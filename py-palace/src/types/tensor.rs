@@ -109,6 +109,14 @@ impl Clone for TensorOperator {
     }
 }
 
+impl TensorOperator {
+    pub fn nd(&self) -> usize {
+        let nd = self.metadata.dimensions.len();
+        assert_eq!(nd, self.metadata.chunk_size.len());
+        nd
+    }
+}
+
 impl TryFrom<CTensorOperator<DDyn, DType>> for TensorOperator {
     type Error = PyErr;
 
@@ -381,7 +389,13 @@ pub enum MaybeEmbeddedTensorOperator {
 }
 
 impl MaybeEmbeddedTensorOperator {
-    pub fn inner(self) -> TensorOperator {
+    pub fn inner(&self) -> &TensorOperator {
+        match self {
+            MaybeEmbeddedTensorOperator::Not(i) => i,
+            MaybeEmbeddedTensorOperator::Embedded(e) => &e.inner,
+        }
+    }
+    pub fn into_inner(self) -> TensorOperator {
         match self {
             MaybeEmbeddedTensorOperator::Not(i) => i,
             MaybeEmbeddedTensorOperator::Embedded(e) => e.inner,

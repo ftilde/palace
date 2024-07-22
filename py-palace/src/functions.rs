@@ -6,16 +6,26 @@ use palace_core::dtypes::DType;
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3::{exceptions::PyException, prelude::*};
+use pyo3::{
+    exceptions::{PyException, PyValueError},
+    prelude::*,
+};
 
 #[pyfunction]
 pub fn rechunk(
     py: Python,
-    vol: MaybeEmbeddedTensorOperator,
+    tensor: MaybeEmbeddedTensorOperator,
     size: Vec<ChunkSize>,
 ) -> PyResult<PyObject> {
+    if tensor.inner().nd() != size.len() {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "Chunk size must be {}-dimensional to fit tensor",
+            tensor.into_inner().nd()
+        )));
+    }
+
     let size = Vector::<DDyn, _>::new(size).map(|s: ChunkSize| s.0);
-    vol.try_map_inner(
+    tensor.try_map_inner(
         py,
         |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
             Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into_dyn())
@@ -65,7 +75,7 @@ fn jit_binary(
         Ok(crate::map_err(JitTensorOperator::<DDyn>::bin_op(
             op,
             v1,
-            v2.inner().try_into_jit()?,
+            v2.into_inner().try_into_jit()?,
         ))?
         .into())
     })
@@ -198,7 +208,7 @@ pub fn render_slice(
 
 #[pyfunction]
 pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
-    let vol = vol.inner().try_into_core()?;
+    let vol = vol.into_inner().try_into_core()?;
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
@@ -257,7 +267,7 @@ pub fn apply_tf(
     input: MaybeEmbeddedTensorOperator,
     tf: TransFuncOperator,
 ) -> PyResult<PyObject> {
-    let nd = input.clone().inner().metadata.dimensions.len();
+    let nd = input.clone().into_inner().metadata.dimensions.len();
     if nd != 2 {
         return Err(PyErr::new::<PyException, _>(format!(
             "apply_tf for dim {} not supported, yet",
