@@ -54,28 +54,28 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
     ) -> ScalarOperator<StaticElementType<O>> {
         self.map(data, f)
     }
-    pub fn zip<O: Element>(
-        self,
-        other: ScalarOperator<StaticElementType<O>>,
-    ) -> ScalarOperator<StaticElementType<crate::storage::P<T, O>>> {
-        scalar(
-            OperatorDescriptor::new("ScalarOperator::zip")
-                .dependent_on(&self)
-                .dependent_on(&other),
-            (self, other),
-            move |ctx, (s, other)| {
-                async move {
-                    let (l, r) = futures::join! {
-                        ctx.submit(s.request_scalar()),
-                        ctx.submit(other.request_scalar()),
-                    };
-                    ctx.write_scalar(crate::storage::P(l, r));
-                    Ok(())
-                }
-                .into()
-            },
-        )
-    }
+    //pub fn zip<O: Element>(
+    //    self,
+    //    other: ScalarOperator<StaticElementType<O>>,
+    //) -> ScalarOperator<StaticElementType<crate::storage::P<T, O>>> {
+    //    scalar(
+    //        OperatorDescriptor::new("ScalarOperator::zip")
+    //            .dependent_on(&self)
+    //            .dependent_on(&other),
+    //        (self, other),
+    //        move |ctx, (s, other)| {
+    //            async move {
+    //                let (l, r) = futures::join! {
+    //                    ctx.submit(s.request_scalar()),
+    //                    ctx.submit(other.request_scalar()),
+    //                };
+    //                ctx.write_scalar(crate::storage::P(l, r));
+    //                Ok(())
+    //            }
+    //            .into()
+    //        },
+    //    )
+    //}
 }
 
 pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementType<T>> {

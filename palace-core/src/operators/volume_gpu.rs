@@ -566,7 +566,7 @@ impl GLSLType for Vector<D4, u8> {
     const TYPE_NAME: &'static str = "uint8_t[4]";
 }
 
-pub fn rechunk<D: DynDimension, T: ElementType + Into<DType> + 'static>(
+pub fn rechunk<D: DynDimension, T: ElementType>(
     input: TensorOperator<D, T>,
     chunk_size: Vector<D, ChunkSize>,
 ) -> TensorOperator<D, T> {

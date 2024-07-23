@@ -6,15 +6,16 @@ pub mod ram;
 use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
+    dtypes::AsDynType,
     operator::DataId,
     runtime::FrameNumber,
     util::Map,
     vulkan::{DeviceId, DstBarrierInfo},
 };
 
-pub trait Element: Send + Sync + bytemuck::AnyBitPattern {}
+pub trait Element: Send + Sync + bytemuck::AnyBitPattern + AsDynType {}
 
-impl<T: bytemuck::AnyBitPattern + Send + Sync> Element for T {}
+impl<T: bytemuck::AnyBitPattern + Send + Sync + AsDynType> Element for T {}
 
 #[derive(Copy, Clone, bytemuck::AnyBitPattern)]
 #[repr(C)]
