@@ -118,6 +118,9 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
     pub fn dim(&self) -> D {
         self.metadata.dim()
     }
+    pub fn dtype(&self) -> E {
+        self.chunks.dtype()
+    }
 }
 
 impl<D: DynDimension, E> TensorOperator<D, E> {

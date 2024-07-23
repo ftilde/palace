@@ -1,4 +1,5 @@
 use std::alloc::Layout;
+use std::fmt::Debug;
 
 use id::Identify;
 #[cfg(feature = "python")]
@@ -6,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{dim::D4, storage::Element, vec::Vector};
 
-pub trait ElementType: Clone + 'static + Into<DType> {
+pub trait ElementType: Clone + 'static + Into<DType> + PartialEq + Debug {
     fn array_layout(&self, size: usize) -> Layout;
     fn element_layout(&self) -> Layout {
         self.array_layout(1)
@@ -20,6 +21,17 @@ pub trait AsDynType {
 /// Static ---------------------------------------------------------------------
 
 pub struct StaticElementType<T>(std::marker::PhantomData<T>);
+
+impl<T> PartialEq for StaticElementType<T> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl<T> Debug for StaticElementType<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StaticElementType<{}>", std::any::type_name::<T>())
+    }
+}
 
 impl<T> Default for StaticElementType<T> {
     fn default() -> Self {

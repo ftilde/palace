@@ -791,7 +791,9 @@ pub fn convolution_1d<D: DynDimension, T: ElementType>(
 
     assert!(dim < nd);
 
-    let dtype: DType = input.chunks.dtype().into();
+    assert_eq!(input.dtype(), kernel.dtype());
+
+    let dtype: DType = input.dtype().into();
 
     let push_constants = DynPushConstants::new()
         .array::<u32>(nd, "mem_dim")

@@ -128,6 +128,16 @@ pub fn separable_convolution<'py>(
         })
         .collect::<Result<Vec<_>, PyErr>>()?;
 
+    for kernel in &kernels {
+        if tensor.inner().dtype != kernel.dtype() {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "Kernel must have the same type as tensor ({:?}), but has {:?}",
+                tensor.inner().dtype,
+                kernel.dtype(),
+            )));
+        }
+    }
+
     let kernel_refs = Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(
         |i| &kernels[i],
         kernels.len(),
