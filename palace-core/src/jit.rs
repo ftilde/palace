@@ -23,12 +23,22 @@ use crate::{
 pub enum UnaryOp {
     Abs,
     Neg,
+    Cast(DType),
 }
 
 impl UnaryOp {
     fn dtype(&self, input: DType) -> Result<DType, crate::Error> {
         Ok(match self {
             UnaryOp::Abs => input,
+            UnaryOp::Cast(output) => {
+                if input.vec_size() == output.vec_size() {
+                    *output
+                } else {
+                    return Err(
+                        format!("Cannot {:?} cannot be converted to {:?}", input, output).into(),
+                    );
+                }
+            }
             UnaryOp::Neg => match input {
                 DType::U8 | DType::U16 | DType::U32 | DType::U8Vec4 => {
                     return Err(format!("Value of type {:?} cannot be negated", input).into())
@@ -43,6 +53,7 @@ impl Display for WriteUnary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
             UnaryOp::Abs => write!(f, "abs({})", self.1),
+            UnaryOp::Cast(output) => write!(f, "{}({})", output.glsl_type(), self.1),
             UnaryOp::Neg => write!(f, "-{}", self.1),
         }
     }
@@ -246,11 +257,18 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn add(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Add, self, other)
     }
-}
+    pub fn mul(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Mul, self, other)
+    }
 
-impl<D: DynDimension> JitTensorOperator<D> {
     pub fn abs(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Abs, self)
+    }
+    pub fn neg(self) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Neg, self)
+    }
+    pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Cast(to), self)
     }
 }
 
@@ -417,13 +435,15 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     let num_chunk_elements = m.num_chunk_elements();
 
                     let pipeline = device.request_state(
-                        RessourceId::new("pipeline").of(ctx.current_op()),
+                        RessourceId::new("pipeline")
+                            .of(ctx.current_op())
+                            .dependent_on(jit_operator),
                         || {
                             let shader = compile(&jit_operator.node, &jit_operator.operators.0)?;
                             ComputePipeline::new(
                                 device,
                                 (
-                                    shader.as_str(),
+                                    dbg!(shader.as_str()),
                                     ShaderDefines::new().add("BRICK_MEM_SIZE", num_chunk_elements),
                                 ),
                                 true,

@@ -8,8 +8,9 @@ use palace_core::{
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
     dtypes::DType,
+    jit::jit,
     operators::{
-        raycaster::TransFuncOperator, volume::EmbeddedVolumeOperator, volume_gpu::linear_rescale,
+        raycaster::TransFuncOperator, tensor::TensorOperator, volume::EmbeddedVolumeOperator,
     },
     Error,
 };
@@ -124,12 +125,18 @@ pub fn open(
     };
 
     let vol = palace_core::operators::raw::open(raw_path, metadata, dtype)?;
-    let vol = palace_core::operators::volume_gpu::cast(vol, DType::F32);
-    let mut vol = vol.try_into().unwrap();
+    let vol = jit(vol);
+    let mut vol = vol.cast(DType::F32)?;
 
-    if scale != 1.0 && rwm_offset != 0.0 {
-        vol = linear_rescale(vol, scale, rwm_offset);
+    if scale != 1.0 {
+        vol = vol.mul(scale.into())?;
     }
+
+    if rwm_offset != 0.0 {
+        vol = vol.add(rwm_offset.into())?;
+    }
+
+    let vol: TensorOperator<D3, DType> = vol.try_into().unwrap();
 
     Ok(vol.embedded(embedding_data).into())
 }

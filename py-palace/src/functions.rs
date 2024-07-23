@@ -61,6 +61,11 @@ pub fn neg(py: Python, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     jit_unary(py, UnaryOp::Neg, vol)
 }
 
+#[pyfunction]
+pub fn cast(py: Python, vol: MaybeEmbeddedTensorOperator, to: DType) -> PyResult<PyObject> {
+    jit_unary(py, UnaryOp::Cast(to), vol)
+}
+
 fn jit_binary(
     py: Python,
     op: BinOp,

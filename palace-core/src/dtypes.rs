@@ -175,6 +175,19 @@ impl DType {
             DType::F32Vec4A2 => None,
         }
     }
+    pub fn vec_size(&self) -> usize {
+        match self {
+            DType::U8
+            | DType::I8
+            | DType::U16
+            | DType::I16
+            | DType::F32
+            | DType::U32
+            | DType::I32 => 1,
+            DType::U8Vec4 => 4,
+            DType::F32Vec4A2 => 8, //TODO??
+        }
+    }
 }
 
 impl ElementType for DType {
