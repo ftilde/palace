@@ -30,21 +30,6 @@ pub fn rechunk(
     )
 }
 
-#[pyfunction]
-pub fn linear_rescale(
-    py: Python,
-    vol: MaybeEmbeddedTensorOperator,
-    scale: f32,
-    offset: f32,
-) -> PyResult<PyObject> {
-    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
-        Ok(
-            palace_core::operators::volume_gpu::linear_rescale(vol.try_into()?, scale, offset)
-                .into(),
-        )
-    })
-}
-
 fn jit_unary(py: Python, op: UnaryOp, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     vol.try_map_inner_jit(py, |vol: JitTensorOperator<DDyn>| {
         Ok(crate::map_err(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
@@ -98,6 +83,15 @@ pub fn mul(
     v2: MaybeEmbeddedTensorOperator,
 ) -> PyResult<PyObject> {
     jit_binary(py, BinOp::Mul, v1, v2)
+}
+
+#[pyfunction]
+pub fn max(
+    py: Python,
+    v1: MaybeEmbeddedTensorOperator,
+    v2: MaybeEmbeddedTensorOperator,
+) -> PyResult<PyObject> {
+    jit_binary(py, BinOp::Max, v1, v2)
 }
 
 #[pyfunction]

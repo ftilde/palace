@@ -20,7 +20,6 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(read_png, m)?)?;
     m.add_function(wrap_pyfunction!(mean, m)?)?;
-    m.add_function(wrap_pyfunction!(linear_rescale, m)?)?;
     m.add_function(wrap_pyfunction!(threshold, m)?)?;
     m.add_function(wrap_pyfunction!(rechunk, m)?)?;
     m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
@@ -34,6 +33,7 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mandelbrot, m)?)?;
     m.add_function(wrap_pyfunction!(add, m)?)?;
     m.add_function(wrap_pyfunction!(mul, m)?)?;
+    m.add_function(wrap_pyfunction!(max, m)?)?;
     m.add_function(wrap_pyfunction!(abs, m)?)?;
     m.add_function(wrap_pyfunction!(neg, m)?)?;
     m.add_function(wrap_pyfunction!(cast, m)?)?;

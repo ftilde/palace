@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
+use palace_core::jit::jit;
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
@@ -190,8 +191,15 @@ fn eval_network(
             //let after_kernel = operators::vesselness::vesselness(vol, *stddev);
             let after_kernel = vol;
 
-            let scaled =
-                volume_gpu::linear_rescale(after_kernel, (*scale).into(), (*offset).into());
+            let scaled = jit(after_kernel.into())
+                .mul((*scale).into())
+                .unwrap()
+                .add((*offset).into())
+                .unwrap()
+                .compile()
+                .unwrap()
+                .try_into()
+                .unwrap();
             scaled
         })
     });

@@ -63,6 +63,7 @@ impl Display for WriteUnary {
 pub enum BinOp {
     Add,
     Mul,
+    Max,
 }
 
 impl BinOp {
@@ -84,6 +85,7 @@ impl Display for WriteBin {
         match self.0 {
             BinOp::Add => write!(f, "{} + {}", self.1, self.2),
             BinOp::Mul => write!(f, "{} * {}", self.1, self.2),
+            BinOp::Max => write!(f, "max({}, {})", self.1, self.2),
         }
     }
 }
@@ -259,6 +261,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn mul(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Mul, self, other)
+    }
+    pub fn max(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Max, self, other)
     }
 
     pub fn abs(self) -> Result<Self, crate::Error> {

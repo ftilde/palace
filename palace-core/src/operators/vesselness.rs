@@ -3,6 +3,7 @@ use futures::StreamExt;
 
 use crate::dim::*;
 use crate::dtypes::StaticElementType;
+use crate::jit::jit;
 use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
@@ -28,9 +29,9 @@ pub fn multiscale_vesselness(
     let spacing_diag = input.embedding_data.spacing.length();
     let c = 1.0 / (spacing_diag * spacing_diag);
 
-    let mut out = out.map_inner(|v| {
-        crate::operators::volume_gpu::linear_rescale(v, c * step_scale * step_scale, 0.0)
-    });
+    let mut out = jit(out.inner.into())
+        .mul((c * step_scale * step_scale).into())
+        .unwrap();
 
     let num_reductions = num_steps - 1;
     for step in 1..num_steps {
@@ -47,14 +48,18 @@ pub fn multiscale_vesselness(
         };
 
         let vesselness = vesselness(input.clone(), step_scale.clone());
-        let step_vesselness = vesselness.map_inner(|v| {
-            crate::operators::volume_gpu::linear_rescale(v, c * step_scale * step_scale, 0.0)
-        });
-        out = crate::operators::bin_ops::max(out.inner, step_vesselness.inner)
-            .embedded(input.embedding_data);
+        let step_vesselness = jit(vesselness.inner.into())
+            .mul((c * step_scale * step_scale).into())
+            .unwrap();
+
+        out = out.max(step_vesselness).unwrap();
     }
 
-    out
+    out.compile()
+        .unwrap()
+        .embedded(input.embedding_data)
+        .try_into()
+        .unwrap()
 }
 
 pub fn vesselness(

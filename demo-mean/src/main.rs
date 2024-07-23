@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, VoxelPosition};
 use palace_core::dim::D3;
 use palace_core::dtypes::StaticElementType;
+use palace_core::jit::jit;
 use palace_core::operators;
 use palace_core::operators::volume::VolumeOperator;
 use palace_core::runtime::RunTime;
@@ -129,11 +130,13 @@ fn eval_network(
     let convolved = volume_gpu::separable_convolution(rechunked.clone(), kernel_refs);
     let mapped = convolved; //tensor::map(convolved, |v| v.min(0.5));
 
-    let scaled1 = volume_gpu::linear_rescale(mapped, factor.into(), 0.0.into());
-    let scaled2 = volume_gpu::linear_rescale(scaled1, factor.into(), 0.0.into());
-    let scaled3 = volume_gpu::linear_rescale(scaled2.clone(), (-1.0).into(), 0.0.into());
+    let scaled = jit(mapped.into())
+        .mul(factor.into())
+        .unwrap()
+        .compile()
+        .unwrap();
 
-    let mean = volume_gpu::mean(scaled3);
+    let mean = volume_gpu::mean(scaled.try_into().unwrap());
     let mean_unscaled = volume_gpu::mean(rechunked.clone());
 
     // TODO: it's slightly annoying that we have to construct the reference here (because of async

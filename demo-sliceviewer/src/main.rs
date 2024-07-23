@@ -6,6 +6,7 @@ use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::dim::*;
 use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
+use palace_core::jit::jit;
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
@@ -291,7 +292,15 @@ fn eval_network(
             //    let after_kernel =
             //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
             //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
-            let scaled = volume_gpu::linear_rescale(vol, (*scale).into(), (*offset).into());
+            let scaled = jit(vol.into())
+                .mul((*scale).into())
+                .unwrap()
+                .add((*offset).into())
+                .unwrap()
+                .compile()
+                .unwrap()
+                .try_into()
+                .unwrap();
             scaled
         })
     });
