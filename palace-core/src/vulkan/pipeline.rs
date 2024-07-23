@@ -641,34 +641,6 @@ pub struct DynPushConstantsWriter<'a> {
     buf: Vec<u8>,
 }
 
-//pub trait PushConstValue {
-//    fn validate(&self, member: &Member) -> Result<(), crate::Error>;
-//    fn write(&self, buf: &mut Vec<u8>);
-//}
-//
-//impl<T> PushConstValue for T
-//where
-//    StaticElementType<T>: AsDynType,
-//{
-//    fn validate(&self, member: &Member) -> Result<(), crate::Error> {
-//        todo!()
-//    }
-//
-//    fn write(&self, buf: &mut Vec<u8>) {
-//        todo!()
-//    }
-//}
-//
-//impl<D: Dimension, T: Element> PushConstValue for Vector<D, T> {
-//    fn validate(&self, member: &Member) -> Result<(), crate::Error> {
-//        todo!()
-//    }
-//
-//    fn write(&self, buf: &mut Vec<u8>) {
-//        todo!()
-//    }
-//}
-
 impl<'a> DynPushConstantsWriter<'a> {
     pub fn finish(self) -> Result<Vec<u8>, crate::Error> {
         if self.pos < self.consts.members.len() {

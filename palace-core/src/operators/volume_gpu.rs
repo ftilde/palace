@@ -663,10 +663,7 @@ void main() {
                                     .add("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
                                     .add("N", dim)
                                     .add("T", dtype.glsl_type())
-                                    .add(
-                                        "declare_push_consts(__name)",
-                                        push_constants.glsl_definition(),
-                                    ),
+                                    .push_const_block_dyn(&push_constants),
                                 Config::new()
                                     .ext(dtype.glsl_ext())
                                     .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
@@ -785,32 +782,28 @@ void main() {
 /// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
 /// supported (and thus always applied) border handling routine.
 //TODO It should be relatively easy to support other strategies now
-pub fn convolution_1d<D: Dimension>(
+pub fn convolution_1d<D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     kernel: ArrayOperator<StaticElementType<f32>>,
     dim: usize,
 ) -> TensorOperator<D, StaticElementType<f32>> {
-    assert!(dim < D::N);
-    #[derive(Clone, bytemuck::Zeroable)]
-    #[repr(C)]
-    struct PushConstants<D: Dimension> {
-        mem_dim: Vector<D, u32>,
-        logical_dim_out: Vector<D, u32>,
-        out_begin: Vector<D, u32>,
-        global_dim: Vector<D, u32>,
-        dim_in_chunks: Vector<D, u32>,
-        num_chunks: u32,
-        first_chunk_pos: u32,
-        extent: i32,
-    }
-    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
-    //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
+    let nd = input.metadata.dimensions.len();
+
+    assert!(dim < nd);
+
+    let dtype: DType = input.chunks.dtype().into();
+
+    let push_constants = DynPushConstants::new()
+        .array::<u32>(nd, "mem_dim")
+        .array::<u32>(nd, "logical_dim_out")
+        .array::<u32>(nd, "out_begin")
+        .array::<u32>(nd, "global_dim")
+        .array::<u32>(nd, "dim_in_chunks")
+        .scalar::<u32>("num_chunks")
+        .scalar::<u32>("first_chunk_pos")
+        .scalar::<i32>("extent");
+
     const SHADER: &'static str = r#"
-#version 450
-
-#extension GL_EXT_scalar_block_layout : require
-
 #include <util.glsl>
 #include <vec.glsl>
 
@@ -828,16 +821,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
 } outputData;
 
-layout(scalar, push_constant) uniform PushConsts {
-    uint[N] mem_dim;
-    uint[N] logical_dim_out;
-    uint[N] out_begin;
-    uint[N] global_dim;
-    uint[N] dim_in_chunks;
-    uint num_chunks;
-    uint first_chunk_pos;
-    int extent;
-} consts;
+declare_push_consts(consts)
 
 float kernel_val(int p) {
     int kernel_buf_index = consts.extent - p;
@@ -932,13 +916,13 @@ void main() {
             .dependent_on(&kernel)
             .dependent_on_data(&dim),
         Default::default(),
-        input.metadata,
-        (input, kernel),
-        move |ctx, mut positions, (input, kernel)| {
+        input.metadata.clone(),
+        (input, kernel, push_constants),
+        move |ctx, mut positions, (input, kernel, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
-                let m_in = input.metadata;
+                let m_in = &input.metadata;
                 let kernel_m = kernel.metadata;
                 let kernel_handle = ctx
                     .submit(kernel.chunks.request_gpu(
@@ -951,7 +935,7 @@ void main() {
                     ))
                     .await;
 
-                let m_out = m_in;
+                let m_out = m_in.clone();
 
                 assert_eq!(
                     kernel_m.dimensions.raw(),
@@ -971,14 +955,16 @@ void main() {
                     let out_end = out_info.end();
 
                     let in_begin = out_begin
+                        .clone()
                         .map_element(dim, |v| (v.raw.saturating_sub(extent as u32)).into());
                     let in_end = out_end
+                        .clone()
                         .map_element(dim, |v| (v + extent as u32).min(m_out.dimensions[dim]));
 
                     let in_begin_brick = m_in.chunk_pos(&in_begin);
                     let in_end_brick = m_in.chunk_pos(&in_end.map(|v| v - 1u32));
 
-                    let in_brick_positions = (0..D::N)
+                    let in_brick_positions = (0..nd)
                         .into_iter()
                         .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
                         .multi_cartesian_product()
@@ -1010,7 +996,7 @@ void main() {
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&max_bricks)
-                        .dependent_on(&D::N)
+                        .dependent_on(&nd)
                         .dependent_on(&dim),
                     || {
                         ComputePipeline::new(
@@ -1020,9 +1006,13 @@ void main() {
                                 ShaderDefines::new()
                                     .add("MAX_BRICKS", max_bricks)
                                     .add("DIM", dim)
-                                    .add("N", D::N)
+                                    .add("N", nd)
                                     .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
-                                    .add("KERNEL_SIZE", kernel_size),
+                                    .add("KERNEL_SIZE", kernel_size)
+                                    .push_const_block_dyn(&push_constants),
+                                Config::new()
+                                    .ext(dtype.glsl_ext())
+                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                             ),
                             true,
                         )
@@ -1048,7 +1038,7 @@ void main() {
                     let out_begin = out_info.begin();
 
                     for window in in_brick_positions.windows(2) {
-                        for d in 0..D::N {
+                        for d in 0..nd {
                             if d == dim {
                                 assert_eq!(window[0][d] + 1u32, window[1][d]);
                             } else {
@@ -1064,17 +1054,6 @@ void main() {
 
                     let first_chunk_pos = in_brick_positions.first().unwrap()[dim].raw;
                     let global_size = m_out.chunk_size.hmul();
-
-                    let consts = PushConstants {
-                        mem_dim: m_out.chunk_size.raw(),
-                        logical_dim_out: out_info.logical_dimensions.raw(),
-                        out_begin: out_begin.raw(),
-                        global_dim: m_out.dimensions.raw(),
-                        dim_in_chunks: m_out.dimension_in_chunks().raw(),
-                        num_chunks: num_chunks as _,
-                        first_chunk_pos,
-                        extent: extent as i32,
-                    };
 
                     // TODO: This padding to max_bricks is necessary since the descriptor array in
                     // the shader has a static since. Once we use dynamic ssbos this can go away.
@@ -1095,7 +1074,18 @@ void main() {
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant_pod(consts);
+                            pipeline.push_constant_dyn(&push_constants, |w| {
+                                w.array(&m_out.chunk_size.raw())?;
+                                w.array(&out_info.logical_dimensions.raw())?;
+                                w.array(&out_begin.raw())?;
+                                w.array(&m_out.dimensions.raw())?;
+                                w.array(&m_out.dimension_in_chunks().raw())?;
+                                w.scalar(num_chunks as u32)?;
+                                w.scalar(first_chunk_pos)?;
+                                w.scalar(extent as i32)?;
+
+                                Ok(())
+                            });
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(global_size);
                         }

@@ -10,7 +10,11 @@ use crate::{
     util::{Map, Set},
 };
 
-use super::{pipeline::DynamicDescriptorSetPool, state::VulkanState, DeviceFunctions};
+use super::{
+    pipeline::{DynPushConstants, DynamicDescriptorSetPool},
+    state::VulkanState,
+    DeviceFunctions,
+};
 
 pub struct ShaderDefines {
     defines: Map<String, String>,
@@ -36,6 +40,12 @@ impl ShaderDefines {
             without_leading_struct
         );
         self.add("declare_push_consts(__name)", def)
+    }
+    pub fn push_const_block_dyn(self, push_consts_def: &DynPushConstants) -> Self {
+        self.add(
+            "declare_push_consts(__name)",
+            push_consts_def.glsl_definition(),
+        )
     }
 }
 

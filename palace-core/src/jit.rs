@@ -33,7 +33,7 @@ impl UnaryOp {
                 DType::U8 | DType::U16 | DType::U32 | DType::U8Vec4 => {
                     return Err(format!("Value of type {:?} cannot be negated", input).into())
                 }
-                DType::F32 | DType::F32Vec4A2 => input,
+                DType::I8 | DType::I16 | DType::I32 | DType::F32 | DType::F32Vec4A2 => input,
             },
         })
     }
