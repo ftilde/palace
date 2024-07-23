@@ -782,11 +782,11 @@ void main() {
 /// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
 /// supported (and thus always applied) border handling routine.
 //TODO It should be relatively easy to support other strategies now
-pub fn convolution_1d<D: DynDimension>(
-    input: TensorOperator<D, StaticElementType<f32>>,
-    kernel: ArrayOperator<StaticElementType<f32>>,
+pub fn convolution_1d<D: DynDimension, T: ElementType>(
+    input: TensorOperator<D, T>,
+    kernel: ArrayOperator<T>,
     dim: usize,
-) -> TensorOperator<D, StaticElementType<f32>> {
+) -> TensorOperator<D, T> {
     let nd = input.metadata.dimensions.len();
 
     assert!(dim < nd);
@@ -810,25 +810,25 @@ pub fn convolution_1d<D: DynDimension>(
 layout (local_size_x = 256) in;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
-    float values[BRICK_MEM_SIZE];
+    T values[BRICK_MEM_SIZE];
 } sourceData[MAX_BRICKS];
 
 layout(std430, binding = 1) readonly buffer KernelBuffer{
-    float values[KERNEL_SIZE];
+    T values[KERNEL_SIZE];
 } kernel;
 
 layout(std430, binding = 2) buffer OutputBuffer{
-    float values[BRICK_MEM_SIZE];
+    T values[BRICK_MEM_SIZE];
 } outputData;
 
 declare_push_consts(consts)
 
-float kernel_val(int p) {
+T kernel_val(int p) {
     int kernel_buf_index = consts.extent - p;
     return kernel.values[kernel_buf_index];
 }
 
-float sample_brick(uint[N] pos, int brick) {
+T sample_brick(uint[N] pos, int brick) {
     uint local_index = to_linear(pos, consts.mem_dim);
     return sourceData[brick].values[local_index];
 }
@@ -838,7 +838,7 @@ void main() {
 
     if(gID < BRICK_MEM_SIZE) {
         uint[N] out_local = from_linear(gID, consts.mem_dim);
-        float acc = 0.0;
+        T acc = T(0);
 
         if(all(less_than(out_local, consts.logical_dim_out))) {
 
@@ -877,7 +877,7 @@ void main() {
                 // Border handling for first chunk in dim
                 if(chunk_pos == 0) {
                     pos[DIM] = chunk_begin_local; //Clip to volume/chunk
-                    float local_val = sample_brick(pos, i);
+                    T local_val = sample_brick(pos, i);
 
                     for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
@@ -894,7 +894,7 @@ void main() {
                 // Border handling for last chunk in dim
                 if(chunk_pos == last_chunk) {
                     pos[DIM] = chunk_end_local; //Clip to volume/chunk
-                    float local_val = sample_brick(pos, i);
+                    T local_val = sample_brick(pos, i);
 
                     for (int local=chunk_end_local+1; local<=l_end_no_clip; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
@@ -903,7 +903,7 @@ void main() {
                 }
             }
         } else {
-            acc = NaN;
+            //acc = NaN;
         }
 
         outputData.values[gID] = acc;
@@ -915,7 +915,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on(&kernel)
             .dependent_on_data(&dim),
-        Default::default(),
+        input.chunks.dtype(),
         input.metadata.clone(),
         (input, kernel, push_constants),
         move |ctx, mut positions, (input, kernel, push_constants)| {
@@ -997,7 +997,8 @@ void main() {
                         .of(ctx.current_op())
                         .dependent_on(&max_bricks)
                         .dependent_on(&nd)
-                        .dependent_on(&dim),
+                        .dependent_on(&dim)
+                        .dependent_on(&dtype),
                     || {
                         ComputePipeline::new(
                             device,
@@ -1007,6 +1008,7 @@ void main() {
                                     .add("MAX_BRICKS", max_bricks)
                                     .add("DIM", dim)
                                     .add("N", nd)
+                                    .add("T", dtype.glsl_type())
                                     .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                     .add("KERNEL_SIZE", kernel_size)
                                     .push_const_block_dyn(&push_constants),
