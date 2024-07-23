@@ -20,7 +20,7 @@ pub fn rechunk(
     if tensor.inner().nd() != size.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
             "Chunk size must be {}-dimensional to fit tensor",
-            tensor.into_inner().nd()
+            tensor.inner().nd()
         )));
     }
 
@@ -112,9 +112,17 @@ pub fn threshold(
 #[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
-    vol: MaybeEmbeddedTensorOperator,
+    tensor: MaybeEmbeddedTensorOperator,
     kernels: Vec<MaybeConstTensorOperator>, //TODO
 ) -> PyResult<PyObject> {
+    if tensor.inner().nd() != kernels.len() {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "Expected {} kernels for tensor, but got {}",
+            tensor.inner().nd(),
+            kernels.len()
+        )));
+    }
+
     let kernels = kernels
         .into_iter()
         .map(|k| {
@@ -129,7 +137,7 @@ pub fn separable_convolution<'py>(
     )
     .unwrap();
 
-    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
+    tensor.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
         Ok(
             palace_core::operators::volume_gpu::separable_convolution(vol, kernel_refs)
                 .into_dyn()
