@@ -74,6 +74,12 @@ impl<D: DynDimension> TensorMetaData<D> {
             chunk_size: self.chunk_size.into_dyn(),
         }
     }
+
+    pub fn dim(&self) -> D {
+        let d = self.dimensions.dim();
+        assert_eq!(d, self.chunk_size.dim());
+        d
+    }
 }
 
 // We have to do this manually since bytemuck cannot verify this in general due to the const

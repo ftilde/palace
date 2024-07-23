@@ -579,14 +579,14 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
 
     let dtype: DType = input.chunks.dtype().into();
 
-    let dim = md.chunk_size.len();
+    let nd = input.dim().n();
 
     let push_constants = DynPushConstants::new()
-        .array::<u32>(dim, "mem_size_in")
-        .array::<u32>(dim, "mem_size_out")
-        .array::<u32>(dim, "begin_in")
-        .array::<u32>(dim, "begin_out")
-        .array::<u32>(dim, "region_size")
+        .array::<u32>(nd, "mem_size_in")
+        .array::<u32>(nd, "mem_size_out")
+        .array::<u32>(nd, "begin_in")
+        .array::<u32>(nd, "begin_out")
+        .array::<u32>(nd, "region_size")
         .scalar::<u32>("global_size");
 
     const SHADER: &'static str = r#"
@@ -626,7 +626,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on_data(&chunk_size)
             .dependent_on_data(&dtype)
-            .dependent_on_data(&dim),
+            .dependent_on_data(&nd),
         input.chunks.dtype(),
         {
             let mut m = input.metadata.clone();
@@ -653,7 +653,7 @@ void main() {
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&dtype)
-                        .dependent_on(&dim),
+                        .dependent_on(&nd),
                     || {
                         ComputePipeline::new(
                             device,
@@ -661,7 +661,7 @@ void main() {
                                 SHADER,
                                 ShaderDefines::new()
                                     .add("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
-                                    .add("N", dim)
+                                    .add("N", nd)
                                     .add("T", dtype.glsl_type())
                                     .push_const_block_dyn(&push_constants),
                                 Config::new()
@@ -787,7 +787,7 @@ pub fn convolution_1d<D: DynDimension, T: ElementType>(
     kernel: ArrayOperator<T>,
     dim: usize,
 ) -> TensorOperator<D, T> {
-    let nd = input.metadata.dimensions.len();
+    let nd = input.dim().n();
 
     assert!(dim < nd);
 
@@ -1111,11 +1111,12 @@ void main() {
 }
 
 //TODO: kind of annoying that we have to use a reference to the operator here, but that is the only way it is copy...
-pub fn separable_convolution<D: Dimension>(
-    mut v: TensorOperator<D, StaticElementType<f32>>,
-    kernels: Vector<D, &ArrayOperator<StaticElementType<f32>>>,
-) -> TensorOperator<D, StaticElementType<f32>> {
-    for dim in (0..D::N).rev() {
+pub fn separable_convolution<D: DynDimension, T: ElementType>(
+    mut v: TensorOperator<D, T>,
+    kernels: Vector<D, &ArrayOperator<T>>,
+) -> TensorOperator<D, T> {
+    assert_eq!(v.dim(), kernels.dim());
+    for dim in (0..v.dim().n()).rev() {
         v = convolution_1d(v, kernels[dim].clone(), dim);
     }
     v

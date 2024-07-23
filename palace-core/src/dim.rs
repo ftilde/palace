@@ -80,19 +80,24 @@ pub trait Dimension:
     type NDArrayDim: ndarray::Dimension;
     type Array<T: Copy>: Array<T>;
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim;
+    fn new() -> Self;
 }
 
-pub trait DynDimension: 'static + Debug + Clone {
+pub trait DynDimension: 'static + Debug + Clone + PartialEq {
     type DynArray<T: Copy>: DynArray<T>;
-    fn n_dim(&self) -> usize;
+    fn n(&self) -> usize;
+    fn dim_of_array<T: Copy>(v: &Self::DynArray<T>) -> Self;
     fn try_into_dim<D: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D::Array<T>>;
 
     fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T>;
 }
 impl<D: Dimension> DynDimension for D {
     type DynArray<T: Copy> = D::Array<T>;
-    fn n_dim(&self) -> usize {
+    fn n(&self) -> usize {
         D::N
+    }
+    fn dim_of_array<T: Copy>(_v: &Self::DynArray<T>) -> Self {
+        Self::new()
     }
     fn try_into_dim<D2: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D2::Array<T>> {
         if D::N == D2::N {
@@ -109,8 +114,11 @@ impl<D: Dimension> DynDimension for D {
 
 impl DynDimension for DDyn {
     type DynArray<T: Copy> = Vec<T>;
-    fn n_dim(&self) -> usize {
+    fn n(&self) -> usize {
         self.0
+    }
+    fn dim_of_array<T: Copy>(v: &Self::DynArray<T>) -> Self {
+        DDyn(v.len())
     }
     fn try_into_dim<D2: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D2::Array<T>> {
         if v.len() == D2::N {
@@ -139,6 +147,9 @@ impl Dimension for D1 {
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim {
         ndarray::Dim(i)
     }
+    fn new() -> Self {
+        D1
+    }
 }
 impl LargerDim for D1 {
     type Larger = D2;
@@ -150,6 +161,9 @@ impl Dimension for D2 {
     type Array<T: Copy> = [T; 2];
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim {
         ndarray::Dim(i)
+    }
+    fn new() -> Self {
+        D2
     }
 }
 impl LargerDim for D2 {
@@ -166,6 +180,9 @@ impl Dimension for D3 {
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim {
         ndarray::Dim(i)
     }
+    fn new() -> Self {
+        D3
+    }
 }
 impl LargerDim for D3 {
     type Larger = D4;
@@ -181,6 +198,9 @@ impl Dimension for D4 {
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim {
         ndarray::Dim(i)
     }
+    fn new() -> Self {
+        D4
+    }
 }
 impl SmallerDim for D4 {
     type Smaller = D3;
@@ -195,6 +215,9 @@ impl Dimension for D5 {
     type Array<T: Copy> = [T; 5];
     fn to_ndarray_dim(i: Self::Array<usize>) -> Self::NDArrayDim {
         ndarray::Dim(i)
+    }
+    fn new() -> Self {
+        D5
     }
 }
 impl SmallerDim for D5 {

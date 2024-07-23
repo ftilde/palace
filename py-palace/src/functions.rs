@@ -50,7 +50,6 @@ pub fn linear_rescale(
 
 fn jit_unary(py: Python, op: UnaryOp, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     vol.try_map_inner_jit(py, |vol: JitTensorOperator<DDyn>| {
-        //TODO: ndim -> static dispatch
         Ok(crate::map_err(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
     })
 }
@@ -114,20 +113,25 @@ pub fn threshold(
 pub fn separable_convolution<'py>(
     py: Python,
     vol: MaybeEmbeddedTensorOperator,
-    zyx: [MaybeConstTensorOperator; 3], //TODO
+    kernels: Vec<MaybeConstTensorOperator>, //TODO
 ) -> PyResult<PyObject> {
-    let [z, y, x] = zyx;
+    let kernels = kernels
+        .into_iter()
+        .map(|k| {
+            let ret: CTensorOperator<D1, DType> = k.try_into_core()?.try_into()?;
+            Ok(ret)
+        })
+        .collect::<Result<Vec<_>, PyErr>>()?;
 
-    let kernels = [
-        z.try_into_core()?.try_into()?,
-        y.try_into_core()?.try_into()?,
-        x.try_into_core()?.try_into()?,
-    ];
-    let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
+    let kernel_refs = Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(
+        |i| &kernels[i],
+        kernels.len(),
+    )
+    .unwrap();
+
     vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
-        let vol = try_into_static_err(vol)?;
         Ok(
-            palace_core::operators::volume_gpu::separable_convolution(vol.try_into()?, kernel_refs)
+            palace_core::operators::volume_gpu::separable_convolution(vol, kernel_refs)
                 .into_dyn()
                 .into(),
         )

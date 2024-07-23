@@ -121,6 +121,9 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn dim(&self) -> D {
+        D::dim_of_array(&self.0)
+    }
     pub fn inner(self) -> D::DynArray<T> {
         self.0
     }

@@ -114,6 +114,10 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
             chunks: crate::operator::cache(self.chunks),
         }
     }
+
+    pub fn dim(&self) -> D {
+        self.metadata.dim()
+    }
 }
 
 impl<D: DynDimension, E> TensorOperator<D, E> {
