@@ -6,10 +6,7 @@ use palace_core::dtypes::DType;
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3::{
-    exceptions::{PyException, PyValueError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyfunction]
 pub fn rechunk(
@@ -279,13 +276,6 @@ pub fn apply_tf(
     input: MaybeEmbeddedTensorOperator,
     tf: TransFuncOperator,
 ) -> PyResult<PyObject> {
-    let nd = input.clone().into_inner().metadata.dimensions.len();
-    if nd != 2 {
-        return Err(PyErr::new::<PyException, _>(format!(
-            "apply_tf for dim {} not supported, yet",
-            nd
-        )));
-    }
     let tf = tf.try_into()?;
     input.try_map_inner(py, |input| {
         Ok(palace_core::operators::volume_gpu::apply_tf::<DDyn>(input.try_into()?, tf).into())
