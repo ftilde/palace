@@ -105,7 +105,9 @@ void main()
                     .await;
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&m.num_chunk_elements()),
                     || {
                         ComputePipeline::new(
                             device,
@@ -224,7 +226,9 @@ void main()
                 let m = input.metadata.clone().into_dyn();
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&m.num_chunk_elements()),
                     || {
                         ComputePipeline::new(
                             device,
@@ -393,6 +397,7 @@ void main() {
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
+                        .dependent_on(&m_in.num_chunk_elements())
                         .dependent_on(&dtype)
                         .dependent_on(&nd),
                     || {
@@ -737,9 +742,11 @@ void main() {
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&max_bricks)
-                        .dependent_on(&nd)
                         .dependent_on(&dim)
-                        .dependent_on(&dtype),
+                        .dependent_on(&nd)
+                        .dependent_on(&dtype)
+                        .dependent_on(&m_in.chunk_size)
+                        .dependent_on(&kernel_size),
                     || {
                         ComputePipeline::new(
                             device,
@@ -941,7 +948,9 @@ void main()
                 let batch_size = 1024;
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&m.chunk_size),
                     || {
                         ComputePipeline::new(
                             device,

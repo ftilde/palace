@@ -214,7 +214,8 @@ void main()
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(&m.chunk_size),
+                        .dependent_on(&m.chunk_size)
+                        .dependent_on(&D::N),
                     || {
                         ComputePipeline::new(
                             device,

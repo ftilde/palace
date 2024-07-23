@@ -437,7 +437,11 @@ void main()
                 let request_table_size = 256;
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&m_in.chunk_size)
+                        .dependent_on(&num_bricks)
+                        .dependent_on(&request_table_size),
                     || {
                         ComputePipeline::new(
                             device,
