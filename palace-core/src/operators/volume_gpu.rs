@@ -990,8 +990,6 @@ void main() {
                 let max_bricks =
                     2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
 
-                //TODO: This is really ugly, we should investigate to use z,y,x ordering in shaders
-                //as well.
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
