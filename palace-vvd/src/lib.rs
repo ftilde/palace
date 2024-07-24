@@ -82,6 +82,13 @@ pub fn open(
         return Err(format!("Spacing is not valid: {:?}", spacing).into());
     }
 
+    let (dtype_mult, dtype) = match format.as_str() {
+        "float" => (1.0, DType::F32),
+        "uint8" => (1.0 / ((1 << 8) as f32), DType::U8),
+        "uint16" => (1.0 / ((1 << 16) as f32), DType::U16),
+        f => return Err(format!("Unsupported format '{}'.", f).into()),
+    };
+
     let rwm_offset = evaluate_xpath(
         &document,
         "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@offset",
@@ -94,16 +101,12 @@ pub fn open(
         "/VoreenData/Volumes/Volume/MetaData/MetaItem[@name='RealWorldMapping']/value/@scale",
     )?
     .number() as f32;
-    let rwm_scale = default_if_nan(rwm_scale, 1.0);
+    // Voreen behavior is: If there is no RWM, a denormalizing-mapping is applied
+    // -> We reverse dtype_mult
+    let rwm_scale = default_if_nan(rwm_scale, 1.0 / dtype_mult);
 
     let embedding_data = TensorEmbeddingData { spacing };
 
-    let (dtype_mult, dtype) = match format.as_str() {
-        "float" => (1.0, DType::F32),
-        "uint8" => (1.0 / ((1 << 8) as f32), DType::U8),
-        "uint16" => (1.0 / ((1 << 16) as f32), DType::U16),
-        f => return Err(format!("Unsupported format '{}'.", f).into()),
-    };
     let scale = rwm_scale * dtype_mult;
 
     let simple_path = evaluate_xpath(&document, "/VoreenData/Volumes/Volume/RawData/@filename")?;

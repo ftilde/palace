@@ -458,7 +458,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                 jit_operator.root,
                                 &jit_operator.operators.0,
                             )?;
-                            println!("{}", shader.as_str());
+                            //println!("{}", shader.as_str());
                             ComputePipeline::new(
                                 device,
                                 (
