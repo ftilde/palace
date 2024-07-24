@@ -221,7 +221,10 @@ pub struct WriteHandle<'a> {
 pub struct DropError;
 impl Drop for DropError {
     fn drop(&mut self) {
-        panic!("The WriteHandle was not marked initialized!");
+        if !std::thread::panicking() {
+            // Avoid additional panics (-> aborts) while already panicking (unwinding)
+            panic!("The WriteHandle was not marked initialized!");
+        }
     }
 }
 

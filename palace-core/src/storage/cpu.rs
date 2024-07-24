@@ -208,7 +208,10 @@ impl<'a, Allocator> DropError<'a, Allocator> {
 }
 impl<Allocator> Drop for DropError<'_, Allocator> {
     fn drop(&mut self) {
-        panic!("The WriteHandle was not marked initialized!");
+        if !std::thread::panicking() {
+            // Avoid additional panics (-> aborts) while already panicking (unwinding)
+            panic!("The WriteHandle was not marked initialized!");
+        }
     }
 }
 pub struct DropMarkInitialized<'a, Allocator> {

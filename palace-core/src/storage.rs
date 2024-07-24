@@ -251,7 +251,10 @@ pub struct GarbageCollectId(u64);
 struct ThreadHandleDropPanic;
 impl Drop for ThreadHandleDropPanic {
     fn drop(&mut self) {
-        panic!("ThreadHandles must be returned to main thread before being dropped!");
+        if !std::thread::panicking() {
+            // Avoid additional panics (-> aborts) while already panicking (unwinding)
+            panic!("ThreadHandles must be returned to main thread before being dropped!");
+        }
     }
 }
 impl ThreadHandleDropPanic {
