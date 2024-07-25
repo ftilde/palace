@@ -425,11 +425,16 @@ fn compile<D: DynDimension>(
     Ok((shader, config))
 }
 impl<D: DynDimension> JitTensorOperator<D> {
-    pub fn compile(self) -> Result<TensorOperator<D, DType>, crate::Error> {
+    pub fn compile(mut self) -> Result<TensorOperator<D, DType>, crate::Error> {
         let dtype = self.dtype;
         let Some(metadata) = self.metadata.clone() else {
             return Err("No metadata information in JitOperator".into());
         };
+
+        if let &[Node::Read(_, _)] = self.nodes.0.as_slice() {
+            assert_eq!(self.operators.0.len(), 1);
+            return Ok(self.operators.0.pop().unwrap());
+        }
 
         Ok(TensorOperator::with_state(
             OperatorDescriptor::new("jit").dependent_on_data(&self),

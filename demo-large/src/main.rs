@@ -336,13 +336,13 @@ fn eval_network(
     let radius_range = voxel_diag..=volume_diag * 0.1;
     let smoothing_range = voxel_diag..=volume_diag * 0.1;
 
-    //let vol = vol.map_inner(|v| {
-    //    let v = palace_core::jit::jit(v.into());
-    //    //let v = v.add((-1.0).into()).unwrap().abs().unwrap();
-    //    v.try_into().unwrap()
-    //});
+    let vol = vol.map_inner(|v| {
+        let v = palace_core::jit::jit(v.into());
+        //let v = v.add((-1.0).into()).unwrap().abs().unwrap();
+        v.try_into().unwrap()
+    });
 
-    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
+    let vol = palace_core::operators::resample::create_lod(vol.try_into().unwrap(), 2.0);
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
