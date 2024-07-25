@@ -187,6 +187,12 @@ impl<D: DynDimension> JitTensorOperator<D> {
         Ok(self)
     }
     pub fn unary_op(op: UnaryOp, inner: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        if let UnaryOp::Cast(target) = &op {
+            if *target == inner.dtype {
+                return Ok(inner);
+            }
+        }
+
         Ok({
             let dtype = op.dtype(inner.dtype)?;
             let node = Node::UnaryOp(dtype, op, inner.root);
