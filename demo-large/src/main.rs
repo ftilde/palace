@@ -342,7 +342,9 @@ fn eval_network(
         v.try_into().unwrap()
     });
 
-    let vol = palace_core::operators::resample::create_lod(vol.try_into().unwrap(), 2.0);
+    let vol: EmbeddedVolumeOperator<StaticElementType<f32>> = vol.try_into().unwrap();
+
+    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 
@@ -367,7 +369,9 @@ fn eval_network(
             )
         }),
     };
+
     let mut take_screenshot = false;
+    let mut fit_tf = false;
     let mut save_task_stream = false;
 
     let gui = app_state.gui.setup(&mut events, |ctx| {
@@ -503,6 +507,9 @@ fn eval_network(
                             });
                     }
                 }
+                if ui.button("Fit Transfer Function").clicked() {
+                    fit_tf = true;
+                }
                 if ui.button("Save Screenshot").clicked() {
                     take_screenshot = true;
                 }
@@ -512,6 +519,34 @@ fn eval_network(
             });
         });
     });
+
+    if fit_tf {
+        let min_max_sample_bricks = 10;
+
+        let min = palace_core::operators::volume_gpu::min(
+            processed.levels[0].inner.clone(),
+            volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+        );
+        let min = &min;
+        let max = palace_core::operators::volume_gpu::max(
+            processed.levels[0].inner.clone(),
+            volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+        );
+        let max = &max;
+
+        let (min, max) = runtime.resolve(None, false, |ctx, _| {
+            async move {
+                Ok(palace_core::task::join! {
+                    ctx.submit(min.request_scalar()),
+                    ctx.submit(max.request_scalar())
+                })
+            }
+            .into()
+        })?;
+
+        app_state.raycasting.tf.min = min;
+        app_state.raycasting.tf.max = max;
+    }
 
     let frame = match app_state.rendering {
         RenderingState::Slice => slice_viewer_z(

@@ -1,8 +1,11 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use futures::StreamExt;
 use id::Identify;
 use itertools::Itertools;
+use rand::prelude::*;
 
 use crate::{
     array::ChunkIndex,
@@ -874,10 +877,16 @@ pub fn separable_convolution<D: DynDimension, T: ElementType>(
 }
 
 #[derive(Copy, Clone, Identify)]
-enum AggretationMethod {
+pub enum AggretationMethod {
     Mean,
     Max,
     Min,
+}
+
+#[derive(Copy, Clone, Identify)]
+pub enum SampleMethod {
+    All,
+    Subset(usize),
 }
 
 impl AggretationMethod {
@@ -913,25 +922,32 @@ impl AggretationMethod {
 pub fn mean<'op>(
     input: VolumeOperator<StaticElementType<f32>>,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    scalar_aggregation(input, AggretationMethod::Mean)
+    scalar_aggregation(input, AggretationMethod::Mean, SampleMethod::All)
 }
 
 pub fn min<'op>(
     input: VolumeOperator<StaticElementType<f32>>,
+    sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    scalar_aggregation(input, AggretationMethod::Min)
+    scalar_aggregation(input, AggretationMethod::Min, sample_method)
 }
 
 pub fn max<'op>(
     input: VolumeOperator<StaticElementType<f32>>,
+    sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    scalar_aggregation(input, AggretationMethod::Max)
+    scalar_aggregation(input, AggretationMethod::Max, sample_method)
 }
 
 fn scalar_aggregation<'op>(
     input: VolumeOperator<StaticElementType<f32>>,
     method: AggretationMethod,
+    sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
+    if let (AggretationMethod::Mean, SampleMethod::Subset(_)) = (method, sample_method) {
+        panic!("Mean aggregation not implemented for subset");
+    }
+
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         mem_dim: cgmath::Vector3<u32>,
@@ -993,7 +1009,10 @@ void main()
 "#;
 
     crate::operators::scalar::scalar(
-        OperatorDescriptor::new("volume_mean_gpu").dependent_on(&input),
+        OperatorDescriptor::new("volume_mean_gpu")
+            .dependent_on(&input)
+            .dependent_on_data(&method)
+            .dependent_on_data(&sample_method),
         input,
         move |ctx, input| {
             async move {
@@ -1001,14 +1020,27 @@ void main()
 
                 let m = input.metadata;
 
-                let to_request = m.brick_positions().collect::<Vec<_>>();
+                let mut all_chunks = m.chunk_indices().into_iter().collect::<Vec<_>>();
+                let to_request = match sample_method {
+                    SampleMethod::All => all_chunks.as_slice(),
+                    SampleMethod::Subset(n) => {
+                        let mut h = DefaultHasher::new();
+                        ctx.current_op().inner().hash(&mut h);
+                        let seed = h.finish();
+                        let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+                        let (ret, _) = all_chunks.partial_shuffle(&mut rng, n);
+                        ret.sort();
+                        ret
+                    }
+                };
                 let batch_size = 1024;
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size)
-                        .dependent_on(&method),
+                        .dependent_on(&method)
+                        .dependent_on(&sample_method),
                     || {
                         let neutral_val_str =
                             format!("uintBitsToFloat({})", method.neutral_val().to_bits());
@@ -1059,17 +1091,16 @@ void main()
 
                 for chunk in to_request.chunks(batch_size) {
                     let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
-                        let pos = m.chunk_index(pos);
                         (
                             input.chunks.request_gpu(
                                 device.id,
-                                pos,
+                                *pos,
                                 DstBarrierInfo {
                                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                     access: vk::AccessFlags2::SHADER_READ,
                                 },
                             ),
-                            pos,
+                            *pos,
                         )
                     }));
                     while let Some((gpu_brick_in, pos)) = stream.next().await {

@@ -30,6 +30,8 @@ use futures::Stream;
 use id::{Id, Identify};
 use pin_project::pin_project;
 
+pub use futures::join;
+
 use derive_more::{Constructor, Deref, DerefMut};
 
 #[derive(Deref, DerefMut)]

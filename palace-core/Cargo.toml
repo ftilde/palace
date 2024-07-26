@@ -42,6 +42,7 @@ ahash = "0.8.6"
 priority-queue = "1.3.2"
 gs-core = { path = "../graph-stream/gs-core" }
 bytesize = "1.3.0"
+rand = { version = "0.8.5", features = ["small_rng"] }
 
 [features]
 default = ["python"] #TODO: We don't actually want this by default, I think, but this makes rust-analyzer help in the respective code snippets

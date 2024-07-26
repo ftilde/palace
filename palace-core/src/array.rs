@@ -335,6 +335,10 @@ impl<D: DynDimension> TensorMetaData<D> {
             begin,
         }
     }
+    pub fn chunk_indices(&self) -> impl Iterator<Item = ChunkIndex> {
+        let bp = self.dimension_in_chunks();
+        (0..bp.hmul() as u64).into_iter().map(ChunkIndex)
+    }
 }
 impl<D: LargerDim> TensorMetaData<D> {
     pub fn push_dim_small(
@@ -349,7 +353,7 @@ impl<D: LargerDim> TensorMetaData<D> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ChunkIndex(pub(crate) u64);
 
 pub type VolumeMetaData = TensorMetaData<D3>;
