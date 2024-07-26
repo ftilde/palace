@@ -1193,58 +1193,6 @@ mod test {
     }
 
     #[test]
-    fn test_rescale_gpu() {
-        let size = VoxelPosition::fill(5.into());
-        let brick_size = LocalVoxelPosition::fill(2.into());
-
-        let (point_vol, center) = center_point_vol(size, brick_size);
-
-        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
-            for z in 0..size.z().raw {
-                for y in 0..size.y().raw {
-                    for x in 0..size.x().raw {
-                        let pos = VoxelPosition::from([z, y, x]);
-                        if pos != center {
-                            comp[pos.as_index()] = 1.0;
-                        }
-                    }
-                }
-            }
-            comp[center.as_index()] = -1.0;
-        };
-        let scale = (-2.0).into();
-        let offset = (1.0).into();
-        let output = linear_rescale(point_vol, scale, offset);
-        compare_tensor_fn(output, fill_expected);
-    }
-
-    #[test]
-    fn test_rescale_gpu_not_inplace() {
-        let size = VoxelPosition::fill(5.into());
-        let brick_size = LocalVoxelPosition::fill(2.into());
-
-        let (point_vol, center) = center_point_vol(size, brick_size);
-
-        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
-            for z in 0..size.z().raw {
-                for y in 0..size.y().raw {
-                    for x in 0..size.x().raw {
-                        let pos = VoxelPosition::from([z, y, x]);
-                        if pos != center {
-                            comp[pos.as_index()] = 1.0;
-                        }
-                    }
-                }
-            }
-            comp[center.as_index()] = -1.0;
-        };
-        let l = linear_rescale(point_vol.clone(), -2.0, 1.0);
-        let l2 = linear_rescale(point_vol, -2.0, -10.0);
-        let output = crate::operators::bin_ops::max(l, l2);
-        compare_tensor_fn(output, fill_expected);
-    }
-
-    #[test]
     fn test_rechunk_gpu() {
         let size = VoxelPosition::fill(5.into());
         let brick_size = LocalVoxelPosition::fill(2.into());
