@@ -2,13 +2,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, VoxelPosition};
-use palace_core::dim::D3;
 use palace_core::dtypes::StaticElementType;
-use palace_core::jit::jit;
 use palace_core::operators;
 use palace_core::operators::volume::VolumeOperator;
 use palace_core::runtime::RunTime;
-use palace_core::vec::Vector;
 use palace_core::{array, operators::volume_gpu};
 use palace_volume::Hints;
 
@@ -35,9 +32,6 @@ enum Input {
 struct CliArgs {
     #[command(subcommand)]
     input: Input,
-
-    #[arg(short, long, default_value = "1.0")]
-    factor: f32,
 
     #[arg(short, long, default_value = "0")]
     slice_num: u32,
@@ -114,37 +108,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = vol.try_into().unwrap();
 
-    eval_network(&mut runtime, vol, args.factor)
+    eval_network(&mut runtime, vol)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
     vol: VolumeOperator<StaticElementType<f32>>,
-    factor: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let rechunked = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
+    //let vol = palace_core::jit::jit(vol.into())
+    //    .add(10.0.into())
+    //    .unwrap()
+    //    .compile()
+    //    .unwrap()
+    //    .try_into()
+    //    .unwrap();
 
-    let smoothing_kernel = crate::operators::array::from_static(&[1.0 / 4.0, 2.0 / 4.0, 1.0 / 4.0]);
-    let kernels: [_; 3] = std::array::from_fn(|_| smoothing_kernel.clone());
-    let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-    let convolved = volume_gpu::separable_convolution(rechunked.clone(), kernel_refs);
-    let mapped = convolved; //tensor::map(convolved, |v| v.min(0.5));
-
-    let scaled = jit(mapped.into())
-        .mul(factor.into())
-        .unwrap()
-        .compile()
-        .unwrap();
-
-    let mean = volume_gpu::mean(scaled.try_into().unwrap());
-    let mean_unscaled = volume_gpu::mean(rechunked.clone());
-
-    // TODO: it's slightly annoying that we have to construct the reference here (because of async
-    // move). Is there a better way, i.e. to only move some values into the future?
-    let mean_ref = &mean;
-    let _mean_val = runtime.resolve(None, false, |ctx, _| {
-        async move { Ok(ctx.submit(mean_ref.request_scalar()).await) }.into()
-    })?;
+    let mean_unscaled = volume_gpu::mean(vol);
 
     // Neat: We can even write to references in the closure/future below to get results out.
     let mean_unscaled_ref = &mean_unscaled;

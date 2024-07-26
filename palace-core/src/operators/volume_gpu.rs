@@ -1,6 +1,7 @@
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use futures::StreamExt;
+use id::Identify;
 use itertools::Itertools;
 
 use crate::{
@@ -872,8 +873,64 @@ pub fn separable_convolution<D: DynDimension, T: ElementType>(
     v
 }
 
+#[derive(Copy, Clone, Identify)]
+enum AggretationMethod {
+    Mean,
+    Max,
+    Min,
+}
+
+impl AggretationMethod {
+    fn norm_factor(&self, num_voxels: usize) -> f32 {
+        match self {
+            AggretationMethod::Mean => 1.0 / num_voxels as f32,
+            AggretationMethod::Max | AggretationMethod::Min => 1.0,
+        }
+    }
+    fn aggregration_function_glsl(&self) -> &'static str {
+        match self {
+            AggretationMethod::Mean => "atomic_add_float",
+            AggretationMethod::Min => "atomic_min_float",
+            AggretationMethod::Max => "atomic_max_float",
+        }
+    }
+    fn subgroup_aggregration_function_glsl(&self) -> &'static str {
+        match self {
+            AggretationMethod::Mean => "subgroupAdd",
+            AggretationMethod::Min => "subgroupMin",
+            AggretationMethod::Max => "subgroupMax",
+        }
+    }
+    fn neutral_val(&self) -> f32 {
+        match self {
+            AggretationMethod::Mean => 0.0,
+            AggretationMethod::Min => f32::INFINITY,
+            AggretationMethod::Max => -f32::INFINITY,
+        }
+    }
+}
+
 pub fn mean<'op>(
     input: VolumeOperator<StaticElementType<f32>>,
+) -> ScalarOperator<StaticElementType<f32>> {
+    scalar_aggregation(input, AggretationMethod::Mean)
+}
+
+pub fn min<'op>(
+    input: VolumeOperator<StaticElementType<f32>>,
+) -> ScalarOperator<StaticElementType<f32>> {
+    scalar_aggregation(input, AggretationMethod::Min)
+}
+
+pub fn max<'op>(
+    input: VolumeOperator<StaticElementType<f32>>,
+) -> ScalarOperator<StaticElementType<f32>> {
+    scalar_aggregation(input, AggretationMethod::Max)
+}
+
+fn scalar_aggregation<'op>(
+    input: VolumeOperator<StaticElementType<f32>>,
+    method: AggretationMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -907,7 +964,7 @@ void main()
 {
     uint gID = gl_GlobalInvocationID.x;
     if(gl_LocalInvocationIndex == 0) {
-        shared_sum = floatBitsToUint(0.0);
+        shared_sum = floatBitsToUint(NEUTRAL_VAL);
     }
     barrier();
 
@@ -918,19 +975,19 @@ void main()
     if(all(lessThan(local, consts.logical_dim))) {
         val = sourceData.values[gID] * consts.norm_factor;
     } else {
-        val = 0.0;
+        val = NEUTRAL_VAL;
     }
 
-    float sg_sum = subgroupAdd(val);
+    float sg_agg = AGG_FUNCTION_SUBGROUP(val);
 
     if(gl_SubgroupInvocationID == 0) {
-        atomic_add_float(shared_sum, sg_sum);
+        AGG_FUNCTION(shared_sum, sg_agg);
     }
 
     barrier();
 
     if(gl_LocalInvocationIndex == 0) {
-        atomic_add_float(sum.value, uintBitsToFloat(shared_sum));
+        AGG_FUNCTION(sum.value, uintBitsToFloat(shared_sum));
     }
 }
 "#;
@@ -950,15 +1007,24 @@ void main()
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
                         .of(ctx.current_op())
-                        .dependent_on(&m.chunk_size),
+                        .dependent_on(&m.chunk_size)
+                        .dependent_on(&method),
                     || {
+                        let neutral_val_str =
+                            format!("uintBitsToFloat({})", method.neutral_val().to_bits());
                         ComputePipeline::new(
                             device,
                             (
                                 SHADER,
                                 ShaderDefines::new()
                                     .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
+                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                    .add("AGG_FUNCTION", method.aggregration_function_glsl())
+                                    .add(
+                                        "AGG_FUNCTION_SUBGROUP",
+                                        method.subgroup_aggregration_function_glsl(),
+                                    )
+                                    .add("NEUTRAL_VAL", neutral_val_str),
                             ),
                             true,
                         )
@@ -967,7 +1033,7 @@ void main()
 
                 let sum = ctx.submit(ctx.alloc_scalar_gpu(device)).await;
 
-                let normalization_factor = 1.0 / (m.dimensions.hmul() as f32);
+                let normalization_factor = method.norm_factor(m.dimensions.hmul());
 
                 device.with_cmd_buffer(|cmd| {
                     unsafe {
@@ -975,7 +1041,7 @@ void main()
                             cmd.raw(),
                             sum.buffer,
                             0,
-                            bytemuck::cast_slice(&[0f32]),
+                            bytemuck::cast_slice(&[method.neutral_val()]),
                         )
                     };
                 });
