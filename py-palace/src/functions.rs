@@ -214,11 +214,17 @@ pub fn render_slice(
     input: LODTensorOperator,
     result_metadata: PyTensorMetaData,
     projection_mat: Matrix<D4, f32>,
+    tf: Option<TransFuncOperator>,
 ) -> PyResult<TensorOperator> {
+    let tf = tf
+        .map(|tf| tf.try_into())
+        .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
+
     palace_core::operators::sliceviewer::render_slice(
         input.try_into()?,
         result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
+        tf,
     )
     .into_dyn()
     .try_into()

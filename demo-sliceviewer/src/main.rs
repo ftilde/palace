@@ -8,6 +8,7 @@ use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::jit::jit;
 use palace_core::operators::gui::{egui, GuiState};
+use palace_core::operators::raycaster::TransFuncOperator;
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
@@ -88,6 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let brick_size = LocalVoxelPosition::fill(64.into());
 
+    let tf = TransFuncOperator::grey_ramp(0.0, 1.0);
+
     let vol = match args.input {
         Input::File(path) => {
             let base =
@@ -132,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut offset,
                 &mut stddev,
                 &mut gui,
+                &tf,
                 events,
                 timeout,
             )
@@ -154,6 +158,7 @@ fn slice_viewer_z(
     slice_num: &mut i32,
     offset: &mut Vector<D2, f32>,
     zoom_level: &mut f32,
+    tf: &TransFuncOperator,
     events: &mut EventStream,
 ) -> FrameOperator {
     events.act(|c| {
@@ -191,7 +196,7 @@ fn slice_viewer_z(
         *zoom_level,
     );
 
-    let slice = crate::operators::sliceviewer::render_slice(vol, md, slice_proj_z);
+    let slice = crate::operators::sliceviewer::render_slice(vol, md, slice_proj_z, tf.clone());
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice
@@ -201,6 +206,7 @@ fn slice_viewer_rot(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     md: ImageMetaData,
     angle: &mut f32,
+    tf: &TransFuncOperator,
     mut events: EventStream,
 ) -> FrameOperator {
     events.act(|c| {
@@ -223,7 +229,8 @@ fn slice_viewer_rot(
         (*angle).into(),
     );
 
-    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot);
+    let slice =
+        crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot, tf.clone());
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
@@ -240,6 +247,7 @@ fn eval_network(
     offset: &mut f32,
     stddev: &mut f32,
     gui: &mut GuiState,
+    tf: &TransFuncOperator,
     mut events: EventStream,
     deadline: Instant,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
@@ -311,11 +319,12 @@ fn eval_network(
         slice_num,
         slice_offset,
         slice_zoom_level,
+        tf,
         &mut events_l,
     );
 
     let left = gui.render(left);
-    let right = slice_viewer_rot(vol, splitter.metadata_last(), angle, events_r);
+    let right = slice_viewer_rot(vol, splitter.metadata_last(), angle, tf, events_r);
     let frame = splitter.render(left, right);
 
     let slice_ref = &frame;

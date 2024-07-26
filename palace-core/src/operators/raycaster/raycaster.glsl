@@ -99,9 +99,9 @@ bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
 #define T_DONE (intBitsToFloat(int(0xFFC00000u)))
 
 u8vec4 classify(float val) {
-    float norm = (val-consts.tf_min)/(consts.tf_max - consts.tf_min);
-    uint index = min(uint(max(0.0, norm) * consts.tf_len), consts.tf_len - 1);
-    return tf_table.values[index];
+    u8vec4 result;
+    apply_tf(tf_table.values, consts.tf_len, consts.tf_min, consts.tf_max, val, result);
+    return result;
 }
 
 #ifdef COMPOSITING_MOP

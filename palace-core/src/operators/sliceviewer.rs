@@ -4,6 +4,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use super::{
+    raycaster::TransFuncOperator,
     tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator},
     volume::LODVolumeOperator,
 };
@@ -275,14 +276,18 @@ pub fn render_slice(
     input: LODVolumeOperator<StaticElementType<f32>>,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
+    tf: TransFuncOperator,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
         vol_dim: cgmath::Vector3<u32>,
+        tf_min: f32,
         chunk_dim: cgmath::Vector3<u32>,
+        tf_max: f32,
         out_begin: cgmath::Vector2<u32>,
         out_mem_dim: cgmath::Vector2<u32>,
+        tf_len: u32,
     }
 
     const SHADER: &'static str = r#"
@@ -323,11 +328,19 @@ layout(std430, binding = 4) buffer ValueBuffer{
     float values[];
 } brick_values;
 
+layout(std430, binding = 5) buffer TFTableBuffer {
+    u8vec4 values[];
+} tf_table;
+
 declare_push_consts(consts);
 
 #define UNINIT 0
 #define INIT_VAL 1
 #define INIT_EMPTY 2
+
+void classify(in float val, out u8vec4 result) {
+    apply_tf(tf_table.values, consts.tf_len, consts.tf_min, consts.tf_max, val, result);
+}
 
 void main()
 {
@@ -339,7 +352,7 @@ void main()
         u8vec4 val;
         if(s == INIT_VAL) {
             float v = brick_values.values[gID];
-            val = intensity_to_grey(v);
+            classify(v, val);
         } else if(s == INIT_EMPTY) {
             val = u8vec4(0, 0, 255, 255);
         } else {
@@ -365,7 +378,7 @@ void main()
             try_sample(3, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
             if(res == SAMPLE_RES_FOUND) {
-                val = intensity_to_grey(sampled_intensity);
+                classify(sampled_intensity, val);
 
                 state.values[gID] = INIT_VAL;
                 brick_values.values[gID] = sampled_intensity;
@@ -388,12 +401,13 @@ void main()
         OperatorDescriptor::new("sliceviewer")
             .dependent_on(&input)
             .dependent_on_data(&result_metadata)
+            .dependent_on_data(&tf)
             .dependent_on_data(&projection_mat)
             .unstable(),
         Default::default(),
         result_metadata,
-        (input, result_metadata, projection_mat),
-        move |ctx, pos, _, (input, result_metadata, projection_mat)| {
+        (input, result_metadata, projection_mat, tf),
+        move |ctx, pos, _, (input, result_metadata, projection_mat, tf)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -418,6 +432,11 @@ void main()
 
                 let transform =
                     emd_l.physical_to_voxel() * emd_0.voxel_to_physical() * *pixel_to_voxel;
+
+                assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
+                let tf_data_gpu = ctx
+                    .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
+                    .await;
 
                 let out_info = m_out.chunk_info(pos);
 
@@ -493,7 +512,11 @@ void main()
                         .await,
                 );
 
+                let tf_data = tf.data();
                 let consts = PushConstants {
+                    tf_min: tf_data.min,
+                    tf_max: tf_data.max,
+                    tf_len: tf_data.len,
                     vol_dim: m_in.dimensions.raw().into(),
                     chunk_dim: m_in.chunk_size.raw().into(),
                     out_begin: out_info.begin.raw().into(),
@@ -531,6 +554,7 @@ void main()
                             request_table.buffer(),
                             &state_initialized,
                             &state_values,
+                            &tf_data_gpu,
                         ]);
 
                         unsafe {
@@ -624,10 +648,9 @@ mod test {
                             * vol_size.x().raw as f32
                             - 0.5;
 
-                        let mut out = Vector::fill(
-                            (((voxel_x.round() + voxel_y.round() + z as f32) / 32.0) * 255.0) as u8,
+                        let out = Vector::fill(
+                            (((voxel_x.round() + voxel_y.round() + z as f32) / 32.0) * 256.0) as u8,
                         );
-                        out[3] = 255;
                         comp[pos.as_index()] = out;
                     }
                 }
@@ -658,6 +681,7 @@ mod test {
                     .single_level_lod(),
                 img_meta.into(),
                 slice_proj,
+                crate::operators::raycaster::TransFuncOperator::grey_ramp(0.0, 1.0),
             );
             compare_tensor_fn(slice, fill_expected);
         }

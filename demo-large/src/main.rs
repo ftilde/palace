@@ -81,7 +81,6 @@ enum RenderingState {
 
 struct RaycastingState {
     camera: CameraState,
-    tf: TransFuncOperator,
     config: RaycasterConfig,
 }
 
@@ -92,6 +91,7 @@ struct State {
     vesselness: VesselnessState,
     raycasting: RaycastingState,
     sliceview: SliceState,
+    tf: TransFuncOperator,
     smoothing_std: f32,
 }
 
@@ -134,15 +134,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         raycasting: RaycastingState {
             camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
             config: RaycasterConfig::default(),
-            tf: if let Some(path) = args.transfunc_path {
-                palace_vvd::load_tfi(&path).unwrap()
-            } else {
-                TransFuncOperator::grey_ramp(0.0, 1.0)
-            },
         },
         sliceview: SliceState {
             inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
             gui: GuiState::on_device(args.device),
+        },
+        tf: if let Some(path) = args.transfunc_path {
+            palace_vvd::load_tfi(&path).unwrap()
+        } else {
+            TransFuncOperator::grey_ramp(0.0, 1.0)
         },
         smoothing_std: voxel_diag,
     };
@@ -171,6 +171,7 @@ fn slice_viewer_z(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     size: Vector<D2, GlobalCoordinate>,
     state: &mut SliceState,
+    tf: &TransFuncOperator,
     events: &mut EventStream,
 ) -> FrameOperator {
     let md = ImageMetaData {
@@ -274,7 +275,8 @@ fn slice_viewer_z(
             }))
     });
 
-    let slice = crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z);
+    let slice =
+        crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z, tf.clone());
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(slice);
 
@@ -285,6 +287,7 @@ fn raycaster(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     size: Vector<D2, GlobalCoordinate>,
     state: &mut RaycastingState,
+    tf: &TransFuncOperator,
     mut events: EventStream,
 ) -> FrameOperator {
     events.act(|c| {
@@ -309,7 +312,7 @@ fn raycaster(
         md.into(),
         matrix.into(),
     );
-    palace_core::operators::raycaster::raycast(vol, eep, state.tf.clone(), state.config)
+    palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), state.config)
 }
 
 fn eval_network(
@@ -544,8 +547,8 @@ fn eval_network(
             .into()
         })?;
 
-        app_state.raycasting.tf.min = min;
-        app_state.raycasting.tf.max = max;
+        app_state.tf.min = min;
+        app_state.tf.max = max;
     }
 
     let frame = match app_state.rendering {
@@ -554,12 +557,14 @@ fn eval_network(
             processed.clone(),
             window.size(),
             &mut app_state.sliceview,
+            &app_state.tf,
             &mut events,
         ),
         RenderingState::Raycasting => raycaster(
             processed.into(),
             window.size(),
             &mut app_state.raycasting,
+            &app_state.tf,
             events,
         ),
     };

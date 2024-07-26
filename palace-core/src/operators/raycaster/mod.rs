@@ -5,8 +5,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140, std430::AsStd430};
 
 use crate::{
     array::{
-        ChunkIndex, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData,
-        VolumeMetaData,
+        ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
     chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
@@ -676,11 +675,7 @@ pub fn raycast(
 
                 assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
                 let tf_data_gpu = ctx
-                    .submit(
-                        tf.table
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), dst_info),
-                    )
+                    .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
                     .await;
                 let out_info = m_out.chunk_info(pos);
 
