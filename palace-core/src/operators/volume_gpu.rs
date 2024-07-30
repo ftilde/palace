@@ -253,7 +253,7 @@ void main()
                             device.id,
                             *pos,
                             ctx.current_op_desc().unwrap(),
-                            DType::F32,
+                            DType::scalar(crate::dtypes::ScalarType::F32),
                             access_info,
                         )
                     }))

@@ -171,7 +171,7 @@ pub fn entry_exit_points(
     embedding_data: VolumeEmbeddingData,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
-) -> ImageOperator<StaticElementType<[Vector<D4, f32>; 2]>> {
+) -> ImageOperator<StaticElementType<[f32; 8]>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
         transform: cgmath::Matrix4<f32>,
@@ -592,7 +592,7 @@ fn std_430_array_layout<T: AsStd430>(n: usize) -> Layout {
 
 pub fn raycast(
     input: LODVolumeOperator<StaticElementType<f32>>,
-    entry_exit_points: ImageOperator<StaticElementType<[Vector<D4, f32>; 2]>>,
+    entry_exit_points: ImageOperator<StaticElementType<[f32; 8]>>,
     tf: TransFuncOperator,
     config: RaycasterConfig,
 ) -> FrameOperator {

@@ -5,7 +5,7 @@ use id::Identify;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use crate::{dim::D4, storage::Element, vec::Vector};
+use crate::{dim::Dimension, storage::Element, vec::Vector};
 
 pub trait ElementType: Clone + 'static + Into<DType> + PartialEq + Debug {
     fn array_layout(&self, size: usize) -> Layout;
@@ -54,15 +54,15 @@ impl<T: Element> ElementType for StaticElementType<T> {
 
 macro_rules! impl_conversion {
     ($ty:ty, $variant:ident) => {
-        impl TryFrom<DType> for StaticElementType<$ty> {
+        impl TryFrom<ScalarType> for StaticElementType<$ty> {
             type Error = ConversionError;
 
-            fn try_from(value: DType) -> Result<Self, Self::Error> {
-                if let DType::$variant = value {
+            fn try_from(value: ScalarType) -> Result<Self, Self::Error> {
+                if let ScalarType::$variant = value {
                     Ok(Default::default())
                 } else {
                     Err(ConversionError {
-                        actual: value.pretty_type(),
+                        actual: value.into(),
                         expected: stringify!($ty),
                     })
                 }
@@ -70,7 +70,7 @@ macro_rules! impl_conversion {
         }
 
         impl AsDynType for $ty {
-            const D_TYPE: DType = DType::$variant;
+            const D_TYPE: DType = DType::scalar(ScalarType::$variant);
         }
     };
 }
@@ -82,6 +82,65 @@ impl<T: AsDynType> From<StaticElementType<T>> for DType {
     }
 }
 
+impl<T> TryFrom<DType> for StaticElementType<T>
+where
+    StaticElementType<T>: TryFrom<ScalarType, Error = ConversionError>,
+{
+    type Error = ConversionError;
+
+    fn try_from(value: DType) -> Result<Self, Self::Error> {
+        StaticElementType::try_from(value.scalar)
+    }
+}
+impl<D: Dimension, T: Copy + AsDynType> AsDynType for Vector<D, T> {
+    const D_TYPE: DType = DType {
+        scalar: T::D_TYPE.scalar,
+        size: D::N as u32 * T::D_TYPE.size,
+    };
+}
+
+impl<D: Dimension, T: Copy> TryFrom<DType> for StaticElementType<Vector<D, T>>
+where
+    StaticElementType<T>: TryFrom<ScalarType, Error = ConversionError>,
+{
+    type Error = ConversionError;
+
+    fn try_from(value: DType) -> Result<Self, Self::Error> {
+        let _ = StaticElementType::<T>::try_from(value.scalar)?;
+        if value.size as usize != D::N {
+            return Err(ConversionError {
+                actual: value.into(),
+                expected: stringify!(Vector<D, T>),
+            });
+        }
+        Ok(Default::default())
+    }
+}
+impl<const N: usize, T: Copy + AsDynType> AsDynType for [T; N] {
+    const D_TYPE: DType = DType {
+        scalar: T::D_TYPE.scalar,
+        size: N as u32 * T::D_TYPE.size,
+    };
+}
+
+impl<const N: usize, T: Copy> TryFrom<DType> for StaticElementType<[T; N]>
+where
+    StaticElementType<T>: TryFrom<ScalarType, Error = ConversionError>,
+{
+    type Error = ConversionError;
+
+    fn try_from(value: DType) -> Result<Self, Self::Error> {
+        let _ = StaticElementType::<T>::try_from(value.scalar)?;
+        if value.size as usize != N {
+            return Err(ConversionError {
+                actual: value.into(),
+                expected: stringify!(Vector<D, T>),
+            });
+        }
+        Ok(Default::default())
+    }
+}
+
 impl_conversion!(u8, U8);
 impl_conversion!(i8, I8);
 impl_conversion!(u16, U16);
@@ -89,13 +148,13 @@ impl_conversion!(i16, I16);
 impl_conversion!(u32, U32);
 impl_conversion!(i32, I32);
 impl_conversion!(f32, F32);
-impl_conversion!(Vector<D4, u8>, U8Vec4);
-impl_conversion!([Vector<D4, f32>; 2], F32Vec4A2);
+//impl_conversion!(Vector<D4, u8>, U8Vec4, 1);
+//impl_conversion!([Vector<D4, f32>; 2], F32Vec4A2, 1);
 
 #[derive(Debug)]
 pub struct ConversionError {
     pub expected: &'static str,
-    pub actual: &'static str,
+    pub actual: DType,
 }
 
 impl std::error::Error for ConversionError {}
@@ -125,7 +184,67 @@ mod py {
 
 #[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
 #[cfg_attr(feature = "python", pyclass)]
-pub enum DType {
+pub struct DType {
+    pub scalar: ScalarType,
+    pub size: u32,
+}
+
+impl From<ScalarType> for DType {
+    fn from(value: ScalarType) -> Self {
+        Self::scalar(value)
+    }
+}
+
+impl DType {
+    pub const fn scalar(scalar: ScalarType) -> Self {
+        Self { scalar, size: 1 }
+    }
+    pub fn glsl_type(&self) -> String {
+        let scalar = self.scalar.glsl_type().to_owned();
+        if self.size > 1 {
+            format!("{}[{}]", scalar, self.size)
+        } else {
+            scalar
+        }
+    }
+    pub fn glsl_ext(&self) -> Option<&'static str> {
+        match self.scalar {
+            ScalarType::U8 | ScalarType::I8 => Some(crate::vulkan::shader::ext::INT8_TYPES),
+            ScalarType::U16 | ScalarType::I16 => Some(crate::vulkan::shader::ext::INT16_TYPES),
+            ScalarType::F32 => None,
+            ScalarType::U32 | ScalarType::I32 => None,
+        }
+    }
+    pub fn vec_size(&self) -> usize {
+        self.size as _
+    }
+}
+
+impl std::fmt::Display for DType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}; {}]", self.scalar.pretty_type(), self.size)
+    }
+}
+
+impl ElementType for DType {
+    fn array_layout(&self, size: usize) -> Layout {
+        let size = size * self.size as usize;
+        // TODO: This is REALLY error prone...
+        match self.scalar {
+            ScalarType::U8 => Layout::array::<u8>(size).unwrap(),
+            ScalarType::I8 => Layout::array::<i8>(size).unwrap(),
+            ScalarType::U16 => Layout::array::<u16>(size).unwrap(),
+            ScalarType::I16 => Layout::array::<i16>(size).unwrap(),
+            ScalarType::U32 => Layout::array::<u32>(size).unwrap(),
+            ScalarType::I32 => Layout::array::<i32>(size).unwrap(),
+            ScalarType::F32 => Layout::array::<f32>(size).unwrap(),
+        }
+    }
+}
+
+/// Some specialized types -----------------------------------------------------
+#[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
+pub enum ScalarType {
     U8,
     I8,
     U16,
@@ -133,82 +252,30 @@ pub enum DType {
     F32,
     U32,
     I32,
-    U8Vec4,
-    F32Vec4A2,
 }
 
-impl DType {
-    pub fn pretty_type(&self) -> &'static str {
+impl ScalarType {
+    fn glsl_type(&self) -> &'static str {
         match self {
-            DType::U8 => "u8",
-            DType::I8 => "i8",
-            DType::U16 => "u16",
-            DType::I16 => "i16",
-            DType::U32 => "u32",
-            DType::I32 => "i32",
-            DType::F32 => "f32",
-            DType::U8Vec4 => "u8vec4",
-            DType::F32Vec4A2 => "[vec4; 2]",
+            ScalarType::U8 => "uint8_t",
+            ScalarType::I8 => "int8_t",
+            ScalarType::U16 => "uint16_t",
+            ScalarType::I16 => "int16_t",
+            ScalarType::U32 => "uint",
+            ScalarType::I32 => "int",
+            ScalarType::F32 => "float",
         }
     }
 
-    pub fn glsl_type(&self) -> &str {
+    fn pretty_type(&self) -> &'static str {
         match self {
-            DType::U8 => "uint8_t",
-            DType::I8 => "int8_t",
-            DType::U16 => "uint16_t",
-            DType::I16 => "int16_t",
-            DType::U32 => "uint",
-            DType::I32 => "int",
-            DType::F32 => "float",
-            DType::U8Vec4 => "u8vec4",
-            DType::F32Vec4A2 => "vec4[2]",
+            ScalarType::U8 => "u8",
+            ScalarType::I8 => "i8",
+            ScalarType::U16 => "u16",
+            ScalarType::I16 => "i16",
+            ScalarType::U32 => "u32",
+            ScalarType::I32 => "i32",
+            ScalarType::F32 => "f32",
         }
     }
-    pub fn glsl_ext(&self) -> Option<&'static str> {
-        match self {
-            DType::U8 | DType::I8 => Some(crate::vulkan::shader::ext::INT8_TYPES),
-            DType::U16 | DType::I16 => Some(crate::vulkan::shader::ext::INT16_TYPES),
-            DType::F32 => None,
-            DType::U32 | DType::I32 => None,
-            DType::U8Vec4 => Some(crate::vulkan::shader::ext::INT8_TYPES),
-            DType::F32Vec4A2 => None,
-        }
-    }
-    pub fn vec_size(&self) -> usize {
-        match self {
-            DType::U8
-            | DType::I8
-            | DType::U16
-            | DType::I16
-            | DType::F32
-            | DType::U32
-            | DType::I32 => 1,
-            DType::U8Vec4 => 4,
-            DType::F32Vec4A2 => 8, //TODO??
-        }
-    }
-}
-
-impl ElementType for DType {
-    fn array_layout(&self, size: usize) -> Layout {
-        // TODO: This is REALLY error prone...
-        match self {
-            DType::U8 => Layout::array::<u8>(size).unwrap(),
-            DType::I8 => Layout::array::<i8>(size).unwrap(),
-            DType::U16 => Layout::array::<u16>(size).unwrap(),
-            DType::I16 => Layout::array::<i16>(size).unwrap(),
-            DType::U32 => Layout::array::<u32>(size).unwrap(),
-            DType::I32 => Layout::array::<i32>(size).unwrap(),
-            DType::F32 => Layout::array::<f32>(size).unwrap(),
-            DType::U8Vec4 => Layout::array::<Vector<D4, u8>>(size).unwrap(),
-            DType::F32Vec4A2 => Layout::array::<[Vector<D4, f32>; 2]>(size).unwrap(),
-        }
-    }
-}
-
-/// Some specialized types -----------------------------------------------------
-pub enum Scalar {
-    F32,
-    U32,
 }

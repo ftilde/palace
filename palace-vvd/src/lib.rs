@@ -7,7 +7,7 @@ use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::*,
-    dtypes::DType,
+    dtypes::{DType, ScalarType},
     jit::jit,
     operators::{
         raycaster::TransFuncOperator, tensor::TensorOperator, volume::EmbeddedVolumeOperator,
@@ -82,12 +82,13 @@ pub fn open(
         return Err(format!("Spacing is not valid: {:?}", spacing).into());
     }
 
-    let (dtype_mult, dtype) = match format.as_str() {
-        "float" => (1.0, DType::F32),
-        "uint8" => (1.0 / ((1 << 8) as f32), DType::U8),
-        "uint16" => (1.0 / ((1 << 16) as f32), DType::U16),
+    let (dtype_mult, scalar_type) = match format.as_str() {
+        "float" => (1.0, ScalarType::F32),
+        "uint8" => (1.0 / ((1 << 8) as f32), ScalarType::U8),
+        "uint16" => (1.0 / ((1 << 16) as f32), ScalarType::U16),
         f => return Err(format!("Unsupported format '{}'.", f).into()),
     };
+    let dtype = DType::scalar(scalar_type);
 
     let rwm_offset = evaluate_xpath(
         &document,
@@ -129,7 +130,7 @@ pub fn open(
 
     let vol = palace_core::operators::raw::open(raw_path, metadata, dtype)?;
     let vol = jit(vol);
-    let mut vol = vol.cast(DType::F32)?;
+    let mut vol = vol.cast(DType::scalar(ScalarType::F32))?;
 
     if scale != 1.0 {
         vol = vol.mul(scale.into())?;

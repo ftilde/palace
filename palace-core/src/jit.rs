@@ -7,7 +7,7 @@ use id::{Id, Identify};
 use crate::{
     array::TensorMetaData,
     dim::DynDimension,
-    dtypes::DType,
+    dtypes::{DType, ScalarType},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     task::RequestStream,
@@ -39,11 +39,11 @@ impl UnaryOp {
                     );
                 }
             }
-            UnaryOp::Neg => match input {
-                DType::U8 | DType::U16 | DType::U32 | DType::U8Vec4 => {
+            UnaryOp::Neg => match input.scalar {
+                ScalarType::U8 | ScalarType::U16 | ScalarType::U32 => {
                     return Err(format!("Value of type {:?} cannot be negated", input).into())
                 }
-                DType::I8 | DType::I16 | DType::I32 | DType::F32 | DType::F32Vec4A2 => input,
+                ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::F32 => input,
             },
         })
     }
@@ -106,7 +106,7 @@ impl Display for ConstValue {
 impl ConstValue {
     fn dtype(&self) -> DType {
         match self {
-            ConstValue::F32(_) => DType::F32,
+            ConstValue::F32(_) => DType::scalar(ScalarType::F32),
         }
     }
 }
