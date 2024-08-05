@@ -331,11 +331,11 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
     let nd = input.dim().n();
 
     let push_constants = DynPushConstants::new()
-        .array::<u32>(nd, "mem_size_in")
-        .array::<u32>(nd, "mem_size_out")
-        .array::<u32>(nd, "begin_in")
-        .array::<u32>(nd, "begin_out")
-        .array::<u32>(nd, "region_size")
+        .vec::<u32>(nd, "mem_size_in")
+        .vec::<u32>(nd, "mem_size_out")
+        .vec::<u32>(nd, "begin_in")
+        .vec::<u32>(nd, "begin_out")
+        .vec::<u32>(nd, "region_size")
         .scalar::<u32>("global_size");
 
     const SHADER: &'static str = r#"
@@ -497,11 +497,11 @@ void main() {
                                 let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant_dyn(&push_constants, |consts| {
-                                    consts.array(&m_in.chunk_size.raw())?;
-                                    consts.array(&m_out.chunk_size.raw())?;
-                                    consts.array(&in_chunk_begin.raw())?;
-                                    consts.array(&out_chunk_begin.raw())?;
-                                    consts.array(&overlap_size.raw())?;
+                                    consts.vec(&m_in.chunk_size.raw())?;
+                                    consts.vec(&m_out.chunk_size.raw())?;
+                                    consts.vec(&in_chunk_begin.raw())?;
+                                    consts.vec(&out_chunk_begin.raw())?;
+                                    consts.vec(&overlap_size.raw())?;
                                     consts.scalar(global_size as u32)?;
                                     Ok(())
                                 });
@@ -546,11 +546,11 @@ pub fn convolution_1d<D: DynDimension, T: ElementType>(
     let dtype: DType = input.dtype().into();
 
     let push_constants = DynPushConstants::new()
-        .array::<u32>(nd, "mem_dim")
-        .array::<u32>(nd, "logical_dim_out")
-        .array::<u32>(nd, "out_begin")
-        .array::<u32>(nd, "global_dim")
-        .array::<u32>(nd, "dim_in_chunks")
+        .vec::<u32>(nd, "mem_dim")
+        .vec::<u32>(nd, "logical_dim_out")
+        .vec::<u32>(nd, "out_begin")
+        .vec::<u32>(nd, "global_dim")
+        .vec::<u32>(nd, "dim_in_chunks")
         .scalar::<u32>("num_chunks")
         .scalar::<u32>("first_chunk_pos")
         .scalar::<i32>("extent");
@@ -829,11 +829,11 @@ void main() {
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant_dyn(&push_constants, |w| {
-                                w.array(&m_out.chunk_size.raw())?;
-                                w.array(&out_info.logical_dimensions.raw())?;
-                                w.array(&out_begin.raw())?;
-                                w.array(&m_out.dimensions.raw())?;
-                                w.array(&m_out.dimension_in_chunks().raw())?;
+                                w.vec(&m_out.chunk_size.raw())?;
+                                w.vec(&out_info.logical_dimensions.raw())?;
+                                w.vec(&out_begin.raw())?;
+                                w.vec(&m_out.dimensions.raw())?;
+                                w.vec(&m_out.dimension_in_chunks().raw())?;
                                 w.scalar(num_chunks as u32)?;
                                 w.scalar(first_chunk_pos)?;
                                 w.scalar(extent as i32)?;

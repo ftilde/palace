@@ -11,7 +11,7 @@ use crate::{
     operator::{OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig},
+        pipeline::{ComputePipeline, DescriptorConfig, DynPushConstants},
         shader::ShaderDefines,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
@@ -148,21 +148,14 @@ pub fn resample_transform<D: LargerDim + Dimension>(
 where
     D::Larger: Dimension,
 {
-    #[derive(Clone, bytemuck::Zeroable)]
-    #[repr(C)]
-    struct PushConstants<D: LargerDim + Dimension>
-    where
-        D::Larger: Dimension,
-    {
-        transform: Matrix<D::Larger, f32>,
-        chunk_dim_in: Vector<D, u32>,
-        vol_dim_in: Vector<D, u32>,
-        out_begin: Vector<D, u32>,
-        mem_size_out: Vector<D, u32>,
-    }
-    impl<D: LargerDim + Dimension> Copy for PushConstants<D> where D::Larger: Dimension {}
-    //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<D: LargerDim + Dimension> bytemuck::Pod for PushConstants<D> where D::Larger: Dimension {}
+    let nd = input.dim().n();
+
+    let push_constants = DynPushConstants::new()
+        .mat::<f32>(nd + 1, "transform")
+        .vec::<u32>(nd, "chunk_dim_in")
+        .vec::<u32>(nd, "vol_dim_in")
+        .vec::<u32>(nd, "mem_size_out")
+        .vec::<u32>(nd, "out_begin");
 
     const SHADER: &'static str = r#"
 #version 450
@@ -200,13 +193,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(scalar, push_constant) uniform PushConsts {
-    Mat(N+1) transform;
-    uint[N] chunk_dim_in;
-    uint[N] vol_dim_in;
-    uint[N] out_begin;
-    uint[N] mem_size_out;
-} consts;
+declare_push_consts(consts)
 
 void main() {
 
@@ -266,8 +253,8 @@ void main() {
             .dependent_on_data(&element_out_to_in),
         Default::default(),
         output_size,
-        (input, output_size, element_out_to_in),
-        move |ctx, mut positions, (input, output_size, element_out_to_in)| {
+        (input, output_size, element_out_to_in, push_constants),
+        move |ctx, mut positions, (input, output_size, element_out_to_in, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -295,7 +282,8 @@ void main() {
                                 ShaderDefines::new()
                                     .add("NUM_CHUNKS", num_chunks)
                                     .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
-                                    .add("N", D::N),
+                                    .add("N", D::N)
+                                    .push_const_block_dyn(&push_constants),
                             ),
                             true,
                         )
@@ -416,14 +404,15 @@ void main() {
                     device.with_cmd_buffer(|cmd| unsafe {
                         let mut pipeline = pipeline.bind(cmd);
 
-                        pipeline.push_constant_pod(PushConstants {
-                            transform: (*element_out_to_in),
-                            chunk_dim_in: m_in.chunk_size.raw(),
-                            vol_dim_in: m_in.dimensions.raw(),
-
-                            mem_size_out: m_out.chunk_size.raw(),
-                            out_begin: out_info.begin().raw(),
+                        pipeline.push_constant_dyn(&push_constants, |consts| {
+                            consts.mat(element_out_to_in)?;
+                            consts.vec(&m_in.chunk_size.raw())?;
+                            consts.vec(&m_in.dimensions.raw())?;
+                            consts.vec(&m_out.chunk_size.raw())?;
+                            consts.vec(&out_info.begin().raw())?;
+                            Ok(())
                         });
+
                         pipeline.push_descriptor_set(0, descriptor_config);
                         pipeline.dispatch3d(size);
                     });

@@ -31,6 +31,9 @@ impl<D: Dimension, T: Copy> Matrix<D, T> {
 }
 
 impl<D: DynDimension, T: Copy> Matrix<D, T> {
+    pub fn dim(&self) -> D {
+        self.dim
+    }
     pub fn from_fn_and_dim(dim: D, mut f: impl FnMut(usize, usize) -> T) -> Self {
         let n = dim.n();
         Self {
