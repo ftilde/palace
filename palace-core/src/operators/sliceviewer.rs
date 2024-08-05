@@ -142,7 +142,7 @@ pub fn slice_projection_mat_z_scaled_fit(
     let vol_dim = input_data.dimensions.map(|v| v.raw as f32);
     let img_dim = output_data.dimensions.map(|v| v.raw as f32);
     let scale = Matrix::from_scale(
-        vol_dim
+        &vol_dim
             .drop_dim(0)
             .zip(&img_dim, |v, i| v / i)
             .push_dim_large(1.0),
@@ -151,7 +151,7 @@ pub fn slice_projection_mat_z_scaled_fit(
     let slice_select =
         Matrix::from_translation(Vector::from([selected_slice.raw as f32, 0.0, 0.0]));
     let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
-    let out = to_voxel_center * slice_select * scale * to_pixel_center;
+    let out = to_voxel_center * &slice_select * &scale * &to_pixel_center;
     out
 }
 
@@ -199,17 +199,17 @@ pub fn slice_projection_mat(
     let to_pixel_center =
         Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
     let pixel_transform = permute
-        * Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
-        * Matrix::from_scale(Vector::<D3, _>::fill(zoom_level)).to_homogeneous()
-        * Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0))
-        * to_pixel_center;
+        * &Matrix::from_translation(Vector::from([0.0, -offset_y, -offset_x]))
+        * &Matrix::from_scale(&Vector::<D3, _>::fill(zoom_level)).to_homogeneous()
+        * &Matrix::from_translation(offset.map(|v| -v).push_dim_large(0.0))
+        * &to_pixel_center;
 
     let mut translation = Vector::<D3, f32>::fill(-0.5); //For "centered" voxel positions
     translation[dim] += selected_slice.raw as f32;
-    let scale = Matrix::from_scale(Vector::<D3, _>::fill(scaling_factor)).to_homogeneous();
+    let scale = Matrix::from_scale(&Vector::<D3, _>::fill(scaling_factor)).to_homogeneous();
     let slice_select = Matrix::from_translation(translation);
-    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
-    let mat = slice_select * rw_to_voxel * scale * pixel_transform;
+    let rw_to_voxel = Matrix::from_scale(&embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
+    let mat = slice_select * &rw_to_voxel * &scale * &pixel_transform;
 
     mat
 }
@@ -228,17 +228,17 @@ pub fn slice_projection_mat_centered_rotate(
 
     let to_pixel_center =
         Matrix::from_translation(Vector::<D2, f32>::fill(0.5).push_dim_large(0.0));
-    let central_normalized = Matrix::from_scale(Vector::<D3, _>::fill(2.0 / min_dim_img))
+    let central_normalized = Matrix::from_scale(&Vector::<D3, _>::fill(2.0 / min_dim_img))
         .to_homogeneous()
-        * Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0))
-        * to_pixel_center;
+        * &Matrix::from_translation(img_dim.map(|v| -v * 0.5).push_dim_large(0.0))
+        * &to_pixel_center;
 
     let rotation = Matrix::from_angle_y(rotation);
     let norm_to_rw = Matrix::from_translation(vol_dim.map(|v| v * 0.5))
-        * Matrix::<D3, _>::from_scale(Vector::fill(min_dim_vol * 0.5)).to_homogeneous();
-    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
+        * &Matrix::<D3, _>::from_scale(&Vector::fill(min_dim_vol * 0.5)).to_homogeneous();
+    let rw_to_voxel = Matrix::from_scale(&embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
     let to_voxel_center = Matrix::from_translation(Vector::<D3, f32>::fill(-0.5));
-    let out = to_voxel_center * rw_to_voxel * norm_to_rw * rotation * central_normalized;
+    let out = to_voxel_center * &rw_to_voxel * &norm_to_rw * &rotation * &central_normalized;
     out
 }
 
@@ -249,18 +249,18 @@ pub fn select_level<'a, D: SmallerDim, T>(
 ) -> &'a EmbeddedTensorOperator<D::Smaller, T> {
     let neighbor_dirs = neighbor_dirs
         .iter()
-        .map(|p| (transform_rw * p.push_dim_large(0.0)).to_non_homogeneous_coord())
+        .map(|p| (transform_rw.clone() * &p.push_dim_large(0.0)).to_non_homogeneous_coord())
         .collect::<Vec<_>>();
 
     let mut selected_level = lod.levels.len() - 1;
 
     let coarse_lod_factor = 1.0; //TODO: make configurable
     'outer: for (i, level) in lod.levels.iter().enumerate() {
-        let emd = level.embedding_data;
+        let emd = &level.embedding_data;
 
         for dir in &neighbor_dirs {
             let abs_dir = dir.map(|v| v.abs()).normalized();
-            let dir_spacing_dist = (abs_dir * emd.spacing).length();
+            let dir_spacing_dist = (abs_dir * emd.spacing.clone()).length();
             let pixel_dist = dir.length();
             if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
                 selected_level = i;
@@ -420,7 +420,7 @@ void main()
                 let emd_0 = input.levels[0].embedding_data;
                 let pixel_to_voxel = projection_mat;
 
-                let transform_rw = emd_0.voxel_to_physical() * *pixel_to_voxel;
+                let transform_rw = emd_0.voxel_to_physical() * pixel_to_voxel;
                 let level = select_level(
                     &input,
                     transform_rw,
@@ -431,7 +431,7 @@ void main()
                 let emd_l = level.embedding_data;
 
                 let transform =
-                    emd_l.physical_to_voxel() * emd_0.voxel_to_physical() * *pixel_to_voxel;
+                    emd_l.physical_to_voxel() * &emd_0.voxel_to_physical() * pixel_to_voxel;
 
                 assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
                 let tf_data_gpu = ctx

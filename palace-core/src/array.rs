@@ -51,7 +51,12 @@ impl<D: DynDimension> Clone for TensorMetaData<D> {
     }
 }
 
-impl<D: Dimension> Copy for TensorMetaData<D> {}
+impl<D: Dimension> Copy for TensorMetaData<D>
+where
+    Vector<D, GlobalCoordinate>: Copy,
+    Vector<D, LocalCoordinate>: Copy,
+{
+}
 
 impl<D: DynDimension> PartialEq for TensorMetaData<D> {
     fn eq(&self, other: &Self) -> bool {
@@ -88,12 +93,12 @@ impl<D: DynDimension> TensorMetaData<D> {
 
 impl<D: LargerDim> TensorMetaData<D> {
     pub fn norm_to_voxel(&self) -> Matrix<D::Larger, f32> {
-        Matrix::from_translation(Vector::fill(-0.5))
-            * Matrix::from_scale(self.dimensions.raw().f32()).to_homogeneous()
+        Matrix::from_translation(Vector::fill_with_len(-0.5, self.dimensions.len()))
+            * &Matrix::from_scale(&self.dimensions.raw().f32()).to_homogeneous()
     }
     pub fn voxel_to_norm(&self) -> Matrix<D::Larger, f32> {
-        Matrix::from_scale(self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneous()
-            * Matrix::from_translation(Vector::fill(0.5))
+        Matrix::from_scale(&self.dimensions.raw().f32().map(|v| 1.0 / v)).to_homogeneous()
+            * &Matrix::from_translation(Vector::fill_with_len(0.5, self.dimensions.len()))
     }
 }
 
@@ -104,7 +109,7 @@ pub struct TensorEmbeddingData<D: DynDimension> {
     // NOTE: need to change identify impl if we want to add members
 }
 
-impl<D: Dimension> Copy for TensorEmbeddingData<D> {}
+impl<D: Dimension> Copy for TensorEmbeddingData<D> where Vector<D, f32>: Copy {}
 
 impl<D: DynDimension> TensorEmbeddingData<D> {
     pub fn try_into_static<DF: Dimension>(self) -> Option<TensorEmbeddingData<DF>> {
@@ -122,10 +127,10 @@ impl<D: DynDimension> TensorEmbeddingData<D> {
 
 impl<D: LargerDim> TensorEmbeddingData<D> {
     pub fn voxel_to_physical(&self) -> Matrix<D::Larger, f32> {
-        Matrix::from_scale(self.spacing).to_homogeneous()
+        Matrix::from_scale(&self.spacing).to_homogeneous()
     }
     pub fn physical_to_voxel(&self) -> Matrix<D::Larger, f32> {
-        Matrix::from_scale(self.spacing.map(|v| 1.0 / v)).to_homogeneous()
+        Matrix::from_scale(&self.spacing.map(|v| 1.0 / v)).to_homogeneous()
     }
 }
 
@@ -133,14 +138,14 @@ pub fn norm_to_physical<D: LargerDim>(
     md: &TensorMetaData<D>,
     emd: &TensorEmbeddingData<D>,
 ) -> Matrix<D::Larger, f32> {
-    emd.voxel_to_physical() * md.norm_to_voxel()
+    emd.voxel_to_physical() * &md.norm_to_voxel()
 }
 
 pub fn physical_to_voxel<D: LargerDim>(
     md: &TensorMetaData<D>,
     emd: &TensorEmbeddingData<D>,
 ) -> Matrix<D::Larger, f32> {
-    md.voxel_to_norm() * emd.physical_to_voxel()
+    md.voxel_to_norm() * &emd.physical_to_voxel()
 }
 
 //TODO: Revisit this. This is definitely fine as long as we don't add other members
@@ -349,6 +354,15 @@ impl<D: LargerDim> TensorMetaData<D> {
         TensorMetaData {
             dimensions: self.dimensions.push_dim_small(dim),
             chunk_size: self.chunk_size.push_dim_small(chunk_size),
+        }
+    }
+}
+
+impl<D: SmallerDim> TensorMetaData<D> {
+    pub fn pop_dim_small(self) -> TensorMetaData<D::Smaller> {
+        TensorMetaData {
+            dimensions: self.dimensions.pop_dim_small(),
+            chunk_size: self.chunk_size.pop_dim_small(),
         }
     }
 }

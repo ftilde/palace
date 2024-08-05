@@ -1,6 +1,6 @@
 use crate::{dim::*, mat::Matrix, vec::Vector};
 
-pub struct AABB<D: Dimension, T: Copy> {
+pub struct AABB<D: DynDimension, T: Copy> {
     min: Vector<D, T>,
     max: Vector<D, T>,
 }
@@ -20,7 +20,7 @@ fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
     }
 }
 
-impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
+impl<D: DynDimension, T: Copy + PartialOrd> AABB<D, T> {
     pub fn new(p1: &Vector<D, T>, p2: &Vector<D, T>) -> Self {
         Self {
             min: p1.zip(p2, partial_ord_min),
@@ -31,7 +31,7 @@ impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
     pub fn from_points(mut points: impl Iterator<Item = Vector<D, T>>) -> Self {
         let first = points.next().unwrap();
         let mut s = Self {
-            min: first,
+            min: first.clone(),
             max: first,
         };
         for p in points {
@@ -45,12 +45,12 @@ impl<D: Dimension, T: Copy + PartialOrd> AABB<D, T> {
         self.max = self.max.zip(p, partial_ord_max);
     }
 
-    pub fn lower(&self) -> Vector<D, T> {
-        self.min
+    pub fn lower(&self) -> &Vector<D, T> {
+        &self.min
     }
 
-    pub fn upper(&self) -> Vector<D, T> {
-        self.max
+    pub fn upper(&self) -> &Vector<D, T> {
+        &self.max
     }
 
     //pub fn contains(&self, p: Vector<D, T>) -> bool {
@@ -67,14 +67,15 @@ impl<D: LargerDim> AABB<D, f32> {
     #[must_use]
     pub fn transform(&self, t: &Matrix<D::Larger, f32>) -> Self {
         let points = (0..8).into_iter().map(|b| {
-            let p = Vector::<D, f32>::from_fn(|i| {
+            let p = Vector::<D, f32>::try_from_fn_and_len(self.min.len(), |i| {
                 if (b & (1 << i)) != 0 {
                     self.min[i]
                 } else {
                     self.max[i]
                 }
-            });
-            (*t * p.to_homogeneous_coord()).drop_dim(0)
+            })
+            .unwrap();
+            t.clone().transform(&p)
         });
         Self::from_points(points)
     }

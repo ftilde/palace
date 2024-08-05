@@ -92,15 +92,15 @@ fn projection_mat(
 
     let to_pixel_center = Matrix::from_translation(Vector::<D2, f32>::fill(0.5));
     let pixel_transform = Matrix::from_translation(Vector::from([-offset_y, -offset_x]))
-        * Matrix::from_scale(Vector::<D2, _>::fill(zoom_level)).to_homogeneous()
-        * Matrix::from_translation(offset.map(|v| -v))
-        * to_pixel_center;
+        * &Matrix::from_scale(&Vector::<D2, _>::fill(zoom_level)).to_homogeneous()
+        * &Matrix::from_translation(offset.map(|v| -v))
+        * &to_pixel_center;
 
     let translation = Vector::<D2, f32>::fill(-0.5); //For "centered" input positions
-    let scale = Matrix::from_scale(Vector::<D2, _>::fill(scaling_factor)).to_homogeneous();
+    let scale = Matrix::from_scale(&Vector::<D2, _>::fill(scaling_factor)).to_homogeneous();
     let slice_select = Matrix::from_translation(translation);
-    let rw_to_voxel = Matrix::from_scale(embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
-    let mat = slice_select * rw_to_voxel * scale * pixel_transform;
+    let rw_to_voxel = Matrix::from_scale(&embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
+    let mat = slice_select * &rw_to_voxel * &scale * &pixel_transform;
 
     mat
 }
@@ -147,7 +147,7 @@ pub fn view_image(
                     view_state.zoom_level,
                 );
 
-                let transform_rw = emd_0.voxel_to_physical() * out_to_pixel_in;
+                let transform_rw = emd_0.voxel_to_physical() * &out_to_pixel_in;
 
                 let level = crate::operators::sliceviewer::select_level(
                     &input,
@@ -159,7 +159,7 @@ pub fn view_image(
                 let emd_l = level.embedding_data;
 
                 let transform =
-                    emd_l.physical_to_voxel() * emd_0.voxel_to_physical() * out_to_pixel_in;
+                    emd_l.physical_to_voxel() * &emd_0.voxel_to_physical() * &out_to_pixel_in;
 
                 let out_info = m_out.chunk_info(pos);
 

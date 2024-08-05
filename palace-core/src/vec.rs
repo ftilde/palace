@@ -19,7 +19,7 @@ impl<D: DynDimension, T: Copy + Identify> Identify for Vector<D, T> {
     }
 }
 
-unsafe impl<D: DynDimension, T: Copy + bytemuck::Zeroable> bytemuck::Zeroable for Vector<D, T> {}
+unsafe impl<D: Dimension, T: Copy + bytemuck::Zeroable> bytemuck::Zeroable for Vector<D, T> {}
 unsafe impl<D: Dimension, T: Copy + bytemuck::Pod> bytemuck::Pod for Vector<D, T> {}
 impl<D: Dimension, T: Copy> Copy for Vector<D, T> {}
 
@@ -86,13 +86,13 @@ impl<D: DynDimension, T: Copy, I: Copy + Into<T>> TryFrom<Vec<I>> for Vector<D, 
     type Error = ();
 
     fn try_from(value: Vec<I>) -> Result<Self, Self::Error> {
-        Self::try_from_fn_and_len(|i| value[i].into(), value.len())
+        Self::try_from_fn_and_len(value.len(), |i| value[i].into())
     }
 }
 
 impl<D: Dimension, T: Copy> Vector<D, T> {
     pub fn from_fn(f: impl FnMut(usize) -> T) -> Self {
-        Self::try_from_fn_and_len(f, D::N).unwrap()
+        Self::try_from_fn_and_len(D::N, f).unwrap()
     }
 
     pub fn fill(val: T) -> Self {
@@ -106,14 +106,17 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
     pub fn try_into_static<D2: Dimension>(self) -> Option<Vector<D2, T>> {
         D::try_into_dim::<D2, T>(self.0).map(Vector)
     }
-    pub fn try_from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Result<Self, ()> {
-        Ok(Vector(D::DynArray::try_from_fn_and_len(f, size)?))
+    pub fn try_from_fn_and_len(size: usize, f: impl FnMut(usize) -> T) -> Result<Self, ()> {
+        Ok(Vector(D::DynArray::try_from_fn_and_len(size, f)?))
     }
-    fn from_fn_and_len(f: impl FnMut(usize) -> T, size: usize) -> Self {
-        Self::try_from_fn_and_len(f, size).unwrap()
+    pub fn try_from_slice(vals: &[T]) -> Result<Self, ()> {
+        Vector::try_from_fn_and_len(vals.len(), |i| vals[i])
+    }
+    fn from_fn_and_len(size: usize, f: impl FnMut(usize) -> T) -> Self {
+        Self::try_from_fn_and_len(size, f).unwrap()
     }
     pub fn fill_with_len(val: T, len: usize) -> Self {
-        Self::from_fn_and_len(|_| val, len)
+        Self::from_fn_and_len(len, |_| val)
     }
     pub fn new(inner: D::DynArray<T>) -> Self {
         Vector(inner)
@@ -128,7 +131,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         self.0
     }
     pub fn map<U: Copy>(&self, mut f: impl FnMut(T) -> U) -> Vector<D, U> {
-        Vector::from_fn_and_len(|i| f(self.0[i]), self.len())
+        Vector::from_fn_and_len(self.len(), |i| f(self.0[i]))
     }
     pub fn map_element(mut self, i: usize, f: impl FnOnce(T) -> T) -> Vector<D, T> {
         self.0[i] = f(self.0[i]);
@@ -146,7 +149,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         mut f: impl FnMut(T, U) -> V,
     ) -> Vector<D, V> {
         assert_eq!(self.len(), other.len());
-        Vector::from_fn_and_len(|i| f(self.0[i], other.0[i]), self.len())
+        Vector::from_fn_and_len(self.len(), |i| f(self.0[i], other.0[i]))
     }
     pub fn zip_enumerate<U: Copy, V: Copy>(
         &self,
@@ -154,7 +157,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         mut f: impl FnMut(usize, T, U) -> V,
     ) -> Vector<D, V> {
         assert_eq!(self.len(), other.len());
-        Vector::from_fn_and_len(|i| f(i, self.0[i], other.0[i]), self.len())
+        Vector::from_fn_and_len(self.len(), |i| f(i, self.0[i], other.0[i]))
     }
     pub fn into_elem<U: Copy>(self) -> Vector<D, U>
     where
@@ -267,11 +270,20 @@ impl<T: Copy> Vector<D2, T> {
 }
 
 impl<D: LargerDim, T: Copy> Vector<D, T> {
-    pub fn push_dim_small(self, extra: T) -> Vector<D::Larger, T> {
-        Vector::from_fn(|i| if i == D::N { extra } else { self.0[i] })
+    pub fn push_dim_small(&self, extra: T) -> Vector<D::Larger, T> {
+        Vector::from_fn_and_len(self.len() + 1, |i| {
+            if i == self.dim().n() {
+                extra
+            } else {
+                self.0[i]
+            }
+        })
     }
-    pub fn push_dim_large(self, extra: T) -> Vector<D::Larger, T> {
-        Vector::from_fn(|i| if i == 0 { extra } else { self.0[i - 1] })
+    pub fn push_dim_large(&self, extra: T) -> Vector<D::Larger, T> {
+        Vector::from_fn_and_len(
+            self.len() + 1,
+            |i| if i == 0 { extra } else { self.0[i - 1] },
+        )
     }
     //pub fn add_dim(self, dim: usize, value: T) -> Vector<D3, T> {
     //    Vector(std::array::from_fn(|i| match i.cmp(&dim) {
@@ -282,14 +294,23 @@ impl<D: LargerDim, T: Copy> Vector<D, T> {
     //}
 }
 impl<D: LargerDim, T: num::One + Copy> Vector<D, T> {
-    pub fn to_homogeneous_coord(self) -> Vector<D::Larger, T> {
+    pub fn to_homogeneous_coord(&self) -> Vector<D::Larger, T> {
         self.push_dim_large(num::one())
     }
 }
 
 impl<D: SmallerDim, T: Copy> Vector<D, T> {
-    pub fn drop_dim(self, dim: usize) -> Vector<D::Smaller, T> {
-        Vector::from_fn(|i| if i < dim { self.0[i] } else { self.0[i + 1] })
+    pub fn drop_dim(&self, dim: usize) -> Vector<D::Smaller, T> {
+        Vector::from_fn_and_len(self.len() - 1, |i| {
+            if i < dim {
+                self.0[i]
+            } else {
+                self.0[i + 1]
+            }
+        })
+    }
+    pub fn pop_dim_small(&self) -> Vector<D::Smaller, T> {
+        self.drop_dim(self.len() - 1)
     }
     pub fn to_non_homogeneous_coord(self) -> Vector<D::Smaller, T> {
         self.drop_dim(0)
@@ -392,7 +413,7 @@ impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<&Vecto
 }
 
 // Add convenience versions without refs for Copy vectors
-impl<D: Dimension, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<Vector<D, U>>
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<Vector<D, U>>
     for Vector<D, T>
 {
     type Output = Vector<D, O>;
@@ -400,7 +421,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Add<U, Output = O>> Add<Vector<D,
         self.zip(&rhs, Add::add)
     }
 }
-impl<D: Dimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<Vector<D, U>>
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<Vector<D, U>>
     for Vector<D, T>
 {
     type Output = Vector<D, O>;
@@ -408,7 +429,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<Vector<D,
         self.zip(&rhs, Sub::sub)
     }
 }
-impl<D: Dimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<Vector<D, U>>
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<Vector<D, U>>
     for Vector<D, T>
 {
     type Output = Vector<D, O>;
@@ -416,7 +437,7 @@ impl<D: Dimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<Vector<D,
         self.zip(&rhs, Mul::mul)
     }
 }
-impl<D: Dimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<D, U>>
+impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector<D, U>>
     for Vector<D, T>
 {
     type Output = Vector<D, O>;
@@ -690,7 +711,7 @@ pub fn from_linear<D: DynDimension, T: CoordinateType>(
     mut linear_pos: usize,
     dim: &Vector<D, Coordinate<T>>,
 ) -> Vector<D, Coordinate<T>> {
-    let mut out = Vector::<D, Coordinate<T>>::from_fn_and_len(|_| 0.into(), dim.len());
+    let mut out = Vector::<D, Coordinate<T>>::from_fn_and_len(dim.len(), |_| 0.into());
     for i in (0..dim.len()).rev() {
         let ddim = dim[i].raw as usize;
         out[i] = ((linear_pos % ddim) as u32).into();

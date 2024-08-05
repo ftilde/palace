@@ -137,11 +137,11 @@ pub fn separable_convolution<'py>(
         }
     }
 
-    let kernel_refs = Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(
-        |i| &kernels[i],
-        kernels.len(),
-    )
-    .unwrap();
+    let kernel_refs =
+        Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(kernels.len(), |i| {
+            &kernels[i]
+        })
+        .unwrap();
 
     tensor.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
         Ok(

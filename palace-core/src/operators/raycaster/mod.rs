@@ -161,7 +161,7 @@ impl CameraState {
             self.far_plane,
         )
         .into();
-        let matrix = perspective * self.trackball.view_mat();
+        let matrix = perspective * &self.trackball.view_mat();
         matrix
     }
 }
@@ -199,10 +199,10 @@ pub fn entry_exit_points(
                 let out_info = m_out.chunk_info(pos);
 
                 let norm_to_world = Matrix::from_scale(
-                    m_in.dimensions.map(|v| v.raw as f32) * embedding_data.spacing,
+                    &(&m_in.dimensions.map(|v| v.raw as f32) * &embedding_data.spacing),
                 )
                 .to_homogeneous();
-                let transform = *transform * norm_to_world;
+                let transform = *transform * &norm_to_world;
 
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),

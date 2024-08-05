@@ -24,20 +24,26 @@ pub fn resample_rescale_mat<'op, D: LargerDim>(
     input_size: TensorMetaData<D>,
     output_size: TensorMetaData<D>,
 ) -> Matrix<D::Larger, f32> {
-    let to_input_center = Matrix::from_translation(Vector::<D, f32>::fill(-0.5));
-    let rescale =
-        Matrix::from_scale(input_size.dimensions.raw().f32() / output_size.dimensions.raw().f32())
-            .to_homogeneous();
-    let to_output_center = Matrix::from_translation(Vector::<D, f32>::fill(0.5));
-    let out = to_input_center * rescale * to_output_center;
+    let to_input_center =
+        Matrix::from_translation(Vector::<D, f32>::fill_with_len(-0.5, input_size.dim().n()));
+    let rescale = Matrix::from_scale(
+        &(&input_size.dimensions.raw().f32() / &output_size.dimensions.raw().f32()),
+    )
+    .to_homogeneous();
+    let to_output_center =
+        Matrix::from_translation(Vector::<D, f32>::fill_with_len(0.5, input_size.dim().n()));
+    let out = to_input_center * &rescale * &to_output_center;
 
     out
 }
 
-pub fn resample<'op, D: LargerDim>(
+pub fn resample<'op, D: LargerDim + Dimension>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>>
+where
+    D::Larger: Dimension,
+{
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size, mat.clone());
     let mut embedding_data = input.embedding_data;
@@ -45,7 +51,9 @@ pub fn resample<'op, D: LargerDim>(
     // We know that mat is only an affine transformation, so we can extract the scaling
     // parts directly.
     let scale_mat = mat.to_scaling_part();
-    let scale = Vector::<D, f32>::from_fn(|i| *scale_mat.at(i, i));
+    let scale =
+        Vector::<D, f32>::try_from_fn_and_len(output_size.dim().n(), |i| scale_mat.at(i, i))
+            .unwrap();
     embedding_data.spacing = embedding_data.spacing * scale;
 
     EmbeddedTensorOperator {
@@ -54,10 +62,13 @@ pub fn resample<'op, D: LargerDim>(
     }
 }
 
-pub fn smooth_downsample<'op, D: LargerDim>(
+pub fn smooth_downsample<'op, D: LargerDim + Dimension>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>>
+where
+    D::Larger: Dimension,
+{
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
         let s_out = output_size.dimensions.raw().f32();
@@ -71,17 +82,22 @@ pub fn smooth_downsample<'op, D: LargerDim>(
         .into_iter()
         .map(|scale| crate::operators::kernels::gauss(scale))
         .collect::<Vec<_>>();
-    let kernel_refs = Vector::from_fn(|i| &kernels[i]);
+    let kernel_refs = Vector::try_from_fn_and_len(kernels.len(), |i| &kernels[i]).unwrap();
     let smoothed =
         input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernel_refs));
     resample(smoothed, output_size)
 }
 
-pub fn create_lod<D: LargerDim>(
+pub fn create_lod<D: LargerDim + Dimension>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     step_factor: f32,
-) -> LODTensorOperator<D, StaticElementType<f32>> {
+) -> LODTensorOperator<D, StaticElementType<f32>>
+where
+    D::Larger: Dimension,
+{
     assert!(step_factor > 1.0);
+
+    let dim = input.dim();
 
     let mut levels = Vec::new();
     let mut current = input;
@@ -90,12 +106,17 @@ pub fn create_lod<D: LargerDim>(
 
     loop {
         let new_md = {
-            let e = current.embedding_data;
-            let m = current.metadata;
+            let e = current.embedding_data.clone();
+            let m = current.metadata.clone();
 
-            let new_spacing_raw = e.spacing * Vector::fill(step_factor);
+            let new_spacing_raw = e.spacing.clone() * Vector::fill_with_len(step_factor, dim.n());
             let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
-            let new_spacing = e.spacing.zip(&Vector::fill(smallest_new), |a, b| a.max(b));
+            let new_spacing = e
+                .spacing
+                .clone()
+                .zip(&Vector::fill_with_len(smallest_new, dim.n()), |a, b| {
+                    a.max(b)
+                });
             let element_ratio = e.spacing / new_spacing;
             let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
                 .map(|v| v.ceil() as u32)
@@ -106,7 +127,7 @@ pub fn create_lod<D: LargerDim>(
             }
         };
 
-        current = smooth_downsample(current, new_md).cache();
+        current = smooth_downsample(current, new_md.clone()).cache();
         //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
         //like "cache everything but the highest resolution layer" on LODTensorOperator
         levels.push(current.clone());
@@ -119,23 +140,29 @@ pub fn create_lod<D: LargerDim>(
     LODTensorOperator { levels }
 }
 
-pub fn resample_transform<D: LargerDim>(
+pub fn resample_transform<D: LargerDim + Dimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,
-) -> TensorOperator<D, StaticElementType<f32>> {
+) -> TensorOperator<D, StaticElementType<f32>>
+where
+    D::Larger: Dimension,
+{
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
-    struct PushConstants<D: LargerDim> {
+    struct PushConstants<D: LargerDim + Dimension>
+    where
+        D::Larger: Dimension,
+    {
         transform: Matrix<D::Larger, f32>,
         chunk_dim_in: Vector<D, u32>,
         vol_dim_in: Vector<D, u32>,
         out_begin: Vector<D, u32>,
         mem_size_out: Vector<D, u32>,
     }
-    impl<D: LargerDim> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
+    impl<D: LargerDim + Dimension> Copy for PushConstants<D> where D::Larger: Dimension {}
     //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<D: LargerDim> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
+    unsafe impl<D: LargerDim + Dimension> bytemuck::Pod for PushConstants<D> where D::Larger: Dimension {}
 
     const SHADER: &'static str = r#"
 #version 450

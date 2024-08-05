@@ -203,7 +203,7 @@ fn slice_viewer_z(
                         mouse_pos.y() as f32,
                         mouse_pos.x() as f32,
                     ]);
-                    let vol_pos = *mat * mouse_pos;
+                    let vol_pos = *mat * &mouse_pos;
                     let vol_pos = vol_pos.drop_dim(0).map(|v| v.round() as i32);
 
                     let dim = m_in.dimensions.raw();
