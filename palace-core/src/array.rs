@@ -325,7 +325,9 @@ impl<D: DynDimension> TensorMetaData<D> {
         raw_end.zip(&self.dimensions, std::cmp::min)
     }
     pub fn chunk_index(&self, pos: &Vector<D, ChunkCoordinate>) -> ChunkIndex {
-        ChunkIndex(crate::vec::to_linear(&pos, &self.dimension_in_chunks()) as u64)
+        let dim_in_chunks = &self.dimension_in_chunks();
+        assert!(pos.zip(dim_in_chunks, |l, r| l < r).hand());
+        ChunkIndex(crate::vec::to_linear(&pos, &dim_in_chunks) as u64)
     }
     pub fn chunk_info(&self, index: ChunkIndex) -> ChunkInfo<D> {
         self.chunk_info_vec(&self.chunk_pos_from_index(index))

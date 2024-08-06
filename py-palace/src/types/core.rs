@@ -54,10 +54,20 @@ impl RunTime {
                 pos.len()
             )));
         }
+
+        let dim_in_chunks = op.metadata.dimension_in_chunks();
+        let pos: Vector<DDyn, u32> = pos.try_into().unwrap();
+
+        if !pos.zip(&dim_in_chunks, |l, r| l < r.raw).hand() {
+            return Err(PyErr::new::<PyException, _>(format!(
+                "Chunk position {:?} out of range for tensor dimension-in-chunks {:?}",
+                pos,
+                dim_in_chunks.raw(),
+            )));
+        }
         map_err(self.inner.resolve(None, false, |ctx, _| {
             async move {
-                let pos: Vector<DDyn, u32> = pos.try_into().unwrap();
-                let pos = dbg!(op_ref.metadata.chunk_index(&pos.chunk()));
+                let pos = op_ref.metadata.chunk_index(&pos.chunk());
                 let chunk = ctx.submit(op_ref.chunks.request(pos)).await;
                 let chunk_info = op_ref.metadata.chunk_info(pos);
                 let chunk = palace_core::data::chunk(&chunk, &chunk_info);
