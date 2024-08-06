@@ -680,11 +680,17 @@ impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     }
 }
 
-impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
-    pub fn to_ndarray_dim(self) -> D::NDArrayDim {
-        D::to_ndarray_dim(self.as_index())
+//impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+//    pub fn to_ndarray_dim(self) -> D::NDArrayDim {
+//        D::to_ndarray_dim(self.as_index())
+//    }
+//}
+impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
+    pub fn to_ndarray_dim(&self) -> D::NDArrayDimDyn {
+        D::to_ndarray_dim_dyn(self.as_index())
     }
 }
+
 impl<D: DynDimension> Vector<D, bool> {
     pub fn hand(self) -> bool {
         self.fold(true, |l, r| l && r)

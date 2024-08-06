@@ -229,7 +229,7 @@ impl RawVolumeSourceState {
         );
         let in_ = ndarray::ArrayView4::from_shape(
             crate::data::contiguous_shape(
-                m.dimensions
+                &m.dimensions
                     .push_dim_small(element_layout.size().try_into().unwrap()),
             ),
             in_,

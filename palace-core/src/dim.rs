@@ -87,6 +87,9 @@ pub trait Dimension:
 pub trait DynDimension: 'static + Debug + Clone + PartialEq + Copy {
     type DynArray<T: Copy>: DynArray<T>;
     type DynMatrix<T: Copy>: DynArray<T>;
+    type NDArrayDimDyn: ndarray::Dimension;
+    fn to_ndarray_dim_dyn(i: Self::DynArray<usize>) -> Self::NDArrayDimDyn;
+
     fn n(&self) -> usize;
     fn dim_of_array<T: Copy>(v: &Self::DynArray<T>) -> Self;
     fn try_into_dim<D: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D::Array<T>>;
@@ -96,6 +99,12 @@ pub trait DynDimension: 'static + Debug + Clone + PartialEq + Copy {
 impl<D: Dimension> DynDimension for D {
     type DynArray<T: Copy> = D::Array<T>;
     type DynMatrix<T: Copy> = D::Mat<T>;
+    type NDArrayDimDyn = D::NDArrayDim;
+
+    fn to_ndarray_dim_dyn(i: Self::DynArray<usize>) -> Self::NDArrayDimDyn {
+        Self::to_ndarray_dim(i)
+    }
+
     fn n(&self) -> usize {
         D::N
     }
@@ -118,6 +127,12 @@ impl<D: Dimension> DynDimension for D {
 impl DynDimension for DDyn {
     type DynArray<T: Copy> = Vec<T>;
     type DynMatrix<T: Copy> = Vec<T>;
+    type NDArrayDimDyn = ndarray::IxDyn;
+
+    fn to_ndarray_dim_dyn(i: Self::DynArray<usize>) -> Self::NDArrayDimDyn {
+        ndarray::Dim(i)
+    }
+
     fn n(&self) -> usize {
         self.0
     }

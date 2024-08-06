@@ -24,6 +24,7 @@ if args.img_file == "mandelbrot":
     tf.max = 1.0;
 
     #img = img.map(lambda img: pc.separable_convolution(img, [pc.gauss_kernel(25.0)]*2))
+    #print(rt.resolve(img.levels[0], [0,0]))
     img = img.map(lambda img: pc.apply_tf(img, tf))
 else:
     img = pc.read_png(args.img_file)

@@ -8,27 +8,28 @@ use crate::dim::*;
 pub use crate::mat::*;
 pub use crate::vec::*;
 
-fn dimension_order_stride<D: Dimension, T: CoordinateType>(
-    mem_size: Vector<D, Coordinate<T>>,
-) -> D::NDArrayDim {
+fn dimension_order_stride<D: DynDimension, T: CoordinateType>(
+    mem_size: &Vector<D, Coordinate<T>>,
+) -> D::NDArrayDimDyn {
+    let nd = mem_size.len();
     let mem_size = mem_size.as_index();
-    let mut out = Vector::<D, usize>::fill(1usize);
+    let mut out = Vector::<D, usize>::fill_with_len(1usize, nd);
     let mut rol = 1;
-    for i in (0..(D::N)).rev() {
+    for i in (0..nd).rev() {
         out[i] = rol;
         rol *= mem_size[i];
     }
-    D::to_ndarray_dim(out.inner())
+    D::to_ndarray_dim_dyn(out.inner())
 }
-pub fn contiguous_shape<D: Dimension, T: CoordinateType>(
-    size: Vector<D, Coordinate<T>>,
-) -> ndarray::Shape<D::NDArrayDim> {
+pub fn contiguous_shape<D: DynDimension, T: CoordinateType>(
+    size: &Vector<D, Coordinate<T>>,
+) -> ndarray::Shape<D::NDArrayDimDyn> {
     ndarray::ShapeBuilder::into_shape(size.to_ndarray_dim())
 }
-pub fn stride_shape<D: Dimension, T: CoordinateType>(
-    size: Vector<D, Coordinate<T>>,
-    mem_size: Vector<D, Coordinate<T>>,
-) -> ndarray::StrideShape<D::NDArrayDim> {
+pub fn stride_shape<D: DynDimension, T: CoordinateType>(
+    size: &Vector<D, Coordinate<T>>,
+    mem_size: &Vector<D, Coordinate<T>>,
+) -> ndarray::StrideShape<D::NDArrayDimDyn> {
     use ndarray::ShapeBuilder;
     let stride = dimension_order_stride(mem_size);
 
@@ -49,15 +50,15 @@ pub fn slice_range<T: Into<usize> + Copy>(
 }
 
 #[allow(unused)]
-pub fn chunk<'a, D: Dimension, T>(
+pub fn chunk<'a, D: DynDimension, T>(
     data: &'a [T],
     brick_info: &ChunkInfo<D>,
-) -> ndarray::ArrayView<'a, T, D::NDArrayDim> {
+) -> ndarray::ArrayView<'a, T, D::NDArrayDimDyn> {
     if brick_info.is_contiguous() {
-        ndarray::ArrayView::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
+        ndarray::ArrayView::from_shape(contiguous_shape(&brick_info.logical_dimensions), data)
     } else {
         ndarray::ArrayView::from_shape(
-            stride_shape(brick_info.logical_dimensions, brick_info.mem_dimensions),
+            stride_shape(&brick_info.logical_dimensions, &brick_info.mem_dimensions),
             data,
         )
     }
@@ -69,10 +70,10 @@ pub fn chunk_mut<'a, D: Dimension, T>(
     brick_info: &ChunkInfo<D>,
 ) -> ndarray::ArrayViewMut<'a, T, D::NDArrayDim> {
     if brick_info.is_contiguous() {
-        ndarray::ArrayViewMut::from_shape(contiguous_shape(brick_info.logical_dimensions), data)
+        ndarray::ArrayViewMut::from_shape(contiguous_shape(&brick_info.logical_dimensions), data)
     } else {
         ndarray::ArrayViewMut::from_shape(
-            stride_shape(brick_info.logical_dimensions, brick_info.mem_dimensions),
+            stride_shape(&brick_info.logical_dimensions, &brick_info.mem_dimensions),
             data,
         )
     }
