@@ -37,15 +37,12 @@ pub fn resample_rescale_mat<'op, D: LargerDim>(
     out
 }
 
-pub fn resample<'op, D: LargerDim + Dimension>(
+pub fn resample<'op, D: LargerDim>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>>
-where
-    D::Larger: Dimension,
-{
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
-    let inner = resample_transform(input.inner, output_size, mat.clone());
+    let inner = resample_transform(input.inner, output_size.clone(), mat.clone());
     let mut embedding_data = input.embedding_data;
 
     // We know that mat is only an affine transformation, so we can extract the scaling
@@ -62,13 +59,10 @@ where
     }
 }
 
-pub fn smooth_downsample<'op, D: LargerDim + Dimension>(
+pub fn smooth_downsample<'op, D: LargerDim>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>>
-where
-    D::Larger: Dimension,
-{
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
         let s_out = output_size.dimensions.raw().f32();
@@ -88,13 +82,10 @@ where
     resample(smoothed, output_size)
 }
 
-pub fn create_lod<D: LargerDim + Dimension>(
+pub fn create_lod<D: LargerDim>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     step_factor: f32,
-) -> LODTensorOperator<D, StaticElementType<f32>>
-where
-    D::Larger: Dimension,
-{
+) -> LODTensorOperator<D, StaticElementType<f32>> {
     assert!(step_factor > 1.0);
 
     let dim = input.dim();
@@ -140,14 +131,11 @@ where
     LODTensorOperator { levels }
 }
 
-pub fn resample_transform<D: LargerDim + Dimension>(
+pub fn resample_transform<D: LargerDim>(
     input: TensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,
-) -> TensorOperator<D, StaticElementType<f32>>
-where
-    D::Larger: Dimension,
-{
+) -> TensorOperator<D, StaticElementType<f32>> {
     let nd = input.dim().n();
 
     let push_constants = DynPushConstants::new()
@@ -252,7 +240,7 @@ void main() {
             .dependent_on_data(&output_size)
             .dependent_on_data(&element_out_to_in),
         Default::default(),
-        output_size,
+        output_size.clone(),
         (input, output_size, element_out_to_in, push_constants),
         move |ctx, mut positions, (input, output_size, element_out_to_in, push_constants)| {
             async move {
@@ -263,7 +251,7 @@ void main() {
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let m_in = input.metadata;
+                let m_in = &input.metadata;
                 let m_out = output_size;
 
                 let num_chunks = m_in.dimension_in_chunks().hmul();
@@ -273,7 +261,7 @@ void main() {
                         .of(ctx.current_op())
                         .dependent_on(&num_chunks)
                         .dependent_on(&m_in.chunk_size)
-                        .dependent_on(&D::N),
+                        .dependent_on(&nd),
                     || {
                         ComputePipeline::new(
                             device,
@@ -282,7 +270,7 @@ void main() {
                                 ShaderDefines::new()
                                     .add("NUM_CHUNKS", num_chunks)
                                     .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
-                                    .add("N", D::N)
+                                    .add("N", nd)
                                     .push_const_block_dyn(&push_constants),
                             ),
                             true,
@@ -314,7 +302,7 @@ void main() {
                         .chunk_pos(&out_end)
                         .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
 
-                    let in_brick_positions = (0..D::N)
+                    let in_brick_positions = (0..nd)
                         .into_iter()
                         .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
                         .multi_cartesian_product()
@@ -396,8 +384,8 @@ void main() {
                     // and [y, x] to [1, y, x]
                     let full_size = m_out.chunk_size.raw();
                     let mut size = Vector::<D3, u32>::fill(1);
-                    for i in 0..D::N {
-                        let oi = i.saturating_sub(D::N.saturating_sub(D3::N));
+                    for i in 0..nd {
+                        let oi = i.saturating_sub(nd.saturating_sub(D3::N));
                         size[oi] *= full_size[i];
                     }
 

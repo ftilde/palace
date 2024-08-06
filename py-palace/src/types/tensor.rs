@@ -345,28 +345,11 @@ impl EmbeddedTensorOperator {
         })
     }
     fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
-        let nd = self.inner.metadata.dimensions.len();
-
-        match nd {
-            2 => {
-                let vol: CEmbeddedTensorOperator<D2, DType> =
-                    self.clone().try_into_core_static()?;
-                palace_core::operators::resample::create_lod(vol.try_into()?, step_factor)
-                    .try_into()
-            }
-            3 => {
-                let vol: CEmbeddedTensorOperator<D3, DType> =
-                    self.clone().try_into_core_static()?;
-                palace_core::operators::resample::create_lod(vol.try_into()?, step_factor)
-                    .try_into()
-            }
-            n => {
-                return Err(PyErr::new::<PyException, _>(format!(
-                    "{}-dimensional operation not yet implemented.",
-                    n
-                )))
-            }
-        }
+        Ok(palace_core::operators::resample::create_lod(
+            self.clone().try_into_core()?.try_into()?,
+            step_factor,
+        )
+        .try_into()?)
     }
 }
 
@@ -458,7 +441,7 @@ pub struct LODTensorOperator {
     #[pyo3(get, set)]
     pub levels: Vec<EmbeddedTensorOperator>,
 }
-impl<D: Dimension> TryFrom<CLODTensorOperator<D, DType>> for LODTensorOperator {
+impl<D: DynDimension> TryFrom<CLODTensorOperator<D, DType>> for LODTensorOperator {
     type Error = PyErr;
 
     fn try_from(t: CLODTensorOperator<D, DType>) -> Result<Self, Self::Error> {
@@ -472,7 +455,7 @@ impl<D: Dimension> TryFrom<CLODTensorOperator<D, DType>> for LODTensorOperator {
     }
 }
 
-impl<D: Dimension, T: std::any::Any + Clone> TryFrom<CLODTensorOperator<D, StaticElementType<T>>>
+impl<D: DynDimension, T: std::any::Any + Clone> TryFrom<CLODTensorOperator<D, StaticElementType<T>>>
     for LODTensorOperator
 where
     DType: From<StaticElementType<T>>,
@@ -489,10 +472,48 @@ where
         })
     }
 }
-impl<D: Dimension> TryInto<CLODTensorOperator<D, DType>> for LODTensorOperator {
+impl TryInto<CLODTensorOperator<DDyn, DType>> for LODTensorOperator {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CLODTensorOperator<D, DType>, Self::Error> {
+    fn try_into(self) -> Result<CLODTensorOperator<DDyn, DType>, Self::Error> {
+        Ok(CLODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|v| v.try_into_core())
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+impl<T: std::any::Any + Element> TryInto<CLODTensorOperator<DDyn, StaticElementType<T>>>
+    for LODTensorOperator
+where
+    StaticElementType<T>: TryFrom<DType, Error = palace_core::dtypes::ConversionError>,
+{
+    type Error = PyErr;
+
+    fn try_into(self) -> Result<CLODTensorOperator<DDyn, StaticElementType<T>>, Self::Error> {
+        Ok(CLODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|v| v.try_into_core().and_then(|v| Ok(v.try_into()?)))
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+impl LODTensorOperator {
+    pub fn try_into_core(self) -> Result<CLODTensorOperator<DDyn, DType>, PyErr> {
+        Ok(CLODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|v| v.try_into_core())
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
+    pub fn try_into_core_static<D: Dimension>(self) -> Result<CLODTensorOperator<D, DType>, PyErr> {
         Ok(CLODTensorOperator {
             levels: self
                 .levels
@@ -502,23 +523,7 @@ impl<D: Dimension> TryInto<CLODTensorOperator<D, DType>> for LODTensorOperator {
         })
     }
 }
-impl<D: Dimension, T: std::any::Any + Element> TryInto<CLODTensorOperator<D, StaticElementType<T>>>
-    for LODTensorOperator
-where
-    StaticElementType<T>: TryFrom<DType, Error = palace_core::dtypes::ConversionError>,
-{
-    type Error = PyErr;
 
-    fn try_into(self) -> Result<CLODTensorOperator<D, StaticElementType<T>>, Self::Error> {
-        Ok(CLODTensorOperator {
-            levels: self
-                .levels
-                .into_iter()
-                .map(|v| v.try_into_core_static().and_then(|v| Ok(v.try_into()?)))
-                .collect::<Result<_, _>>()?,
-        })
-    }
-}
 #[pymethods]
 impl LODTensorOperator {
     pub fn fine_metadata(&self) -> PyTensorMetaData {

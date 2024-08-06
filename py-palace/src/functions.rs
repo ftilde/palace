@@ -200,7 +200,7 @@ pub fn raycast(
     let eep = entry_exit_points.try_into_core()?;
     let eep = try_into_static_err(eep)?;
     palace_core::operators::raycaster::raycast(
-        vol.try_into()?,
+        vol.try_into_core_static()?.try_into()?,
         eep.try_into()?,
         tf,
         config.unwrap_or_default(),
@@ -221,7 +221,7 @@ pub fn render_slice(
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
 
     palace_core::operators::sliceviewer::render_slice(
-        input.try_into()?,
+        input.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
         tf,
@@ -270,7 +270,7 @@ pub fn view_image(
     view_state: palace_core::operators::imageviewer::ImageViewerState,
 ) -> PyResult<TensorOperator> {
     palace_core::operators::imageviewer::view_image(
-        image.try_into()?,
+        image.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         view_state,
     )
