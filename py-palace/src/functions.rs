@@ -2,7 +2,7 @@ use crate::types::*;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
-use palace_core::dtypes::DType;
+use palace_core::dtypes::{DType, ScalarType};
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
@@ -46,8 +46,22 @@ pub fn neg(py: Python, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     jit_unary(py, UnaryOp::Neg, vol)
 }
 
+#[derive(FromPyObject)]
+pub enum MaybeScalarDType {
+    Scalar(ScalarType),
+    DType(DType),
+}
+
 #[pyfunction]
-pub fn cast(py: Python, vol: MaybeEmbeddedTensorOperator, to: DType) -> PyResult<PyObject> {
+pub fn cast(
+    py: Python,
+    vol: MaybeEmbeddedTensorOperator,
+    to: MaybeScalarDType,
+) -> PyResult<PyObject> {
+    let to = match to {
+        MaybeScalarDType::Scalar(s) => DType::scalar(s),
+        MaybeScalarDType::DType(d) => d,
+    };
     jit_unary(py, UnaryOp::Cast(to), vol)
 }
 

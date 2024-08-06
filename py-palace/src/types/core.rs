@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use crate::map_err;
 use palace_core::{
+    array::ChunkIndex,
     dim::{DDyn, DynDimension},
-    dtypes::StaticElementType,
+    dtypes::{DType, ScalarType, StaticElementType},
     vec::Vector,
 };
 use pyo3::{exceptions::PyException, prelude::*};
@@ -13,6 +14,26 @@ use super::{Events, MaybeEmbeddedTensorOperator, ScalarOperator, TensorOperator}
 #[pyclass(unsendable)]
 pub struct RunTime {
     pub inner: palace_core::runtime::RunTime,
+}
+
+impl RunTime {
+    fn resolve_static<T: palace_core::storage::Element + numpy::Element>(
+        &mut self,
+        py: Python,
+        op_ref: &palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<T>>,
+        chunk_i: ChunkIndex,
+    ) -> PyResult<PyObject> {
+        map_err(self.inner.resolve(None, false, |ctx, _| {
+            async move {
+                let chunk = ctx.submit(op_ref.chunks.request(chunk_i)).await;
+                let chunk_info = op_ref.metadata.chunk_info(chunk_i);
+                let chunk = palace_core::data::chunk(&chunk, &chunk_info);
+                Ok(chunk.to_owned())
+            }
+            .into()
+        }))
+        .map(|v| numpy::PyArray::from_owned_array(py, v).into_py(py))
+    }
 }
 
 #[pymethods]
@@ -44,9 +65,7 @@ impl RunTime {
         pos: Vec<u32>,
     ) -> PyResult<PyObject> {
         let v = v.into_inner();
-        let op: palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<f32>> =
-            v.try_into()?;
-        let op_ref = &op;
+        let op: palace_core::operators::tensor::TensorOperator<DDyn, DType> = v.try_into()?;
         if op.dim().n() != pos.len() {
             return Err(PyErr::new::<PyException, _>(format!(
                 "Expected {}-dimensional chunk position for tensor, but got {}",
@@ -65,17 +84,26 @@ impl RunTime {
                 dim_in_chunks.raw(),
             )));
         }
-        map_err(self.inner.resolve(None, false, |ctx, _| {
-            async move {
-                let pos = op_ref.metadata.chunk_index(&pos.chunk());
-                let chunk = ctx.submit(op_ref.chunks.request(pos)).await;
-                let chunk_info = op_ref.metadata.chunk_info(pos);
-                let chunk = palace_core::data::chunk(&chunk, &chunk_info);
-                Ok(chunk.to_owned())
-            }
-            .into()
-        }))
-        .map(|v| numpy::PyArray::from_owned_array(py, v).into_py(py))
+
+        let dtype = op.dtype();
+        if dtype.size != 1 {
+            return Err(PyErr::new::<PyException, _>(format!(
+                "Expected scalar dtype, but got with size {}",
+                dtype.size
+            )));
+        }
+
+        let chunk_id = op.metadata.chunk_index(&pos.chunk());
+
+        match dtype.scalar {
+            ScalarType::U8 => self.resolve_static::<u8>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::I8 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::U16 => self.resolve_static::<u16>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::I16 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::U32 => self.resolve_static::<u32>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::I32 => self.resolve_static::<i32>(py, &op.try_into().unwrap(), chunk_id),
+        }
     }
 
     fn resolve_scalar(&mut self, v: ScalarOperator) -> PyResult<f32> {

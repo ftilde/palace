@@ -244,6 +244,7 @@ impl ElementType for DType {
 
 /// Some specialized types -----------------------------------------------------
 #[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
+#[cfg_attr(feature = "python", pyclass)]
 pub enum ScalarType {
     U8,
     I8,

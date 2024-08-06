@@ -1,6 +1,6 @@
 use palace_core::{
     array::{PyTensorEmbeddingData, PyTensorMetaData},
-    dtypes::DType,
+    dtypes::{DType, ScalarType},
 };
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -62,6 +62,7 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Splitter>()?;
     m.add_class::<ComboBox>()?;
     m.add_class::<DType>()?;
+    m.add_class::<ScalarType>()?;
 
     m.add_class::<state_link::py::Store>()?;
     Ok(())
