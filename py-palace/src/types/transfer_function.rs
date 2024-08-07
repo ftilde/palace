@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 pub use palace_core::operators::raycaster::TransFuncOperator as CTransFuncOperator;
 
 #[pyclass(unsendable)]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TransFuncOperator {
     #[pyo3(get, set)]
     pub min: f32,

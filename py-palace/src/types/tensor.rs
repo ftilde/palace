@@ -1,9 +1,9 @@
 use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, StaticElementType};
-use palace_core::jit;
+use palace_core::jit::{self, JitTensorOperator};
 use palace_core::vec::Vector;
-use palace_core::{dim::*, operator::Operator as COperator, storage::Element};
+use palace_core::{dim::*, storage::Element};
 use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -93,44 +93,71 @@ impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<Static
     }
 }
 
-#[pyclass(unsendable)]
-#[derive(Debug)]
-pub struct TensorOperator {
-    pub inner: Box<dyn std::any::Any>,
-    #[pyo3(get)]
-    pub dtype: DType,
-    #[pyo3(get)]
-    pub metadata: PyTensorMetaData,
-    clone: fn(&Self) -> Self,
+#[derive(Clone)]
+enum MaybeJitTensorOperator {
+    Jit(JitTensorOperator<DDyn>),
+    Tensor(CTensorOperator<DDyn, DType>),
 }
 
-impl Clone for TensorOperator {
-    fn clone(&self) -> Self {
-        (self.clone)(self)
-    }
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct TensorOperator {
+    inner: MaybeJitTensorOperator,
 }
 
 impl TensorOperator {
     pub fn nd(&self) -> usize {
-        let nd = self.metadata.dimensions.len();
-        assert_eq!(nd, self.metadata.chunk_size.len());
+        let nd = self.metadata().dimensions.len();
+        assert_eq!(nd, self.metadata().chunk_size.len());
         nd
+    }
+}
+
+#[pymethods]
+impl TensorOperator {
+    #[getter]
+    pub fn dtype(&self) -> DType {
+        match &self.inner {
+            MaybeJitTensorOperator::Jit(i) => i.dtype(),
+            MaybeJitTensorOperator::Tensor(i) => i.dtype(),
+        }
+    }
+    #[getter]
+    pub fn metadata(&self) -> PyTensorMetaData {
+        match &self.inner {
+            MaybeJitTensorOperator::Jit(i) => i.metadata().unwrap().into(),
+            MaybeJitTensorOperator::Tensor(i) => i.metadata.clone().into(),
+        }
+    }
+    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
+        EmbeddedTensorOperator {
+            inner: self.clone(),
+            embedding_data,
+        }
+    }
+
+    fn unfold_into_vec_dtype(&self) -> PyResult<Self> {
+        Ok(self
+            .clone()
+            .into_core()
+            .unfold_into_vec_dtype()
+            .map_err(crate::map_err)?
+            .into())
+    }
+    fn fold_vec_dtype(&self) -> PyResult<Self> {
+        Ok(self
+            .clone()
+            .into_core()
+            .fold_vec_dtype()
+            .map_err(crate::map_err)?
+            .into())
     }
 }
 
 impl From<CTensorOperator<DDyn, DType>> for TensorOperator {
     fn from(t: CTensorOperator<DDyn, DType>) -> Self {
-        let dtype = t.chunks.dtype();
         Self {
-            inner: Box::new(t.chunks),
-            dtype,
-            metadata: t.metadata.into(),
-            clone: |i| Self {
-                inner: Box::new(i.inner.downcast_ref::<COperator<DType>>().unwrap().clone()),
-                dtype: i.dtype,
-                metadata: i.metadata.clone(),
-                clone: i.clone,
-            },
+            inner: MaybeJitTensorOperator::Tensor(t),
         }
     }
 }
@@ -139,25 +166,12 @@ impl TryFrom<jit::JitTensorOperator<DDyn>> for TensorOperator {
     type Error = PyErr;
 
     fn try_from(t: jit::JitTensorOperator<DDyn>) -> Result<Self, Self::Error> {
-        let dtype = t.dtype();
-        let Some(metadata) = t.metadata() else {
+        let Some(_) = t.metadata() else {
             return crate::map_result(Err("Jit operator does not contain metadata".into()));
         };
+
         Ok(Self {
-            inner: Box::new(t),
-            dtype,
-            metadata: metadata.into(),
-            clone: |i| Self {
-                inner: Box::new(
-                    i.inner
-                        .downcast_ref::<jit::JitTensorOperator<DDyn>>()
-                        .unwrap()
-                        .clone(),
-                ),
-                dtype: i.dtype,
-                metadata: i.metadata.clone(),
-                clone: i.clone,
-            },
+            inner: MaybeJitTensorOperator::Jit(t),
         })
     }
 }
@@ -171,21 +185,11 @@ where
     }
 }
 
-impl TryInto<CTensorOperator<DDyn, DType>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<CTensorOperator<DDyn, DType>, Self::Error> {
-        if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
-            Ok(CTensorOperator {
-                chunks: inner.clone(),
-                metadata: self.metadata.try_into()?,
-            })
-        } else if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<DDyn>>() {
-            Ok(inner.clone().compile().unwrap())
-        } else {
-            Err(PyErr::new::<PyException, _>(format!(
-                "Expected TensorOperator, but got something else",
-            )))
+impl Into<CTensorOperator<DDyn, DType>> for TensorOperator {
+    fn into(self) -> CTensorOperator<DDyn, DType> {
+        match self.inner {
+            MaybeJitTensorOperator::Jit(j) => j.clone().compile().unwrap(),
+            MaybeJitTensorOperator::Tensor(t) => t,
         }
     }
 }
@@ -196,27 +200,16 @@ where
 {
     type Error = PyErr;
     fn try_into(self) -> Result<CTensorOperator<DDyn, StaticElementType<T>>, Self::Error> {
-        let t: CTensorOperator<DDyn, DType> = self.try_into()?;
+        let t: CTensorOperator<DDyn, DType> = self.into();
         Ok(t.try_into()?)
     }
 }
 
-impl TryInto<jit::JitTensorOperator<DDyn>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<jit::JitTensorOperator<DDyn>, Self::Error> {
-        if let Some(inner) = self.inner.downcast_ref::<jit::JitTensorOperator<DDyn>>() {
-            Ok(inner.clone())
-        } else if let Some(inner) = self.inner.downcast_ref::<COperator<DType>>() {
-            Ok(CTensorOperator {
-                chunks: inner.clone(),
-                metadata: self.metadata.try_into()?,
-            }
-            .into())
-        } else {
-            Err(PyErr::new::<PyException, _>(format!(
-                "Expected TensorOperator, but got something else",
-            )))
+impl Into<jit::JitTensorOperator<DDyn>> for TensorOperator {
+    fn into(self) -> jit::JitTensorOperator<DDyn> {
+        match self.inner {
+            MaybeJitTensorOperator::Jit(j) => j,
+            MaybeJitTensorOperator::Tensor(t) => t.into(),
         }
     }
 }
@@ -235,42 +228,15 @@ pub fn try_into_static_err<D: Dimension, T: ElementType>(
 }
 
 impl TensorOperator {
-    pub fn try_into_core(self) -> Result<CTensorOperator<DDyn, DType>, PyErr> {
-        self.try_into()
+    pub fn into_core(self) -> CTensorOperator<DDyn, DType> {
+        self.into()
     }
     pub fn try_into_core_static<D: Dimension>(self) -> Result<CTensorOperator<D, DType>, PyErr> {
-        let s = self.try_into_core()?;
+        let s = self.into_core();
         try_into_static_err(s)
     }
-    pub fn try_into_jit(self) -> Result<jit::JitTensorOperator<DDyn>, PyErr> {
-        self.try_into()
-    }
-}
-
-#[pymethods]
-impl TensorOperator {
-    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
-        EmbeddedTensorOperator {
-            inner: self.clone(),
-            embedding_data,
-        }
-    }
-
-    fn unfold_into_vec_dtype(&self) -> PyResult<Self> {
-        Ok(self
-            .clone()
-            .try_into_core()?
-            .unfold_into_vec_dtype()
-            .map_err(crate::map_err)?
-            .into())
-    }
-    fn fold_vec_dtype(&self) -> PyResult<Self> {
-        Ok(self
-            .clone()
-            .try_into_core()?
-            .fold_vec_dtype()
-            .map_err(crate::map_err)?
-            .into())
+    pub fn into_jit(self) -> jit::JitTensorOperator<DDyn> {
+        self.into()
     }
 }
 
@@ -328,7 +294,7 @@ impl<'a> TryInto<CTensorOperator<DDyn, DType>> for MaybeConstTensorOperator<'a> 
     fn try_into(self) -> Result<CTensorOperator<DDyn, DType>, Self::Error> {
         match self {
             MaybeConstTensorOperator::Numpy(c) => tensor_from_numpy(c),
-            MaybeConstTensorOperator::Operator(o) => o.try_into_core(),
+            MaybeConstTensorOperator::Operator(o) => Ok(o.into_core()),
         }
     }
 }
@@ -340,7 +306,7 @@ impl MaybeConstTensorOperator<'_> {
 }
 
 #[pyclass(unsendable)]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EmbeddedTensorOperator {
     #[pyo3(get, set)]
     pub inner: TensorOperator,
@@ -423,7 +389,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
-#[derive(FromPyObject, Debug, Clone)]
+#[derive(FromPyObject, Clone)]
 pub enum MaybeEmbeddedTensorOperator {
     Not(TensorOperator),
     Embedded(EmbeddedTensorOperator),
@@ -449,15 +415,15 @@ impl MaybeEmbeddedTensorOperator {
     ) -> PyResult<PyObject> {
         Ok(match self {
             MaybeEmbeddedTensorOperator::Not(v) => {
-                let v: CTensorOperator<DDyn, DType> = v.try_into_core()?.try_into()?;
+                let v: CTensorOperator<DDyn, DType> = v.into_core();
                 let v = f(v)?;
-                let v: TensorOperator = v.try_into()?;
+                let v: TensorOperator = v.into();
                 v.into_py(py)
             }
             MaybeEmbeddedTensorOperator::Embedded(orig) => {
-                let v: CTensorOperator<DDyn, DType> = orig.inner.try_into_core()?.try_into()?;
+                let v: CTensorOperator<DDyn, DType> = orig.inner.into_core();
                 let v = f(v)?;
-                let v: TensorOperator = v.try_into()?;
+                let v: TensorOperator = v.into();
                 EmbeddedTensorOperator {
                     inner: v,
                     embedding_data: orig.embedding_data,
@@ -474,13 +440,13 @@ impl MaybeEmbeddedTensorOperator {
     ) -> PyResult<PyObject> {
         Ok(match self {
             MaybeEmbeddedTensorOperator::Not(v) => {
-                let v = v.try_into_jit()?;
+                let v = v.into_jit();
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
                 v.into_py(py)
             }
             MaybeEmbeddedTensorOperator::Embedded(orig) => {
-                let v = orig.inner.try_into_jit()?;
+                let v = orig.inner.into_jit();
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
                 EmbeddedTensorOperator {
@@ -585,7 +551,7 @@ impl LODTensorOperator {
 #[pymethods]
 impl LODTensorOperator {
     pub fn fine_metadata(&self) -> PyTensorMetaData {
-        self.levels[0].inner.metadata.clone()
+        self.levels[0].inner.metadata().clone()
     }
     pub fn fine_embedding_data(&self) -> PyTensorEmbeddingData {
         self.levels[0].embedding_data.clone()

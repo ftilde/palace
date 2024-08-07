@@ -76,7 +76,7 @@ fn jit_binary(
         Ok(crate::map_result(JitTensorOperator::<DDyn>::bin_op(
             op,
             v1,
-            v2.into_inner().try_into_jit()?,
+            v2.into_inner().into_jit(),
         ))?
         .into())
     })
@@ -143,10 +143,10 @@ pub fn separable_convolution<'py>(
         .collect::<Result<Vec<_>, PyErr>>()?;
 
     for kernel in &kernels {
-        if tensor.inner().dtype != kernel.dtype() {
+        if tensor.inner().dtype() != kernel.dtype() {
             return Err(PyErr::new::<PyValueError, _>(format!(
                 "Kernel must have the same type as tensor ({:?}), but has {:?}",
-                tensor.inner().dtype,
+                tensor.inner().dtype(),
                 kernel.dtype(),
             )));
         }
@@ -216,7 +216,7 @@ pub fn raycast(
         .map(|tf| tf.try_into())
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
 
-    let eep = entry_exit_points.try_into_core()?;
+    let eep = entry_exit_points.into_core();
     let eep = try_into_static_err(eep)?;
     Ok(palace_core::operators::raycaster::raycast(
         vol.try_into_core_static()?.try_into()?,
@@ -251,7 +251,7 @@ pub fn render_slice(
 
 #[pyfunction]
 pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
-    let vol = vol.into_inner().try_into_core()?;
+    let vol = vol.into_inner().into_core();
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
