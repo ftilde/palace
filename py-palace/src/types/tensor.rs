@@ -2,6 +2,7 @@ use id::Identify;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, StaticElementType};
 use palace_core::jit;
+use palace_core::vec::Vector;
 use palace_core::{dim::*, operator::Operator as COperator, storage::Element};
 use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyException, prelude::*};
@@ -117,12 +118,10 @@ impl TensorOperator {
     }
 }
 
-impl TryFrom<CTensorOperator<DDyn, DType>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_from(t: CTensorOperator<DDyn, DType>) -> Result<Self, Self::Error> {
+impl From<CTensorOperator<DDyn, DType>> for TensorOperator {
+    fn from(t: CTensorOperator<DDyn, DType>) -> Self {
         let dtype = t.chunks.dtype();
-        Ok(Self {
+        Self {
             inner: Box::new(t.chunks),
             dtype,
             metadata: t.metadata.into(),
@@ -132,7 +131,7 @@ impl TryFrom<CTensorOperator<DDyn, DType>> for TensorOperator {
                 metadata: i.metadata.clone(),
                 clone: i.clone,
             },
-        })
+        }
     }
 }
 
@@ -163,14 +162,12 @@ impl TryFrom<jit::JitTensorOperator<DDyn>> for TensorOperator {
     }
 }
 
-impl<T: 'static> TryFrom<CTensorOperator<DDyn, StaticElementType<T>>> for TensorOperator
+impl<T: 'static> From<CTensorOperator<DDyn, StaticElementType<T>>> for TensorOperator
 where
     DType: From<StaticElementType<T>>,
 {
-    type Error = PyErr;
-
-    fn try_from(t: CTensorOperator<DDyn, StaticElementType<T>>) -> Result<Self, Self::Error> {
-        CTensorOperator::<DDyn, DType>::from(t).try_into()
+    fn from(t: CTensorOperator<DDyn, StaticElementType<T>>) -> Self {
+        CTensorOperator::<DDyn, DType>::from(t).into()
     }
 }
 
@@ -256,27 +253,67 @@ impl TensorOperator {
     }
 }
 
-#[derive(FromPyObject)] //TODO: Derive macro appears to be broken when we use generics here??
+fn try_tensor_from_numpy<T: Element + numpy::Element + id::Identify>(
+    c: &numpy::PyUntypedArray,
+) -> PyResult<CTensorOperator<DDyn, DType>> {
+    let arr: &numpy::PyArrayDyn<T> = c.downcast()?;
+    let dim = Vector::<DDyn, usize>::try_from_slice(arr.shape()).unwrap();
+
+    let values = if arr.is_contiguous() {
+        // Safety: There are no other references (not sure how they would even exist?)
+        arr.to_vec().unwrap()
+    } else {
+        let arr = arr
+            .reshape_with_order(dim.clone().inner(), numpy::npyffi::NPY_ORDER::NPY_CORDER)
+            .unwrap();
+        arr.to_vec().unwrap()
+    };
+    let dim = dim.map(|v| v as u32).global();
+    let op = CTensorOperator::from_vec(dim, values).unwrap();
+    Ok(op.into())
+}
+pub fn tensor_from_numpy(c: &numpy::PyUntypedArray) -> PyResult<CTensorOperator<DDyn, DType>> {
+    let fns = [
+        try_tensor_from_numpy::<i8>,
+        try_tensor_from_numpy::<u8>,
+        try_tensor_from_numpy::<i16>,
+        try_tensor_from_numpy::<u16>,
+        try_tensor_from_numpy::<i32>,
+        try_tensor_from_numpy::<u32>,
+        try_tensor_from_numpy::<f32>,
+    ];
+
+    for f in fns {
+        if let Ok(t) = f(c) {
+            return Ok(t);
+        }
+    }
+
+    Err(PyErr::new::<PyException, _>(format!(
+        "Unable to convert ndarray of type {} to tensor",
+        c.dtype()
+    )))
+}
+
+#[derive(FromPyObject)]
 pub enum MaybeConstTensorOperator<'a> {
-    ConstD1(numpy::borrow::PyReadonlyArray1<'a, f32>),
+    Numpy(&'a numpy::PyUntypedArray),
     Operator(TensorOperator),
 }
 
-impl<'a> TryInto<CTensorOperator<D1, DType>> for MaybeConstTensorOperator<'a> {
+impl<'a> TryInto<CTensorOperator<DDyn, DType>> for MaybeConstTensorOperator<'a> {
     type Error = PyErr;
 
-    fn try_into(self) -> Result<CTensorOperator<D1, DType>, Self::Error> {
+    fn try_into(self) -> Result<CTensorOperator<DDyn, DType>, Self::Error> {
         match self {
-            MaybeConstTensorOperator::ConstD1(c) => {
-                Ok(palace_core::operators::array::from_rc(c.as_slice()?.into()).into())
-            }
-            MaybeConstTensorOperator::Operator(o) => o.try_into_core_static(),
+            MaybeConstTensorOperator::Numpy(c) => tensor_from_numpy(c),
+            MaybeConstTensorOperator::Operator(o) => o.try_into_core(),
         }
     }
 }
 
 impl MaybeConstTensorOperator<'_> {
-    pub fn try_into_core(self) -> Result<CTensorOperator<D1, DType>, PyErr> {
+    pub fn try_into_core(self) -> Result<CTensorOperator<DDyn, DType>, PyErr> {
         self.try_into()
     }
 }

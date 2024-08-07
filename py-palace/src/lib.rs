@@ -31,6 +31,7 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(view_image, m)?)?;
     m.add_function(wrap_pyfunction!(apply_tf, m)?)?;
     m.add_function(wrap_pyfunction!(mandelbrot, m)?)?;
+    m.add_function(wrap_pyfunction!(from_numpy, m)?)?;
     m.add_function(wrap_pyfunction!(add, m)?)?;
     m.add_function(wrap_pyfunction!(mul, m)?)?;
     m.add_function(wrap_pyfunction!(max, m)?)?;

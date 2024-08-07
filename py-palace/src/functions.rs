@@ -1,4 +1,5 @@
 use crate::types::*;
+use numpy::PyUntypedArray;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
 use palace_core::dim::*;
@@ -123,7 +124,7 @@ pub fn threshold(
 pub fn separable_convolution<'py>(
     py: Python,
     tensor: MaybeEmbeddedTensorOperator,
-    kernels: Vec<MaybeConstTensorOperator>, //TODO
+    kernels: Vec<MaybeConstTensorOperator>,
 ) -> PyResult<PyObject> {
     if tensor.inner().nd() != kernels.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
@@ -136,7 +137,7 @@ pub fn separable_convolution<'py>(
     let kernels = kernels
         .into_iter()
         .map(|k| {
-            let ret: CTensorOperator<D1, DType> = k.try_into_core()?.try_into()?;
+            let ret: CTensorOperator<D1, DType> = try_into_static_err(k.try_into_core()?)?;
             Ok(ret)
         })
         .collect::<Result<Vec<_>, PyErr>>()?;
@@ -165,9 +166,13 @@ pub fn separable_convolution<'py>(
         )
     })
 }
+#[pyfunction]
+pub fn from_numpy(a: &PyUntypedArray) -> PyResult<TensorOperator> {
+    Ok(tensor_from_numpy(a)?.into())
+}
 
 #[pyfunction]
-pub fn vesselness<'py>(
+pub fn vesselness(
     vol: EmbeddedTensorOperator,
     min_scale: f32,
     max_scale: f32,
@@ -190,14 +195,14 @@ pub fn entry_exit_points(
     output_md: PyTensorMetaData,
     projection: Matrix<D4, f32>,
 ) -> PyResult<TensorOperator> {
-    palace_core::operators::raycaster::entry_exit_points(
+    Ok(palace_core::operators::raycaster::entry_exit_points(
         input_md.try_into_dim()?,
         embedding_data.try_into_dim()?,
         output_md.try_into_dim()?,
         projection,
     )
     .into_dyn()
-    .try_into()
+    .into())
 }
 
 #[pyfunction]
@@ -213,14 +218,14 @@ pub fn raycast(
 
     let eep = entry_exit_points.try_into_core()?;
     let eep = try_into_static_err(eep)?;
-    palace_core::operators::raycaster::raycast(
+    Ok(palace_core::operators::raycaster::raycast(
         vol.try_into_core_static()?.try_into()?,
         eep.try_into()?,
         tf,
         config.unwrap_or_default(),
     )
     .into_dyn()
-    .try_into()
+    .into())
 }
 
 #[pyfunction]
@@ -234,14 +239,14 @@ pub fn render_slice(
         .map(|tf| tf.try_into())
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
 
-    palace_core::operators::sliceviewer::render_slice(
+    Ok(palace_core::operators::sliceviewer::render_slice(
         input.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
         tf,
     )
     .into_dyn()
-    .try_into()
+    .into())
 }
 
 #[pyfunction]
@@ -253,10 +258,10 @@ pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
 }
 
 #[pyfunction]
-pub fn gauss_kernel(stddev: f32) -> PyResult<TensorOperator> {
+pub fn gauss_kernel(stddev: f32) -> TensorOperator {
     palace_core::operators::kernels::gauss(stddev)
         .into_dyn()
-        .try_into()
+        .into()
 }
 
 #[pyfunction]
@@ -283,20 +288,20 @@ pub fn view_image(
     result_metadata: PyTensorMetaData,
     view_state: palace_core::operators::imageviewer::ImageViewerState,
 ) -> PyResult<TensorOperator> {
-    palace_core::operators::imageviewer::view_image(
+    Ok(palace_core::operators::imageviewer::view_image(
         image.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         view_state,
     )
     .into_dyn()
-    .try_into()
+    .into())
 }
 
 #[pyfunction]
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
-    crate::map_err(palace_core::operators::png::read(path))?
+    Ok(crate::map_err(palace_core::operators::png::read(path))?
         .into_dyn()
-        .try_into()
+        .into())
 }
 
 #[pyfunction]

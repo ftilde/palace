@@ -24,14 +24,15 @@ impl Splitter {
     }
 
     fn render(&self, input_l: TensorOperator, input_r: TensorOperator) -> PyResult<TensorOperator> {
-        self.0
+        Ok(self
+            .0
             .clone()
             .render(
                 input_l.try_into_core_static()?.try_into()?,
                 input_r.try_into_core_static()?.try_into()?,
             )
             .into_dyn()
-            .try_into()
+            .into())
     }
 
     fn metadata_l(&self) -> PyTensorMetaData {

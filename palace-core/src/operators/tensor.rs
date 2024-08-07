@@ -167,13 +167,13 @@ where
     }
 }
 
-impl<D: Dimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>> {
+impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>> {
     pub fn from_static(
         size: Vector<D, GlobalCoordinate>,
         values: &'static [E],
     ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
         let m = TensorMetaData {
-            dimensions: size,
+            dimensions: size.clone(),
             chunk_size: size.map(LocalCoordinate::interpret_as),
         };
         let n_elem = size.hmul();
@@ -214,12 +214,19 @@ impl<D: Dimension, E: Element + Identify> TensorOperator<D, StaticElementType<E>
         ))
     }
 
+    pub fn from_vec(
+        size: Vector<D, GlobalCoordinate>,
+        values: Vec<E>,
+    ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
+        Self::from_rc(size, values.into())
+    }
+
     pub fn from_rc(
         size: Vector<D, GlobalCoordinate>,
         values: Rc<[E]>,
     ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
         let m = TensorMetaData {
-            dimensions: size,
+            dimensions: size.clone(),
             chunk_size: size.map(LocalCoordinate::interpret_as),
         };
         let n_elem = size.hmul();
