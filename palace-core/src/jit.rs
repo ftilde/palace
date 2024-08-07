@@ -46,13 +46,14 @@ impl UnaryOp {
         })
     }
 }
-struct WriteUnary(UnaryOp, NodeId);
+struct WriteUnary(UnaryOp, NodeId, u32);
 impl Display for WriteUnary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = WriteValue(self.1, self.2);
         match self.0 {
-            UnaryOp::Abs => write!(f, "abs({})", self.1),
-            UnaryOp::Cast(output) => write!(f, "{}({})", output.glsl_type(), self.1),
-            UnaryOp::Neg => write!(f, "-{}", self.1),
+            UnaryOp::Abs => write!(f, "abs({})", v),
+            UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
+            UnaryOp::Neg => write!(f, "-{}", v),
         }
     }
 }
@@ -77,13 +78,39 @@ impl BinOp {
         }
     }
 }
-struct WriteBin(BinOp, NodeId, NodeId);
+
+const VEC_LOOP_VARIABLE_NAME: &'static str = "i";
+struct VecLoop(u32);
+impl Display for VecLoop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == 1 {
+            Ok(())
+        } else {
+            write!(f, "for(int i=0; i<{}; ++i)", self.0)
+        }
+    }
+}
+
+struct WriteValue(NodeId, u32);
+impl Display for WriteValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.1 == 1 {
+            write!(f, "{}", self.0)
+        } else {
+            write!(f, "{}[{}]", self.0, VEC_LOOP_VARIABLE_NAME)
+        }
+    }
+}
+
+struct WriteBin(BinOp, NodeId, NodeId, u32);
 impl Display for WriteBin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let l = WriteValue(self.1, self.3);
+        let r = WriteValue(self.2, self.3);
         match self.0 {
-            BinOp::Add => write!(f, "{} + {}", self.1, self.2),
-            BinOp::Mul => write!(f, "{} * {}", self.1, self.2),
-            BinOp::Max => write!(f, "max({}, {})", self.1, self.2),
+            BinOp::Add => write!(f, "{} + {}", l, r),
+            BinOp::Mul => write!(f, "{} * {}", l, r),
+            BinOp::Max => write!(f, "max({}, {})", l, r),
         }
     }
 }
@@ -391,10 +418,12 @@ fn compile<D: DynDimension>(
                 //let param = translate(a, w, value_ids)?;
                 writeln!(
                     &mut shader,
-                    "{} {} = {};",
+                    "{} {}; {} {} = {};",
                     t.glsl_type(),
                     res_id,
-                    WriteUnary(*o, *a)
+                    VecLoop(t.size),
+                    WriteValue(res_id, t.size),
+                    WriteUnary(*o, *a, t.size)
                 )?;
                 *t
             }
@@ -403,10 +432,12 @@ fn compile<D: DynDimension>(
                 //let param_r = translate(r, w, value_ids)?;
                 writeln!(
                     &mut shader,
-                    "{} {} = {};",
+                    "{} {}; {} {} = {};",
                     t.glsl_type(),
                     res_id,
-                    WriteBin(*o, *l, *r)
+                    VecLoop(t.size),
+                    WriteValue(res_id, t.size),
+                    WriteBin(*o, *l, *r, t.size)
                 )?;
                 *t
             }

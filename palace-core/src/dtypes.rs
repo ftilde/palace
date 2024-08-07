@@ -93,10 +93,7 @@ where
     }
 }
 impl<D: Dimension, T: Copy + AsDynType> AsDynType for Vector<D, T> {
-    const D_TYPE: DType = DType {
-        scalar: T::D_TYPE.scalar,
-        size: D::N as u32 * T::D_TYPE.size,
-    };
+    const D_TYPE: DType = T::D_TYPE.vectorize(D::N as u32);
 }
 
 impl<D: Dimension, T: Copy> TryFrom<DType> for StaticElementType<Vector<D, T>>
@@ -199,6 +196,15 @@ impl DType {
     pub const fn scalar(scalar: ScalarType) -> Self {
         Self { scalar, size: 1 }
     }
+    pub const fn vectorize(self, vec_size: u32) -> Self {
+        Self {
+            scalar: self.scalar,
+            size: self.size * vec_size,
+        }
+    }
+    pub fn is_scalar(&self) -> bool {
+        self.size == 1
+    }
     pub fn glsl_type(&self) -> String {
         let scalar = self.scalar.glsl_type().to_owned();
         if self.size > 1 {
@@ -217,6 +223,14 @@ impl DType {
     }
     pub fn vec_size(&self) -> usize {
         self.size as _
+    }
+}
+
+#[cfg_attr(feature = "python", pymethods)]
+impl DType {
+    #[new]
+    pub fn new(scalar: ScalarType, size: u32) -> Self {
+        Self { scalar, size }
     }
 }
 
@@ -256,7 +270,7 @@ pub enum ScalarType {
 }
 
 impl ScalarType {
-    fn glsl_type(&self) -> &'static str {
+    pub fn glsl_type(&self) -> &'static str {
         match self {
             ScalarType::U8 => "uint8_t",
             ScalarType::I8 => "int8_t",
