@@ -7,8 +7,12 @@ use pyo3::{exceptions::PyException, prelude::*};
 mod functions;
 mod types;
 
-fn map_err<T>(e: Result<T, palace_core::Error>) -> PyResult<T> {
-    e.map_err(|e| PyErr::new::<PyException, _>(format!("{}", e)))
+fn map_result<T>(e: Result<T, palace_core::Error>) -> PyResult<T> {
+    e.map_err(map_err)
+}
+
+fn map_err(e: palace_core::Error) -> PyErr {
+    PyErr::new::<PyException, _>(format!("{}", e))
 }
 
 #[pymodule]

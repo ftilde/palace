@@ -33,7 +33,7 @@ pub fn rechunk(
 
 fn jit_unary(py: Python, op: UnaryOp, vol: MaybeEmbeddedTensorOperator) -> PyResult<PyObject> {
     vol.try_map_inner_jit(py, |vol: JitTensorOperator<DDyn>| {
-        Ok(crate::map_err(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
+        Ok(crate::map_result(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
     })
 }
 
@@ -73,7 +73,7 @@ fn jit_binary(
     v2: MaybeEmbeddedTensorOperator,
 ) -> PyResult<PyObject> {
     v1.try_map_inner_jit(py, |v1: JitTensorOperator<DDyn>| {
-        Ok(crate::map_err(JitTensorOperator::<DDyn>::bin_op(
+        Ok(crate::map_result(JitTensorOperator::<DDyn>::bin_op(
             op,
             v1,
             v2.into_inner().try_into_jit()?,
@@ -277,7 +277,7 @@ pub fn open_volume(
         location: volume_path_hint,
         ..Default::default()
     };
-    let vol = crate::map_err(palace_volume::open(path, hints))?;
+    let vol = crate::map_result(palace_volume::open(path, hints))?;
 
     vol.into_dyn().try_into()
 }
@@ -299,7 +299,7 @@ pub fn view_image(
 
 #[pyfunction]
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
-    Ok(crate::map_err(palace_core::operators::png::read(path))?
+    Ok(crate::map_result(palace_core::operators::png::read(path))?
         .into_dyn()
         .into())
 }

@@ -184,6 +184,9 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
             None
         }
     }
+    pub fn small_dim_element(&self) -> T {
+        self.0.as_slice()[self.len() - 1]
+    }
 }
 impl<D: DynDimension, T: std::ops::Mul<Output = T> + Copy> Vector<D, T> {
     pub fn scale(&self, v: T) -> Self {

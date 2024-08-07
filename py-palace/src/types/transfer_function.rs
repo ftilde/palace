@@ -40,6 +40,6 @@ impl TryInto<CTransFuncOperator> for TransFuncOperator {
 
 #[pyfunction]
 pub fn load_tf(path: std::path::PathBuf) -> PyResult<TransFuncOperator> {
-    let raw_tf = crate::map_err(palace_vvd::load_tfi(&path))?;
+    let raw_tf = crate::map_result(palace_vvd::load_tfi(&path))?;
     raw_tf.try_into()
 }

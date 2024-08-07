@@ -141,7 +141,7 @@ impl TryFrom<jit::JitTensorOperator<DDyn>> for TensorOperator {
     fn try_from(t: jit::JitTensorOperator<DDyn>) -> Result<Self, Self::Error> {
         let dtype = t.dtype();
         let Some(metadata) = t.metadata() else {
-            return crate::map_err(Err("Jit operator does not contain metadata".into()));
+            return crate::map_result(Err("Jit operator does not contain metadata".into()));
         };
         Ok(Self {
             inner: Box::new(t),
@@ -224,9 +224,13 @@ impl TryInto<jit::JitTensorOperator<DDyn>> for TensorOperator {
 pub fn try_into_static_err<D: Dimension, T: ElementType>(
     vol: CTensorOperator<DDyn, T>,
 ) -> Result<CTensorOperator<D, T>, PyErr> {
-    let n = vol.metadata.dimensions.len();
+    let n = vol.dim().n();
     vol.try_into_static().ok_or_else(|| {
-        PyErr::new::<PyException, _>(format!("Conv for dim {} not supported, yet", n,))
+        PyErr::new::<PyException, _>(format!(
+            "Unable to convert dynamic dimension {} into static dimension {}",
+            n,
+            D::N
+        ))
     })
 }
 
@@ -250,6 +254,23 @@ impl TensorOperator {
             inner: self.clone(),
             embedding_data,
         }
+    }
+
+    fn unfold_into_vec_dtype(&self) -> PyResult<Self> {
+        Ok(self
+            .clone()
+            .try_into_core()?
+            .unfold_into_vec_dtype()
+            .map_err(crate::map_err)?
+            .into())
+    }
+    fn fold_vec_dtype(&self) -> PyResult<Self> {
+        Ok(self
+            .clone()
+            .try_into_core()?
+            .fold_vec_dtype()
+            .map_err(crate::map_err)?
+            .into())
     }
 }
 

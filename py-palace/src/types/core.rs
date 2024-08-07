@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::map_err;
+use crate::map_result;
 use palace_core::{
     array::ChunkIndex,
     dim::{DDyn, DynDimension},
@@ -23,7 +23,7 @@ impl RunTime {
         op_ref: &palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<T>>,
         chunk_i: ChunkIndex,
     ) -> PyResult<PyObject> {
-        map_err(self.inner.resolve(None, false, |ctx, _| {
+        map_result(self.inner.resolve(None, false, |ctx, _| {
             async move {
                 let chunk = ctx.submit(op_ref.chunks.request(chunk_i)).await;
                 let chunk_info = op_ref.metadata.chunk_info(chunk_i);
@@ -47,7 +47,7 @@ impl RunTime {
         device: Option<usize>,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: map_err(palace_core::runtime::RunTime::new(
+            inner: map_result(palace_core::runtime::RunTime::new(
                 storage_size,
                 gpu_storage_size,
                 num_compute_threads,
@@ -110,7 +110,7 @@ impl RunTime {
         let op: palace_core::operators::scalar::ScalarOperator<StaticElementType<f32>> =
             v.try_into()?;
         let op_ref = &op;
-        map_err(self.inner.resolve(None, false, |ctx, _| {
+        map_result(self.inner.resolve(None, false, |ctx, _| {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
     }
@@ -120,7 +120,7 @@ impl RunTime {
         gen_frame: &pyo3::types::PyFunction,
         timeout_ms: u64,
     ) -> PyResult<()> {
-        crate::map_err(palace_winit::run_with_window(
+        crate::map_result(palace_winit::run_with_window(
             &mut self.inner,
             Duration::from_millis(timeout_ms),
             |_event_loop, window, rt, events, timeout| {

@@ -533,6 +533,26 @@ where
     }
 }
 
+impl Operator<DType> {
+    // Note: Panics if alignment of dtypes is not compatible
+    pub fn reinterpret_dtype(self, new_dtype: DType) -> Self {
+        let old_dtype = self.dtype();
+        assert_eq!(
+            old_dtype.element_layout().align(),
+            new_dtype.element_layout().align()
+        );
+        Operator {
+            descriptor: self.descriptor,
+            state: self.state,
+            granularity: self.granularity,
+            compute: Rc::new(move |ctx, items, tr| {
+                (self.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            }),
+            dtype: new_dtype,
+        }
+    }
+}
+
 impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
     fn op_id(&self) -> OperatorId {
         self.descriptor.id

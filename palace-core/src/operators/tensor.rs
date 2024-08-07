@@ -268,6 +268,49 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
     }
 }
 
+impl<D: LargerDim> TensorOperator<D, DType> {
+    pub fn fold_vec_dtype(self) -> Result<TensorOperator<D::Larger, DType>, crate::Error> {
+        let dtype = self.dtype();
+        if dtype.is_scalar() {
+            Err(format!("Tensor already has scalar type {}", dtype).into())
+        } else {
+            let vec_size = dtype.size;
+            let new_md = self
+                .metadata
+                .clone()
+                .push_dim_small(vec_size.into(), vec_size.into());
+            let new_dtype = DType::scalar(dtype.scalar);
+            Ok(TensorOperator {
+                metadata: new_md,
+                chunks: self.chunks.reinterpret_dtype(new_dtype),
+            })
+        }
+    }
+}
+
+impl<D: SmallerDim> TensorOperator<D, DType> {
+    pub fn unfold_into_vec_dtype(self) -> Result<TensorOperator<D::Smaller, DType>, crate::Error> {
+        let dtype = self.dtype();
+
+        let chunk_dim = self.metadata.dimension_in_chunks().raw();
+        let outer_dim = self.metadata.chunk_size.small_dim_element().raw;
+        if chunk_dim.small_dim_element() != 1 {
+            Err(format!(
+                "Tensor consist of single chunk in last dimension, but has dimension-in-chunks {:?}",
+                chunk_dim
+            )
+            .into())
+        } else {
+            let new_md = self.metadata.clone().pop_dim_small();
+            let new_dtype = dtype.vectorize(outer_dim);
+            Ok(TensorOperator {
+                metadata: new_md,
+                chunks: self.chunks.reinterpret_dtype(new_dtype),
+            })
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EmbeddedTensorOperator<D: DynDimension, E> {
     pub inner: TensorOperator<D, E>,
