@@ -34,9 +34,7 @@ impl UnaryOp {
                 if input.vec_size() == output.vec_size() {
                     *output
                 } else {
-                    return Err(
-                        format!("Cannot {:?} cannot be converted to {:?}", input, output).into(),
-                    );
+                    return Err(format!("{:?} cannot be converted to {:?}", input, output).into());
                 }
             }
             UnaryOp::Neg => match input.scalar {
@@ -328,6 +326,7 @@ pub fn jit<D: DynDimension>(op: TensorOperator<D, DType>) -> JitTensorOperator<D
 fn compile<D: DynDimension>(
     nodes: &Vec<Node>,
     root: NodeId,
+    root_dtype: DType,
     inputs: &Vec<TensorOperator<D, DType>>,
 ) -> Result<(String, Config), crate::Error> {
     let mut shader = String::new();
@@ -354,10 +353,11 @@ fn compile<D: DynDimension>(
         &mut shader,
         r#"
             layout(std430, binding = {}) buffer OutputBuffer{{
-                float values[BRICK_MEM_SIZE];
+                {} values[BRICK_MEM_SIZE];
             }} output_buf;
             "#,
         inputs.len(),
+        root_dtype.glsl_type(),
     )?;
 
     writeln!(
@@ -467,6 +467,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                             let (shader, config) = compile(
                                 &jit_operator.nodes.0,
                                 jit_operator.root,
+                                dtype,
                                 &jit_operator.operators.0,
                             )?;
                             //println!("{}", shader.as_str());
