@@ -362,7 +362,6 @@ where
 
 #[pymethods]
 impl EmbeddedTensorOperator {
-    //TODO: Generalize for other dims and maybe datatypes
     fn single_level_lod(&self) -> PyResult<LODTensorOperator> {
         Ok(LODTensorOperator {
             levels: vec![self.clone()],
