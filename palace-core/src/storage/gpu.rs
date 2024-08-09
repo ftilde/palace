@@ -403,7 +403,7 @@ impl<'a, 'inv> InplaceResult<'a, 'inv> {
 }
 
 pub enum InplaceHandle<'a> {
-    Inplace(WriteHandle<'a>, DataVersionType),
+    Inplace(WriteHandle<'a>, DataVersionType), //TODO: Why do we need the data version type here?
     New(ReadHandle<'a>, WriteHandle<'a>),
 }
 impl<'a> InplaceHandle<'a> {
@@ -1243,6 +1243,7 @@ impl Storage {
         current_frame: FrameNumber,
         old_access: AccessToken<'t>,
         new_desc: DataDescriptor,
+        num_elements: usize,
         dst_info: DstBarrierInfo,
         write_dtype: W,
     ) -> Result<InplaceResult<'b, 'inv>, AccessToken<'t>> {
@@ -1264,7 +1265,7 @@ impl Storage {
             return Err(old_access);
         }
 
-        let out_layout = write_dtype.array_layout(info.layout.size());
+        let out_layout = write_dtype.array_layout(num_elements);
         let same_layout = info.layout == out_layout;
         // Only allow inplace if we are EXACTLY the one reader
         let in_place_possible = matches!(entry.access, AccessState::Some(1)) && same_layout;

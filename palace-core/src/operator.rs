@@ -446,6 +446,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
         item: ChunkIndex,
         write_id: OperatorDescriptor,
         write_dtype: DType,
+        num_elements: usize,
         dst_info: DstBarrierInfo,
     ) -> Request<'req, 'inv, gpu::InplaceResult<'req, 'inv>> {
         let write_id = DataDescriptor::new(write_id, item);
@@ -471,6 +472,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
                         ctx.current_frame,
                         access.take().unwrap(),
                         write_id,
+                        num_elements,
                         dst_info,
                         write_dtype,
                     ) {

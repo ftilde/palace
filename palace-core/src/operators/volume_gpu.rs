@@ -228,6 +228,7 @@ void main()
                     access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                 };
                 let m = input.metadata.clone().into_dyn();
+                let num_chunk_elements = m.num_chunk_elements();
 
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline")
@@ -254,6 +255,7 @@ void main()
                             *pos,
                             ctx.current_op_desc().unwrap(),
                             DType::scalar(crate::dtypes::ScalarType::F32),
+                            num_chunk_elements,
                             access_info,
                         )
                     }))
@@ -262,7 +264,7 @@ void main()
                 while let Some(inplace) = brick_stream.next().await {
                     let (gpu_brick_in, gpu_brick_out): (&dyn AsDescriptors, &dyn AsDescriptors) =
                         match &inplace {
-                            gpu::InplaceHandle::Inplace(rw, _v) => (rw, rw),
+                            gpu::InplaceHandle::Inplace(rw, _) => (rw, rw),
                             gpu::InplaceHandle::New(r, w) => (r, w),
                         };
 
