@@ -255,8 +255,17 @@ mod py {
         }
 
         #[setter]
-        fn set_spacing(&mut self, value: &PyArray1<f32>) {
-            self.spacing = value.to_vec().unwrap();
+        fn set_spacing(&mut self, value: &PyArray1<f32>) -> PyResult<()> {
+            if self.spacing.len() != value.len() {
+                return Err(PyErr::new::<PyException, _>(format!(
+                    "Expected spacing vec of len {}, but got one of len {}",
+                    self.spacing.len(),
+                    value.len(),
+                )));
+            }
+
+            self.spacing = value.to_vec()?;
+            Ok(())
         }
     }
 

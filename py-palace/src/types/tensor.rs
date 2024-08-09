@@ -338,15 +338,13 @@ where
     }
 }
 
-impl TryInto<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<CEmbeddedTensorOperator<DDyn, DType>, Self::Error> {
-        let inner = self.inner.try_into()?;
-        Ok(CEmbeddedTensorOperator {
+impl Into<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
+    fn into(self) -> CEmbeddedTensorOperator<DDyn, DType> {
+        let inner = self.inner.into();
+        CEmbeddedTensorOperator {
             inner,
-            embedding_data: self.embedding_data.try_into()?,
-        })
+            embedding_data: self.embedding_data.try_into().unwrap(),
+        }
     }
 }
 impl<T> TryInto<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>> for EmbeddedTensorOperator
@@ -369,7 +367,7 @@ impl EmbeddedTensorOperator {
     }
     fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
         Ok(palace_core::operators::resample::create_lod(
-            self.clone().try_into_core()?.try_into()?,
+            self.clone().into_core().try_into()?,
             step_factor,
         )
         .try_into()?)
@@ -377,8 +375,8 @@ impl EmbeddedTensorOperator {
 }
 
 impl EmbeddedTensorOperator {
-    pub fn try_into_core(self) -> PyResult<CEmbeddedTensorOperator<DDyn, DType>> {
-        self.try_into()
+    pub fn into_core(self) -> CEmbeddedTensorOperator<DDyn, DType> {
+        self.into()
     }
     pub fn try_into_core_static<D: Dimension>(self) -> PyResult<CEmbeddedTensorOperator<D, DType>> {
         Ok(CEmbeddedTensorOperator {
@@ -495,17 +493,15 @@ where
         })
     }
 }
-impl TryInto<CLODTensorOperator<DDyn, DType>> for LODTensorOperator {
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<CLODTensorOperator<DDyn, DType>, Self::Error> {
-        Ok(CLODTensorOperator {
+impl Into<CLODTensorOperator<DDyn, DType>> for LODTensorOperator {
+    fn into(self) -> CLODTensorOperator<DDyn, DType> {
+        CLODTensorOperator {
             levels: self
                 .levels
                 .into_iter()
-                .map(|v| v.try_into_core())
-                .collect::<Result<_, _>>()?,
-        })
+                .map(|v| v.into_core())
+                .collect::<Vec<_>>(),
+        }
     }
 }
 impl<T: std::any::Any + Element> TryInto<CLODTensorOperator<DDyn, StaticElementType<T>>>
@@ -520,20 +516,14 @@ where
             levels: self
                 .levels
                 .into_iter()
-                .map(|v| v.try_into_core().and_then(|v| Ok(v.try_into()?)))
+                .map(|v| v.into_core().try_into())
                 .collect::<Result<_, _>>()?,
         })
     }
 }
 impl LODTensorOperator {
-    pub fn try_into_core(self) -> Result<CLODTensorOperator<DDyn, DType>, PyErr> {
-        Ok(CLODTensorOperator {
-            levels: self
-                .levels
-                .into_iter()
-                .map(|v| v.try_into_core())
-                .collect::<Result<_, _>>()?,
-        })
+    pub fn into_core(self) -> CLODTensorOperator<DDyn, DType> {
+        self.into()
     }
 
     pub fn try_into_core_static<D: Dimension>(self) -> Result<CLODTensorOperator<D, DType>, PyErr> {
