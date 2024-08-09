@@ -7,10 +7,11 @@ use id::{Id, Identify};
 use crate::{
     array::TensorMetaData,
     dim::DynDimension,
-    dtypes::{DType, ScalarType},
+    dtypes::{DType, ElementType, ScalarType},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    task::RequestStream,
+    storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
+    task::{Request, RequestStream},
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
         shader::{Config, ShaderDefines},
@@ -463,6 +464,15 @@ fn compile<D: DynDimension>(
 }
 impl<D: DynDimension> JitTensorOperator<D> {
     pub fn compile(mut self) -> Result<TensorOperator<D, DType>, crate::Error> {
+        enum MaybeInplaceResult<'a, 'inv> {
+            Inplace(InplaceResult<'a, 'inv>),
+            NotInplace,
+        }
+        enum MaybeInplaceHandle<'a> {
+            Inplace(InplaceHandle<'a>),
+            NotInplace(WriteHandle<'a>),
+        }
+
         let dtype = self.dtype;
         let Some(metadata) = self.metadata.clone() else {
             return Err("No metadata information in JitOperator".into());
@@ -472,6 +482,12 @@ impl<D: DynDimension> JitTensorOperator<D> {
             assert_eq!(self.operators.0.len(), 1);
             return Ok(self.operators.0.pop().unwrap());
         }
+
+        let inplace_operator_index = self
+            .operators
+            .0
+            .iter()
+            .position(|o| o.dtype().element_layout() == dtype.element_layout());
 
         Ok(TensorOperator::with_state(
             OperatorDescriptor::new("jit").dependent_on_data(&self),
@@ -517,24 +533,82 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     let mut brick_stream = ctx
                         .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
                             (
-                                ctx.group(jit_operator.operators.0.iter().map(|input| {
-                                    input.chunks.request_gpu(device.id, *pos, access_info)
-                                })),
+                                ctx.group(
+                                    jit_operator
+                                        .operators
+                                        .0
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(i, _)| Some(*i) != inplace_operator_index)
+                                        .map(|(_, input)| {
+                                            input.chunks.request_gpu(device.id, *pos, access_info)
+                                        }),
+                                ),
                                 *pos,
                             )
                         }))
                         .then_req_with_data(*ctx, |(input, pos)| {
-                            let output = ctx.alloc_slot_gpu(device, pos, num_chunk_elements);
-                            (output, input)
+                            if let Some(inplace_operator_index) = inplace_operator_index {
+                                let output = jit_operator.operators.0[inplace_operator_index]
+                                    .chunks
+                                    .request_inplace_gpu(
+                                        device.id,
+                                        pos,
+                                        ctx.current_op_desc().unwrap(),
+                                        dtype,
+                                        num_chunk_elements,
+                                        access_info,
+                                    )
+                                    .map(|v| MaybeInplaceResult::Inplace(v));
+                                (output, (input, pos))
+                            } else {
+                                //let output = ctx
+                                //    .alloc_slot_gpu(device, pos, num_chunk_elements)
+                                //    .map(|v| MaybeInplaceResult::NotInplace(v));
+                                let output = Request::ready(MaybeInplaceResult::NotInplace);
+                                (output, (input, pos))
+                            }
+                        })
+                        .then_req_with_data(*ctx, |(output, (inputs, pos))| {
+                            let output = match output {
+                                MaybeInplaceResult::Inplace(v) => {
+                                    v.alloc().map(|v| MaybeInplaceHandle::Inplace(v))
+                                }
+                                MaybeInplaceResult::NotInplace => ctx
+                                    .alloc_slot_gpu(device, pos, num_chunk_elements)
+                                    .map(|v| MaybeInplaceHandle::NotInplace(v)),
+                            };
+                            (output, inputs)
                         });
 
-                    while let Some((gpu_brick_out, inputs)) = brick_stream.next().await {
+                    while let Some((output, inputs)) = brick_stream.next().await {
                         device.with_cmd_buffer(|cmd| {
-                            let mut descriptors = inputs
-                                .iter()
-                                .map(|v| v as &dyn AsDescriptors)
-                                .collect::<Vec<_>>();
-                            descriptors.push(&gpu_brick_out);
+                            let mut descriptors: Vec<&dyn AsDescriptors> = Vec::new();
+                            match &output {
+                                MaybeInplaceHandle::Inplace(h) => {
+                                    let i = inplace_operator_index.unwrap();
+                                    descriptors.extend(
+                                        inputs[..i].iter().map(|v| v as &dyn AsDescriptors),
+                                    );
+                                    match h {
+                                        InplaceHandle::Inplace(rw, _) => descriptors.push(rw),
+                                        InplaceHandle::New(r, _) => descriptors.push(r),
+                                    }
+                                    descriptors.extend(
+                                        inputs[i..].iter().map(|v| v as &dyn AsDescriptors),
+                                    );
+                                    match h {
+                                        InplaceHandle::Inplace(rw, _) => descriptors.push(rw),
+                                        InplaceHandle::New(_, w) => descriptors.push(w),
+                                    }
+                                }
+                                MaybeInplaceHandle::NotInplace(w) => {
+                                    descriptors
+                                        .extend(inputs.iter().map(|v| v as &dyn AsDescriptors));
+                                    descriptors.push(w);
+                                }
+                            };
+
                             let descriptor_config = DescriptorConfig::from_vec(descriptors);
 
                             let global_size = num_chunk_elements;
@@ -548,13 +622,22 @@ impl<D: DynDimension> JitTensorOperator<D> {
                         });
 
                         unsafe {
-                            gpu_brick_out.initialized(
-                                *ctx,
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            )
+                            match output {
+                                MaybeInplaceHandle::Inplace(h) => h.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                ),
+                                MaybeInplaceHandle::NotInplace(w) => w.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                ),
+                            }
                         };
                     }
 
