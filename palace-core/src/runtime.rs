@@ -557,6 +557,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             stuck_state = StuckState::WaitingSince(stuck_time);
                         }
                     }
+                    self.cycle_cmd_buffers(Duration::from_secs(0));
                     self.wait_for_async_results();
                 } else {
                     return Ok(());
@@ -1162,7 +1163,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn wait_for_async_results(&mut self) {
-        self.cycle_cmd_buffers(Duration::from_secs(0));
         self.wait_for_async_results_with_timeout(WAIT_TIMEOUT_CPU, WAIT_TIMEOUT_GPU);
     }
     fn wait_for_async_results_with_timeout(
