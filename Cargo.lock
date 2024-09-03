@@ -1306,19 +1306,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loom"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce9394216e2be01e607cf9e9e2b64c387506df1e768b14cbd2854a3650c3c03e"
-dependencies = [
- "cfg-if",
- "generator",
- "scoped-tls",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1729,7 +1716,7 @@ version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f6640c6bda7731b1fdbab747981a0f896dd1fedaf9f4a53fa237a04a84431f4"
 dependencies = [
- "loom 0.5.6",
+ "loom",
 ]
 
 [[package]]
@@ -1825,10 +1812,10 @@ dependencies = [
  "spirq",
  "spirv",
  "spirv-compiler",
+ "spmc",
  "state-link",
  "winapi",
  "winit",
- "work-queue",
  "xxhash-rust",
 ]
 
@@ -2556,6 +2543,12 @@ checksum = "54e486e713586666af4d282efed7e648fa856bc5975cb0fea43a4d7f9cb1dc15"
 dependencies = [
  "shaderc",
 ]
+
+[[package]]
+name = "spmc"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02a8428da277a8e3a15271d79943e80ccc2ef254e78813a166a08d65e4c3ece5"
 
 [[package]]
 name = "spq-core"
@@ -3382,16 +3375,6 @@ dependencies = [
  "cfg-if",
  "serde",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "work-queue"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1c8d5eab11a669da42347cdd5244563592edabfe06c7778553185ffeedb623d"
-dependencies = [
- "concurrent-queue",
- "loom 0.6.1",
 ]
 
 [[package]]
