@@ -39,7 +39,7 @@ impl IoWorker {
         finish_sender: mpsc::Sender<WorkerId>,
         result_sender: mpsc::Sender<JobInfo>,
     ) -> IoWorker {
-        let (task_sender, task_receiver) = mpsc::sync_channel::<(JobInfo, Job)>(0);
+        let (task_sender, task_receiver) = mpsc::sync_channel::<(JobInfo, Job)>(1);
         IoWorker {
             _thread: std::thread::Builder::new()
                 .name(format!("{} {}", thread_name_prefix, id))
