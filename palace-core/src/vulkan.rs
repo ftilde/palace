@@ -819,7 +819,7 @@ impl DeviceContext {
                 if unsafe {
                     self.functions
                         .get_fence_status(command_buffer.fence)
-                        .unwrap_or(false)
+                        .unwrap()
                 } {
                     unsafe {
                         self.functions
