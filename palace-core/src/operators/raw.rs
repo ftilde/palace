@@ -33,14 +33,12 @@ pub struct RawVolumeSourceStateInner {
 fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
     dtype: DType,
     m: VolumeMetaData,
-    in_: ndarray::ArrayView4<u8>,
+    in_: &[u8],
+    size: VoxelPosition,
     chunks_in_line: &mut [(BrickPosition, S)],
 ) {
     let elm_size = dtype.element_layout().size();
-    assert_eq!(elm_size, in_.shape()[3]);
     let brick_size = m.chunk_size.push_dim_small(elm_size.try_into().unwrap());
-
-    //dbg!(chunks_in_line.len());
 
     for (pos, ref mut buf) in &mut *chunks_in_line {
         let chunk_info = m.chunk_info_vec(pos);
@@ -51,10 +49,6 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
     let first_info = m.chunk_info_vec(&first.0);
     let global_begin = first_info.begin;
 
-    let last = chunks_in_line.last().unwrap();
-    let last_info = m.chunk_info_vec(&last.0);
-    let global_end = last_info.end();
-
     let strip_size_z = first_info.logical_dimensions.z();
     let strip_size_y = first_info.logical_dimensions.y();
     for z in 0..strip_size_z.raw {
@@ -64,13 +58,10 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
             let line_begin_brick = crate::data::to_linear(&Vector::from([z, y, 0, 0]), &brick_size);
             let line_size = brick_size[2].raw as usize * elm_size;
 
-            let global_line = in_.slice(ndarray::s!(
-                (global_begin.z().raw + z) as usize,
-                (global_begin.y().raw + y) as usize,
-                global_begin.x().raw as usize..global_end.x().raw as usize,
-                ..,
-            ));
-            let global_line = global_line.as_slice().unwrap();
+            let global_line_begin =
+                crate::vec::to_linear(&(global_begin + VoxelPosition::from([z, y, 0])), &size)
+                    * elm_size;
+            let global_line = &in_[global_line_begin..];
 
             let bricks = chunks_in_line
                 .iter_mut()
@@ -230,14 +221,7 @@ impl RawVolumeSourceState {
             0,
             "Slice must be aligned for type"
         );
-        let in_ = ndarray::ArrayView4::from_shape(
-            crate::data::contiguous_shape(
-                &m.dimensions
-                    .push_dim_small(element_layout.size().try_into().unwrap()),
-            ),
-            in_,
-        )
-        .unwrap();
+        let in_size = self.size;
 
         {
             let requests = batches_cpu.into_iter().map(|positions| {
@@ -261,7 +245,7 @@ impl RawVolumeSourceState {
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        copy_chunk_line(dtype, m, in_, &mut brick_handles);
+                        copy_chunk_line(dtype, m, in_, in_size, &mut brick_handles);
 
                         brick_handles
                     })
@@ -315,7 +299,7 @@ impl RawVolumeSourceState {
                         .collect::<Vec<_>>();
 
                     ctx.spawn_io(move || {
-                        copy_chunk_line(dtype, m, in_, &mut staging_bufs_cpu);
+                        copy_chunk_line(dtype, m, in_, in_size, &mut staging_bufs_cpu);
 
                         std::mem::drop(staging_bufs_cpu);
                         (staging_bufs, brick_handles)
