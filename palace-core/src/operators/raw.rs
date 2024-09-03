@@ -78,9 +78,12 @@ fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
             let mut global_brick_begin = 0;
             for brick_line in bricks {
                 let global_line_brick = &global_line[global_brick_begin..];
-                for (o, i) in brick_line.iter_mut().zip(global_line_brick.iter()) {
-                    o.write(*i);
-                }
+                let actual_line_line = line_size.min(global_line_brick.len());
+                let global_line_brick = &global_line_brick[..actual_line_line];
+                crate::data::write_slice_uninit(
+                    &mut brick_line[..actual_line_line],
+                    global_line_brick,
+                );
                 global_brick_begin += line_size;
             }
         }
