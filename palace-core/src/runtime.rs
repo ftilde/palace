@@ -24,7 +24,7 @@ use crate::{
     Error,
 };
 
-const CMD_BUF_EAGER_CYCLE_TIME: Duration = Duration::from_millis(10);
+const CMD_BUF_EAGER_CYCLE_TIME: Duration = Duration::from_micros(300);
 const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -455,6 +455,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let mut stuck_state = StuckState::Not;
         loop {
             self.cycle_cmd_buffers(CMD_BUF_EAGER_CYCLE_TIME);
+            self.wait_for_async_results_with_timeout(
+                Duration::from_millis(0),
+                Duration::from_millis(0),
+            );
 
             let ready = self.task_graph.next_implied_ready();
             if let Some(task_id) = ready {
@@ -1159,12 +1163,18 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn wait_for_async_results(&mut self) {
         self.cycle_cmd_buffers(Duration::from_secs(0));
-
+        self.wait_for_async_results_with_timeout(WAIT_TIMEOUT_CPU, WAIT_TIMEOUT_GPU);
+    }
+    fn wait_for_async_results_with_timeout(
+        &mut self,
+        timeout_cpu: Duration,
+        timeout_gpu: Duration,
+    ) {
         let mut external_progress = false;
 
         let mut gpu_work_done = false;
         for device in self.data.device_contexts {
-            let done_cmd_buffers = device.wait_for_cmd_buffers(WAIT_TIMEOUT_GPU);
+            let done_cmd_buffers = device.wait_for_cmd_buffers(timeout_gpu);
             external_progress |= !done_cmd_buffers.is_empty();
             for done in done_cmd_buffers {
                 self.task_graph
@@ -1176,7 +1186,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let cpu_wait_timeout = if gpu_work_done {
             Duration::from_secs(0)
         } else {
-            WAIT_TIMEOUT_CPU
+            timeout_cpu
         };
         let jobs = self.task_manager.wait_for_jobs(cpu_wait_timeout);
         external_progress |= !jobs.is_empty();
