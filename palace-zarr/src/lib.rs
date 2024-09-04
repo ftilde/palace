@@ -16,9 +16,11 @@ use palace_core::{
     Error,
 };
 use zarrs::{
-    array::{Array, ArrayBuilder, ArrayError, DataType, FillValue, ZARR_NAN_F32},
+    array::{Array, ArrayBuilder, ArrayError, DataType, FillValue},
     storage::store::FilesystemStore,
 };
+
+const SPACING_KEY: &str = "spacing_us";
 
 fn dtype_zarr_to_palace(d: &DataType) -> Result<DType, Error> {
     Ok(DType::scalar(match d {
@@ -106,10 +108,21 @@ impl ZarrSourceState {
             return Err("Array does not appear to have a regular grid".into());
         }
 
-        // TODO: Read this from the file
-        let embedding_data = TensorEmbeddingData {
-            spacing: Vector::fill_with_len(1.0, nd),
-        };
+        let spacing = array
+            .attributes()
+            .get(SPACING_KEY)
+            .and_then(|s| s.as_array())
+            .and_then(|s| {
+                s.into_iter()
+                    .map(|v| v.as_f64().map(|v| v as f32))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .and_then(|s| Vector::try_from_slice(s.as_slice()).ok())
+            .unwrap_or_else(|| {
+                //eprintln!("Missing spacing information. Using default 1.0");
+                Vector::fill_with_len(1.0, nd)
+            });
+        let embedding_data = TensorEmbeddingData { spacing };
 
         let dtype = dtype_zarr_to_palace(array.data_type())?;
 
@@ -169,27 +182,29 @@ impl ZarrSourceState {
     }
 }
 
-pub async fn save<'cref, 'inv>(
+fn create_array_for_tensor<'cref, 'inv>(
+    t: &'inv TensorOperator<DDyn, DType>,
+) -> Result<ArrayBuilder, palace_core::Error> {
+    let md = &t.metadata;
+    let dtype = t.dtype();
+    let fill_value = vec![0u8; dtype.element_layout().size()];
+
+    Ok(
+        ArrayBuilder::new(
+            to_zarr_pos(&md.dimensions).inner(),
+            dtype_palace_to_zarr(dtype)?,
+            to_zarr_pos(&md.chunk_size).inner().try_into()?,
+            FillValue::new(fill_value),
+        ), //.bytes_to_bytes_codecs(vec![Box::new(GzipCodec::new(5)?)]);
+    )
+}
+
+async fn write_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
-    path: &Path,
+    array: &Array<FilesystemStore>,
     t: &'inv TensorOperator<DDyn, DType>,
 ) -> Result<(), palace_core::Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
-
-    let dtype = t.dtype();
-    let md = t.metadata.clone();
-
-    let array = ArrayBuilder::new(
-        to_zarr_pos(&md.dimensions).inner(),
-        dtype_palace_to_zarr(dtype)?,
-        to_zarr_pos(&md.chunk_size).inner().try_into()?,
-        FillValue::from(ZARR_NAN_F32),
-    )
-    .build(store, "/array")?;
-
-    array.store_metadata()?;
-    //.bytes_to_bytes_codecs(vec![Box::new(GzipCodec::new(5)?)]);
-
+    let md = &t.metadata;
     for chunk_id in md.chunk_indices() {
         let chunk_pos = md.chunk_pos_from_index(chunk_id);
 
@@ -197,6 +212,45 @@ pub async fn save<'cref, 'inv>(
 
         array.store_chunk(to_zarr_pos(&chunk_pos).inner().as_slice(), chunk_raw.data())?;
     }
-
     Ok(())
+}
+
+pub async fn save_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv TensorOperator<DDyn, DType>,
+) -> Result<(), palace_core::Error> {
+    let store = Arc::new(FilesystemStore::new(&path)?);
+    let array = create_array_for_tensor(t)?.build(store, "/array")?;
+
+    array.store_metadata()?;
+    write_tensor(ctx, &array, t).await
+}
+
+pub async fn save_embedded_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv EmbeddedTensorOperator<DDyn, DType>,
+) -> Result<(), palace_core::Error> {
+    let store = Arc::new(FilesystemStore::new(&path)?);
+    let mut attributes = serde_json::Map::new();
+    attributes.insert(
+        SPACING_KEY.to_owned(),
+        serde_json::Value::Array(
+            t.embedding_data
+                .spacing
+                .clone()
+                .inner()
+                .into_iter()
+                .map(|i| i.into())
+                .collect(),
+        ),
+    );
+    let array = create_array_for_tensor(t)?
+        .attributes(attributes)
+        .build(store, "/array")?;
+
+    array.store_metadata()?;
+
+    write_tensor(ctx, &array, t).await
 }

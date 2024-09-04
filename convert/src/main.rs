@@ -58,14 +58,16 @@ fn main() {
     .unwrap();
 
     let input = palace_volume::open(args.input, palace_volume::Hints::default()).unwrap();
-    let input = input.inner.into_dyn();
+    let input = input.into_dyn();
     let input = &input;
 
     runtime
         .resolve(None, false, |ctx, _| {
             async move {
                 match args.output_type {
-                    Output::Zarr => palace_zarr::save(ctx, &args.output_path, input).await,
+                    Output::Zarr => {
+                        palace_zarr::save_embedded_tensor(ctx, &args.output_path, input).await
+                    }
                 }
             }
             .into()
