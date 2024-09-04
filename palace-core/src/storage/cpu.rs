@@ -152,6 +152,12 @@ impl<'a, Allocator> RawReadHandle<'a, Allocator> {
     pub fn id(&self) -> DataId {
         self.access.id
     }
+
+    pub fn data<'b>(&'b self) -> &'b [u8] {
+        // Safety: Since this is a read handle, the slot has already been written to. Since Element
+        // is AnyBitPattern we know that all bytes in the slot are in fact initialized.
+        unsafe { std::slice::from_raw_parts(self.info.data as *const u8, self.info.layout.size()) }
+    }
 }
 
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
