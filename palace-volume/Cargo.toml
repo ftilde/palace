@@ -8,3 +8,4 @@ palace-core = { path = "../palace-core" }
 palace-hdf5 = { path = "../palace-hdf5" }
 palace-vvd = { path = "../palace-vvd" }
 palace-nifti = { path = "../palace-nifti" }
+palace-zarr = { path = "../palace-zarr" }

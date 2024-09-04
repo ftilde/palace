@@ -367,6 +367,10 @@ impl<DropHandler> RawWriteHandle<DropHandler> {
     pub unsafe fn data_ptr(&self) -> *mut MaybeUninit<u8> {
         self.data
     }
+    pub fn data(&mut self) -> &mut [MaybeUninit<u8>] {
+        // Safety: We ensure exclusive access by taking a mutable self reference
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.layout.size()) }
+    }
 }
 
 impl<D: Send> std::ops::Deref for RawWriteHandle<D> {

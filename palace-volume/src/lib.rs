@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    dtypes::DType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
+    dim::D3, dtypes::DType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
 };
 
 #[derive(Clone, Default)]
@@ -49,6 +49,9 @@ pub fn open(
             palace_nifti::open_separate(path, data)
         }
         [.., "h5"] => palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned())),
+        [.., "zarr"] => palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
+            .try_into_static::<D3>()
+            .ok_or_else(|| "Volume is not 3-dimensional".into()),
         _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
     }
 }

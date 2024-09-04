@@ -228,6 +228,9 @@ impl<D: DynDimension> Vector<D, u32> {
     pub fn chunk(&self) -> Vector<D, ChunkCoordinate> {
         self.map(|v| v.into())
     }
+    pub fn local(&self) -> Vector<D, LocalCoordinate> {
+        self.map(|v| v.into())
+    }
 }
 impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
     pub fn raw(&self) -> Vector<D, u32> {

@@ -2009,6 +2009,7 @@ dependencies = [
  "palace-hdf5",
  "palace-nifti",
  "palace-vvd",
+ "palace-zarr",
 ]
 
 [[package]]
