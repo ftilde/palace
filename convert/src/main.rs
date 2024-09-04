@@ -1,11 +1,17 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use palace_core::runtime::RunTime;
+use palace_core::{
+    dim::DDyn,
+    dtypes::{DType, ScalarType, StaticElementType},
+    operators::tensor::EmbeddedTensorOperator,
+    runtime::RunTime,
+};
 
 #[derive(Subcommand, Clone)]
 enum Output {
     Zarr,
+    ZarrLod,
 }
 
 #[derive(Parser)]
@@ -59,7 +65,22 @@ fn main() {
 
     let input = palace_volume::open(args.input, palace_volume::Hints::default()).unwrap();
     let input = input.into_dyn();
+
+    let input_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> = input
+        .clone()
+        .map_inner(|input| {
+            palace_core::jit::jit(input)
+                .cast(ScalarType::F32.into())
+                .unwrap()
+                .compile()
+                .unwrap()
+        })
+        .try_into()
+        .unwrap();
+    let input_lod = palace_core::operators::resample::create_lod(input_float, 2.0).into();
+
     let input = &input;
+    let input_lod = &input_lod;
 
     runtime
         .resolve(None, false, |ctx, _| {
@@ -67,6 +88,9 @@ fn main() {
                 match args.output_type {
                     Output::Zarr => {
                         palace_zarr::save_embedded_tensor(ctx, &args.output_path, input).await
+                    }
+                    Output::ZarrLod => {
+                        palace_zarr::save_lod_tensor(ctx, &args.output_path, input_lod).await
                     }
                 }
             }

@@ -10,7 +10,7 @@ use palace_core::{
     dim::{DDyn, DynDimension},
     dtypes::{DType, ElementType, ScalarType},
     operator::{DataDescriptor, OperatorDescriptor},
-    operators::tensor::{EmbeddedTensorOperator, TensorOperator},
+    operators::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
     task::OpaqueTaskContext,
     vec::Vector,
     Error,
@@ -199,6 +199,27 @@ fn create_array_for_tensor<'cref, 'inv>(
     )
 }
 
+fn create_array_for_embedded_tensor<'cref, 'inv>(
+    t: &'inv EmbeddedTensorOperator<DDyn, DType>,
+) -> Result<ArrayBuilder, palace_core::Error> {
+    let mut attributes = serde_json::Map::new();
+    attributes.insert(
+        SPACING_KEY.to_owned(),
+        serde_json::Value::Array(
+            t.embedding_data
+                .spacing
+                .clone()
+                .inner()
+                .into_iter()
+                .map(|i| i.into())
+                .collect(),
+        ),
+    );
+    let mut b = create_array_for_tensor(t)?;
+    b.attributes(attributes);
+    Ok(b)
+}
+
 async fn write_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     array: &Array<FilesystemStore>,
@@ -233,24 +254,28 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
     t: &'inv EmbeddedTensorOperator<DDyn, DType>,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
-    let mut attributes = serde_json::Map::new();
-    attributes.insert(
-        SPACING_KEY.to_owned(),
-        serde_json::Value::Array(
-            t.embedding_data
-                .spacing
-                .clone()
-                .inner()
-                .into_iter()
-                .map(|i| i.into())
-                .collect(),
-        ),
-    );
-    let array = create_array_for_tensor(t)?
-        .attributes(attributes)
-        .build(store, "/array")?;
+    let array = create_array_for_embedded_tensor(t)?.build(store, "/array")?;
 
     array.store_metadata()?;
 
     write_tensor(ctx, &array, t).await
+}
+
+pub async fn save_lod_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv LODTensorOperator<DDyn, DType>,
+) -> Result<(), palace_core::Error> {
+    let store = Arc::new(FilesystemStore::new(&path)?);
+
+    for (level, tensor) in t.levels.iter().enumerate() {
+        let array = create_array_for_embedded_tensor(tensor)?
+            .build(Arc::clone(&store), &format!("/level{}", level))?;
+
+        array.store_metadata()?;
+
+        write_tensor(ctx, &array, tensor).await?;
+    }
+
+    Ok(())
 }
