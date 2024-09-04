@@ -4,7 +4,9 @@ use crate::{
     array::ChunkIndex,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
     storage::{
-        gpu, ram, CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
+        gpu,
+        ram::{self, RawReadHandle},
+        CpuDataLocation, DataLocation, DataLongevity, Element, VisibleDataLocation,
     },
     task::{DataRequest, OpaqueTaskContext, Request, RequestType, Task, TaskContext},
     task_graph::{LocatedDataId, VisibleDataId},
@@ -399,6 +401,34 @@ impl<OutputType: ElementType> Operator<OutputType> {
                 let item = items.into_iter().next().unwrap();
                 compute(ctx, item.0, item.1, state)
             }),
+        }
+    }
+
+    #[must_use]
+    pub fn request_raw<'req, 'inv: 'req>(
+        &'inv self,
+        item: ChunkIndex,
+    ) -> Request<'req, 'inv, RawReadHandle<'req>> {
+        let id = DataId::new(self.op_id(), item);
+
+        Request {
+            type_: RequestType::Data(DataRequest::new(
+                id,
+                VisibleDataLocation::CPU(CpuDataLocation::Ram),
+                self,
+                item,
+            )),
+            gen_poll: Box::new(move |ctx| {
+                let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
+                Box::new(move || {
+                    access = match ctx.storage.read_raw(access.take().unwrap()) {
+                        Ok(v) => return Some(v),
+                        Err(access) => Some(access),
+                    };
+                    None
+                })
+            }),
+            _marker: Default::default(),
         }
     }
 

@@ -13,7 +13,7 @@ use ash::extensions::khr::{WaylandSurface, XcbSurface, XlibSurface};
 #[cfg(target_family = "windows")]
 use ash::extensions::khr::Win32Surface;
 
-use ash::vk;
+pub use ash::vk;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cell::RefCell;

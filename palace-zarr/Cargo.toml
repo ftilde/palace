@@ -1,0 +1,9 @@
+[package]
+name = "palace-zarr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = "1.17.1"
+palace-core = { path = "../palace-core" }
+zarrs = "0.16.4"

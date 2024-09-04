@@ -6,6 +6,7 @@ use super::cpu::{CpuAllocator, OOMError};
 
 pub type Storage = super::cpu::Storage<RamAllocator>;
 pub type ReadHandle<'a, T> = super::cpu::ReadHandle<'a, T, RamAllocator>;
+pub type RawReadHandle<'a> = super::cpu::RawReadHandle<'a, RamAllocator>;
 pub type WriteHandleInit<'a, T> = super::cpu::WriteHandleInit<'a, T, RamAllocator>;
 pub type WriteHandleUninit<'a, T> = super::cpu::WriteHandleUninit<'a, T, RamAllocator>;
 pub type RawWriteHandleInit<'a> = super::cpu::RawWriteHandleInit<'a, RamAllocator>;

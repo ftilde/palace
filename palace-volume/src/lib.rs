@@ -41,7 +41,7 @@ pub fn open(
             &path,
             hints
                 .brick_size
-                .unwrap_or(LocalVoxelPosition::fill(32.into())),
+                .unwrap_or(LocalVoxelPosition::fill(64.into())),
         ),
         [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path),
         [.., "hdr"] => {
