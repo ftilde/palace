@@ -1,12 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use palace_core::{
-    dim::DDyn,
-    dtypes::{DType, ScalarType, StaticElementType},
-    operators::tensor::EmbeddedTensorOperator,
-    runtime::RunTime,
-};
+use palace_core::runtime::RunTime;
 
 #[derive(Subcommand, Clone)]
 enum Output {
@@ -63,21 +58,10 @@ fn main() {
     )
     .unwrap();
 
-    let input = palace_volume::open(args.input, palace_volume::Hints::default()).unwrap();
-    let input = input.into_dyn();
-
-    let input_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> = input
-        .clone()
-        .map_inner(|input| {
-            palace_core::jit::jit(input)
-                .cast(ScalarType::F32.into())
-                .unwrap()
-                .compile()
-                .unwrap()
-        })
-        .try_into()
-        .unwrap();
-    let input_lod = palace_core::operators::resample::create_lod(input_float, 2.0).into();
+    let input_lod = palace_volume::open_or_create_lod(args.input, palace_volume::Hints::default())
+        .unwrap()
+        .into_dyn();
+    let input = input_lod.levels[0].clone().into_dyn();
 
     let input = &input;
     let input_lod = &input_lod;

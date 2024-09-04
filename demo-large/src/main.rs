@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use palace_core::data::{GlobalCoordinate, Vector};
 use palace_core::dim::*;
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::event::{EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::{
@@ -12,7 +12,7 @@ use palace_core::operators::raycaster::{
 };
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::FrameOperator;
-use palace_core::operators::volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::RunTime;
 use palace_core::storage::DataVersionType;
@@ -116,11 +116,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let vol: EmbeddedVolumeOperator<StaticElementType<f32>> =
-        palace_volume::open(args.vol, palace_volume::Hints::new())?.try_into()?;
+    let hints = palace_volume::Hints::new();
+    let vol = palace_volume::open_or_create_lod(args.vol, hints).unwrap();
 
-    let vol_diag = vol.real_dimensions().length();
-    let voxel_diag = vol.embedding_data.spacing.length();
+    let vol: LODVolumeOperator<StaticElementType<f32>> = vol
+        .map(|v| {
+            v.map_inner(|v| {
+                palace_core::jit::jit(v)
+                    .cast(ScalarType::F32.into())
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+            })
+        })
+        .try_into()
+        .unwrap();
+    let l0 = vol.levels[0].clone();
+
+    let vol_diag = l0.real_dimensions().length();
+    let voxel_diag = l0.embedding_data.spacing.length();
 
     let mut state = State {
         gui: GuiState::on_device(args.device),
@@ -132,11 +146,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             steps: 3,
         },
         raycasting: RaycastingState {
-            camera: CameraState::for_volume(vol.metadata, vol.embedding_data, 30.0),
+            camera: CameraState::for_volume(l0.metadata, l0.embedding_data, 30.0),
             config: RaycasterConfig::default(),
         },
         sliceview: SliceState {
-            inner: SliceviewState::for_volume(vol.metadata, vol.embedding_data, 0),
+            inner: SliceviewState::for_volume(l0.metadata, l0.embedding_data, 0),
             gui: GuiState::on_device(args.device),
         },
         tf: if let Some(path) = args.transfunc_path {
@@ -318,7 +332,7 @@ fn raycaster(
 fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
-    vol: EmbeddedVolumeOperator<StaticElementType<f32>>,
+    vol: LODVolumeOperator<StaticElementType<f32>>,
     app_state: &mut State,
     mut events: EventStream,
     deadline: Instant,
@@ -334,20 +348,19 @@ fn eval_network(
     //        .chain(OnKeyPress(Key::Minus, || *stddev /= 1.10))
     //});
 
-    let volume_diag = vol.real_dimensions().length();
-    let voxel_diag = vol.embedding_data.spacing.length();
+    let l0 = vol.levels[0].clone();
+    let volume_diag = l0.real_dimensions().length();
+    let voxel_diag = l0.embedding_data.spacing.length();
     let radius_range = voxel_diag..=volume_diag * 0.1;
     let smoothing_range = voxel_diag..=volume_diag * 0.1;
 
-    let vol = vol.map_inner(|v| {
-        let v = palace_core::jit::jit(v.into());
-        //let v = v.add((-1.0).into()).unwrap().abs().unwrap();
-        v.try_into().unwrap()
-    });
+    //let vol = vol.map_inner(|v| {
+    //    let v = palace_core::jit::jit(v.into());
+    //    //let v = v.add((-1.0).into()).unwrap().abs().unwrap();
+    //    v.try_into().unwrap()
+    //});
 
-    let vol: EmbeddedVolumeOperator<StaticElementType<f32>> = vol.try_into().unwrap();
-
-    let vol = palace_core::operators::resample::create_lod(vol, 2.0);
+    //let vol: EmbeddedVolumeOperator<StaticElementType<f32>> = vol.try_into().unwrap();
 
     //let vol = volume_gpu::rechunk(vol, LocalVoxelPosition::fill(48.into()).into_elem());
 

@@ -17,6 +17,7 @@ use palace_core::{
 };
 use zarrs::{
     array::{Array, ArrayBuilder, ArrayError, DataType, FillValue},
+    node::{Node, NodePath},
     storage::store::FilesystemStore,
 };
 
@@ -70,7 +71,6 @@ pub struct ZarrSourceStateInner {
     array: Array<FilesystemStore>,
     //dataset: hdf5::Dataset,
     path: PathBuf,
-    volume_location: String,
     dtype: DType,
 }
 
@@ -78,14 +78,62 @@ pub fn open(
     path: PathBuf,
     volume_location: String,
 ) -> Result<EmbeddedTensorOperator<DDyn, DType>, Error> {
-    let state = ZarrSourceState::open(path, volume_location)?;
+    let store = Arc::new(FilesystemStore::new(&path)?);
+    let array = Array::open(store, &volume_location)?;
+    let state = ZarrSourceState::from_array(path, array)?;
     Ok(state.operate())
 }
 
+fn collect_leafs(p: &Node, out: &mut Vec<NodePath>) {
+    let children = p.children();
+    if children.is_empty() {
+        out.push(p.path().clone());
+    } else {
+        for c in children {
+            collect_leafs(c, out);
+        }
+    }
+}
+
+pub fn open_lod(
+    path: PathBuf,
+    level_prefix: String,
+) -> Result<LODTensorOperator<DDyn, DType>, Error> {
+    let store = Arc::new(FilesystemStore::new(&path)?);
+    let mut leafs = Vec::new();
+    let root = Node::open(&store, "/").unwrap();
+    collect_leafs(&root, &mut leafs);
+    let level_array_keys = leafs
+        .into_iter()
+        .filter(|p| p.as_str().starts_with(&level_prefix))
+        .collect::<Vec<_>>();
+    if level_array_keys.is_empty() {
+        return Err(format!("No tensors with prefix {} found", level_prefix).into());
+    }
+
+    let mut levels = Vec::new();
+    for key in level_array_keys {
+        let array = Array::open(Arc::clone(&store), &key.to_string())?;
+        let state = ZarrSourceState::from_array(path.clone(), array)?;
+        levels.push(state.operate());
+    }
+
+    levels.sort_by(|l, r| {
+        l.embedding_data
+            .spacing
+            .length()
+            .total_cmp(&r.embedding_data.spacing.length())
+    });
+
+    for pair in levels.windows(2) {
+        assert!(pair[0].embedding_data.spacing[0] <= pair[1].embedding_data.spacing[0]);
+    }
+
+    Ok(LODTensorOperator { levels })
+}
+
 impl ZarrSourceState {
-    pub fn open(path: PathBuf, volume_location: String) -> Result<Self, Error> {
-        let store = Arc::new(FilesystemStore::new(&path)?);
-        let array = Array::open(store, &volume_location)?;
+    pub fn from_array(path: PathBuf, array: Array<FilesystemStore>) -> Result<Self, Error> {
         let dimensions = from_zarr_pos(array.shape()).global();
         let nd = dimensions.len();
         let num_chunks = from_zarr_pos(&array.chunk_grid_shape().unwrap()).chunk();
@@ -132,7 +180,6 @@ impl ZarrSourceState {
                 embedding_data,
                 array,
                 path,
-                volume_location,
                 dtype,
             }
             .into(),
@@ -143,7 +190,7 @@ impl ZarrSourceState {
         TensorOperator::with_state(
             OperatorDescriptor::new("ZarrSourceState::operate")
                 .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
-                .dependent_on_data(self.inner.volume_location.as_bytes()),
+                .dependent_on_data(self.inner.array.path().as_str().as_bytes()),
             self.inner.dtype,
             self.inner.metadata.clone(),
             self.clone(),

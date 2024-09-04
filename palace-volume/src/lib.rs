@@ -1,7 +1,13 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    dim::D3, dtypes::DType, operators::volume::EmbeddedVolumeOperator, vec::LocalVoxelPosition,
+    dim::{DDyn, D3},
+    dtypes::{DType, ScalarType, StaticElementType},
+    operators::{
+        tensor::EmbeddedTensorOperator,
+        volume::{EmbeddedVolumeOperator, LODVolumeOperator},
+    },
+    vec::LocalVoxelPosition,
 };
 
 #[derive(Clone, Default)]
@@ -54,4 +60,54 @@ pub fn open(
             .ok_or_else(|| "Volume is not 3-dimensional".into()),
         _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
     }
+}
+
+pub fn open_lod(
+    path: PathBuf,
+    hints: Hints,
+) -> Result<LODVolumeOperator<DType>, Box<dyn std::error::Error>> {
+    let Some(file) = path.file_name() else {
+        return Err("No file name in path".into());
+    };
+    let file = file.to_string_lossy();
+    let segments = file.split('.').collect::<Vec<_>>();
+
+    match segments[..] {
+        [.., "zarr"] => palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))?
+            .try_into_static::<D3>()
+            .ok_or_else(|| "Volume is not 3-dimensional".into()),
+        _ => Err(format!(
+            "Unknown lod volume format for file {}",
+            path.to_string_lossy()
+        )
+        .into()),
+    }
+}
+
+pub fn open_or_create_lod(
+    path: PathBuf,
+    hints: Hints,
+) -> Result<LODVolumeOperator<DType>, Box<dyn std::error::Error>> {
+    Ok(if let Ok(vol) = open_lod(path.clone(), hints.clone()) {
+        vol
+    } else {
+        let vol = open(path, hints)?.into_dyn();
+
+        let vol_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> = vol
+            .clone()
+            .map_inner(|input| {
+                palace_core::jit::jit(input)
+                    .cast(ScalarType::F32.into())
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+            })
+            .try_into()
+            .unwrap();
+        let vol: LODVolumeOperator<StaticElementType<f32>> =
+            palace_core::operators::resample::create_lod(vol_float, 2.0)
+                .try_into_static::<D3>()
+                .unwrap();
+        vol.into()
+    })
 }

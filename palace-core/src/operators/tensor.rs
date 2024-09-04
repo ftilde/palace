@@ -467,6 +467,22 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
     pub fn fine_embedding_data(&self) -> TensorEmbeddingData<D> {
         self.levels[0].embedding_data.clone()
     }
+
+    pub fn into_dyn(self) -> LODTensorOperator<DDyn, E> {
+        LODTensorOperator {
+            levels: self.levels.into_iter().map(|l| l.into_dyn()).collect(),
+        }
+    }
+
+    pub fn try_into_static<DS: Dimension>(self) -> Option<LODTensorOperator<DS, E>> {
+        Some(LODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|l| l.try_into_static::<DS>())
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
 }
 
 impl<D: DynDimension, E> LODTensorOperator<D, E> {
