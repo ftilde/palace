@@ -66,15 +66,24 @@ fn main() {
     let input = &input;
     let input_lod = &input_lod;
 
+    let write_hints = Default::default();
+
     runtime
         .resolve(None, false, |ctx, _| {
             async move {
                 match args.output_type {
                     Output::Zarr => {
-                        palace_zarr::save_embedded_tensor(ctx, &args.output_path, input).await
+                        palace_zarr::save_embedded_tensor(
+                            ctx,
+                            &args.output_path,
+                            input,
+                            write_hints,
+                        )
+                        .await
                     }
                     Output::ZarrLod => {
-                        palace_zarr::save_lod_tensor(ctx, &args.output_path, input_lod).await
+                        palace_zarr::save_lod_tensor(ctx, &args.output_path, input_lod, write_hints)
+                            .await
                     }
                 }
             }

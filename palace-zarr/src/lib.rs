@@ -17,7 +17,7 @@ use palace_core::{
     Error,
 };
 use zarrs::{
-    array::{Array, ArrayBuilder, ArrayError, DataType, FillValue},
+    array::{codec::GzipCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
     node::{Node, NodePath},
     storage::store::FilesystemStore,
 };
@@ -237,23 +237,41 @@ impl ZarrSourceState {
 
 fn create_array_for_tensor<'cref, 'inv>(
     t: &'inv TensorOperator<DDyn, DType>,
+    hints: WriteHints,
 ) -> Result<ArrayBuilder, palace_core::Error> {
     let md = &t.metadata;
     let dtype = t.dtype();
     let fill_value = vec![0u8; dtype.element_layout().size()];
 
-    Ok(
-        ArrayBuilder::new(
-            to_zarr_pos(&md.dimensions).inner(),
-            dtype_palace_to_zarr(dtype)?,
-            to_zarr_pos(&md.chunk_size).inner().try_into()?,
-            FillValue::new(fill_value),
-        ), //.bytes_to_bytes_codecs(vec![Box::new(GzipCodec::new(5)?)]);
-    )
+    let mut builder = ArrayBuilder::new(
+        to_zarr_pos(&md.dimensions).inner(),
+        dtype_palace_to_zarr(dtype)?,
+        to_zarr_pos(&md.chunk_size).inner().try_into()?,
+        FillValue::new(fill_value),
+    );
+
+    if hints.compression_level > 0 {
+        builder.bytes_to_bytes_codecs(vec![Box::new(GzipCodec::new(hints.compression_level)?)]);
+    }
+    Ok(builder)
+}
+
+#[derive(Copy, Clone)]
+pub struct WriteHints {
+    pub compression_level: u32,
+}
+
+impl Default for WriteHints {
+    fn default() -> Self {
+        Self {
+            compression_level: 1,
+        }
+    }
 }
 
 fn create_array_for_embedded_tensor<'cref, 'inv>(
     t: &'inv EmbeddedTensorOperator<DDyn, DType>,
+    hints: WriteHints,
 ) -> Result<ArrayBuilder, palace_core::Error> {
     let mut attributes = serde_json::Map::new();
     attributes.insert(
@@ -268,7 +286,7 @@ fn create_array_for_embedded_tensor<'cref, 'inv>(
                 .collect(),
         ),
     );
-    let mut b = create_array_for_tensor(t)?;
+    let mut b = create_array_for_tensor(t, hints)?;
     b.attributes(attributes);
     Ok(b)
 }
@@ -311,9 +329,10 @@ pub async fn save_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     path: &Path,
     t: &'inv TensorOperator<DDyn, DType>,
+    hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
-    let array = create_array_for_tensor(t)?.build(store, "/array")?;
+    let array = create_array_for_tensor(t, hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
     write_tensor(ctx, &array, t).await
@@ -323,9 +342,10 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     path: &Path,
     t: &'inv EmbeddedTensorOperator<DDyn, DType>,
+    hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
-    let array = create_array_for_embedded_tensor(t)?.build(store, "/array")?;
+    let array = create_array_for_embedded_tensor(t, hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
 
@@ -336,11 +356,12 @@ pub async fn save_lod_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     path: &Path,
     t: &'inv LODTensorOperator<DDyn, DType>,
+    hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
 
     for (level, tensor) in t.levels.iter().enumerate() {
-        let array = create_array_for_embedded_tensor(tensor)?
+        let array = create_array_for_embedded_tensor(tensor, hints)?
             .build(Arc::clone(&store), &format!("/level{}", level))?;
 
         array.store_metadata()?;
