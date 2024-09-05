@@ -142,23 +142,6 @@ impl<T: ?Sized, Allocator> std::ops::Deref for ReadHandle<'_, T, Allocator> {
         self.data
     }
 }
-pub struct RawReadHandle<'a, Allocator> {
-    pub info: StorageInfo,
-    #[allow(unused)]
-    access: AccessToken<'a, Allocator>,
-}
-
-impl<'a, Allocator> RawReadHandle<'a, Allocator> {
-    pub fn id(&self) -> DataId {
-        self.access.id
-    }
-
-    pub fn data<'b>(&'b self) -> &'b [u8] {
-        // Safety: Since this is a read handle, the slot has already been written to. Since Element
-        // is AnyBitPattern we know that all bytes in the slot are in fact initialized.
-        unsafe { std::slice::from_raw_parts(self.info.data as *const u8, self.info.layout.size()) }
-    }
-}
 
 pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
     id: DataId,
@@ -265,6 +248,68 @@ impl<Allocator> Drop for DropMarkInitialized<'_, Allocator> {
                     StorageEntryState::Initialized(*info, version)
                 }
             };
+        }
+    }
+}
+
+pub struct RawReadHandle<'a, Allocator> {
+    pub info: StorageInfo,
+    #[allow(unused)]
+    access: AccessToken<'a, Allocator>,
+}
+
+impl<'a, Allocator> RawReadHandle<'a, Allocator> {
+    pub fn id(&self) -> DataId {
+        self.access.id
+    }
+
+    pub fn data<'b>(&'b self) -> &'b [u8] {
+        // Safety: Since this is a read handle, the slot has already been written to. Since Element
+        // is AnyBitPattern we know that all bytes in the slot are in fact initialized.
+        unsafe { std::slice::from_raw_parts(self.info.data as *const u8, self.info.layout.size()) }
+    }
+
+    pub fn into_thread_handle(self) -> RawThreadReadHandle<'a> {
+        let ret = RawThreadReadHandle {
+            id: self.access.id,
+            info: self.info,
+            panic_handle: Default::default(),
+            _marker: Default::default(),
+        };
+        //Avoid running destructor
+        std::mem::forget(self.access);
+
+        ret
+    }
+}
+
+pub struct RawThreadReadHandle<'a> {
+    id: DataId,
+    info: StorageInfo,
+    panic_handle: ThreadHandleDropPanic,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+// Safety: The raw pointer is not accessible
+unsafe impl Send for RawThreadReadHandle<'_> {}
+
+impl<'a> RawThreadReadHandle<'a> {
+    pub fn data<'b>(&'b self) -> &'b [u8] {
+        // Safety: Since this is a read handle, the slot has already been written to. Since Element
+        // is AnyBitPattern we know that all bytes in the slot are in fact initialized.
+        unsafe { std::slice::from_raw_parts(self.info.data as *const u8, self.info.layout.size()) }
+    }
+    pub fn into_main_handle<Allocator>(
+        self,
+        storage: &'a Storage<Allocator>,
+    ) -> RawReadHandle<'a, Allocator> {
+        self.panic_handle.dismiss();
+        RawReadHandle {
+            info: self.info,
+            access: AccessToken {
+                storage,
+                id: self.id,
+            },
         }
     }
 }

@@ -205,17 +205,17 @@ impl ZarrSourceState {
                     });
                     let stream = ctx.submit_unordered_with_data(allocations).then_req(
                         *ctx,
-                        |(brick_handle, chunk_id)| {
-                            let brick_handle = brick_handle.into_thread_handle();
+                        |(chunk_handle, chunk_id)| {
+                            let chunk_handle = chunk_handle.into_thread_handle();
                             let array = &this.inner.array;
                             ctx.spawn_io(move || {
-                                let brick_data = brick_handle.data();
+                                let chunk_data = chunk_handle.data();
                                 let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
                                 let bytes = array
                                     .retrieve_chunk(to_zarr_pos(&chunk_pos).inner().as_slice())?
                                     .into_fixed()?;
-                                palace_core::data::write_slice_uninit(brick_data, &bytes);
-                                Ok::<_, ArrayError>(brick_handle)
+                                palace_core::data::write_slice_uninit(chunk_data, &bytes);
+                                Ok::<_, ArrayError>(chunk_handle)
                             })
                         },
                     );
@@ -279,13 +279,31 @@ async fn write_tensor<'cref, 'inv>(
     t: &'inv TensorOperator<DDyn, DType>,
 ) -> Result<(), palace_core::Error> {
     let md = &t.metadata;
-    for chunk_id in md.chunk_indices() {
-        let chunk_pos = md.chunk_pos_from_index(chunk_id);
 
-        let chunk_raw = ctx.submit(t.chunks.request_raw(chunk_id)).await;
+    let chunks = md
+        .chunk_indices()
+        .map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
 
-        array.store_chunk(to_zarr_pos(&chunk_pos).inner().as_slice(), chunk_raw.data())?;
+    let stream =
+        ctx.submit_unordered_with_data(chunks)
+            .then_req(ctx, |(chunk_handle, chunk_id)| {
+                let chunk_pos = md.chunk_pos_from_index(chunk_id);
+
+                let chunk_handle = chunk_handle.into_thread_handle();
+                let array = &array;
+                ctx.spawn_io(move || {
+                    array.store_chunk(
+                        to_zarr_pos(&chunk_pos).inner().as_slice(),
+                        chunk_handle.data(),
+                    )?;
+                    Ok::<_, ArrayError>(chunk_handle)
+                })
+            });
+    futures::pin_mut!(stream);
+    while let Some(handle) = stream.next().await {
+        let _handle = handle?.into_main_handle(ctx.storage());
     }
+
     Ok(())
 }
 
