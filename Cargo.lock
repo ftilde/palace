@@ -2036,6 +2036,7 @@ name = "palace-zarr"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "futures",
  "palace-core",
  "serde_json",
  "zarrs",

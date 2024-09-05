@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
@@ -11,7 +12,7 @@ use palace_core::{
     dtypes::{DType, ElementType, ScalarType},
     operator::{DataDescriptor, OperatorDescriptor},
     operators::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
-    task::OpaqueTaskContext,
+    task::{OpaqueTaskContext, RequestStream},
     vec::Vector,
     Error,
 };
@@ -69,7 +70,6 @@ pub struct ZarrSourceStateInner {
     metadata: TensorMetaData<DDyn>,
     embedding_data: TensorEmbeddingData<DDyn>,
     array: Array<FilesystemStore>,
-    //dataset: hdf5::Dataset,
     path: PathBuf,
     dtype: DType,
 }
@@ -197,27 +197,33 @@ impl ZarrSourceState {
             move |ctx, positions, this| {
                 async move {
                     let metadata = &this.inner.metadata;
-                    //NO_PUSH_main make parallel
-                    for (chunk_id, _) in positions {
-                        let layout = this.inner.dtype.array_layout(metadata.num_chunk_elements());
+                    let layout = this.inner.dtype.array_layout(metadata.num_chunk_elements());
 
-                        let id = DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
-                        let mut brick_handle = ctx.submit(ctx.alloc_raw(id, layout)).await;
-                        let brick_data = brick_handle.data();
-                        let array = &this.inner.array;
-                        ctx.submit(ctx.spawn_io(|| {
-                            let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
-                            let bytes = array
-                                .retrieve_chunk(to_zarr_pos(&chunk_pos).inner().as_slice())?
-                                .into_fixed()?;
-                            palace_core::data::write_slice_uninit(brick_data, &bytes);
-                            Ok::<(), ArrayError>(())
-                        }))
-                        .await?;
+                    let allocations = positions.into_iter().map(|(chunk_id, _)| {
+                        let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
+                        (ctx.alloc_raw(data_id, layout), chunk_id)
+                    });
+                    let stream = ctx.submit_unordered_with_data(allocations).then_req(
+                        *ctx,
+                        |(brick_handle, chunk_id)| {
+                            let brick_handle = brick_handle.into_thread_handle();
+                            let array = &this.inner.array;
+                            ctx.spawn_io(move || {
+                                let brick_data = brick_handle.data();
+                                let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
+                                let bytes = array
+                                    .retrieve_chunk(to_zarr_pos(&chunk_pos).inner().as_slice())?
+                                    .into_fixed()?;
+                                palace_core::data::write_slice_uninit(brick_data, &bytes);
+                                Ok::<_, ArrayError>(brick_handle)
+                            })
+                        },
+                    );
 
-                        // Safety: At this point the thread pool job above has finished and has initialized all bytes
-                        // in the brick.
-                        unsafe { brick_handle.initialized(*ctx) };
+                    futures::pin_mut!(stream);
+                    while let Some(handle) = stream.next().await {
+                        let handle = handle?.into_main_handle(ctx.storage());
+                        unsafe { handle.initialized(*ctx) };
                     }
                     Ok(())
                 }
