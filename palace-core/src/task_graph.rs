@@ -131,12 +131,13 @@ pub enum TaskClass {
     Transfer = 5,
 }
 
-const ROOT_PRIO: Priority = Priority {
-    origin: TaskOrigin {
-        level: 0,
-        class: TaskClass::Data,
-        progress: 0,
-    },
+pub const ROOT_ORIGIN: TaskOrigin = TaskOrigin {
+    level: 0,
+    class: TaskClass::Data,
+    progress: 0,
+};
+pub const ROOT_PRIO: Priority = Priority {
+    origin: ROOT_ORIGIN,
     progress: 0,
     ts: 0,
 };
@@ -398,14 +399,14 @@ struct PostponedOperatorTask {
 
 #[derive(Default)]
 pub struct TaskGraph {
-    implied_tasks: Map<TaskId, TaskMetadata>,
+    tasks: Map<TaskId, TaskMetadata>,
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
     required_by: Map<RequestId, Set<TaskId>>,
     will_provide_data: Map<TaskId, Set<DataId>>,
     data_provided_by: Map<DataId, Set<TaskId>>,
     will_fullfil_req: Map<TaskId, Set<RequestId>>,
     req_fullfil_by: Map<RequestId, TaskId>,
-    implied_ready: priority_queue::PriorityQueue<TaskId, Priority>,
+    ready: priority_queue::PriorityQueue<TaskId, Priority>,
     resolved_deps: Map<TaskId, Set<RequestId>>,
     in_groups: Map<RequestId, Set<GroupId>>,
     groups: Map<GroupId, Set<RequestId>>,
@@ -466,18 +467,13 @@ impl TaskGraph {
         wanted: RequestId,
         progress_indicator: ProgressIndicator,
     ) {
-        // Hm, only relevant for the root task, i think. Could be moved somewhere else possibly
-        if !self.waits_on.contains_key(&wants) {
-            self.high_level.add_task(wants);
-        }
-
         self.waits_on
             .entry(wants)
             .or_default()
             .insert(wanted, progress_indicator);
 
         self.required_by.entry(wanted).or_default().insert(wants);
-        self.implied_ready.remove(&wants);
+        self.ready.remove(&wants);
 
         if let RequestId::Data(d) = wanted {
             let entry = self.data_requests.entry(d.id).or_default();
@@ -612,7 +608,7 @@ impl TaskGraph {
         }
     }
 
-    pub fn add_implied(&mut self, id: TaskId, origin: TaskOrigin) {
+    pub fn add_task(&mut self, id: TaskId, origin: TaskOrigin) {
         let next_ts = self.ts_counter + 1;
         self.ts_counter = next_ts;
         let priority = Priority {
@@ -620,8 +616,10 @@ impl TaskGraph {
             progress: 0,
             ts: next_ts,
         };
-        let inserted = self.implied_tasks.insert(id, TaskMetadata { priority });
+        let inserted = self.tasks.insert(id, TaskMetadata { priority });
         assert!(inserted.is_none(), "Tried to insert task twice");
+
+        self.resolved_deps.insert(id, Default::default());
 
         self.waits_on.insert(id, Map::new());
 
@@ -644,11 +642,11 @@ impl TaskGraph {
         };
 
         if run_now {
-            self.implied_ready.push(id, priority);
+            self.ready.push(id, priority);
         }
     }
     pub fn has_task(&self, id: TaskId) -> bool {
-        self.implied_tasks.contains_key(&id)
+        self.tasks.contains_key(&id)
     }
     pub fn try_increase_priority(&mut self, id: TaskId, origin: TaskOrigin) {
         // Note that this does not change the priority of downstream tasks recursively! This is
@@ -656,16 +654,13 @@ impl TaskGraph {
         // tasks) whose priority is only updated as long as they are not started (and thus have no
         // downstream tasks).
 
-        let task_md = self.implied_tasks.get_mut(&id).unwrap();
+        let task_md = self.tasks.get_mut(&id).unwrap();
         task_md.priority.origin = task_md.priority.origin.merge(origin);
 
-        self.implied_ready.change_priority(&id, task_md.priority);
+        self.ready.change_priority(&id, task_md.priority);
     }
-    pub fn get_priority(&mut self, id: TaskId) -> Priority {
-        self.implied_tasks
-            .get(&id)
-            .map(|m| m.priority)
-            .unwrap_or(ROOT_PRIO)
+    pub fn get_priority(&mut self, id: TaskId) -> Option<Priority> {
+        self.tasks.get(&id).map(|m| m.priority)
     }
 
     pub fn dependents(&self, id: RequestId) -> &Set<TaskId> {
@@ -693,10 +688,10 @@ impl TaskGraph {
         for rev_dep in required_by.iter().flatten() {
             let deps_of_rev_dep = self.waits_on.get_mut(&rev_dep).unwrap();
             let progress_indicator = deps_of_rev_dep.remove(&id).unwrap();
-            let resolved_deps = self.resolved_deps.entry(*rev_dep).or_default();
+            let resolved_deps = self.resolved_deps.get_mut(rev_dep).unwrap();
             resolved_deps.insert(id);
 
-            if let Some(md) = self.implied_tasks.get_mut(&rev_dep) {
+            if let Some(md) = self.tasks.get_mut(&rev_dep) {
                 if let RequestId::Data(_) = id {
                     md.priority.progress += 1;
                 }
@@ -704,7 +699,7 @@ impl TaskGraph {
                 if deps_of_rev_dep.is_empty()
                     || matches!(progress_indicator, ProgressIndicator::PartialPossible)
                 {
-                    self.implied_ready.push(*rev_dep, md.priority);
+                    self.ready.push(*rev_dep, md.priority);
                 }
             }
         }
@@ -726,8 +721,8 @@ impl TaskGraph {
     }
 
     pub fn run_sanity_check(&mut self) {
-        assert!(self.implied_ready.is_empty());
-        for t in self.implied_tasks.keys() {
+        assert!(self.ready.is_empty());
+        for t in self.tasks.keys() {
             if let Some(waiting_for) = self.waits_on.get(t) {
                 if waiting_for.is_empty() {
                     println!("Task {:?} waiting requests is empty", t);
@@ -761,8 +756,8 @@ impl TaskGraph {
     }
 
     pub fn task_done(&mut self, id: TaskId) {
-        self.implied_tasks.remove(&id);
-        self.implied_ready.remove(&id);
+        self.tasks.remove(&id);
+        self.ready.remove(&id);
         self.resolved_deps.remove(&id);
 
         let wpd = self.will_provide_data.remove(&id);
@@ -777,7 +772,7 @@ impl TaskGraph {
 
         if let Some(entry) = self.postponed_data_operator_tasks.get_mut(&id.operator()) {
             if let Some((next_id, priority)) = entry.queue.pop_front() {
-                self.implied_ready.push(next_id, priority);
+                self.ready.push(next_id, priority);
             } else {
                 entry.num_active -= 1;
             }
@@ -787,19 +782,19 @@ impl TaskGraph {
         }
     }
 
-    pub fn next_implied_ready(&mut self) -> Option<TaskId> {
-        self.implied_ready.pop().map(|(k, _v)| {
+    pub fn next_ready(&mut self) -> Option<TaskId> {
+        self.ready.pop().map(|(k, _v)| {
             //println!("Scheduling {:?} with prio {:?}", k, _v);
             k
         })
     }
 
     pub fn has_open_tasks(&self) -> bool {
-        !self.implied_tasks.is_empty()
+        !self.tasks.is_empty()
     }
 
-    pub fn resolved_deps(&mut self, task: TaskId) -> Option<&mut Set<RequestId>> {
-        self.resolved_deps.get_mut(&task)
+    pub fn resolved_deps(&mut self, task: TaskId) -> &mut Set<RequestId> {
+        self.resolved_deps.get_mut(&task).unwrap()
     }
 }
 

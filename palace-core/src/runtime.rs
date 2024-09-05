@@ -444,7 +444,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
-    fn try_resolve_implied(&mut self) -> Result<(), Error> {
+    fn try_resolve_implied(&mut self, root: TaskId) -> Result<(), Error> {
         self.wait_for_async_results();
 
         enum StuckState {
@@ -460,18 +460,16 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 Duration::from_millis(0),
             );
 
-            let ready = self.task_graph.next_implied_ready();
+            let ready = self.task_graph.next_ready();
             if let Some(task_id) = ready {
+                if task_id == root {
+                    return Ok(());
+                }
+
                 stuck_state = StuckState::Not;
 
-                let resolved_deps =
-                    if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
-                        let mut tmp = Set::new();
-                        std::mem::swap(&mut tmp, resolved_deps);
-                        tmp
-                    } else {
-                        Set::new()
-                    };
+                let mut resolved_deps = Set::new();
+                std::mem::swap(&mut resolved_deps, self.task_graph.resolved_deps(task_id));
                 let old_hints = self.data.hints.completed.replace(resolved_deps);
                 // Hints should only contain during the loop body and returned back to the task
                 // graph once the task was polled.
@@ -499,7 +497,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         .unwrap_or(false);
 
                 match task.as_mut().poll(&mut ctx) {
-                    Poll::Ready(Ok(_)) => {
+                    Poll::Ready(Ok(())) => {
                         assert!(self.data.request_queue.is_empty());
                         // Drain hints
                         self.data.hints.completed.replace(Set::new());
@@ -516,10 +514,8 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                     Poll::Pending => {
                         // Return hints back to the task graph
-                        let old_hints = self.data.hints.completed.replace(Set::new());
-                        if let Some(resolved_deps) = self.task_graph.resolved_deps(task_id) {
-                            *resolved_deps = old_hints;
-                        }
+                        *self.task_graph.resolved_deps(task_id) =
+                            self.data.hints.completed.replace(Set::new());
                         self.register_produced_data(task_id, cache_results);
                         self.enqueue_requested(task_id);
                     }
@@ -603,7 +599,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     let req_prio = requested
                         .1
                         .iter()
-                        .map(|tid| self.task_graph.get_priority(*tid))
+                        .map(|tid| {
+                            self.task_graph
+                                .get_priority(*tid)
+                                .unwrap_or(crate::task_graph::ROOT_PRIO)
+                        })
                         .max()
                         .unwrap();
 
@@ -679,7 +679,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         {
                             BatchAddResult::New(t) => {
                                 self.task_graph
-                                    .add_implied(t, req_prio.downstream(TaskClass::Barrier));
+                                    .add_task(t, req_prio.downstream(TaskClass::Barrier));
                                 t
                             }
                             BatchAddResult::Existing(t) => t,
@@ -728,7 +728,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     TransferTaskResult::New(t) => {
                         self.task_manager.add_task(task_id, t);
                         self.task_graph
-                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
+                            .add_task(task_id, req_prio.downstream(TaskClass::Transfer));
                         task_id
                     }
                     TransferTaskResult::Existing(task_id) => task_id,
@@ -748,7 +748,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     TransferTaskResult::New(t) => {
                         self.task_manager.add_task(task_id, t);
                         self.task_graph
-                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
+                            .add_task(task_id, req_prio.downstream(TaskClass::Transfer));
                         task_id
                     }
                     TransferTaskResult::Existing(task_id) => task_id,
@@ -782,7 +782,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     TransferTaskResult::New(t) => {
                         self.task_manager.add_task(task_id, t);
                         self.task_graph
-                            .add_implied(task_id, req_prio.downstream(TaskClass::Transfer));
+                            .add_task(task_id, req_prio.downstream(TaskClass::Transfer));
                         task_id
                     }
                     TransferTaskResult::Existing(task_id) => task_id,
@@ -826,7 +826,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let req_id = req.id();
         //TODO: We also want to increase the priority of a task if it was already requested...
 
-        let req_prio = self.task_graph.get_priority(from);
+        let req_prio = self.task_graph.get_priority(from).unwrap();
         self.task_graph
             .add_dependency(from, req_id, req.progress_indicator);
         match req.task {
@@ -873,7 +873,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 match self.request_batcher.add(data_request, batch_size, from) {
                                     BatchAddResult::New(id) => {
                                         self.task_graph
-                                            .add_implied(id, req_prio.downstream(TaskClass::Data));
+                                            .add_task(id, req_prio.downstream(TaskClass::Data));
                                         id
                                     }
                                     BatchAddResult::Existing(id) => {
@@ -912,7 +912,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 {
                     BatchAddResult::New(id) => {
                         self.task_graph
-                            .add_implied(id, req_prio.downstream(TaskClass::Barrier));
+                            .add_task(id, req_prio.downstream(TaskClass::Barrier));
                         id
                     }
                     BatchAddResult::Existing(id) => {
@@ -1040,11 +1040,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 };
                 self.task_manager.add_task(task_id, task);
                 self.task_graph
-                    .add_implied(task_id, req_prio.downstream(TaskClass::Alloc));
+                    .add_task(task_id, req_prio.downstream(TaskClass::Alloc));
                 self.task_graph.will_fullfil_req(task_id, req_id);
             }
             RequestType::ThreadPoolJob(job, type_) => {
-                self.task_manager.spawn_job(job, type_).unwrap();
+                self.task_manager.spawn_job(job, type_);
             }
             RequestType::Group(group) => {
                 for v in group.all {
@@ -1138,7 +1138,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     };
                     self.task_manager.add_task(task_id, task);
                     self.task_graph
-                        .add_implied(task_id, req_prio.downstream(TaskClass::GarbageCollect));
+                        .add_task(task_id, req_prio.downstream(TaskClass::GarbageCollect));
                 }
                 self.task_graph.will_fullfil_req(task_id, req_id);
             }
@@ -1210,20 +1210,39 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let op_id = OperatorId::new("RunTime::resolve");
         let task_id = TaskId::new(op_id, 0);
         let mut task = task(self.context(task_id));
+        self.task_graph
+            .add_task(task_id, crate::task_graph::ROOT_ORIGIN);
 
-        loop {
+        let res = loop {
             let mut ctx = Context::from_waker(&self.waker);
+
+            let mut resolved_deps = Set::new();
+            std::mem::swap(&mut resolved_deps, self.task_graph.resolved_deps(task_id));
+            let old_hints = self.data.hints.completed.replace(resolved_deps);
+            assert!(old_hints.is_empty());
+
             match task.as_mut().poll(&mut ctx) {
                 Poll::Ready(res) => {
-                    return res;
+                    self.task_graph.task_done(task_id);
+                    break res;
                 }
                 Poll::Pending => {
                     self.enqueue_requested(task_id);
                 }
             };
-            self.try_resolve_implied()?;
+
+            *self.task_graph.resolved_deps(task_id) = self.data.hints.completed.replace(Set::new());
+
+            self.try_resolve_implied(task_id)?;
             assert!(self.data.request_queue.is_empty());
+        };
+
+        // Resolve open caching tasks
+        while self.task_graph.has_open_tasks() {
+            self.try_resolve_implied(task_id)?;
         }
+
+        res
     }
 }
 

@@ -106,10 +106,9 @@ impl<'a> TaskManager<'a> {
         };
 
         let mut job_done = |info: JobInfo| {
-            self.managed_tasks
-                .get_mut(&info.caller)
-                .unwrap()
-                .waiting_on_threads -= 1;
+            if let Some(d) = self.managed_tasks.get_mut(&info.caller) {
+                d.waiting_on_threads -= 1;
+            }
             info.job_id
         };
 
@@ -123,12 +122,10 @@ impl<'a> TaskManager<'a> {
         result
     }
 
-    pub fn spawn_job(&mut self, job: ThreadPoolJob, type_: JobType) -> Result<(), Error> {
-        let task_data = self
-            .managed_tasks
-            .get_mut(&job.waiting_id)
-            .ok_or(Error::NoSuchTask)?;
-        task_data.waiting_on_threads += 1;
+    pub fn spawn_job(&mut self, job: ThreadPoolJob, type_: JobType) {
+        if let Some(task_data) = self.managed_tasks.get_mut(&job.waiting_id) {
+            task_data.waiting_on_threads += 1;
+        }
 
         let info = crate::threadpool::JobInfo {
             caller: job.waiting_id,
@@ -138,7 +135,6 @@ impl<'a> TaskManager<'a> {
             JobType::Compute => self.compute_thread_pool.submit(info, job.job),
             JobType::Io => self.io_thread_pool.submit(info, job.job),
         };
-        Ok(())
     }
 }
 
