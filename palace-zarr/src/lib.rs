@@ -10,9 +10,13 @@ use palace_core::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{Coordinate, CoordinateType},
     dim::{DDyn, DynDimension},
-    dtypes::{DType, ElementType, ScalarType},
+    dtypes::{DType, ElementType, ScalarType, StaticElementType},
     operator::{DataDescriptor, OperatorDescriptor},
-    operators::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
+    operators::{
+        resample::smooth_downsample,
+        tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
+    },
+    runtime::RunTime,
     storage::DataLocation,
     task::{OpaqueTaskContext, RequestStream},
     util::Map,
@@ -443,21 +447,80 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
     write_tensor(ctx, &array, t).await
 }
 
-pub async fn save_lod_tensor<'cref, 'inv>(
-    ctx: OpaqueTaskContext<'cref, 'inv>,
+fn level_path(level: usize) -> String {
+    format!("/level{}", level)
+}
+
+pub fn save_lod_tensor(
+    runtime: &mut RunTime,
     path: &Path,
-    t: &'inv LODTensorOperator<DDyn, DType>,
+    t: &LODTensorOperator<DDyn, DType>,
     hints: WriteHints,
+    recreate_lod: bool,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
+    let store = &store;
 
-    for (level, tensor) in t.levels.iter().enumerate() {
-        let array = create_array_for_embedded_tensor(tensor, hints)?
-            .build(Arc::clone(&store), &format!("/level{}", level))?;
+    if recreate_lod {
+        runtime.resolve(None, false, |ctx, _| {
+            async move {
+                for (level, tensor) in t.levels.iter().enumerate() {
+                    let array = create_array_for_embedded_tensor(tensor, hints)?
+                        .build(Arc::clone(store), &level_path(level))?;
 
-        array.store_metadata()?;
+                    array.store_metadata()?;
 
-        write_tensor(ctx, &array, tensor).await?;
+                    write_tensor(ctx, &array, tensor).await?;
+                }
+                Ok(())
+            }
+            .into()
+        })?;
+    } else {
+        let step_factor = 2.0;
+
+        let current = t.levels[0].clone();
+        let mut current_level = 0;
+
+        // Cast to float. TODO: Remove once we have resampling for other types
+        let mut current = current.clone().map_inner(|input| {
+            palace_core::jit::jit(input)
+                .cast(ScalarType::F32.into())
+                .unwrap()
+                .compile()
+                .unwrap()
+        });
+        loop {
+            let current_location = level_path(current_level);
+            let current_location_ref = &current_location;
+            let current_ref = &current;
+            runtime.resolve(None, false, |ctx, _| {
+                async move {
+                    let array = create_array_for_embedded_tensor(current_ref, hints)?
+                        .build(Arc::clone(store), current_location_ref)?;
+
+                    array.store_metadata()?;
+
+                    write_tensor(ctx, &array, current_ref).await
+                }
+                .into()
+            })?;
+
+            if current.metadata.dimension_in_chunks().hmul() == 1 {
+                break;
+            }
+
+            let new_md = palace_core::operators::resample::coarser_lod_md(&current, step_factor);
+
+            current = open(path.into(), current_location)?;
+            let current_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> =
+                current.try_into().unwrap();
+
+            //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
+            //like "cache everything but the highest resolution layer" on LODTensorOperator
+            current = smooth_downsample(current_float, new_md.clone()).into();
+            current_level += 1;
+        }
     }
 
     Ok(())

@@ -7,7 +7,7 @@ use crate::{
     coordinate::ChunkCoordinate,
     data::{Matrix, Vector, AABB},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{ElementType, StaticElementType},
     operator::{OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
@@ -82,50 +82,53 @@ pub fn smooth_downsample<'op, D: LargerDim>(
     resample(smoothed, output_size)
 }
 
+pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
+    input: &EmbeddedTensorOperator<D, E>,
+    step_factor: f32,
+) -> TensorMetaData<D> {
+    assert!(step_factor > 1.0);
+
+    let dim = input.dim();
+
+    let e = input.embedding_data.clone();
+    let m = input.metadata.clone();
+
+    let new_spacing_raw = e.spacing.clone() * Vector::fill_with_len(step_factor, dim.n());
+    let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
+    let new_spacing = e
+        .spacing
+        .clone()
+        .zip(&Vector::fill_with_len(smallest_new, dim.n()), |a, b| {
+            a.max(b)
+        });
+    let element_ratio = e.spacing / new_spacing;
+    let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
+        .map(|v| v.ceil() as u32)
+        .global();
+    TensorMetaData {
+        dimensions: new_dimensions,
+        chunk_size: m.chunk_size,
+    }
+}
+
 pub fn create_lod<D: LargerDim>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     step_factor: f32,
 ) -> LODTensorOperator<D, StaticElementType<f32>> {
     assert!(step_factor > 1.0);
 
-    let dim = input.dim();
-
     let mut levels = Vec::new();
     let mut current = input;
 
     levels.push(current.clone());
 
-    loop {
-        let new_md = {
-            let e = current.embedding_data.clone();
-            let m = current.metadata.clone();
+    while current.metadata.dimension_in_chunks().hmul() != 1 {
+        let new_md = coarser_lod_md(&current, step_factor);
 
-            let new_spacing_raw = e.spacing.clone() * Vector::fill_with_len(step_factor, dim.n());
-            let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
-            let new_spacing = e
-                .spacing
-                .clone()
-                .zip(&Vector::fill_with_len(smallest_new, dim.n()), |a, b| {
-                    a.max(b)
-                });
-            let element_ratio = e.spacing / new_spacing;
-            let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
-                .map(|v| v.ceil() as u32)
-                .global();
-            TensorMetaData {
-                dimensions: new_dimensions,
-                chunk_size: m.chunk_size,
-            }
-        };
-
-        current = smooth_downsample(current, new_md.clone()).cache();
         //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
         //like "cache everything but the highest resolution layer" on LODTensorOperator
+        current = smooth_downsample(current, new_md.clone()).cache();
         levels.push(current.clone());
-
-        if new_md.dimension_in_chunks().hmul() == 1 {
-            break;
-        }
     }
 
     LODTensorOperator { levels }

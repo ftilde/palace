@@ -84,12 +84,17 @@ pub fn open_lod(
     }
 }
 
+pub enum LodOrigin {
+    Existing,
+    Dynamic,
+}
+
 pub fn open_or_create_lod(
     path: PathBuf,
     hints: Hints,
-) -> Result<LODVolumeOperator<DType>, Box<dyn std::error::Error>> {
+) -> Result<(LODVolumeOperator<DType>, LodOrigin), Box<dyn std::error::Error>> {
     Ok(if let Ok(vol) = open_lod(path.clone(), hints.clone()) {
-        vol
+        (vol, LodOrigin::Existing)
     } else {
         let vol = open(path, hints)?.into_dyn();
 
@@ -104,10 +109,11 @@ pub fn open_or_create_lod(
             })
             .try_into()
             .unwrap();
+
         let vol: LODVolumeOperator<StaticElementType<f32>> =
             palace_core::operators::resample::create_lod(vol_float, 2.0)
                 .try_into_static::<D3>()
                 .unwrap();
-        vol.into()
+        (vol.into(), LodOrigin::Dynamic)
     })
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::runtime::RunTime;
+use palace_volume::LodOrigin;
 use palace_zarr::WriteHints;
 
 #[derive(Subcommand, Clone)]
@@ -63,9 +64,10 @@ fn main() {
     )
     .unwrap();
 
-    let input_lod = palace_volume::open_or_create_lod(args.input, palace_volume::Hints::default())
-        .unwrap()
-        .into_dyn();
+    let (input_lod, lod_origin) =
+        palace_volume::open_or_create_lod(args.input, palace_volume::Hints::default()).unwrap();
+    let input_lod = input_lod.into_dyn();
+
     let input = input_lod.levels[0].clone().into_dyn();
 
     let input = &input;
@@ -75,26 +77,20 @@ fn main() {
         compression_level: args.compression_level,
     };
 
-    runtime
-        .resolve(None, false, |ctx, _| {
+    match args.output_type {
+        Output::Zarr => runtime.resolve(None, false, |ctx, _| {
             async move {
-                match args.output_type {
-                    Output::Zarr => {
-                        palace_zarr::save_embedded_tensor(
-                            ctx,
-                            &args.output_path,
-                            input,
-                            write_hints,
-                        )
-                        .await
-                    }
-                    Output::ZarrLod => {
-                        palace_zarr::save_lod_tensor(ctx, &args.output_path, input_lod, write_hints)
-                            .await
-                    }
-                }
+                palace_zarr::save_embedded_tensor(ctx, &args.output_path, input, write_hints).await
             }
             .into()
-        })
-        .unwrap();
+        }),
+        Output::ZarrLod => palace_zarr::save_lod_tensor(
+            &mut runtime,
+            &args.output_path,
+            input_lod,
+            write_hints,
+            matches!(lod_origin, LodOrigin::Dynamic),
+        ),
+    }
+    .unwrap();
 }
