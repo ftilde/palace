@@ -1,9 +1,13 @@
-use palace_core::array::VolumeEmbeddingData;
+use palace_core::array::{ChunkInfo, VolumeEmbeddingData};
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
-use palace_core::dtypes::DType;
+use palace_core::dtypes::{DType, ElementType, ScalarType};
+use palace_core::operator::DataDescriptor;
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+use hdf5::Datatype;
 
 use palace_core::{
     array::VolumeMetaData,
@@ -24,6 +28,7 @@ pub struct Hdf5VolumeSourceStateInner {
     dataset: hdf5::Dataset,
     path: PathBuf,
     volume_location: String,
+    dtype: DType,
 }
 
 fn to_size_vector<C: CoordinateType>(
@@ -52,12 +57,87 @@ fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hypersla
     (begin[0]..end[0], begin[1]..end[1], begin[2]..end[2]).into()
 }
 
+fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
+    let scalar = if d.is::<i8>() {
+        ScalarType::I8
+    } else if d.is::<u8>() {
+        ScalarType::U8
+    } else if d.is::<i16>() {
+        ScalarType::I16
+    } else if d.is::<u16>() {
+        ScalarType::U16
+    } else if d.is::<i32>() {
+        ScalarType::I32
+    } else if d.is::<u32>() {
+        ScalarType::U32
+    } else if d.is::<f32>() {
+        ScalarType::F32
+    } else {
+        return Err(format!("No palace correspondence for {:?}", d).into());
+    };
+    Ok(DType::scalar(scalar))
+}
+
+//fn dtype_palace_to_hdf5(d: DType) -> Result<Datatype, Error> {
+//    if d.size != 1 {
+//        Err(format!("No zarr correspondence for {:?}", d))?;
+//    }
+//
+//    Ok(match d.scalar {
+//        ScalarType::U8 => Datatype::from_type::<u8>()?,
+//        ScalarType::I8 => Datatype::from_type::<u8>()?,
+//        ScalarType::U16 => Datatype::from_type::<u16>()?,
+//        ScalarType::I16 => Datatype::from_type::<i16>()?,
+//        ScalarType::F32 => Datatype::from_type::<f32>()?,
+//        ScalarType::U32 => Datatype::from_type::<u32>()?,
+//        ScalarType::I32 => Datatype::from_type::<i32>()?,
+//    })
+//}
+
 pub fn open(
     path: PathBuf,
     volume_location: String,
 ) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let state = Hdf5VolumeSourceState::open(path, volume_location)?;
     Ok(state.operate())
+}
+
+fn copy_chunk_inner<T: hdf5::H5Type + Copy>(
+    dataset: &hdf5::Container,
+    selection: hdf5::Hyperslab,
+    brick_data: &mut [MaybeUninit<u8>],
+    out_info: ChunkInfo<D3>,
+) {
+    let byte_slice_len = brick_data.len();
+    assert_eq!(byte_slice_len % std::mem::size_of::<T>(), 0);
+    let elm_slice_len = byte_slice_len / std::mem::size_of::<T>();
+    let elm_slice_ptr: *mut MaybeUninit<T> = brick_data.as_mut_ptr().cast();
+    assert!(elm_slice_ptr.is_aligned());
+    let brick_data: &mut [MaybeUninit<T>] =
+        unsafe { std::slice::from_raw_parts_mut(elm_slice_ptr.cast(), elm_slice_len) };
+
+    let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
+    let in_chunk = dataset.read_slice::<T, _, ndarray::Ix3>(selection).unwrap();
+    ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
+}
+fn copy_chunk(
+    dataset: &hdf5::Container,
+    selection: hdf5::Hyperslab,
+    dtype: DType,
+    brick_data: &mut [MaybeUninit<u8>],
+    out_info: ChunkInfo<D3>,
+) {
+    assert!(dtype.is_scalar());
+
+    match dtype.scalar {
+        ScalarType::U8 => copy_chunk_inner::<u8>(dataset, selection, brick_data, out_info),
+        ScalarType::I8 => copy_chunk_inner::<i8>(dataset, selection, brick_data, out_info),
+        ScalarType::U16 => copy_chunk_inner::<u16>(dataset, selection, brick_data, out_info),
+        ScalarType::I16 => copy_chunk_inner::<i16>(dataset, selection, brick_data, out_info),
+        ScalarType::F32 => copy_chunk_inner::<f32>(dataset, selection, brick_data, out_info),
+        ScalarType::U32 => copy_chunk_inner::<u32>(dataset, selection, brick_data, out_info),
+        ScalarType::I32 => copy_chunk_inner::<i32>(dataset, selection, brick_data, out_info),
+    }
 }
 
 impl Hdf5VolumeSourceState {
@@ -85,10 +165,7 @@ impl Hdf5VolumeSourceState {
             }
         };
 
-        let dtype = vol.dtype()?;
-        if !dtype.is::<f32>() {
-            return Err("Only f32 volumes are supported".into());
-        }
+        let dtype = dtype_hdf5_to_palace(&vol.dtype()?)?;
 
         let metadata = VolumeMetaData {
             dimensions,
@@ -104,6 +181,7 @@ impl Hdf5VolumeSourceState {
                 dataset: vol,
                 path,
                 volume_location,
+                dtype,
             }),
         })
     }
@@ -113,7 +191,7 @@ impl Hdf5VolumeSourceState {
             OperatorDescriptor::new("Hdf5VolumeSourceState::operate")
                 .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
                 .dependent_on_data(self.inner.volume_location.as_bytes()),
-            Default::default(),
+            self.inner.dtype,
             self.inner.metadata,
             self.clone(),
             move |ctx, positions, this| {
@@ -126,18 +204,18 @@ impl Hdf5VolumeSourceState {
 
                         let num_voxels = this.inner.metadata.chunk_size.hmul();
 
-                        let mut brick_handle = ctx.submit(ctx.alloc_slot(pos, num_voxels)).await;
-                        let brick_data = &mut *brick_handle;
+                        let dtype = this.inner.dtype;
+                        let layout = dtype.array_layout(num_voxels);
+
+                        let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
+                        let mut brick_handle = ctx.submit(ctx.alloc_raw(data_id, layout)).await;
+                        let brick_data = brick_handle.data();
                         let dataset = &this.inner.dataset;
                         ctx.submit(ctx.spawn_io(|| {
-                            palace_core::data::init_non_full(brick_data, &chunk, f32::NAN);
-
+                            palace_core::data::init_non_full(brick_data, &chunk, 0);
                             let out_info = metadata.chunk_info(pos);
-                            let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
-                            let in_chunk = dataset
-                                .read_slice::<f32, _, ndarray::Ix3>(selection)
-                                .unwrap();
-                            ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
+
+                            copy_chunk(&dataset, selection, dtype, brick_data, out_info);
                         }))
                         .await;
 
