@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::runtime::RunTime;
+use palace_zarr::WriteHints;
 
 #[derive(Subcommand, Clone)]
 enum Output {
@@ -33,12 +34,16 @@ struct CliArgs {
     disk_cache_size: Option<bytesize::ByteSize>,
 
     /// Force a specific size for the compute task pool [default: number of cores]
-    #[arg(short, long)]
+    #[arg(long)]
     compute_pool_size: Option<usize>,
 
     /// Use the vulkan device with the specified id
     #[arg(long, default_value = "0")]
     device: usize,
+
+    /// Use the vulkan device with the specified id
+    #[arg(short, long, default_value = "1")]
+    compression_level: i32,
 }
 
 fn main() {
@@ -66,7 +71,9 @@ fn main() {
     let input = &input;
     let input_lod = &input_lod;
 
-    let write_hints = Default::default();
+    let write_hints = WriteHints {
+        compression_level: args.compression_level,
+    };
 
     runtime
         .resolve(None, false, |ctx, _| {

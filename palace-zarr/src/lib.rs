@@ -21,7 +21,7 @@ use palace_core::{
     Error,
 };
 use zarrs::{
-    array::{codec::GzipCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
+    array::{codec::ZstdCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
     node::{Node, NodePath},
     storage::store::FilesystemStore,
 };
@@ -339,14 +339,17 @@ fn create_array_for_tensor<'cref, 'inv>(
     );
 
     if hints.compression_level > 0 {
-        builder.bytes_to_bytes_codecs(vec![Box::new(GzipCodec::new(hints.compression_level)?)]);
+        builder.bytes_to_bytes_codecs(vec![Box::new(ZstdCodec::new(
+            hints.compression_level,
+            false,
+        ))]);
     }
     Ok(builder)
 }
 
 #[derive(Copy, Clone)]
 pub struct WriteHints {
-    pub compression_level: u32,
+    pub compression_level: i32,
 }
 
 impl Default for WriteHints {
