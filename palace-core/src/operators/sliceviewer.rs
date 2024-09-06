@@ -13,7 +13,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkRequestTable,
+    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -246,7 +246,7 @@ pub fn select_level<'a, D: SmallerDim, T>(
     lod: &'a LODTensorOperator<D::Smaller, T>,
     transform_rw: Matrix<D, f32>,
     neighbor_dirs: &[Vector<D::Smaller, f32>],
-) -> &'a EmbeddedTensorOperator<D::Smaller, T> {
+) -> (usize, &'a EmbeddedTensorOperator<D::Smaller, T>) {
     let neighbor_dirs = neighbor_dirs
         .iter()
         .map(|p| (transform_rw.clone() * &p.push_dim_large(0.0)).to_non_homogeneous_coord())
@@ -269,7 +269,7 @@ pub fn select_level<'a, D: SmallerDim, T>(
         }
     }
 
-    &lod.levels[selected_level]
+    (selected_level, &lod.levels[selected_level])
 }
 
 pub fn render_slice(
@@ -421,7 +421,7 @@ void main()
                 let pixel_to_voxel = projection_mat;
 
                 let transform_rw = emd_0.voxel_to_physical() * pixel_to_voxel;
-                let level = select_level(
+                let (level_num, level) = select_level(
                     &input,
                     transform_rw,
                     &[[0.0, 0.0, 1.0].into(), [0.0, 1.0, 0.0].into()],
@@ -593,6 +593,7 @@ void main()
                             &mut to_request_linear,
                             level,
                             &brick_index,
+                            base_batch_size_for_level(level_num),
                         )
                         .await
                     {

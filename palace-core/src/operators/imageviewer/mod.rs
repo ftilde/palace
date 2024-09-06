@@ -8,7 +8,7 @@ use super::tensor::{FrameOperator, LODImageOperator};
 
 use crate::{
     array::{ImageEmbeddingData, ImageMetaData},
-    chunk_utils::ChunkRequestTable,
+    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
     coordinate::GlobalCoordinate,
     data::Vector,
     dim::*,
@@ -149,7 +149,7 @@ pub fn view_image(
 
                 let transform_rw = emd_0.voxel_to_physical() * &out_to_pixel_in;
 
-                let level = crate::operators::sliceviewer::select_level(
+                let (level_num, level) = crate::operators::sliceviewer::select_level(
                     &input,
                     transform_rw,
                     &[[0.0, 1.0].into(), [1.0, 0.0].into()],
@@ -307,6 +307,7 @@ pub fn view_image(
                             &mut to_request_linear,
                             level,
                             &brick_index,
+                            base_batch_size_for_level(level_num),
                         )
                         .await
                     {

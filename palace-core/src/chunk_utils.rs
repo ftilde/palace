@@ -104,12 +104,22 @@ impl VulkanState for ChunkRequestTable {
 
 pub struct Timeout;
 
+pub fn base_batch_size_for_level(level: usize) -> usize {
+    // Thought for heuristic: For level 0 we want to be able to use all cores to load chunks from
+    // disk. For higher levels the number of base bricks increases (estimating: factor 2 in each
+    // dimension -> 2*3=8). This is obviously not correct in all cases (e.g. when we load a lod
+    // volume directly from disk), but is still better than pessimistically always starting with a
+    // base batch size of 1.
+    (32 >> (level * 3)).max(1)
+}
+
 pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
     to_request_linear: &mut [RTElement],
     vol: &'inv TensorOperator<D, StaticElementType<E>>,
     index: &IndexHandle<'_>,
+    base_batch_size: usize,
 ) -> Result<(), Timeout> {
     let dim_in_bricks = vol.metadata.dimension_in_chunks();
     let num_bricks = dim_in_bricks.hmul();
@@ -118,7 +128,7 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
     to_request_linear.sort_unstable();
 
     // Fulfill requests
-    let mut batch_size = 1;
+    let mut batch_size = base_batch_size;
     let mut to_request_linear = &to_request_linear[..];
     while !to_request_linear.is_empty() {
         let batch;

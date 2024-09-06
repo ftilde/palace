@@ -7,7 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkRequestTable,
+    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -838,7 +838,9 @@ pub fn raycast(
                     .await;
 
                     let mut requested_anything = false;
-                    for (level, data) in (input.levels.iter().zip(lod_data.iter())).rev() {
+                    for ((level_num, level), data) in
+                        (input.levels.iter().enumerate().zip(lod_data.iter())).rev()
+                    {
                         let mut to_request_linear = data.1.download_requested(*ctx, device).await;
 
                         if to_request_linear.is_empty() {
@@ -854,6 +856,7 @@ pub fn raycast(
                                 &mut to_request_linear,
                                 level,
                                 &data.0,
+                                base_batch_size_for_level(level_num),
                             )
                             .await
                         {
