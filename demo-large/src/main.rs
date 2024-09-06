@@ -120,6 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vol = palace_volume::open_or_create_lod(args.vol, hints).unwrap();
 
     let vol: LODVolumeOperator<StaticElementType<f32>> = vol
+        .0
         .map(|v| {
             v.map_inner(|v| {
                 palace_core::jit::jit(v)
