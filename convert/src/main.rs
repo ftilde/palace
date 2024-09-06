@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use palace_core::runtime::RunTime;
+use palace_core::{
+    operators::{volume::ChunkSize, volume_gpu::rechunk},
+    runtime::RunTime,
+};
 use palace_volume::LodOrigin;
 use palace_zarr::WriteHints;
 
@@ -45,6 +48,10 @@ struct CliArgs {
     /// Use the vulkan device with the specified id
     #[arg(short, long, default_value = "1")]
     compression_level: i32,
+
+    /// Use the vulkan device with the specified id
+    #[arg(long)]
+    chunk_size: Option<u32>,
 }
 
 fn main() {
@@ -66,6 +73,17 @@ fn main() {
 
     let (input_lod, lod_origin) =
         palace_volume::open_or_create_lod(args.input, palace_volume::Hints::default()).unwrap();
+
+    let input_lod = if let Some(chunk_size) = args.chunk_size {
+        let chunk_size = input_lod.levels[0]
+            .metadata
+            .chunk_size
+            .map(|_| ChunkSize::Fixed(chunk_size.into()));
+        input_lod.map(|t| t.map_inner(|t| rechunk(t, chunk_size)))
+    } else {
+        input_lod
+    };
+
     let input_lod = input_lod.into_dyn();
 
     let input = input_lod.levels[0].clone().into_dyn();
