@@ -205,21 +205,30 @@ impl Priority {
     }
 }
 
-#[derive(Default)]
-struct GraphEventStream(EventStreamBuilder);
+struct GraphEventStream {
+    inner: EventStreamBuilder,
+    enabled: bool,
+}
 
 impl GraphEventStream {
-    // Eventstream stuff:
+    pub fn new(enable_stream_recording: bool) -> Self {
+        Self {
+            inner: Default::default(),
+            enabled: enable_stream_recording,
+        }
+    }
     fn emit_node(&mut self, action: StreamAction, item: impl EventStreamNode) {
-        let node = gs_core::Node {
-            id: item.to_eventstream_id(),
-            label: item.label(),
-        };
-        let e = match action {
-            StreamAction::Add => gs_core::Event::AddNode(node),
-            StreamAction::Remove => gs_core::Event::RemoveNode(node),
-        };
-        self.0.add(e);
+        if self.enabled {
+            let node = gs_core::Node {
+                id: item.to_eventstream_id(),
+                label: item.label(),
+            };
+            let e = match action {
+                StreamAction::Add => gs_core::Event::AddNode(node),
+                StreamAction::Remove => gs_core::Event::RemoveNode(node),
+            };
+            self.inner.add(e);
+        }
     }
 
     fn node_add(&mut self, item: impl EventStreamNode) {
@@ -236,16 +245,18 @@ impl GraphEventStream {
         to: impl EventStreamNode,
         count: usize,
     ) {
-        let edge = gs_core::Edge {
-            from: from.to_eventstream_id(),
-            to: to.to_eventstream_id(),
-            label: format!("{}", count),
-        };
-        let e = match action {
-            StreamAction::Add => gs_core::Event::AddEdge(edge),
-            StreamAction::Remove => gs_core::Event::RemoveEdge(edge),
-        };
-        self.0.add(e);
+        if self.enabled {
+            let edge = gs_core::Edge {
+                from: from.to_eventstream_id(),
+                to: to.to_eventstream_id(),
+                label: format!("{}", count),
+            };
+            let e = match action {
+                StreamAction::Add => gs_core::Event::AddEdge(edge),
+                StreamAction::Remove => gs_core::Event::RemoveEdge(edge),
+            };
+            self.inner.add(e);
+        }
     }
     fn edge_update(
         &mut self,
@@ -254,13 +265,15 @@ impl GraphEventStream {
         count: usize,
         new_count: usize,
     ) {
-        let edge = gs_core::Edge {
-            from: from.to_eventstream_id(),
-            to: to.to_eventstream_id(),
-            label: format!("{}", count),
-        };
-        let e = gs_core::Event::UpdateEdgeLabel(edge, format!("{}", new_count));
-        self.0.add(e);
+        if self.enabled {
+            let edge = gs_core::Edge {
+                from: from.to_eventstream_id(),
+                to: to.to_eventstream_id(),
+                label: format!("{}", count),
+            };
+            let e = gs_core::Event::UpdateEdgeLabel(edge, format!("{}", new_count));
+            self.inner.add(e);
+        }
     }
     fn edge_add(&mut self, from: impl EventStreamNode, to: impl EventStreamNode, count: usize) {
         self.edge(StreamAction::Add, from, to, count)
@@ -270,11 +283,16 @@ impl GraphEventStream {
     }
 }
 
-#[derive(Default)]
 struct HighLevelGraph {
     depends_on: Map<TaskId, Map<TaskId, Set<RequestId>>>,
     //provides_for: Map<TaskId, Map<TaskId, usize>>,
     event_stream: GraphEventStream,
+}
+
+impl Default for HighLevelGraph {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 fn pseudo_tid(t: TaskId) -> (bool, TaskId) {
@@ -290,6 +308,12 @@ fn pseudo_tid(t: TaskId) -> (bool, TaskId) {
 }
 
 impl HighLevelGraph {
+    pub fn new(enable_stream_recording: bool) -> Self {
+        Self {
+            depends_on: Default::default(),
+            event_stream: GraphEventStream::new(enable_stream_recording),
+        }
+    }
     fn add_task(&mut self, t: TaskId) {
         let (pseudo, t) = pseudo_tid(t);
 
@@ -457,8 +481,11 @@ impl EventStreamNode for DataId {
 }
 
 impl TaskGraph {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(enable_stream_recording: bool) -> Self {
+        Self {
+            high_level: HighLevelGraph::new(enable_stream_recording),
+            ..Default::default()
+        }
     }
 
     pub fn add_dependency(
@@ -963,16 +990,21 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
     println!("Finished writing dependency graph to file: {}", filename);
 
     let filename = "hltaskeventstream.json";
-    task_graph
-        .high_level
-        .event_stream
-        .0
-        .stream
-        .save(std::path::Path::new(filename));
-    println!(
-        "Finished writing high level event stream to file: {}",
-        filename
-    );
+
+    if task_graph.high_level.event_stream.enabled {
+        task_graph
+            .high_level
+            .event_stream
+            .inner
+            .stream
+            .save(std::path::Path::new(filename));
+        println!(
+            "Finished writing high level event stream to file: {}",
+            filename
+        );
+    } else {
+        println!("Task event stream recording was not enabled",);
+    }
 }
 
 pub fn export(task_graph: &TaskGraph) {
@@ -1131,14 +1163,18 @@ pub fn export(task_graph: &TaskGraph) {
     println!("Finished writing dependency graph to file: {}", filename);
 
     let filename = "hltaskeventstream.json";
-    task_graph
-        .high_level
-        .event_stream
-        .0
-        .stream
-        .save(std::path::Path::new(filename));
-    println!(
-        "Finished writing high level event stream to file: {}",
-        filename
-    );
+    if task_graph.high_level.event_stream.enabled {
+        task_graph
+            .high_level
+            .event_stream
+            .inner
+            .stream
+            .save(std::path::Path::new(filename));
+        println!(
+            "Finished writing high level event stream to file: {}",
+            filename
+        );
+    } else {
+        println!("Task event stream recording was not enabled",);
+    }
 }

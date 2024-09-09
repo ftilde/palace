@@ -332,7 +332,7 @@ impl RunTime {
                     &mut self.async_result_receiver,
                 ),
                 waker: dummy_waker(),
-                task_graph: TaskGraph::new(),
+                task_graph: TaskGraph::new(save_task_stream),
                 statistics: Statistics::new(),
                 operator_info: Default::default(),
                 transfer_manager: Default::default(),
