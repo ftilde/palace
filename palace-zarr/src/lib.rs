@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use itertools::Itertools;
 use std::{
     mem::MaybeUninit,
     path::{Path, PathBuf},
@@ -393,28 +394,40 @@ async fn write_tensor<'cref, 'inv>(
 ) -> Result<(), palace_core::Error> {
     let md = &t.metadata;
 
-    let chunks = md
-        .chunk_indices()
-        .map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
+    let num_total = md.dimension_in_chunks().hmul();
+    println!("{} chunks to save", num_total);
 
-    let stream =
-        ctx.submit_unordered_with_data(chunks)
-            .then_req(ctx, |(chunk_handle, chunk_id)| {
-                let chunk_pos = md.chunk_pos_from_index(chunk_id);
+    let request_chunk_size = 1024;
+    let chunk_ids_in_parts = md.chunk_indices().chunks(request_chunk_size);
+    let mut i = 0;
+    for chunk_ids in &chunk_ids_in_parts {
+        let requests = chunk_ids.map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
+        let stream =
+            ctx.submit_unordered_with_data(requests)
+                .then_req(ctx, |(chunk_handle, chunk_id)| {
+                    let chunk_pos = md.chunk_pos_from_index(chunk_id);
 
-                let chunk_handle = chunk_handle.into_thread_handle();
-                let array = &array;
-                ctx.spawn_io(move || {
-                    array.store_chunk(
-                        to_zarr_pos(&chunk_pos).inner().as_slice(),
-                        chunk_handle.data(),
-                    )?;
-                    Ok::<_, ArrayError>(chunk_handle)
-                })
-            });
-    futures::pin_mut!(stream);
-    while let Some(handle) = stream.next().await {
-        let _handle = handle?.into_main_handle(ctx.storage());
+                    let chunk_handle = chunk_handle.into_thread_handle();
+                    let array = &array;
+                    ctx.spawn_io(move || {
+                        array.store_chunk(
+                            to_zarr_pos(&chunk_pos).inner().as_slice(),
+                            chunk_handle.data(),
+                        )?;
+                        Ok::<_, ArrayError>(chunk_handle)
+                    })
+                });
+        futures::pin_mut!(stream);
+        while let Some(handle) = stream.next().await {
+            let _handle = handle?.into_main_handle(ctx.storage());
+        }
+        i += request_chunk_size;
+        println!(
+            "{}/{}, {}%",
+            i,
+            num_total,
+            i as f32 / num_total as f32 * 100.0
+        );
     }
 
     Ok(())
@@ -462,21 +475,6 @@ pub fn save_lod_tensor(
     let store = &store;
 
     if recreate_lod {
-        runtime.resolve(None, false, |ctx, _| {
-            async move {
-                for (level, tensor) in t.levels.iter().enumerate() {
-                    let array = create_array_for_embedded_tensor(tensor, hints)?
-                        .build(Arc::clone(store), &level_path(level))?;
-
-                    array.store_metadata()?;
-
-                    write_tensor(ctx, &array, tensor).await?;
-                }
-                Ok(())
-            }
-            .into()
-        })?;
-    } else {
         let step_factor = 2.0;
 
         let current = t.levels[0].clone();
@@ -521,6 +519,21 @@ pub fn save_lod_tensor(
             current = smooth_downsample(current_float, new_md.clone()).into();
             current_level += 1;
         }
+    } else {
+        runtime.resolve(None, false, |ctx, _| {
+            async move {
+                for (level, tensor) in t.levels.iter().enumerate() {
+                    let array = create_array_for_embedded_tensor(tensor, hints)?
+                        .build(Arc::clone(store), &level_path(level))?;
+
+                    array.store_metadata()?;
+
+                    write_tensor(ctx, &array, tensor).await?;
+                }
+                Ok(())
+            }
+            .into()
+        })?;
     }
 
     Ok(())

@@ -2036,6 +2036,7 @@ name = "palace-zarr"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "itertools 0.13.0",
  "palace-core",
  "serde_json",
  "zarrs",
