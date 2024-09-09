@@ -3,6 +3,9 @@ use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
 use palace_core::dtypes::{DType, ElementType, ScalarType};
 use palace_core::operator::DataDescriptor;
+use palace_core::storage::DataLocation;
+use palace_core::util::Map;
+use palace_core::vulkan::{vk, DeviceId};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -196,8 +199,19 @@ impl Hdf5VolumeSourceState {
             self.clone(),
             move |ctx, positions, this| {
                 async move {
+                    let mut positions_gpus: Map<DeviceId, Vec<_>> = Map::default();
+                    let mut positions_cpu = Vec::new();
+                    for (position, location) in positions.into_iter() {
+                        match location {
+                            DataLocation::CPU(_) => positions_cpu.push(position),
+                            DataLocation::GPU(i) => {
+                                positions_gpus.entry(i).or_default().push(position)
+                            }
+                        }
+                    }
+
                     let metadata = this.inner.metadata;
-                    for (pos, _) in positions {
+                    for pos in positions_cpu {
                         let chunk = metadata.chunk_info(pos);
 
                         let selection = to_hdf5_hyperslab(*chunk.begin(), chunk.end());
@@ -222,6 +236,71 @@ impl Hdf5VolumeSourceState {
                         // Safety: At this point the thread pool job above has finished and has initialized all bytes
                         // in the brick.
                         unsafe { brick_handle.initialized(*ctx) };
+                    }
+
+                    for (device_id, positions_gpu) in positions_gpus {
+                        let device = ctx.device_ctx(device_id);
+                        for pos in positions_gpu {
+                            let chunk = metadata.chunk_info(pos);
+
+                            let selection = to_hdf5_hyperslab(*chunk.begin(), chunk.end());
+
+                            let num_voxels = this.inner.metadata.chunk_size.hmul();
+
+                            let dtype = this.inner.dtype;
+                            let layout = dtype.array_layout(num_voxels);
+
+                            let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
+                            let brick_handle =
+                                ctx.submit(ctx.alloc_raw_gpu(device, data_id, layout)).await;
+
+                            let staging_buf = ctx
+                                .submit(device.staging_to_gpu.request(device, layout))
+                                .await;
+
+                            let ptr = staging_buf
+                                .mapped_ptr()
+                                .unwrap()
+                                .cast::<MaybeUninit<u8>>()
+                                .as_ptr();
+                            let chunk_data = unsafe {
+                                std::slice::from_raw_parts_mut(ptr, staging_buf.size as usize)
+                            };
+
+                            let dataset = &this.inner.dataset;
+                            ctx.submit(ctx.spawn_io(|| {
+                                palace_core::data::init_non_full(chunk_data, &chunk, 0);
+                                let out_info = metadata.chunk_info(pos);
+
+                                copy_chunk(&dataset, selection, dtype, chunk_data, out_info);
+                            }))
+                            .await;
+
+                            device.with_cmd_buffer(|cmd| {
+                                let copy_info =
+                                    vk::BufferCopy::builder().size(brick_handle.size as _);
+                                unsafe {
+                                    device.functions().cmd_copy_buffer(
+                                        cmd.raw(),
+                                        staging_buf.buffer,
+                                        brick_handle.buffer,
+                                        &[*copy_info],
+                                    );
+                                }
+                            });
+
+                            unsafe {
+                                brick_handle.initialized(
+                                    *ctx,
+                                    palace_core::vulkan::SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::TRANSFER,
+                                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                                    },
+                                )
+                            };
+
+                            unsafe { device.staging_to_gpu.return_buf(device, staging_buf) };
+                        }
                     }
                     Ok(())
                 }
