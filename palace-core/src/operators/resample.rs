@@ -63,23 +63,26 @@ pub fn smooth_downsample<'op, D: LargerDim>(
     input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     output_size: TensorMetaData<D>,
 ) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+    const DOWNSAMPLE_SCALE_MULT: f32 = 0.5;
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
         let s_out = output_size.dimensions.raw().f32();
 
         let downsample_factor = s_in / s_out;
-        let stddev = downsample_factor.scale(0.5);
+        let stddev = downsample_factor.scale(DOWNSAMPLE_SCALE_MULT);
         stddev
     };
 
-    let kernels = scale
-        .into_iter()
-        .map(|scale| crate::operators::kernels::gauss(scale))
-        .collect::<Vec<_>>();
-    let kernel_refs = Vector::try_from_fn_and_len(kernels.len(), |i| &kernels[i]).unwrap();
-    let smoothed =
-        input.map_inner(|v| crate::operators::volume_gpu::separable_convolution(v, kernel_refs));
-    resample(smoothed, output_size)
+    let mut v = input;
+    for dim in (0..v.dim().n()).rev() {
+        let scale = scale[dim];
+        if scale != DOWNSAMPLE_SCALE_MULT {
+            let kernel = crate::operators::kernels::gauss(scale);
+            v = v.map_inner(|v| crate::operators::volume_gpu::convolution_1d(v, kernel, dim));
+        }
+    }
+
+    resample(v, output_size)
 }
 
 pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
