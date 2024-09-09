@@ -153,7 +153,6 @@ impl TaskOrigin {
     pub fn merge(&self, other: TaskOrigin) -> Self {
         //TODO: Maybe revisit this
         let progress = self.progress.max(other.progress);
-        assert!(progress < 0xffff);
         Self {
             level: self.level.max(other.level),
             class: self.class.max(other.class),
@@ -184,15 +183,15 @@ impl PartialOrd for Priority {
 impl Priority {
     fn prio(&self) -> u64 {
         let progress = self.total_progress();
+        // NOTE: The following does currently not work anymore since progress is not < (1<<32>
         //(((1 << 8) - (self.origin.level as u64)) << 56) + ((progress as u64) << 32) + (1 << 32)
         //    - (self.ts as u64)
         ((self.origin.class as u8 as u64) << 56)
             + (((1 << 8) - (self.origin.level as u64)) << 48)
-            + ((progress as u64) << 32)
+            + (progress as u64)
     }
 
     fn total_progress(&self) -> u32 {
-        assert!(self.progress < 0xffff);
         self.progress + self.origin.progress
     }
 
