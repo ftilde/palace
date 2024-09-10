@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    dim::{DDyn, D3},
-    dtypes::{DType, ScalarType, StaticElementType},
-    operators::{
-        tensor::EmbeddedTensorOperator,
-        volume::{EmbeddedVolumeOperator, LODVolumeOperator},
-    },
+    dim::D3,
+    dtypes::DType,
+    operators::volume::{EmbeddedVolumeOperator, LODVolumeOperator},
     vec::LocalVoxelPosition,
 };
 
@@ -98,22 +95,9 @@ pub fn open_or_create_lod(
     } else {
         let vol = open(path, hints)?.into_dyn();
 
-        let vol_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> = vol
-            .clone()
-            .map_inner(|input| {
-                palace_core::jit::jit(input)
-                    .cast(ScalarType::F32.into())
-                    .unwrap()
-                    .compile()
-                    .unwrap()
-            })
-            .try_into()
+        let vol: LODVolumeOperator<DType> = palace_core::operators::resample::create_lod(vol, 2.0)
+            .try_into_static::<D3>()
             .unwrap();
-
-        let vol: LODVolumeOperator<StaticElementType<f32>> =
-            palace_core::operators::resample::create_lod(vol_float, 2.0)
-                .try_into_static::<D3>()
-                .unwrap();
         (vol.into(), LodOrigin::Dynamic)
     })
 }

@@ -11,7 +11,7 @@ use palace_core::{
     array::{TensorEmbeddingData, TensorMetaData},
     data::{Coordinate, CoordinateType},
     dim::{DDyn, DynDimension},
-    dtypes::{DType, ElementType, ScalarType, StaticElementType},
+    dtypes::{DType, ElementType, ScalarType},
     operator::{DataDescriptor, OperatorDescriptor},
     operators::{
         resample::smooth_downsample,
@@ -477,17 +477,9 @@ pub fn save_lod_tensor(
     if recreate_lod {
         let step_factor = 2.0;
 
-        let current = t.levels[0].clone();
+        let mut current = t.levels[0].clone();
         let mut current_level = 0;
 
-        // Cast to float. TODO: Remove once we have resampling for other types
-        let mut current = current.clone().map_inner(|input| {
-            palace_core::jit::jit(input)
-                .cast(ScalarType::F32.into())
-                .unwrap()
-                .compile()
-                .unwrap()
-        });
         loop {
             let current_location = level_path(current_level);
             let current_location_ref = &current_location;
@@ -511,12 +503,10 @@ pub fn save_lod_tensor(
             let new_md = palace_core::operators::resample::coarser_lod_md(&current, step_factor);
 
             current = open(path.into(), current_location)?;
-            let current_float: EmbeddedTensorOperator<DDyn, StaticElementType<f32>> =
-                current.try_into().unwrap();
 
             //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
             //like "cache everything but the highest resolution layer" on LODTensorOperator
-            current = smooth_downsample(current_float, new_md.clone()).into();
+            current = smooth_downsample(current, new_md.clone()).into();
             current_level += 1;
         }
     } else {
