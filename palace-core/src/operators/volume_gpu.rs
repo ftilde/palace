@@ -534,18 +534,17 @@ void main() {
 /// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
 /// supported (and thus always applied) border handling routine.
 //TODO It should be relatively easy to support other strategies now
-pub fn convolution_1d<D: DynDimension, T: ElementType>(
+pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
     input: TensorOperator<D, T>,
-    kernel: ArrayOperator<T>,
+    kernel: ArrayOperator<K>,
     dim: usize,
 ) -> TensorOperator<D, T> {
     let nd = input.dim().n();
 
     assert!(dim < nd);
 
-    assert_eq!(input.dtype(), kernel.dtype());
-
     let dtype: DType = input.dtype().into();
+    let kernel_dtype: DType = kernel.dtype().into();
 
     let push_constants = DynPushConstants::new()
         .vec::<u32>(nd, "mem_dim")
@@ -568,7 +567,7 @@ layout(std430, binding = 0) readonly buffer InputBuffer{
 } sourceData[MAX_BRICKS];
 
 layout(std430, binding = 1) readonly buffer KernelBuffer{
-    T values[KERNEL_SIZE];
+    K values[KERNEL_SIZE];
 } kernel;
 
 layout(std430, binding = 2) buffer OutputBuffer{
@@ -577,7 +576,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
 
 declare_push_consts(consts)
 
-T kernel_val(int p) {
+K kernel_val(int p) {
     int kernel_buf_index = consts.extent - p;
     return kernel.values[kernel_buf_index];
 }
@@ -592,7 +591,7 @@ void main() {
 
     if(gID < BRICK_MEM_SIZE) {
         uint[N] out_local = from_linear(gID, consts.mem_dim);
-        T acc = T(0);
+        K acc = K(0);
 
         if(all(less_than(out_local, consts.logical_dim_out))) {
 
@@ -635,14 +634,14 @@ void main() {
 
                     for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        acc += kernel_val(kernel_offset) * local_val;
+                        acc += kernel_val(kernel_offset) * K(local_val);
                     }
                 }
 
                 for (int local=l_begin; local<=l_end; ++local) {
                     int kernel_offset = local - out_pos_rel_to_in_pos_rel;
                     pos[DIM] = local;
-                    acc += kernel_val(kernel_offset) * sample_brick(pos, i);
+                    acc += kernel_val(kernel_offset) * K(sample_brick(pos, i));
                 }
 
                 // Border handling for last chunk in dim
@@ -652,7 +651,7 @@ void main() {
 
                     for (int local=chunk_end_local+1; local<=l_end_no_clip; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        acc += kernel_val(kernel_offset) * local_val;
+                        acc += kernel_val(kernel_offset) * K(local_val);
                     }
                 }
             }
@@ -660,7 +659,7 @@ void main() {
             //acc = NaN;
         }
 
-        outputData.values[gID] = acc;
+        outputData.values[gID] = T(acc);
     }
 }
 "#;
@@ -751,6 +750,7 @@ void main() {
                         .dependent_on(&dim)
                         .dependent_on(&nd)
                         .dependent_on(&dtype)
+                        .dependent_on(&kernel_dtype)
                         .dependent_on(&m_in.chunk_size)
                         .dependent_on(&kernel_size),
                     || {
@@ -763,11 +763,13 @@ void main() {
                                     .add("DIM", dim)
                                     .add("N", nd)
                                     .add("T", dtype.glsl_type())
+                                    .add("K", kernel_dtype.glsl_type())
                                     .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                     .add("KERNEL_SIZE", kernel_size)
                                     .push_const_block_dyn(&push_constants),
                                 Config::new()
                                     .ext(dtype.glsl_ext())
+                                    .ext(kernel_dtype.glsl_ext())
                                     .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                             ),
                             true,
@@ -867,9 +869,9 @@ void main() {
 }
 
 //TODO: kind of annoying that we have to use a reference to the operator here, but that is the only way it is copy...
-pub fn separable_convolution<D: DynDimension, T: ElementType>(
+pub fn separable_convolution<D: DynDimension, T: ElementType, K: ElementType>(
     mut v: TensorOperator<D, T>,
-    kernels: Vector<D, &ArrayOperator<T>>,
+    kernels: Vector<D, &ArrayOperator<K>>,
 ) -> TensorOperator<D, T> {
     assert_eq!(v.dim(), kernels.dim());
     for dim in (0..v.dim().n()).rev() {
