@@ -588,7 +588,11 @@ impl TaskGraph {
         }
     }
     pub fn has_produced_data(&mut self, task: TaskId, data: DataId) {
-        assert!(self.data_provided_by.get_mut(&data).unwrap().remove(&task));
+        let dpb_entry = self.data_provided_by.get_mut(&data).unwrap();
+        assert!(dpb_entry.remove(&task));
+        if dpb_entry.is_empty() {
+            self.data_provided_by.remove(&data);
+        }
 
         let entry = self.will_provide_data.get_mut(&task).unwrap();
         assert!(entry.remove(&data));
