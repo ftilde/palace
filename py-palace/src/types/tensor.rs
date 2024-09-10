@@ -366,11 +366,10 @@ impl EmbeddedTensorOperator {
         })
     }
     fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
-        Ok(palace_core::operators::resample::create_lod(
-            self.clone().into_core().try_into()?,
-            step_factor,
+        Ok(
+            palace_core::operators::resample::create_lod(self.clone().into_core(), step_factor)
+                .try_into()?,
         )
-        .try_into()?)
     }
 }
 

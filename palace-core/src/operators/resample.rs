@@ -7,12 +7,12 @@ use crate::{
     coordinate::ChunkCoordinate,
     data::{Matrix, Vector, AABB},
     dim::*,
-    dtypes::{ElementType, StaticElementType},
+    dtypes::{DType, ElementType},
     operator::{OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipeline, DescriptorConfig, DynPushConstants},
-        shader::ShaderDefines,
+        shader::{Config, ShaderDefines},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -37,10 +37,10 @@ pub fn resample_rescale_mat<'op, D: LargerDim>(
     out
 }
 
-pub fn resample<'op, D: LargerDim>(
-    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+pub fn resample<'op, D: LargerDim, T: ElementType>(
+    input: EmbeddedTensorOperator<D, T>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+) -> EmbeddedTensorOperator<D, T> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
     let inner = resample_transform(input.inner, output_size.clone(), mat.clone());
     let mut embedding_data = input.embedding_data;
@@ -59,10 +59,10 @@ pub fn resample<'op, D: LargerDim>(
     }
 }
 
-pub fn smooth_downsample<'op, D: LargerDim>(
-    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+pub fn smooth_downsample<'op, D: LargerDim, T: ElementType>(
+    input: EmbeddedTensorOperator<D, T>,
     output_size: TensorMetaData<D>,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+) -> EmbeddedTensorOperator<D, T> {
     const DOWNSAMPLE_SCALE_MULT: f32 = 0.5;
     let scale = {
         let s_in = input.metadata.dimensions.raw().f32();
@@ -114,10 +114,10 @@ pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
     }
 }
 
-pub fn create_lod<D: LargerDim>(
-    input: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+pub fn create_lod<D: LargerDim, T: ElementType>(
+    input: EmbeddedTensorOperator<D, T>,
     step_factor: f32,
-) -> LODTensorOperator<D, StaticElementType<f32>> {
+) -> LODTensorOperator<D, T> {
     assert!(step_factor > 1.0);
 
     let mut levels = Vec::new();
@@ -137,11 +137,11 @@ pub fn create_lod<D: LargerDim>(
     LODTensorOperator { levels }
 }
 
-pub fn resample_transform<D: LargerDim>(
-    input: TensorOperator<D, StaticElementType<f32>>,
+pub fn resample_transform<D: LargerDim, T: ElementType>(
+    input: TensorOperator<D, T>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,
-) -> TensorOperator<D, StaticElementType<f32>> {
+) -> TensorOperator<D, T> {
     let nd = input.dim().n();
 
     let push_constants = DynPushConstants::new()
@@ -151,20 +151,15 @@ pub fn resample_transform<D: LargerDim>(
         .vec::<u32>(nd, "mem_size_out")
         .vec::<u32>(nd, "out_begin");
 
+    let dtype_dyn: DType = input.dtype().into();
+
     const SHADER: &'static str = r#"
-#version 450
-
-#extension GL_EXT_scalar_block_layout : require
-
-#extension GL_EXT_buffer_reference : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-
 #include <util.glsl>
 #include <mat.glsl>
 #include <vec.glsl>
 #include <util.glsl>
 
-#define ChunkValue float
+#define ChunkValue T
 
 #define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
 #include <sample.glsl>
@@ -184,7 +179,7 @@ layout(std430, binding = 0) buffer RefBuffer {
 } bricks;
 
 layout(std430, binding = 1) buffer OutputBuffer{
-    float values[];
+    T values[];
 } outputData;
 
 declare_push_consts(consts)
@@ -214,7 +209,7 @@ void main() {
         float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
         map(N, sample_pos, sample_pos, round);
 
-        float default_val = 0.5;
+        T default_val = T(0);
 
         TensorMetaData(N) m_in;
         m_in.dimensions = consts.vol_dim_in;
@@ -222,7 +217,7 @@ void main() {
 
         int res;
         uint sample_brick_pos_linear;
-        float sampled_intensity;
+        T sampled_intensity;
         try_sample(N, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
         if(res == SAMPLE_RES_FOUND) {
@@ -245,7 +240,7 @@ void main() {
             .dependent_on(&input)
             .dependent_on_data(&output_size)
             .dependent_on_data(&element_out_to_in),
-        Default::default(),
+        input.dtype(),
         output_size.clone(),
         (input, output_size, element_out_to_in, push_constants),
         move |ctx, mut positions, (input, output_size, element_out_to_in, push_constants)| {
@@ -267,7 +262,8 @@ void main() {
                         .of(ctx.current_op())
                         .dependent_on(&num_chunks)
                         .dependent_on(&m_in.chunk_size)
-                        .dependent_on(&nd),
+                        .dependent_on(&nd)
+                        .dependent_on(&dtype_dyn),
                     || {
                         ComputePipeline::new(
                             device,
@@ -277,7 +273,13 @@ void main() {
                                     .add("NUM_CHUNKS", num_chunks)
                                     .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
                                     .add("N", nd)
+                                    .add("T", dtype_dyn.glsl_type())
                                     .push_const_block_dyn(&push_constants),
+                                Config::new()
+                                    .ext(dtype_dyn.glsl_ext())
+                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
+                                    .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
+                                    .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
                             ),
                             true,
                         )
