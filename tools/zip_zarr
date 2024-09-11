@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -e
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: INPUT OUTPUT"
+fi
+
+zarr_dir="$1"
+zip_dir=$(realpath "$2")
+
+cd $zarr_dir
+zip -r0 $zip_dir .
