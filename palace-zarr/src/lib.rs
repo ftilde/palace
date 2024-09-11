@@ -96,7 +96,7 @@ fn open_storage_for_read(path: &Path) -> Result<Arc<dyn ZarrReadStorage>, Error>
         //    StoreKey::new(path.file_name().unwrap().to_str().unwrap())?,
         //)?))
 
-        let store = Arc::new(zip_reader::Reader::open(&path)?);
+        let store = Arc::new(zip_reader::Reader::open(path.to_owned())?);
         Ok(store)
     } else {
         Ok(Arc::new(FilesystemStore::new(&path)?))
