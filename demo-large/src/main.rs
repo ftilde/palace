@@ -478,7 +478,7 @@ fn eval_network(
                         ui.add(
                             egui::Slider::new(
                                 &mut app_state.raycasting.config.lod_coarseness,
-                                1.0..=100.0,
+                                0.01..=100.0,
                             )
                             .text("LOD coarseness")
                             .logarithmic(true),
