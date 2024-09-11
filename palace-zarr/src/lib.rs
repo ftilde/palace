@@ -1,3 +1,5 @@
+mod zip_reader;
+
 use futures::StreamExt;
 use itertools::Itertools;
 use std::{
@@ -28,10 +30,7 @@ use palace_core::{
 use zarrs::{
     array::{codec::ZstdCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
     node::{Node, NodePath},
-    storage::{
-        storage_adapter::zip::ZipStorageAdapter, store::FilesystemStore, ListableStorageTraits,
-        ReadableStorageTraits, StoreKey,
-    },
+    storage::{store::FilesystemStore, ListableStorageTraits, ReadableStorageTraits},
 };
 
 const SPACING_KEY: &str = "spacing_us";
@@ -91,11 +90,14 @@ pub struct ZarrSourceStateInner {
 
 fn open_storage_for_read(path: &Path) -> Result<Arc<dyn ZarrReadStorage>, Error> {
     if path.extension().and_then(|s| s.to_str()) == Some("zip") {
-        let store = Arc::new(FilesystemStore::new(&path.parent().unwrap())?);
-        Ok(Arc::new(ZipStorageAdapter::new(
-            store,
-            StoreKey::new(path.file_name().unwrap().to_str().unwrap())?,
-        )?))
+        //let store = Arc::new(FilesystemStore::new(&path.parent().unwrap())?);
+        //Ok(Arc::new(ZipStorageAdapter::new(
+        //    store,
+        //    StoreKey::new(path.file_name().unwrap().to_str().unwrap())?,
+        //)?))
+
+        let store = Arc::new(zip_reader::Reader::open(&path)?);
+        Ok(store)
     } else {
         Ok(Arc::new(FilesystemStore::new(&path)?))
     }
@@ -362,7 +364,7 @@ fn create_array_for_tensor<'cref, 'inv>(
     );
 
     if hints.compression_level > 0 {
-        builder.bytes_to_bytes_codecs(vec![Box::new(ZstdCodec::new(
+        builder.bytes_to_bytes_codecs(vec![Arc::new(ZstdCodec::new(
             hints.compression_level,
             false,
         ))]);
@@ -491,6 +493,9 @@ pub fn save_lod_tensor(
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
     let store = &store;
+
+    let group = zarrs::group::GroupBuilder::new().build(Arc::clone(store), "/")?;
+    group.store_metadata()?;
 
     if recreate_lod {
         let step_factor = 2.0;
