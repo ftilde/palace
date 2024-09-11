@@ -8,4 +8,4 @@ futures = "0.3.30"
 itertools = "0.13.0"
 palace-core = { path = "../palace-core" }
 serde_json = "1.0.127"
-zarrs = "0.16.4"
+zarrs = { version = "0.16.4", features = ["zip"] }

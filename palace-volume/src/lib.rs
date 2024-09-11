@@ -52,9 +52,11 @@ pub fn open(
             palace_nifti::open_separate(path, data)
         }
         [.., "h5"] => palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned())),
-        [.., "zarr"] => palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
-            .try_into_static::<D3>()
-            .ok_or_else(|| "Volume is not 3-dimensional".into()),
+        [.., "zarr"] | [.., "zarr", "zip"] => {
+            palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
+                .try_into_static::<D3>()
+                .ok_or_else(|| "Volume is not 3-dimensional".into())
+        }
         _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
     }
 }
@@ -70,9 +72,11 @@ pub fn open_lod(
     let segments = file.split('.').collect::<Vec<_>>();
 
     match segments[..] {
-        [.., "zarr"] => palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))?
-            .try_into_static::<D3>()
-            .ok_or_else(|| "Volume is not 3-dimensional".into()),
+        [.., "zarr"] | [.., "zarr", "zip"] => {
+            palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))?
+                .try_into_static::<D3>()
+                .ok_or_else(|| "Volume is not 3-dimensional".into())
+        }
         _ => Err(format!(
             "Unknown lod volume format for file {}",
             path.to_string_lossy()

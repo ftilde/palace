@@ -28,7 +28,10 @@ use palace_core::{
 use zarrs::{
     array::{codec::ZstdCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
     node::{Node, NodePath},
-    storage::store::FilesystemStore,
+    storage::{
+        storage_adapter::zip::ZipStorageAdapter, store::FilesystemStore, ListableStorageTraits,
+        ReadableStorageTraits, StoreKey,
+    },
 };
 
 const SPACING_KEY: &str = "spacing_us";
@@ -75,19 +78,34 @@ pub struct ZarrSourceState {
     inner: Rc<ZarrSourceStateInner>,
 }
 
+trait ZarrReadStorage: ReadableStorageTraits + ListableStorageTraits {}
+impl<T: ReadableStorageTraits + ListableStorageTraits> ZarrReadStorage for T {}
+
 pub struct ZarrSourceStateInner {
     metadata: TensorMetaData<DDyn>,
     embedding_data: TensorEmbeddingData<DDyn>,
-    array: Array<FilesystemStore>,
+    array: Array<dyn ZarrReadStorage>,
     path: PathBuf,
     dtype: DType,
+}
+
+fn open_storage_for_read(path: &Path) -> Result<Arc<dyn ZarrReadStorage>, Error> {
+    if path.extension().and_then(|s| s.to_str()) == Some("zip") {
+        let store = Arc::new(FilesystemStore::new(&path.parent().unwrap())?);
+        Ok(Arc::new(ZipStorageAdapter::new(
+            store,
+            StoreKey::new(path.file_name().unwrap().to_str().unwrap())?,
+        )?))
+    } else {
+        Ok(Arc::new(FilesystemStore::new(&path)?))
+    }
 }
 
 pub fn open(
     path: PathBuf,
     volume_location: String,
 ) -> Result<EmbeddedTensorOperator<DDyn, DType>, Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
+    let store = open_storage_for_read(&path)?;
     let array = Array::open(store, &volume_location)?;
     let state = ZarrSourceState::from_array(path, array)?;
     Ok(state.operate())
@@ -108,7 +126,7 @@ pub fn open_lod(
     path: PathBuf,
     level_prefix: String,
 ) -> Result<LODTensorOperator<DDyn, DType>, Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
+    let store = open_storage_for_read(&path)?;
     let mut leafs = Vec::new();
     let root = Node::open(&store, "/").unwrap();
     collect_leafs(&root, &mut leafs);
@@ -142,7 +160,7 @@ pub fn open_lod(
 }
 
 impl ZarrSourceState {
-    pub fn from_array(path: PathBuf, array: Array<FilesystemStore>) -> Result<Self, Error> {
+    fn from_array(path: PathBuf, array: Array<dyn ZarrReadStorage>) -> Result<Self, Error> {
         let dimensions = from_zarr_pos(array.shape()).global();
         let nd = dimensions.len();
         let num_chunks = from_zarr_pos(&array.chunk_grid_shape().unwrap()).chunk();
