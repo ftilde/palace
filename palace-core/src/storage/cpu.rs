@@ -26,6 +26,27 @@ pub struct StorageInfo {
     pub data_longevity: DataLongevity,
 }
 
+impl StorageInfo {
+    unsafe fn as_mut_slice_of<'a, 'b, T>(&'a mut self) -> &'b mut [T] {
+        let t_ptr = self.data.cast::<T>();
+
+        let num_elements = num_elms_in_array::<T>(self.layout.size());
+
+        // Safety: Type matches as per contract upheld by caller. There are also no mutable
+        // references to the slot since it has already been initialized.
+        unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) }
+    }
+    unsafe fn as_slice_of<'a, 'b, T>(&'a self) -> &'b [T] {
+        let t_ptr = self.data.cast::<T>();
+
+        let num_elements = num_elms_in_array::<T>(self.layout.size());
+
+        // Safety: Type matches as per contract upheld by caller. There are also no mutable
+        // references to the slot since it has already been initialized.
+        unsafe { std::slice::from_raw_parts(t_ptr, num_elements) }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 enum StorageEntryState {
     Registered,
@@ -369,6 +390,7 @@ impl<'a, T: ?Sized + Send> ThreadWriteHandle<'a, T, ThreadMarkerInitialized> {
         ctx: OpaqueTaskContext<'a, 'inv>,
     ) -> WriteHandleInit<'a, T, super::ram::RamAllocator> {
         self._panic_handle.dismiss();
+
         WriteHandle {
             drop_handler: DropMarkInitialized {
                 access: AccessToken {
@@ -518,16 +540,16 @@ pub type WriteHandleUninit<'a, T, Allocator> = WriteHandle<'a, T, DropError<'a, 
 pub type RawWriteHandleUninit<'a, Allocator> = RawWriteHandle<DropError<'a, Allocator>>;
 pub type ThreadWriteHandleUninit<'a, T> = ThreadWriteHandle<'a, T, ThreadMarkerUninitialized>;
 
-impl<'a, T: ?Sized, Allocator> WriteHandleUninit<'a, T, Allocator> {
+impl<'a, T: AsInit + ?Sized, Allocator> WriteHandleUninit<'a, T, Allocator> {
     /// Safety: The corresponding slot has to have been completely written to, i.e. all
     /// (non-padding) bytes of T must have been written.
     pub unsafe fn initialized<'inv>(
         self,
         ctx: OpaqueTaskContext<'a, 'inv>,
-    ) -> WriteHandleInit<'a, T, Allocator> {
+    ) -> WriteHandleInit<'a, T::Init, Allocator> {
         WriteHandle {
             drop_handler: self.drop_handler.into_mark_initialized(ctx, None),
-            data: self.data,
+            data: T::assume_init(self.data),
         }
     }
 
@@ -537,10 +559,10 @@ impl<'a, T: ?Sized, Allocator> WriteHandleUninit<'a, T, Allocator> {
         self,
         ctx: OpaqueTaskContext<'a, 'inv>,
         version: DataVersionType,
-    ) -> WriteHandleInit<'a, T, Allocator> {
+    ) -> WriteHandleInit<'a, T::Init, Allocator> {
         WriteHandle {
             drop_handler: self.drop_handler.into_mark_initialized(ctx, Some(version)),
-            data: self.data,
+            data: T::assume_init(self.data),
         }
     }
 }
@@ -667,6 +689,25 @@ impl<'a, T: Send> ThreadInplaceHandle<'a, T> {
                 w.into_main_handle(&ctx.storage),
             ),
         }
+    }
+}
+
+pub trait AsInit {
+    type Init: ?Sized + Send;
+    unsafe fn assume_init(&mut self) -> &mut Self::Init;
+}
+
+impl<T: Send> AsInit for MaybeUninit<T> {
+    type Init = T;
+    unsafe fn assume_init(&mut self) -> &mut Self::Init {
+        self.assume_init_mut()
+    }
+}
+
+impl<T: Send> AsInit for [MaybeUninit<T>] {
+    type Init = [T];
+    unsafe fn assume_init(&mut self) -> &mut Self::Init {
+        crate::data::slice_assume_init_mut(self)
     }
 }
 
@@ -973,17 +1014,9 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 return Err(access);
             };
 
-            let ptr = info.data;
-            let t_ptr = ptr.cast::<T>();
-
-            let num_elements = num_elms_in_array::<T>(info.layout.size());
-
             // Safety: Type matches as per contract upheld by caller. There are also no mutable
             // references to the slot since it has already been initialized.
-            (
-                unsafe { std::slice::from_raw_parts(t_ptr, num_elements) },
-                info.data_longevity,
-            )
+            (info.as_slice_of::<T>(), info.data_longevity)
         };
         Ok(ReadHandle {
             access,
