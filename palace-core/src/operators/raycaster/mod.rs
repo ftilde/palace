@@ -7,7 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
+    chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -659,6 +659,15 @@ pub fn raycast(
                     },
                 )?;
 
+                let request_batch_size = ctx
+                    .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))
+                    .await;
+                let mut request_batch_size = unsafe {
+                    request_batch_size.init(|r| {
+                        crate::data::fill_uninit(r, 1usize);
+                    })
+                };
+
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
@@ -838,8 +847,12 @@ pub fn raycast(
                     .await;
 
                     let mut requested_anything = false;
-                    for ((level_num, level), data) in
-                        (input.levels.iter().enumerate().zip(lod_data.iter())).rev()
+                    for ((level, request_batch_size), data) in (input
+                        .levels
+                        .iter()
+                        .zip(request_batch_size.iter_mut())
+                        .zip(lod_data.iter()))
+                    .rev()
                     {
                         let mut to_request_linear = data.1.download_requested(*ctx, device).await;
 
@@ -856,7 +869,7 @@ pub fn raycast(
                                 &mut to_request_linear,
                                 level,
                                 &data.0,
-                                base_batch_size_for_level(level_num),
+                                request_batch_size,
                             )
                             .await
                         {
@@ -876,6 +889,7 @@ pub fn raycast(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_WRITE,
                 };
+
                 if timed_out {
                     unsafe {
                         gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)

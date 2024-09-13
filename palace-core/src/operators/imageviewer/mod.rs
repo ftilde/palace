@@ -8,7 +8,7 @@ use super::tensor::{FrameOperator, LODImageOperator};
 
 use crate::{
     array::{ImageEmbeddingData, ImageMetaData},
-    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
+    chunk_utils::ChunkRequestTable,
     coordinate::GlobalCoordinate,
     data::Vector,
     dim::*,
@@ -196,6 +196,16 @@ pub fn view_image(
                     },
                 )?;
 
+                let request_batch_size = ctx
+                    .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))
+                    .await;
+                let mut request_batch_size = unsafe {
+                    request_batch_size.init(|r| {
+                        crate::data::fill_uninit(r, 1usize);
+                    })
+                };
+                let request_batch_size = &mut request_batch_size[level_num];
+
                 let state_initialized = ctx
                     .submit(ctx.access_state_cache_gpu(
                         device,
@@ -307,7 +317,7 @@ pub fn view_image(
                             &mut to_request_linear,
                             level,
                             &brick_index,
-                            base_batch_size_for_level(level_num),
+                            request_batch_size,
                         )
                         .await
                     {

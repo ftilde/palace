@@ -104,22 +104,13 @@ impl VulkanState for ChunkRequestTable {
 
 pub struct Timeout;
 
-pub fn base_batch_size_for_level(level: usize) -> usize {
-    // Thought for heuristic: For level 0 we want to be able to use all cores to load chunks from
-    // disk. For higher levels the number of base bricks increases (estimating: factor 2 in each
-    // dimension -> 2*3=8). This is obviously not correct in all cases (e.g. when we load a lod
-    // volume directly from disk), but is still better than pessimistically always starting with a
-    // base batch size of 1.
-    (32 >> (level * 3)).max(1)
-}
-
 pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
     to_request_linear: &mut [RTElement],
     vol: &'inv TensorOperator<D, StaticElementType<E>>,
     index: &IndexHandle<'_>,
-    base_batch_size: usize,
+    batch_size: &mut usize,
 ) -> Result<(), Timeout> {
     let dim_in_bricks = vol.metadata.dimension_in_chunks();
     let num_bricks = dim_in_bricks.hmul();
@@ -127,13 +118,14 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
     // Sort to get at least some benefit from spatial neighborhood
     to_request_linear.sort_unstable();
 
+    let max_batch_size = to_request_linear.len().max(*batch_size);
+
     // Fulfill requests
-    let mut batch_size = base_batch_size;
     let mut to_request_linear = &to_request_linear[..];
     while !to_request_linear.is_empty() {
         let batch;
         (batch, to_request_linear) =
-            to_request_linear.split_at(batch_size.min(to_request_linear.len()));
+            to_request_linear.split_at((*batch_size).min(to_request_linear.len()));
 
         let to_request = batch.iter().map(|v| {
             assert!(*v < num_bricks as _);
@@ -152,11 +144,14 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
             index.insert(*brick_linear_pos as u64, brick);
         }
 
-        if ctx.past_deadline() {
+        if let Some(lateness) = ctx.past_deadline() {
+            if lateness > 2.0 {
+                *batch_size = (*batch_size >> 2).max(1);
+            }
             return Err(Timeout);
         }
 
-        batch_size *= 2;
+        *batch_size = (*batch_size * 2).min(max_batch_size);
     }
 
     Ok(())

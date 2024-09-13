@@ -13,7 +13,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{base_batch_size_for_level, ChunkRequestTable},
+    chunk_utils::ChunkRequestTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -477,6 +477,16 @@ void main()
                     },
                 )?;
 
+                let request_batch_size = ctx
+                    .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))
+                    .await;
+                let mut request_batch_size = unsafe {
+                    request_batch_size.init(|r| {
+                        crate::data::fill_uninit(r, 1usize);
+                    })
+                };
+                let request_batch_size = &mut request_batch_size[level_num];
+
                 let state_initialized = ctx
                     .submit(ctx.access_state_cache_gpu(
                         device,
@@ -593,7 +603,7 @@ void main()
                             &mut to_request_linear,
                             level,
                             &brick_index,
-                            base_batch_size_for_level(level_num),
+                            request_batch_size,
                         )
                         .await
                     {

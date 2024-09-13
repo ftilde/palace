@@ -341,6 +341,7 @@ impl RunTime {
                 deadline: deadline.unwrap_or_else(|| {
                     Instant::now() + std::time::Duration::from_secs(1 << 32)
                 } /* basically: never */),
+                start: Instant::now(),
                 preferred_device: self.preferred_device,
             }
         };
@@ -407,6 +408,7 @@ struct Executor<'cref, 'inv> {
     operator_info: Map<OperatorId, OperatorDescriptor>,
     waker: Waker,
     deadline: Instant,
+    start: Instant,
     preferred_device: usize,
 }
 
@@ -428,6 +430,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             current_frame: self.data.frame,
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
             deadline: self.deadline,
+            start: self.start,
             preferred_device: self.preferred_device,
         }
     }

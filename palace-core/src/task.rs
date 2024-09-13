@@ -7,7 +7,7 @@ use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::task::Poll;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::array::ChunkIndex;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
@@ -271,6 +271,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
     pub(crate) current_frame: FrameNumber,
     pub(crate) deadline: Instant,
+    pub(crate) start: Instant,
     pub(crate) preferred_device: usize,
 }
 
@@ -510,10 +511,22 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &self.device_contexts[id]
     }
 
-    pub fn past_deadline(&self) -> bool {
-        self.deadline < Instant::now()
+    pub fn past_deadline(&self) -> Option<Lateness> {
+        let now = Instant::now();
+        if self.deadline < now {
+            let d = now - self.deadline;
+            let total_duration = self
+                .deadline
+                .checked_duration_since(self.start)
+                .unwrap_or(Duration::from_secs(0));
+            Some(d.as_millis() as f32 / total_duration.as_millis() as f32)
+        } else {
+            None
+        }
     }
 }
+
+pub type Lateness = f32;
 
 pub trait RequestStream<'req, 'inv, V> {
     // TODO: Possibly change once impl trait ist stable
