@@ -998,7 +998,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 data_longevity: descriptor.longevity,
             };
 
-            entry.state = StorageEntryState::Initializing(info, WriteAccessCount::One);
+            entry.state = StorageEntryState::Initializing(info, WriteAccessCount::Zero);
 
             data
         };
@@ -1013,17 +1013,16 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         let mut index = self.index.borrow_mut();
         let entry = index.get_mut(&access.id).unwrap();
 
-        if let StorageEntryState::Initializing(info, count) = entry.state {
-            if let WriteAccessCount::Zero = count {
+        if let StorageEntryState::Initializing(info, ref mut count) = entry.state {
+            if let WriteAccessCount::Zero = *count {
+                *count = WriteAccessCount::One;
                 Ok(RawWriteHandle {
                     data: info.data,
                     layout: info.layout,
                     drop_handler: DropUnref { access },
                 })
             } else {
-                //TODO: Not sure if we should panic here instead. don't know if the task will ever
-                //be woken up otherwise
-                Err(access)
+                panic!("Concurrent write access to initializing datum attempted")
             }
         } else {
             Err(access)
