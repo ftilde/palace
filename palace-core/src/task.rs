@@ -15,8 +15,8 @@ use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
 use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
-use crate::storage::gpu::{BarrierEpoch, MemoryLocation, StateCacheResult, WriteHandle};
-use crate::storage::ram::{self, RawWriteHandleUninit, WriteHandleUninit};
+use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
+use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{disk, CpuDataLocation, Element};
 use crate::storage::{DataLocation, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
@@ -784,13 +784,13 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
         self.alloc_raw_gpu(device, id, layout)
     }
 
-    pub fn access_state_cache<'a>(
+    pub fn access_state_cache_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,
         item: ChunkIndex,
         name: &str,
         layout: Layout,
-    ) -> Request<'a, 'inv, StateCacheResult<'a>> {
+    ) -> Request<'a, 'inv, crate::storage::gpu::StateCacheResult<'a>> {
         let base_id = DataId::new(self.current_op(), item);
         let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
 
@@ -820,9 +820,9 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
                     {
                         Ok(r) => {
                             return Some(if old {
-                                StateCacheResult::Existing(r)
+                                crate::storage::gpu::StateCacheResult::Existing(r)
                             } else {
-                                StateCacheResult::New(r)
+                                crate::storage::gpu::StateCacheResult::New(r)
                             });
                         }
                         Err(acc) => Some(acc),
@@ -832,6 +832,20 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
             }),
             _marker: Default::default(),
         }
+    }
+
+    pub fn access_state_cache<'a, S: bytemuck::AnyBitPattern + Send>(
+        &'a self,
+        item: ChunkIndex,
+        name: &str,
+        size: usize,
+    ) -> Request<'a, 'inv, crate::storage::cpu::StateCacheResult<'a, [MaybeUninit<S>], RamAllocator>>
+    {
+        let base_id = DataId::new(self.current_op(), item);
+        let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
+
+        self.storage
+            .request_access_state_cache(self.current_frame, id, size)
     }
 }
 

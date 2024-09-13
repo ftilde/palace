@@ -764,7 +764,7 @@ pub fn raycast(
                 };
 
                 let state_initialized = ctx
-                    .submit(ctx.access_state_cache(
+                    .submit(ctx.access_state_cache_gpu(
                         device,
                         pos,
                         "initialized",

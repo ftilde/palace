@@ -197,7 +197,7 @@ pub fn view_image(
                 )?;
 
                 let state_initialized = ctx
-                    .submit(ctx.access_state_cache(
+                    .submit(ctx.access_state_cache_gpu(
                         device,
                         pos,
                         "initialized",
@@ -216,7 +216,7 @@ pub fn view_image(
                     });
                 });
                 let state_values = ctx
-                    .submit(ctx.access_state_cache(
+                    .submit(ctx.access_state_cache_gpu(
                         device,
                         pos,
                         "values",

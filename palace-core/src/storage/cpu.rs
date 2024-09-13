@@ -27,15 +27,15 @@ pub struct StorageInfo {
 }
 
 impl StorageInfo {
-    unsafe fn as_mut_slice_of<'a, 'b, T>(&'a mut self) -> &'b mut [T] {
-        let t_ptr = self.data.cast::<T>();
+    //unsafe fn as_mut_slice_of<'a, 'b, T>(&'a mut self) -> &'b mut [T] {
+    //    let t_ptr = self.data.cast::<T>();
 
-        let num_elements = num_elms_in_array::<T>(self.layout.size());
+    //    let num_elements = num_elms_in_array::<T>(self.layout.size());
 
-        // Safety: Type matches as per contract upheld by caller. There are also no mutable
-        // references to the slot since it has already been initialized.
-        unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) }
-    }
+    //    // Safety: Type matches as per contract upheld by caller. There are also no mutable
+    //    // references to the slot since it has already been initialized.
+    //    unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) }
+    //}
     unsafe fn as_slice_of<'a, 'b, T>(&'a self) -> &'b [T] {
         let t_ptr = self.data.cast::<T>();
 
@@ -48,9 +48,15 @@ impl StorageInfo {
 }
 
 #[derive(Copy, Clone, Debug)]
+enum WriteAccessCount {
+    One,
+    Zero,
+}
+
+#[derive(Copy, Clone, Debug)]
 enum StorageEntryState {
     Registered,
-    Initializing(StorageInfo),
+    Initializing(StorageInfo, WriteAccessCount),
     Initialized(StorageInfo, DataVersion),
 }
 
@@ -102,7 +108,8 @@ impl<Allocator> Drop for AccessToken<'_, Allocator> {
         ram_entry.access = match ram_entry.access {
             AccessState::Some(1) => {
                 let lru_id = if let StorageEntryState::Initialized(si, _)
-                | StorageEntryState::Initializing(si) = &ram_entry.state
+                | StorageEntryState::Initializing(si, WriteAccessCount::One) =
+                    &ram_entry.state
                 {
                     let lru_id = self
                         .storage
@@ -265,8 +272,11 @@ impl<Allocator> Drop for DropMarkInitialized<'_, Allocator> {
                 StorageEntryState::Initialized(..) => {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
-                StorageEntryState::Initializing(info) => {
+                StorageEntryState::Initializing(info, WriteAccessCount::One) => {
                     StorageEntryState::Initialized(*info, version)
+                }
+                StorageEntryState::Initializing(_info, WriteAccessCount::Zero) => {
+                    panic!("Invalid state");
                 }
             };
         }
@@ -582,6 +592,25 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T, super::ram::RamAllocator> {
         }
     }
 }
+impl<DropHandler> RawWriteHandle<DropHandler> {
+    fn transmute<'a, T: bytemuck::AnyBitPattern>(
+        self,
+        size: usize,
+    ) -> WriteHandle<'a, [MaybeUninit<T>], DropHandler> {
+        let layout = Layout::array::<T>(size).unwrap();
+        assert_eq!(layout, self.layout);
+
+        let t_ptr = self.data.cast::<MaybeUninit<T>>();
+
+        // Safety: We constructed the pointer with the required layout and T is
+        // bytemuck::AnyBitPattern
+        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
+        WriteHandle {
+            data: t_ref,
+            drop_handler: self.drop_handler,
+        }
+    }
+}
 impl<'a, Allocator> RawWriteHandleUninit<'a, Allocator> {
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized<'inv>(
@@ -592,23 +621,6 @@ impl<'a, Allocator> RawWriteHandleUninit<'a, Allocator> {
             drop_handler: self.drop_handler.into_mark_initialized(ctx, None),
             data: self.data,
             layout: self.layout,
-        }
-    }
-
-    fn transmute<T: Element>(
-        self,
-        size: usize,
-    ) -> WriteHandleUninit<'a, [MaybeUninit<T>], Allocator> {
-        let layout = Layout::array::<T>(size).unwrap();
-        assert_eq!(layout, self.layout);
-
-        let t_ptr = self.data.cast::<MaybeUninit<T>>();
-
-        // Safety: We constructed the pointer with the required layout
-        let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
-        WriteHandleUninit {
-            data: t_ref,
-            drop_handler: self.drop_handler,
         }
     }
 }
@@ -692,6 +704,11 @@ impl<'a, T: Send> ThreadInplaceHandle<'a, T> {
     }
 }
 
+//pub struct StateCacheHandle<'a, T, Allocator> {
+//    data: &'a mut MaybeUninit<T>,
+//    access: AccessToken<'a, Allocator>,
+//}
+
 pub trait AsInit {
     type Init: ?Sized + Send;
     unsafe fn assume_init(&mut self) -> &mut Self::Init;
@@ -708,6 +725,66 @@ impl<T: Send> AsInit for [MaybeUninit<T>] {
     type Init = [T];
     unsafe fn assume_init(&mut self) -> &mut Self::Init {
         crate::data::slice_assume_init_mut(self)
+    }
+}
+
+pub struct DropUnref<'a, Allocator> {
+    access: AccessToken<'a, Allocator>,
+}
+impl<'a, Allocator> DropUnref<'a, Allocator> {
+    fn into_error(self) -> DropError<'a, Allocator> {
+        let id = self.access.id;
+        let storage = self.access.storage;
+        // Avoid running destructor
+        std::mem::forget(self);
+        DropError {
+            access: AccessToken { storage, id },
+        }
+    }
+}
+impl<Allocator> Drop for DropUnref<'_, Allocator> {
+    fn drop(&mut self) {
+        let mut binding = self.access.storage.index.borrow_mut();
+        let state = &mut binding.get_mut(&self.access.id).unwrap().state;
+
+        *state = match state {
+            StorageEntryState::Registered => {
+                panic!("Entry should be in state Initializing, but is in Registered");
+            }
+            StorageEntryState::Initialized(..) => {
+                panic!("Entry should be in state Initializing, but is in Initialized");
+            }
+            StorageEntryState::Initializing(info, WriteAccessCount::One) => {
+                StorageEntryState::Initializing(*info, WriteAccessCount::Zero)
+            }
+            StorageEntryState::Initializing(_info, WriteAccessCount::Zero) => {
+                panic!("Invalid state");
+            }
+        };
+    }
+}
+
+pub enum StateCacheResult<'a, T: ?Sized, Allocator> {
+    New(WriteHandle<'a, T, DropUnref<'a, Allocator>>),
+    Existing(WriteHandle<'a, T, DropUnref<'a, Allocator>>),
+}
+
+impl<'a, T: AsInit + ?Sized, Allocator> StateCacheResult<'a, T, Allocator> {
+    pub unsafe fn init(
+        self,
+        f: impl FnOnce(&mut WriteHandle<'a, T, DropUnref<'a, Allocator>>),
+    ) -> WriteHandle<'a, T::Init, DropUnref<'a, Allocator>> {
+        let n = match self {
+            StateCacheResult::New(mut n) => {
+                f(&mut n);
+                n
+            }
+            StateCacheResult::Existing(n) => n,
+        };
+        WriteHandle {
+            data: T::assume_init(n.data),
+            drop_handler: n.drop_handler,
+        }
     }
 }
 
@@ -755,7 +832,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 let entry = index.get_mut(&key).unwrap();
                 let info = match entry.state {
                     StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                    StorageEntryState::Initializing(info)
+                    StorageEntryState::Initializing(info, _)
                     | StorageEntryState::Initialized(info, _) => info,
                 };
                 assert!(matches!(entry.access, AccessState::None(_)));
@@ -807,9 +884,8 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
 
             let info = match entry.state {
                 StorageEntryState::Registered => return Err(()),
-                StorageEntryState::Initializing(info) | StorageEntryState::Initialized(info, _) => {
-                    info
-                }
+                StorageEntryState::Initializing(info, _)
+                | StorageEntryState::Initialized(info, _) => info,
             };
 
             let lru_index = entry.lru_index().unwrap();
@@ -922,7 +998,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 data_longevity: descriptor.longevity,
             };
 
-            entry.state = StorageEntryState::Initializing(info);
+            entry.state = StorageEntryState::Initializing(info, WriteAccessCount::One);
 
             data
         };
@@ -930,19 +1006,25 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         Ok((data, AccessToken::new(self, descriptor.id)))
     }
 
-    pub fn access_initializing<'a>(
+    fn access_initializing<'a>(
         &self,
         access: AccessToken<'a, Allocator>,
-    ) -> Result<RawWriteHandleUninit<'a, Allocator>, AccessToken<'a, Allocator>> {
-        let index = self.index.borrow_mut();
-        let entry = index.get(&access.id).unwrap();
+    ) -> Result<RawWriteHandle<DropUnref<'a, Allocator>>, AccessToken<'a, Allocator>> {
+        let mut index = self.index.borrow_mut();
+        let entry = index.get_mut(&access.id).unwrap();
 
-        if let StorageEntryState::Initializing(info) = entry.state {
-            Ok(RawWriteHandleUninit {
-                data: info.data,
-                layout: info.layout,
-                drop_handler: DropError { access },
-            })
+        if let StorageEntryState::Initializing(info, count) = entry.state {
+            if let WriteAccessCount::Zero = count {
+                Ok(RawWriteHandle {
+                    data: info.data,
+                    layout: info.layout,
+                    drop_handler: DropUnref { access },
+                })
+            } else {
+                //TODO: Not sure if we should panic here instead. don't know if the task will ever
+                //be woken up otherwise
+                Err(access)
+            }
         } else {
             Err(access)
         }
@@ -1041,7 +1123,13 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
             gen_poll: Box::new(move |_ctx| {
                 Box::new(move || {
                     access = match self.access_initializing(access.take().unwrap()) {
-                        Ok(r) => return Some(r),
+                        Ok(r) => {
+                            return Some(RawWriteHandle {
+                                data: r.data,
+                                layout: r.layout,
+                                drop_handler: r.drop_handler.into_error(),
+                            })
+                        }
                         Err(acc) => Some(acc),
                     };
                     None
@@ -1060,6 +1148,44 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         let layout = Layout::array::<T>(size).unwrap();
         self.request_alloc_raw(current_frame, key, layout)
             .map(move |v| v.transmute(size))
+    }
+
+    pub fn request_access_state_cache<'req, 'inv, T: bytemuck::AnyBitPattern + Send>(
+        &'req self,
+        current_frame: FrameNumber,
+        id: DataId,
+        size: usize,
+    ) -> Request<'req, 'inv, StateCacheResult<[MaybeUninit<T>], Allocator>> {
+        let access = self.register_access(current_frame, id);
+        let layout = Layout::array::<T>(size).unwrap();
+
+        let data_descriptor = DataDescriptor {
+            id,
+            longevity: DataLongevity::Cache,
+        };
+
+        match self.access_initializing(access) {
+            Ok(r) => Request::ready(StateCacheResult::Existing(r.transmute(size))),
+            Err(access) => {
+                let mut access = Some(access);
+                Request {
+                    type_: RequestType::Allocation(
+                        AllocationId::next(),
+                        AllocationRequest::Ram(layout, data_descriptor, Allocator::LOCATION),
+                    ),
+                    gen_poll: Box::new(move |_ctx| {
+                        Box::new(move || {
+                            access = match self.access_initializing(access.take().unwrap()) {
+                                Ok(r) => return Some(StateCacheResult::New(r.transmute(size))),
+                                Err(acc) => Some(acc),
+                            };
+                            None
+                        })
+                    }),
+                    _marker: Default::default(),
+                }
+            }
+        }
     }
 }
 
@@ -1106,7 +1232,7 @@ impl Storage<super::ram::RamAllocator> {
                 access: AccessState::Some(0),
             });
 
-            new_entry.state = StorageEntryState::Initializing(info);
+            new_entry.state = StorageEntryState::Initializing(info, WriteAccessCount::One);
 
             new_entry.access = match new_entry.access {
                 AccessState::Some(n) => AccessState::Some(n + 1),
