@@ -576,6 +576,44 @@ pub struct TransFuncData {
     pub max: f32,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, Debug)]
+enum RaycastingState {
+    Empty = 0,
+    RenderingPreview = 1,
+    PreviewDone = 2,
+    RenderingFull = 3,
+    Done = 4,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::AnyBitPattern)]
+struct RawRaycastingState(u8);
+
+impl From<RaycastingState> for RawRaycastingState {
+    fn from(value: RaycastingState) -> Self {
+        RawRaycastingState(value as u8)
+    }
+}
+impl RawRaycastingState {
+    fn unpack(&self) -> RaycastingState {
+        (*self).into()
+    }
+}
+
+impl From<RawRaycastingState> for RaycastingState {
+    fn from(value: RawRaycastingState) -> Self {
+        match value.0 {
+            0 => RaycastingState::Empty,
+            1 => RaycastingState::RenderingPreview,
+            2 => RaycastingState::PreviewDone,
+            3 => RaycastingState::RenderingFull,
+            4 => RaycastingState::Done,
+            _ => panic!("Invalid state"),
+        }
+    }
+}
+
 pub fn raycast(
     input: LODVolumeOperator<StaticElementType<f32>>,
     entry_exit_points: ImageOperator<StaticElementType<[f32; 8]>>,
@@ -590,6 +628,7 @@ pub fn raycast(
         tf_min: f32,
         tf_max: f32,
         tf_len: u32,
+        reset_state: u32,
     }
 
     #[repr(C)]
@@ -650,6 +689,30 @@ pub fn raycast(
                     })
                 };
 
+                let progress_state = ctx
+                    .submit(ctx.access_state_cache::<RawRaycastingState>(pos, "progress_state", 1))
+                    .await;
+                let mut progress_state = unsafe {
+                    progress_state.init(|r| {
+                        crate::data::fill_uninit(r, RaycastingState::Empty.into());
+                    })
+                };
+                let [ref mut progress_state] = &mut *progress_state else {
+                    panic!("Invalid size");
+                };
+
+                let lod_coarseness = match progress_state.unpack() {
+                    RaycastingState::Empty | RaycastingState::RenderingPreview => {
+                        config.lod_coarseness * 10.0
+                    }
+                    _ => config.lod_coarseness,
+                };
+
+                let reset_state = matches!(
+                    progress_state.unpack(),
+                    RaycastingState::Empty | RaycastingState::PreviewDone
+                );
+
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
@@ -678,7 +741,8 @@ pub fn raycast(
                     tf_len: tf_data.len,
                     out_mem_dim: chunk_size.into(),
                     oversampling_factor: config.oversampling_factor,
-                    lod_coarseness: config.lod_coarseness,
+                    lod_coarseness,
+                    reset_state: reset_state as u32,
                 };
 
                 let mut lods = Vec::new();
@@ -771,6 +835,8 @@ pub fn raycast(
                             vk::WHOLE_SIZE,
                             0,
                         );
+                        // Reset state if we lose cache
+                        *progress_state = RaycastingState::Empty.into();
                     });
                 });
 
@@ -791,6 +857,8 @@ pub fn raycast(
                             vk::WHOLE_SIZE,
                             0,
                         );
+                        // Reset state if we lose cache
+                        *progress_state = RaycastingState::Empty.into();
                     });
                 });
 
@@ -893,12 +961,34 @@ pub fn raycast(
                     access: vk::AccessFlags2::SHADER_WRITE,
                 };
 
-                if timed_out {
+                let new_state = match progress_state.unpack() {
+                    RaycastingState::Empty | RaycastingState::RenderingPreview => {
+                        if timed_out {
+                            RaycastingState::RenderingPreview
+                        } else {
+                            RaycastingState::PreviewDone
+                        }
+                    }
+                    RaycastingState::PreviewDone | RaycastingState::RenderingFull => {
+                        if timed_out {
+                            RaycastingState::RenderingFull
+                        } else {
+                            RaycastingState::Done
+                        }
+                    }
+                    RaycastingState::Done => {
+                        panic!("Should not rerender");
+                    }
+                };
+                println!("{:?} -> {:?}", progress_state.unpack(), new_state);
+                *progress_state = new_state.into();
+
+                if matches!(new_state, RaycastingState::Done) {
+                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                } else {
                     unsafe {
                         gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
                     };
-                } else {
-                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
                 }
 
                 Ok(())
