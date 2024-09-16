@@ -797,6 +797,18 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
         self.alloc_raw_gpu(device, id, layout)
     }
 
+    pub fn try_promote_previous_preview<'a>(
+        &'a self,
+        device: &'a DeviceContext,
+        item: ChunkIndex,
+    ) -> Result<(), ()> {
+        let id = DataId::new(self.current_op(), item);
+        device.storage.try_promote_previous_preview(
+            id,
+            crate::storage::DataVersion::Preview(self.current_frame),
+        )
+    }
+
     pub fn access_state_cache_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,

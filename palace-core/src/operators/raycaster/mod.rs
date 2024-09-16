@@ -580,7 +580,7 @@ pub struct TransFuncData {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 enum RaycastingState {
     Empty = 0,
     RenderingPreview = 1,
@@ -658,40 +658,6 @@ pub fn raycast(
             async move {
                 let device = ctx.preferred_device();
 
-                let request_table_size = 256;
-
-                let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
-                        .of(ctx.current_op())
-                        .dependent_on(&input.levels.len())
-                        .dependent_on(&config.compositing_mode)
-                        .dependent_on(&config.shading),
-                    || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                include_str!("raycaster.glsl"),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("NUM_LEVELS", input.levels.len())
-                                    .add("REQUEST_TABLE_SIZE", request_table_size)
-                                    .add(config.compositing_mode.define_name(), 1)
-                                    .add(config.shading.define_name(), 1),
-                            ),
-                            false,
-                        )
-                    },
-                )?;
-
-                let request_batch_size = ctx
-                    .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))
-                    .await;
-                let mut request_batch_size = unsafe {
-                    request_batch_size.init(|r| {
-                        crate::data::fill_uninit(r, 1usize);
-                    })
-                };
-
                 let progress_state = ctx
                     .submit(ctx.access_state_cache::<RawRaycastingState>(pos, "progress_state", 1))
                     .await;
@@ -715,111 +681,7 @@ pub fn raycast(
                     progress_state.unpack(),
                     RaycastingState::Empty | RaycastingState::PreviewDone
                 );
-
-                let dst_info = DstBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    access: vk::AccessFlags2::SHADER_READ,
-                };
-
                 let m_out = entry_exit_points.metadata;
-                let eep = ctx
-                    .submit(
-                        entry_exit_points
-                            .chunks
-                            .request_gpu(device.id, pos, dst_info),
-                    )
-                    .await;
-
-                assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
-                let tf_data_gpu = ctx
-                    .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
-                    .await;
-                let out_info = m_out.chunk_info(pos);
-
-                let chunk_size = out_info.mem_dimensions.raw();
-                let tf_data = tf.data();
-                let consts = PushConstants {
-                    tf_min: tf_data.min,
-                    tf_max: tf_data.max,
-                    tf_len: tf_data.len,
-                    out_mem_dim: chunk_size.into(),
-                    oversampling_factor: config.oversampling_factor,
-                    lod_coarseness,
-                    reset_state: reset_state as u32,
-                };
-
-                let mut lods = Vec::new();
-                let mut lod_data = Vec::new();
-                for level in &input.levels {
-                    let m_in = level.metadata;
-                    let emd = level.embedding_data;
-                    let num_bricks = m_in.dimension_in_chunks().hmul();
-                    //let dim_in_bricks = m_in.dimension_in_chunks();
-
-                    let brick_index = device
-                        .storage
-                        .get_index(
-                            *ctx,
-                            device,
-                            level.chunks.descriptor(),
-                            num_bricks,
-                            dst_info,
-                        )
-                        .await;
-
-                    let info =
-                        ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_index.buffer);
-                    let index_addr = unsafe { device.functions().get_buffer_device_address(&info) };
-
-                    let request_table = TempRessource::new(
-                        device,
-                        ctx.submit(ChunkRequestTable::new(request_table_size, device))
-                            .await,
-                    );
-
-                    let info = ash::vk::BufferDeviceAddressInfo::builder()
-                        .buffer(request_table.buffer().buffer);
-                    let req_table_addr =
-                        unsafe { device.functions().get_buffer_device_address(&info) };
-
-                    lod_data.push((brick_index, request_table, m_in));
-
-                    lods.push(LOD {
-                        index: index_addr,
-                        query_table: req_table_addr,
-                        dim: m_in.dimensions.raw().into(),
-                        chunk_dim: m_in.chunk_size.raw().into(),
-                        spacing: emd.spacing.into(),
-                        _padding: 0,
-                    });
-                }
-                let layout = Layout::array::<LOD>(lods.len()).unwrap();
-                let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
-                    | ash::vk::BufferUsageFlags::TRANSFER_DST;
-
-                let location = crate::storage::gpu::MemoryLocation::GpuOnly;
-                let lod_data_gpu = TempRessource::new(
-                    device,
-                    ctx.submit(
-                        device
-                            .storage
-                            .request_allocate_raw(device, layout, flags, location),
-                    )
-                    .await,
-                );
-
-                let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
-                let in_ptr = in_bytes.as_ptr().cast();
-                unsafe {
-                    crate::vulkan::memory::copy_to_gpu(
-                        *ctx,
-                        device,
-                        in_ptr,
-                        layout,
-                        lod_data_gpu.buffer,
-                    )
-                    .await
-                };
 
                 let state_ray = ctx
                     .submit(ctx.access_state_cache_gpu(
@@ -865,133 +727,286 @@ pub fn raycast(
                     });
                 });
 
-                let gpu_brick_out = ctx
-                    .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
-                    .await;
-                let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+                if ctx.past_deadline().is_none()
+                    || progress_state.unpack() < RaycastingState::RenderingFull
+                    || ctx.try_promote_previous_preview(device, pos).is_err()
+                {
+                    let request_table_size = 256;
 
-                // Actual rendering
-                let timed_out = 'outer: loop {
-                    let loop_start = std::time::Instant::now();
-                    // Make writes to the request table visible (including initialization)
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        },
-                    ))
-                    .await;
-
-                    // Now first try a render pass to collect bricks to load (or just to finish the
-                    // rendering
-                    device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([
-                            &gpu_brick_out,
-                            &eep,
-                            &*lod_data_gpu,
-                            &state_ray,
-                            &state_img,
-                            &tf_data_gpu,
-                        ]);
-
-                        unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
-
-                            pipeline.push_constant(consts);
-                            pipeline.write_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch3d(global_size);
-                        }
-                    });
-
-                    // Make requests visible
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_READ,
-                        },
-                    ))
-                    .await;
-
-                    let mut requested_anything = false;
-                    for ((level, request_batch_size), data) in (input
-                        .levels
-                        .iter()
-                        .zip(request_batch_size.iter_mut())
-                        .zip(lod_data.iter()))
-                    .rev()
-                    {
-                        let mut to_request_linear = data.1.download_requested(*ctx, device).await;
-
-                        if to_request_linear.is_empty() {
-                            continue;
-                        }
-                        println!("Draw time: {}ms", loop_start.elapsed().as_millis());
-                        requested_anything = true;
-
-                        if let Err(crate::chunk_utils::Timeout) =
-                            crate::chunk_utils::request_to_index_with_timeout(
-                                &*ctx,
+                    let pipeline = device.request_state(
+                        RessourceId::new("pipeline")
+                            .of(ctx.current_op())
+                            .dependent_on(&input.levels.len())
+                            .dependent_on(&config.compositing_mode)
+                            .dependent_on(&config.shading),
+                        || {
+                            ComputePipeline::new(
                                 device,
-                                &mut to_request_linear,
-                                level,
-                                &data.0,
-                                request_batch_size,
+                                (
+                                    include_str!("raycaster.glsl"),
+                                    ShaderDefines::new()
+                                        .push_const_block::<PushConstants>()
+                                        .add("NUM_LEVELS", input.levels.len())
+                                        .add("REQUEST_TABLE_SIZE", request_table_size)
+                                        .add(config.compositing_mode.define_name(), 1)
+                                        .add(config.shading.define_name(), 1),
+                                ),
+                                false,
                             )
-                            .await
-                        {
-                            break 'outer true;
-                        }
+                        },
+                    )?;
 
-                        // Clear request table for the next iteration
-                        device.with_cmd_buffer(|cmd| data.1.clear(cmd));
-                    }
-
-                    if !requested_anything {
-                        break 'outer false;
-                    }
-                };
-
-                let src_info = SrcBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    access: vk::AccessFlags2::SHADER_WRITE,
-                };
-
-                let new_state = match progress_state.unpack() {
-                    RaycastingState::Empty | RaycastingState::RenderingPreview => {
-                        if timed_out {
-                            RaycastingState::RenderingPreview
-                        } else {
-                            RaycastingState::PreviewDone
-                        }
-                    }
-                    RaycastingState::PreviewDone | RaycastingState::RenderingFull => {
-                        if timed_out {
-                            RaycastingState::RenderingFull
-                        } else {
-                            RaycastingState::Done
-                        }
-                    }
-                    RaycastingState::Done => {
-                        panic!("Should not rerender");
-                    }
-                };
-                println!("{:?} -> {:?}", progress_state.unpack(), new_state);
-                *progress_state = new_state.into();
-
-                if matches!(new_state, RaycastingState::Done) {
-                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
-                } else {
-                    unsafe {
-                        gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
+                    let request_batch_size = ctx
+                        .submit(ctx.access_state_cache(
+                            pos,
+                            "request_batch_size",
+                            input.levels.len(),
+                        ))
+                        .await;
+                    let mut request_batch_size = unsafe {
+                        request_batch_size.init(|r| {
+                            crate::data::fill_uninit(r, 1usize);
+                        })
                     };
+
+                    let dst_info = DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_READ,
+                    };
+
+                    let eep = ctx
+                        .submit(
+                            entry_exit_points
+                                .chunks
+                                .request_gpu(device.id, pos, dst_info),
+                        )
+                        .await;
+
+                    assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
+                    let tf_data_gpu = ctx
+                        .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
+                        .await;
+                    let out_info = m_out.chunk_info(pos);
+
+                    let chunk_size = out_info.mem_dimensions.raw();
+                    let tf_data = tf.data();
+                    let consts = PushConstants {
+                        tf_min: tf_data.min,
+                        tf_max: tf_data.max,
+                        tf_len: tf_data.len,
+                        out_mem_dim: chunk_size.into(),
+                        oversampling_factor: config.oversampling_factor,
+                        lod_coarseness,
+                        reset_state: reset_state as u32,
+                    };
+
+                    let mut lods = Vec::new();
+                    let mut lod_data = Vec::new();
+                    for level in &input.levels {
+                        let m_in = level.metadata;
+                        let emd = level.embedding_data;
+                        let num_bricks = m_in.dimension_in_chunks().hmul();
+                        //let dim_in_bricks = m_in.dimension_in_chunks();
+
+                        let brick_index = device
+                            .storage
+                            .get_index(
+                                *ctx,
+                                device,
+                                level.chunks.descriptor(),
+                                num_bricks,
+                                dst_info,
+                            )
+                            .await;
+
+                        let info =
+                            ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_index.buffer);
+                        let index_addr =
+                            unsafe { device.functions().get_buffer_device_address(&info) };
+
+                        let request_table = TempRessource::new(
+                            device,
+                            ctx.submit(ChunkRequestTable::new(request_table_size, device))
+                                .await,
+                        );
+
+                        let info = ash::vk::BufferDeviceAddressInfo::builder()
+                            .buffer(request_table.buffer().buffer);
+                        let req_table_addr =
+                            unsafe { device.functions().get_buffer_device_address(&info) };
+
+                        lod_data.push((brick_index, request_table, m_in));
+
+                        lods.push(LOD {
+                            index: index_addr,
+                            query_table: req_table_addr,
+                            dim: m_in.dimensions.raw().into(),
+                            chunk_dim: m_in.chunk_size.raw().into(),
+                            spacing: emd.spacing.into(),
+                            _padding: 0,
+                        });
+                    }
+                    let layout = Layout::array::<LOD>(lods.len()).unwrap();
+                    let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
+                        | ash::vk::BufferUsageFlags::TRANSFER_DST;
+
+                    let location = crate::storage::gpu::MemoryLocation::GpuOnly;
+                    let lod_data_gpu = TempRessource::new(
+                        device,
+                        ctx.submit(
+                            device
+                                .storage
+                                .request_allocate_raw(device, layout, flags, location),
+                        )
+                        .await,
+                    );
+
+                    let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
+                    let in_ptr = in_bytes.as_ptr().cast();
+                    unsafe {
+                        crate::vulkan::memory::copy_to_gpu(
+                            *ctx,
+                            device,
+                            in_ptr,
+                            layout,
+                            lod_data_gpu.buffer,
+                        )
+                        .await
+                    };
+                    let gpu_brick_out = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                        .await;
+                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                    // Actual rendering
+                    let timed_out = 'outer: loop {
+                        let loop_start = std::time::Instant::now();
+                        // Make writes to the request table visible (including initialization)
+                        ctx.submit(device.barrier(
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_WRITE,
+                            },
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ
+                                    | vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        ))
+                        .await;
+
+                        // Now first try a render pass to collect bricks to load (or just to finish the
+                        // rendering
+                        device.with_cmd_buffer(|cmd| {
+                            let descriptor_config = DescriptorConfig::new([
+                                &gpu_brick_out,
+                                &eep,
+                                &*lod_data_gpu,
+                                &state_ray,
+                                &state_img,
+                                &tf_data_gpu,
+                            ]);
+
+                            unsafe {
+                                let mut pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant(consts);
+                                pipeline.write_descriptor_set(0, descriptor_config);
+                                pipeline.dispatch3d(global_size);
+                            }
+                        });
+
+                        // Make requests visible
+                        ctx.submit(device.barrier(
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_READ,
+                            },
+                        ))
+                        .await;
+
+                        let mut requested_anything = false;
+                        for ((level, request_batch_size), data) in (input
+                            .levels
+                            .iter()
+                            .zip(request_batch_size.iter_mut())
+                            .zip(lod_data.iter()))
+                        .rev()
+                        {
+                            let mut to_request_linear =
+                                data.1.download_requested(*ctx, device).await;
+
+                            if to_request_linear.is_empty() {
+                                continue;
+                            }
+                            println!("Draw time: {}ms", loop_start.elapsed().as_millis());
+                            requested_anything = true;
+
+                            if let Err(crate::chunk_utils::Timeout) =
+                                crate::chunk_utils::request_to_index_with_timeout(
+                                    &*ctx,
+                                    device,
+                                    &mut to_request_linear,
+                                    level,
+                                    &data.0,
+                                    request_batch_size,
+                                )
+                                .await
+                            {
+                                break 'outer true;
+                            }
+
+                            // Clear request table for the next iteration
+                            device.with_cmd_buffer(|cmd| data.1.clear(cmd));
+                        }
+
+                        if !requested_anything {
+                            break 'outer false;
+                        }
+                    };
+
+                    let src_info = SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
+                    };
+
+                    let new_state = match progress_state.unpack() {
+                        RaycastingState::Empty | RaycastingState::RenderingPreview => {
+                            if timed_out {
+                                RaycastingState::RenderingPreview
+                            } else {
+                                RaycastingState::PreviewDone
+                            }
+                        }
+                        RaycastingState::PreviewDone | RaycastingState::RenderingFull => {
+                            if timed_out {
+                                RaycastingState::RenderingFull
+                            } else {
+                                RaycastingState::Done
+                            }
+                        }
+                        RaycastingState::Done => {
+                            panic!("Should not rerender");
+                        }
+                    };
+                    //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
+                    *progress_state = new_state.into();
+
+                    if matches!(new_state, RaycastingState::Done) {
+                        unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                    } else {
+                        unsafe {
+                            gpu_brick_out.initialized_version(
+                                *ctx,
+                                src_info,
+                                DataVersionType::Preview,
+                            )
+                        };
+                    }
                 }
 
                 Ok(())

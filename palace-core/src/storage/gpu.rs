@@ -2,7 +2,7 @@ use ahash::HashMapExt;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
-    collections::VecDeque,
+    collections::BTreeMap,
     mem::MaybeUninit,
 };
 
@@ -199,13 +199,18 @@ impl Drop for AccessToken<'_> {
         let vram_entry = index.get_mut(&self.id).unwrap();
 
         let longevity = vram_entry.state.storage_info().map(|i| i.data_longevity);
+        let version = if let StorageEntryState::Initialized(_, _, v) = vram_entry.state {
+            v
+        } else {
+            DataVersion::Final
+        };
 
         let mut lru_manager = self.storage.lru_manager.borrow_mut();
         dec_access(
             &mut vram_entry.access,
             &mut lru_manager,
             self.device,
-            LRUItem::Data(self.id),
+            LRUItem::Data(self.id, version),
             longevity,
         );
     }
@@ -443,11 +448,17 @@ unsafe fn unref_brick_in_index(
     let d_entry = brick_index.get_mut(&brick_ref.id).unwrap();
     let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
 
+    let version = if let StorageEntryState::Initialized(_, _, v) = d_entry.state {
+        v
+    } else {
+        DataVersion::Final
+    };
+
     dec_access(
         &mut d_entry.access,
         brick_lru,
         device,
-        LRUItem::Data(brick_ref.id),
+        LRUItem::Data(brick_ref.id, version),
         longevity,
     );
 }
@@ -563,15 +574,17 @@ impl<'a> Drop for IndexHandle<'a> {
 
 #[derive(Copy, Clone)]
 enum LRUItem {
-    Data(DataId),
+    Data(DataId, DataVersion),
     Cache(DataId, FrameNumber),
     Index(OperatorId),
 }
 
 pub struct Storage {
     data_index: RefCell<Map<DataId, Entry>>,
+    old_preview_data_index: RefCell<
+        Map<DataId, BTreeMap<FrameNumber, (StorageEntryState, Option<LRUIndex>, CmdBufferEpoch)>>,
+    >,
     index_index: RefCell<Map<OperatorId, IndexEntry>>,
-    old_unused: RefCell<VecDeque<(StorageInfo, CmdBufferEpoch)>>,
     // Manage (unreferenced) items (brick as well as index) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when bricks in index were requested and possibly remove them from the
@@ -589,8 +602,8 @@ impl Storage {
     pub fn new(device: DeviceId, allocator: Allocator) -> Self {
         Self {
             data_index: Default::default(),
+            old_preview_data_index: Default::default(),
             index_index: Default::default(),
-            old_unused: Default::default(),
             lru_manager: Default::default(),
             index_lru: Default::default(),
             barrier_manager: BarrierManager::new(),
@@ -605,10 +618,6 @@ impl Storage {
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
     /// references is done!
     pub unsafe fn free_vram(&self) {
-        for (info, _) in std::mem::take(&mut *self.old_unused.borrow_mut()) {
-            self.allocator.deallocate(info.allocation);
-        }
-
         for (_, entry) in std::mem::take(&mut *self.index_index.borrow_mut()) {
             self.allocator.deallocate(entry.storage.allocation);
         }
@@ -622,6 +631,18 @@ impl Storage {
                 }
             }
         }
+
+        for (_, entries) in std::mem::take(&mut *self.old_preview_data_index.borrow_mut()) {
+            for (_, entry) in entries {
+                match entry.0 {
+                    StorageEntryState::Registered => {}
+                    StorageEntryState::Initializing(info)
+                    | StorageEntryState::Initialized(info, _, _) => {
+                        self.allocator.deallocate(info.allocation);
+                    }
+                }
+            }
+        }
     }
 
     pub fn next_garbage_collect(&self) -> GarbageCollectId {
@@ -630,6 +651,51 @@ impl Storage {
 
     pub fn wait_garbage_collect<'a, 'inv>(&self) -> Request<'a, 'inv, ()> {
         Request::garbage_collect(DataLocation::GPU(self.id), self.next_garbage_collect())
+    }
+
+    pub fn try_promote_previous_preview(
+        &self,
+        d: DataId,
+        new_version: DataVersion,
+    ) -> Result<(), ()> {
+        let mut old_preview_data_index = self.old_preview_data_index.borrow_mut();
+        if let Some(entries) = old_preview_data_index.get_mut(&d) {
+            let entry = entries.pop_last().unwrap();
+            let (old_state, lru_index, epoch) = entry.1;
+
+            let mut index = self.data_index.borrow_mut();
+
+            let existing_access = index.remove(&d).map(|v| {
+                assert!(matches!(v.state, StorageEntryState::Registered));
+                v.access
+            });
+            let access = match existing_access {
+                Some(AccessState::Some(n)) => {
+                    if let Some(lru_index) = lru_index {
+                        self.lru_manager.borrow_mut().remove(lru_index);
+                    }
+                    AccessState::Some(n)
+                }
+                Some(AccessState::None(_, _)) => panic!("New entry should already have accesses"),
+                None => AccessState::None(lru_index, epoch),
+            };
+
+            index.insert(
+                d,
+                Entry {
+                    state: old_state,
+                    access,
+                },
+            );
+            self.new_data.add(d, new_version.type_());
+
+            if entries.is_empty() {
+                old_preview_data_index.remove(&d);
+            }
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     pub fn bytes_allocated(&self) -> usize {
@@ -644,21 +710,10 @@ impl Storage {
         let mut collected = self.manual_garbage_returns.get() as usize;
         self.manual_garbage_returns.set(0);
 
-        let mut unused = self.old_unused.borrow_mut();
-        while unused
-            .front()
-            .map(|(_, d)| device.cmd_buffer_completed(*d))
-            .unwrap_or(false)
-        {
-            let (info, _) = unused.pop_front().unwrap();
-            unsafe { self.allocator.deallocate(info.allocation) };
-
-            collected += info.layout.size();
-        }
-
         let mut lru = self.lru_manager.borrow_mut();
         let mut index_lru = self.index_lru.borrow_mut();
         let mut index = self.data_index.borrow_mut();
+        let mut old_preview_index = self.old_preview_data_index.borrow_mut();
         let mut index_index = self.index_index.borrow_mut();
 
         let mut indices_to_unref = Vec::new();
@@ -671,21 +726,46 @@ impl Storage {
 
             while let Some(key) = inner_lru.get_next() {
                 let info = match key {
-                    LRUItem::Data(key) => {
-                        let entry = index.get_mut(&key).unwrap();
-                        let AccessState::None(_, f) = entry.access else {
-                            panic!("Should not be in LRU list");
-                        };
-                        if !device.cmd_buffer_completed(f) {
+                    LRUItem::Data(key, data_version) => {
+                        let (old_preview_frame, epoch) =
+                            if let DataVersion::Preview(v) = data_version {
+                                if let Some((_, _, epoch)) =
+                                    old_preview_index.get_mut(&key).and_then(|m| m.get_mut(&v))
+                                {
+                                    (Some(v), *epoch)
+                                } else {
+                                    let entry = index.get_mut(&key).unwrap();
+                                    let AccessState::None(_, epoch) = entry.access else {
+                                        panic!("Should not be in LRU list");
+                                    };
+                                    (None, epoch)
+                                }
+                            } else {
+                                let entry = index.get_mut(&key).unwrap();
+                                let AccessState::None(_, epoch) = entry.access else {
+                                    panic!("Should not be in LRU list");
+                                };
+                                (None, epoch)
+                            };
+                        if !device.cmd_buffer_completed(epoch) {
                             // All following LRU items will have the same or a later epoch so cannot be deleted
                             // either
                             break;
                         }
 
-                        let entry = index.remove(&key).unwrap();
+                        let state = if let Some(old_preview_frame) = old_preview_frame {
+                            let old_versions = old_preview_index.get_mut(&key).unwrap();
+                            let ret = old_versions.remove(&old_preview_frame).unwrap().0;
+                            if old_versions.is_empty() {
+                                old_preview_index.remove(&key);
+                            }
+                            ret
+                        } else {
+                            index.remove(&key).unwrap().state
+                        };
 
                         self.new_data.remove(key);
-                        match entry.state {
+                        match state {
                             StorageEntryState::Registered => panic!("Should not be in LRU list"),
                             StorageEntryState::Initializing(info)
                             | StorageEntryState::Initialized(info, _, _) => info,
@@ -843,14 +923,14 @@ impl Storage {
                                 );
                             }
                             AccessState::None(lru_index, epoch) => {
-                                let StorageEntryState::Initialized(info, _, _) = old.state else {
-                                    panic!("we just checked that");
+                                let DataVersion::Preview(frame_number) = version else {
+                                    panic!("invalid state since version is smaller than current preview");
                                 };
-                                if let Some(lru_index) = lru_index {
-                                    self.lru_manager.borrow_mut().remove(lru_index);
-                                }
-                                let mut old_unused = self.old_unused.borrow_mut();
-                                old_unused.push_back((info, epoch));
+                                self.old_preview_data_index
+                                    .borrow_mut()
+                                    .entry(*e.key())
+                                    .or_default()
+                                    .insert(frame_number, (old.state, lru_index, epoch));
                             }
                         }
                     }
