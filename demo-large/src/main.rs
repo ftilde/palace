@@ -485,6 +485,14 @@ fn eval_network(
                         );
                         ui.add(
                             egui::Slider::new(
+                                &mut app_state.raycasting.config.preview_lod_coarseness,
+                                0.01..=100.0,
+                            )
+                            .text("Preview LOD c.")
+                            .logarithmic(true),
+                        );
+                        ui.add(
+                            egui::Slider::new(
                                 &mut app_state.raycasting.config.oversampling_factor,
                                 0.01..=10.0,
                             )
