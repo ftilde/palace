@@ -1,7 +1,7 @@
 use std::alloc::Layout;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140, std430::AsStd430};
+use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{
@@ -576,20 +576,6 @@ pub struct TransFuncData {
     pub max: f32,
 }
 
-#[derive(GlslStruct, AsStd430)]
-#[repr(C)]
-pub struct RayState {
-    t: f32,
-    color: cgmath::Vector4<f32>,
-}
-
-fn std_430_array_layout<T: AsStd430>(n: usize) -> Layout {
-    let size = RayState::std430_size_static();
-    let align = <<RayState as AsStd430>::Output as crevice::std430::Std430>::ALIGNMENT;
-    assert_eq!(size % align, 0);
-    Layout::from_size_align(size * n, align).unwrap()
-}
-
 pub fn raycast(
     input: LODVolumeOperator<StaticElementType<f32>>,
     entry_exit_points: ImageOperator<StaticElementType<[f32; 8]>>,
@@ -647,10 +633,6 @@ pub fn raycast(
                                     .push_const_block::<PushConstants>()
                                     .add("NUM_LEVELS", input.levels.len())
                                     .add("REQUEST_TABLE_SIZE", request_table_size)
-                                    .add(
-                                        "RAY_STATE_STRUCT_DEF",
-                                        RayState::glsl_definition().replace("\n", ""),
-                                    )
                                     .add(config.compositing_mode.define_name(), 1)
                                     .add(config.shading.define_name(), 1),
                             ),
@@ -772,15 +754,35 @@ pub fn raycast(
                     .await
                 };
 
-                let state_initialized = ctx
+                let state_ray = ctx
                     .submit(ctx.access_state_cache_gpu(
                         device,
                         pos,
-                        "initialized",
-                        std_430_array_layout::<RayState>(m_out.chunk_size.hmul()),
+                        "state_ray",
+                        Layout::array::<f32>(m_out.chunk_size.hmul()).unwrap(),
                     ))
                     .await;
-                let state_initialized = state_initialized.init(|v| {
+                let state_ray = state_ray.init(|v| {
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        device.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            v.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0,
+                        );
+                    });
+                });
+
+                let state_img = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        "state_img",
+                        Layout::array::<Vector<D4, u8>>(m_out.chunk_size.hmul()).unwrap(),
+                    ))
+                    .await;
+                let state_img = state_img.init(|v| {
                     device.with_cmd_buffer(|cmd| unsafe {
                         device.functions().cmd_fill_buffer(
                             cmd.raw(),
@@ -820,7 +822,8 @@ pub fn raycast(
                             &gpu_brick_out,
                             &eep,
                             &*lod_data_gpu,
-                            &state_initialized,
+                            &state_ray,
+                            &state_img,
                             &tf_data_gpu,
                         ]);
 

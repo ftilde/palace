@@ -32,11 +32,9 @@ struct LOD {
     uint _padding;
 };
 
-RAY_STATE_STRUCT_DEF
-
 layout (local_size_x = 32, local_size_y = 32) in;
 
-layout(std430, binding = 0) buffer OutputBuffer{
+layout(scalar, binding = 0) buffer OutputBuffer{
     u8vec4 values[];
 } output_data;
 
@@ -49,10 +47,14 @@ layout(scalar, binding = 2) buffer LodBuffer {
 } vol;
 
 layout(std430, binding = 3) buffer RayStateBuffer {
-    RayState values[];
+    float values[];
 } state_cache;
 
-layout(std430, binding = 4) buffer TFTableBuffer {
+layout(scalar, binding = 4) buffer RayColorBuffer {
+    u8vec4 values[];
+} state_colors;
+
+layout(std430, binding = 5) buffer TFTableBuffer {
     u8vec4 values[];
 } tf_table;
 
@@ -105,40 +107,55 @@ u8vec4 classify(float val) {
 }
 
 #ifdef COMPOSITING_MOP
-void update_state(inout RayState state, vec4 color, float step_size) {
-    if(state.color.a < color.a) {
-        state.color = color;
+void update_state(inout float t, inout u8vec4 state_color, u8vec4 color, float step_size) {
+    if(state_color.a < color.a) {
+        state_color = color;
     }
 }
 #endif
 
 #ifdef COMPOSITING_DVR
-void update_state(inout RayState state, vec4 sample_f, float step_size) {
+void update_state(inout float t, inout u8vec4 state_color, u8vec4 color, float step_size) {
     const float REFERENCE_STEP_SIZE_INV = 256.0;
+
+    vec4 sample_f = to_uniform(color);
+    vec4 state_color_f = to_uniform(state_color);
+
     float alpha = 1.0 - pow(1.0 - sample_f.a, step_size * REFERENCE_STEP_SIZE_INV);
 
-    state.color.rgb = state.color.rgb + alpha * (1.0 - state.color.a) * sample_f.rgb;
-    state.color.a   = state.color.a   + alpha * (1.0 - state.color.a);
+    state_color_f.rgb = state_color_f.rgb + alpha * (1.0 - state_color_f.a) * sample_f.rgb;
+    state_color_f.a   = state_color_f.a   + alpha * (1.0 - state_color_f.a);
 
-    if (state.color.a >= 0.95) {
-        state.color.a = 1.0;
-        state.t = T_DONE;
+    if (state_color_f.a >= 0.95) {
+        state_color_f.a = 1.0;
+        t = T_DONE;
     }
+
+    state_color = from_uniform(state_color_f);
 }
 #endif
 
-vec3 apply_phong_shading(vec3 color, vec3 normal, vec3 view, vec3 light) {
+u8vec3 apply_phong_shading(u8vec4 sample_u8, vec3 normal, vec3 view, vec3 light) {
+    vec4 sample_f = to_uniform(sample_u8);
+    // Welp, there appears to be another graphics driver bug. If the following
+    // (pretty much nonsensical) lines are removed, rendering is way slower and
+    // there are a few dark voxels in the volume.
+    if(sample_u8.a == 255 && sample_f.a != 0.0) {
+        sample_f.r *= 1.00001;
+    }
+
     vec3 ambient_light = vec3(0.2);
     vec3 diffuse_light = vec3(0.8);
     vec3 specular_light = vec3(0.5);
     float shininess = 60.0;
 
+    vec3 color = sample_f.xyz;
     vec3 o;
     o  = color * ambient_light;
     o += color * diffuse_light * max(0.0, dot(normal, light));
     o += color * specular_light * pow(max(0.0, dot(normal, normalize(light + view))), shininess);
 
-    return o;
+    return from_uniform(o);
 }
 
 void main()
@@ -155,9 +172,10 @@ void main()
 
         u8vec4 color;
         if(valid) {
-            RayState state = state_cache.values[gID];
+            float t = state_cache.values[gID];
+            u8vec4 state_color = state_colors.values[gID];
 
-            if(state.t != T_DONE) {
+            if(t != T_DONE) {
 
                 float diag = length(vec3(to_glsl_uvec3(root_level.dimensions)) * to_glsl_vec3(root_level.spacing));
 
@@ -198,8 +216,8 @@ void main()
                 float oversampling_factor = consts.oversampling_factor;
 
                 uint level_num = 0;
-                while(state.t <= t_end) {
-                    float alpha = state.t/t_end;
+                while(t <= t_end) {
+                    float alpha = t/t_end;
                     float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
 
                     while(level_num < NUM_LEVELS - 1) {
@@ -217,7 +235,7 @@ void main()
                     m_in.dimensions = level.dimensions.vals;
                     m_in.chunk_size = level.chunk_size.vals;
 
-                    vec3 p = start + state.t*dir;
+                    vec3 p = start + t*dir;
 
                     vec3 pos_voxel_g = round(world_to_voxel(p, level));
                     float[3] pos_voxel = from_glsl(pos_voxel_g);
@@ -238,17 +256,7 @@ void main()
 
                     bool stop = false;
                     if(res == SAMPLE_RES_FOUND) {
-
-
-                        u8vec4 sample_u8 = classify(sampled_intensity);
-                        vec4 sample_f = to_uniform(sample_u8);
-                        // Welp, there appears to be another graphics driver bug. If the following
-                        // (pretty much nonsensical) lines are removed, rendering is way slower and
-                        // there are a few dark voxels in the volume.
-                        if(sample_u8.a == 255 && sample_f.a != 0.0) {
-                            sample_f.r *= 1.00001;
-                        }
-
+                        u8vec4 sample_col = classify(sampled_intensity);
 
                         #ifdef SHADING_PHONG
                         vec3 grad = to_glsl(grad_f);
@@ -257,11 +265,11 @@ void main()
                         } else {
                             grad = normalize(to_glsl_vec3(level.spacing) * grad);
                         }
-                        sample_f.rgb = apply_phong_shading(sample_f.rgb, grad, dir, dir);
+                        sample_col.rgb = apply_phong_shading(sample_col, grad, dir, dir);
                         #endif
 
                         float norm_step = step / diag;
-                        update_state(state, sample_f, norm_step);
+                        update_state(t, state_color, sample_col, norm_step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
@@ -270,19 +278,20 @@ void main()
                     }
 
 
-                    state.t += step;
+                    t += step;
                 }
-                if(state.t > t_end) {
-                    state.t = T_DONE;
+                if(t > t_end) {
+                    t = T_DONE;
                     //if(level_num > 0) {
                     //    state.intensity = 0.0;
                     //}
                 }
 
-                state_cache.values[gID] = state;
+                state_cache.values[gID] = t;
+                state_colors.values[gID] = state_color;
             }
 
-            color = from_uniform(state.color);
+            color = state_color;
         } else {
             color = u8vec4(0);
         }
