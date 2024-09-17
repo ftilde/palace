@@ -992,9 +992,7 @@ pub fn raycast(
                                 RaycastingState::Done
                             }
                         }
-                        RaycastingState::Done => {
-                            panic!("Should not rerender");
-                        }
+                        RaycastingState::Done => RaycastingState::Done,
                     };
                     //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
                     *progress_state = new_state.into();
