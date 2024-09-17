@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
@@ -12,7 +12,7 @@ use palace_core::operators::raycaster::TransFuncOperator;
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
-use palace_core::runtime::RunTime;
+use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 
@@ -249,7 +249,7 @@ fn eval_network(
     gui: &mut GuiState,
     tf: &TransFuncOperator,
     mut events: EventStream,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
     events.act(|c| {
         c.chain(OnKeyPress(Key::Digit9, || *slice_num += 1))

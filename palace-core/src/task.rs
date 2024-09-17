@@ -14,7 +14,7 @@ use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
 };
-use crate::runtime::{CompletedRequests, FrameNumber, RequestQueue, TaskHints};
+use crate::runtime::{CompletedRequests, Deadline, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
 use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{disk, CpuDataLocation, Element};
@@ -270,7 +270,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) current_task: TaskId,
     pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
     pub(crate) current_frame: FrameNumber,
-    pub(crate) deadline: Instant,
+    pub(crate) deadline: Deadline,
     pub(crate) start: Instant,
     pub(crate) preferred_device: usize,
 }
@@ -511,18 +511,26 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &self.device_contexts[id]
     }
 
-    pub fn past_deadline(&self) -> Option<Lateness> {
-        let now = Instant::now();
-        if self.deadline < now {
-            let d = now - self.deadline;
-            let total_duration = self
-                .deadline
-                .checked_duration_since(self.start)
-                .unwrap_or(Duration::from_secs(0));
-            Some(d.as_millis() as f32 / total_duration.as_millis() as f32)
+    pub fn past_deadline(&self, interactive: bool) -> Option<Lateness> {
+        let deadline = if interactive {
+            self.deadline.interactive
         } else {
-            None
-        }
+            self.deadline.refinement
+        };
+        lateness_for_deadline(self.start, deadline)
+    }
+}
+
+fn lateness_for_deadline(start: Instant, deadline: Instant) -> Option<Lateness> {
+    let now = Instant::now();
+    if deadline < now {
+        let d = now - deadline;
+        let total_duration = deadline
+            .checked_duration_since(start)
+            .unwrap_or(Duration::from_secs(0));
+        Some(d.as_millis() as f32 / total_duration.as_millis() as f32)
+    } else {
+        None
     }
 }
 

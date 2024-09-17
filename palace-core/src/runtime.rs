@@ -243,6 +243,28 @@ pub struct RunTime {
     pub preferred_device: DeviceId,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct Deadline {
+    pub interactive: Instant,
+    pub refinement: Instant,
+}
+
+impl Deadline {
+    pub fn for_frame_duration(last_frame: Instant, duration: Duration) -> Self {
+        Self {
+            interactive: last_frame + duration,
+            refinement: last_frame + 5 * duration,
+        }
+    }
+
+    pub fn never() -> Self {
+        Self {
+            interactive: Instant::now() + std::time::Duration::from_secs(1 << 32),
+            refinement: Instant::now() + std::time::Duration::from_secs(1 << 32),
+        }
+    }
+}
+
 impl RunTime {
     pub fn new(
         storage_size: usize,
@@ -300,7 +322,7 @@ impl RunTime {
         ) -> Task<'cref, R>,
     >(
         &'call mut self,
-        deadline: Option<Instant>,
+        deadline: Option<Deadline>,
         save_task_stream: bool,
         task: F,
     ) -> Result<R, Error> {
@@ -338,9 +360,7 @@ impl RunTime {
                 transfer_manager: Default::default(),
                 request_batcher: Default::default(),
                 barrier_batcher: BarrierBatcher::new(),
-                deadline: deadline.unwrap_or_else(|| {
-                    Instant::now() + std::time::Duration::from_secs(1 << 32)
-                } /* basically: never */),
+                deadline: deadline.unwrap_or(Deadline::never()),
                 start: Instant::now(),
                 preferred_device: self.preferred_device,
             }
@@ -407,7 +427,7 @@ struct Executor<'cref, 'inv> {
     statistics: Statistics,
     operator_info: Map<OperatorId, OperatorDescriptor>,
     waker: Waker,
-    deadline: Instant,
+    deadline: Deadline,
     start: Instant,
     preferred_device: usize,
 }

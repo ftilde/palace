@@ -318,6 +318,7 @@ pub fn view_image(
                             level,
                             &brick_index,
                             request_batch_size,
+                            true,
                         )
                         .await
                     {

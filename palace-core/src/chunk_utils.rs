@@ -189,6 +189,7 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
     vol: &'inv TensorOperator<D, StaticElementType<E>>,
     index: &IndexHandle<'_>,
     batch_size: &mut usize,
+    interactive: bool,
 ) -> Result<(), Timeout> {
     let dim_in_bricks = vol.metadata.dimension_in_chunks();
     let num_bricks = dim_in_bricks.hmul();
@@ -222,14 +223,14 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
             index.insert(*brick_linear_pos as u64, brick);
         }
 
-        if let Some(lateness) = ctx.past_deadline() {
+        if let Some(lateness) = ctx.past_deadline(interactive) {
             if lateness > 2.0 {
-                *batch_size = (*batch_size >> 2).max(1);
+                *batch_size = (*batch_size / 2).max(1);
             }
             return Err(Timeout);
         }
 
-        *batch_size = (*batch_size * 2).min(max_batch_size);
+        *batch_size = (*batch_size * 4).min(max_batch_size);
     }
 
     Ok(())

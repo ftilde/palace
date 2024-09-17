@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use ash::vk;
+use palace_core::runtime::Deadline;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window as PWindow;
 use palace_core::{
@@ -153,7 +154,6 @@ pub fn create_window(
 
 struct AppState<'a, F> {
     //state: State,
-    next_timeout: Instant,
     last_frame: Instant,
     timeout_per_frame: Duration,
     runtime: &'a mut RunTime,
@@ -169,7 +169,7 @@ impl<
             &mut PWindow,
             &mut RunTime,
             EventStream,
-            Instant,
+            Deadline,
         ) -> Result<DataVersionType, palace_core::Error>,
     > winit::application::ApplicationHandler for AppState<'_, F>
 {
@@ -197,13 +197,12 @@ impl<
                 //std::thread::sleep(dbg!(
                 //    next_timeout.saturating_duration_since(std::time::Instant::now())
                 //));
-                self.next_timeout = Instant::now() + self.timeout_per_frame;
                 let res = (self.draw)(
                     event_loop,
                     &mut window.1,
                     &mut self.runtime,
                     self.events.current_batch(),
-                    self.next_timeout,
+                    Deadline::for_frame_duration(self.last_frame, self.timeout_per_frame),
                 );
                 match res {
                     Ok(version) => {
@@ -235,7 +234,7 @@ pub fn run_with_window<
         &mut PWindow,
         &mut RunTime,
         EventStream,
-        Instant,
+        Deadline,
     ) -> Result<DataVersionType, palace_core::Error>,
 >(
     runtime: &mut RunTime,
@@ -246,7 +245,6 @@ pub fn run_with_window<
     let mut state = AppState {
         runtime,
         last_frame: Instant::now(),
-        next_timeout: Instant::now() + timeout_per_frame,
         timeout_per_frame,
         window: None,
         events: EventSource::default(),

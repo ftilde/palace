@@ -683,6 +683,8 @@ pub fn raycast(
                 );
                 let m_out = entry_exit_points.metadata;
 
+                let in_preview = progress_state.unpack() < RaycastingState::RenderingFull;
+
                 let state_ray = ctx
                     .submit(ctx.access_state_cache_gpu(
                         device,
@@ -748,7 +750,7 @@ pub fn raycast(
                 let gpu_brick_out = ctx.submit(reuse_res.request).await;
 
                 if reuse_res.new
-                    || ctx.past_deadline().is_none()
+                    || ctx.past_deadline(in_preview).is_none()
                     || progress_state.unpack() < RaycastingState::RenderingFull
                 {
                     let pipeline = device.request_state(
@@ -922,6 +924,7 @@ pub fn raycast(
                                         level,
                                         &data.0,
                                         request_batch_size,
+                                        in_preview,
                                     )
                                     .await
                                 {

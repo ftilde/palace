@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Parser;
 use palace_core::data::{GlobalCoordinate, Vector};
@@ -14,7 +14,7 @@ use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
-use palace_core::runtime::RunTime;
+use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 
@@ -336,7 +336,7 @@ fn eval_network(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     app_state: &mut State,
     mut events: EventStream,
-    deadline: Instant,
+    deadline: Deadline,
 ) -> Result<DataVersionType, Box<dyn std::error::Error>> {
     //events.act(|c| {
     //    c.chain(OnKeyPress(Key::Key9, || *slice_num += 1))

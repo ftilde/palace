@@ -604,6 +604,7 @@ void main()
                             level,
                             &brick_index,
                             request_batch_size,
+                            true,
                         )
                         .await
                     {
