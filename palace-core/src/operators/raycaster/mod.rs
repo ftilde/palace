@@ -728,18 +728,10 @@ pub fn raycast(
                 });
                 let out_info = m_out.chunk_info(pos);
 
-                let (reused, gpu_brick_out) =
-                    if let Ok(w) = ctx.try_promote_previous_preview(device, pos) {
-                        (true, w)
-                    } else {
-                        (
-                            false,
-                            ctx.submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
-                                .await,
-                        )
-                    };
+                let reuse_res = ctx.alloc_try_reuse_gpu(device, pos, out_info.mem_elements());
+                let gpu_brick_out = ctx.submit(reuse_res.request).await;
 
-                if !reused
+                if reuse_res.new
                     || ctx.past_deadline().is_none()
                     || progress_state.unpack() < RaycastingState::RenderingFull
                 {

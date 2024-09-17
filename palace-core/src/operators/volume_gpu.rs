@@ -15,7 +15,7 @@ use crate::{
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::{gpu, DataVersionType},
-    task::{Request, RequestStream},
+    task::RequestStream,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig, DynPushConstants},
         shader::{Config, ShaderDefines},
@@ -457,18 +457,10 @@ void main() {
                                 crate::data::fill_uninit(r, 0);
                             })
                         };
-                        let (redo_all, out_request) = if let Ok(gpu_brick_out) =
-                            ctx.try_promote_previous_preview(device, pos)
-                        {
-                            (false, Request::ready(gpu_brick_out))
-                        } else {
-                            (
-                                true,
-                                ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements()),
-                            )
-                        };
+                        let reuse_res =
+                            ctx.alloc_try_reuse_gpu(device, pos, m_out.num_chunk_elements());
 
-                        if redo_all {
+                        if reuse_res.new {
                             //println!("lost prev version :(");
                             tile_done.fill(0);
                         }
@@ -495,7 +487,12 @@ void main() {
 
                         (
                             brick_requests,
-                            (out_request, pos, in_brick_positions_to_fill, tile_done),
+                            (
+                                reuse_res.request,
+                                pos,
+                                in_brick_positions_to_fill,
+                                tile_done,
+                            ),
                         )
                     })
                     .then_req_with_data(

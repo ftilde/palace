@@ -785,6 +785,11 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Ou
     }
 }
 
+pub struct ReuseResult<'a, 'inv> {
+    pub request: Request<'a, 'inv, WriteHandle<'a>>,
+    pub new: bool,
+}
+
 impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> {
     pub fn alloc_slot_gpu<'a>(
         &'a self,
@@ -797,15 +802,33 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
         self.alloc_raw_gpu(device, id, layout)
     }
 
-    pub fn try_promote_previous_preview<'a>(
+    pub fn alloc_try_reuse_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,
         item: ChunkIndex,
-    ) -> Result<WriteHandle<'a>, ()> {
+        size: usize,
+    ) -> ReuseResult<'a, 'inv> {
+        let layout = self.dtype.array_layout(size);
         let id = DataId::new(self.current_op(), item);
-        device
-            .storage
-            .try_promote_previous_preview(device, id, self.current_frame)
+        let descriptor = DataDescriptor {
+            id,
+            longevity: crate::storage::DataLongevity::Cache,
+        };
+        if let Ok(handle) =
+            device
+                .storage
+                .try_promote_previous_preview(device, id, self.current_frame)
+        {
+            ReuseResult {
+                request: Request::ready(handle),
+                new: false,
+            }
+        } else {
+            ReuseResult {
+                request: self.alloc_raw_gpu(device, descriptor, layout),
+                new: true,
+            }
+        }
     }
 
     pub fn access_state_cache_gpu<'a>(
