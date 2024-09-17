@@ -12,7 +12,7 @@ use palace_core::operators::raycaster::{
 };
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::FrameOperator;
-use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
+use palace_core::operators::volume::{ChunkSize, LODVolumeOperator, VolumeOperator};
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
@@ -54,6 +54,10 @@ struct CliArgs {
     /// Transfer function (voreen .tfi file)
     #[arg(short, long)]
     transfunc_path: Option<PathBuf>,
+
+    /// Initially fit transfer function to volume values
+    #[arg(long)]
+    fit_transfunc: bool,
 
     /// Stop after rendering a complete frame
     #[arg(short, long)]
@@ -161,6 +165,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         smoothing_std: voxel_diag,
     };
+
+    if args.fit_transfunc {
+        fit_transfer_function(&mut runtime, &mut state, &l0.inner);
+    }
 
     let res = palace_winit::run_with_window(
         &mut runtime,
@@ -328,6 +336,40 @@ fn raycaster(
         matrix.into(),
     );
     palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), state.config)
+}
+
+fn fit_transfer_function(
+    runtime: &mut RunTime,
+    app_state: &mut State,
+    vol: &VolumeOperator<StaticElementType<f32>>,
+) {
+    let min_max_sample_bricks = 10;
+
+    let min = palace_core::operators::volume_gpu::min(
+        vol.clone(),
+        volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+    );
+    let min = &min;
+    let max = palace_core::operators::volume_gpu::max(
+        vol.clone(),
+        volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+    );
+    let max = &max;
+
+    let (min, max) = runtime
+        .resolve(None, false, |ctx, _| {
+            async move {
+                Ok(palace_core::task::join! {
+                    ctx.submit(min.request_scalar()),
+                    ctx.submit(max.request_scalar())
+                })
+            }
+            .into()
+        })
+        .unwrap();
+
+    app_state.tf.min = min;
+    app_state.tf.max = max;
 }
 
 fn eval_network(
@@ -546,31 +588,7 @@ fn eval_network(
     });
 
     if fit_tf {
-        let min_max_sample_bricks = 10;
-
-        let min = palace_core::operators::volume_gpu::min(
-            processed.levels[0].inner.clone(),
-            volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
-        );
-        let min = &min;
-        let max = palace_core::operators::volume_gpu::max(
-            processed.levels[0].inner.clone(),
-            volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
-        );
-        let max = &max;
-
-        let (min, max) = runtime.resolve(None, false, |ctx, _| {
-            async move {
-                Ok(palace_core::task::join! {
-                    ctx.submit(min.request_scalar()),
-                    ctx.submit(max.request_scalar())
-                })
-            }
-            .into()
-        })?;
-
-        app_state.tf.min = min;
-        app_state.tf.max = max;
+        fit_transfer_function(runtime, app_state, &processed.levels[0].inner);
     }
 
     let frame = match app_state.rendering {
