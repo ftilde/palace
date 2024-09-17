@@ -801,12 +801,11 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
         &'a self,
         device: &'a DeviceContext,
         item: ChunkIndex,
-    ) -> Result<(), ()> {
+    ) -> Result<WriteHandle<'a>, ()> {
         let id = DataId::new(self.current_op(), item);
-        device.storage.try_promote_previous_preview(
-            id,
-            crate::storage::DataVersion::Preview(self.current_frame),
-        )
+        device
+            .storage
+            .try_promote_previous_preview(device, id, self.current_frame)
     }
 
     pub fn access_state_cache_gpu<'a>(

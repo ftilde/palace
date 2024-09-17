@@ -653,46 +653,53 @@ impl Storage {
         Request::garbage_collect(DataLocation::GPU(self.id), self.next_garbage_collect())
     }
 
-    pub fn try_promote_previous_preview(
-        &self,
+    pub fn try_promote_previous_preview<'b>(
+        &'b self,
+        device: &'b DeviceContext,
         d: DataId,
-        new_version: DataVersion,
-    ) -> Result<(), ()> {
+        current_frame: FrameNumber,
+    ) -> Result<WriteHandle<'b>, ()> {
         let mut old_preview_data_index = self.old_preview_data_index.borrow_mut();
         if let Some(entries) = old_preview_data_index.get_mut(&d) {
-            let entry = entries.pop_last().unwrap();
-            let (old_state, lru_index, epoch) = entry.1;
-
-            let mut index = self.data_index.borrow_mut();
-
-            let existing_access = index.remove(&d).map(|v| {
-                assert!(matches!(v.state, StorageEntryState::Registered));
-                v.access
-            });
-            let access = match existing_access {
-                Some(AccessState::Some(n)) => {
-                    if let Some(lru_index) = lru_index {
-                        self.lru_manager.borrow_mut().remove(lru_index);
-                    }
-                    AccessState::Some(n)
+            {
+                let entry = entries.pop_last().unwrap();
+                if entries.is_empty() {
+                    old_preview_data_index.remove(&d);
                 }
-                Some(AccessState::None(_, _)) => panic!("New entry should already have accesses"),
-                None => AccessState::None(lru_index, epoch),
-            };
 
-            index.insert(
-                d,
-                Entry {
-                    state: old_state,
-                    access,
-                },
-            );
-            self.new_data.add(d, new_version.type_());
+                let (old_state, lru_index, epoch) = entry.1;
 
-            if entries.is_empty() {
-                old_preview_data_index.remove(&d);
+                let mut index = self.data_index.borrow_mut();
+
+                let existing_access = index.remove(&d).map(|v| {
+                    assert!(matches!(v.state, StorageEntryState::Registered));
+                    v.access
+                });
+                let access = match existing_access {
+                    Some(AccessState::Some(n)) => {
+                        if let Some(lru_index) = lru_index {
+                            self.lru_manager.borrow_mut().remove(lru_index);
+                        }
+                        AccessState::Some(n)
+                    }
+                    Some(AccessState::None(_, _)) => {
+                        panic!("New entry should already have accesses")
+                    }
+                    None => AccessState::None(lru_index, epoch),
+                };
+
+                let StorageEntryState::Initialized(info, _visibility, _version) = old_state else {
+                    panic!("Invalid state");
+                };
+
+                let state = StorageEntryState::Initializing(info);
+
+                index.insert(d, Entry { state, access });
             }
-            Ok(())
+
+            let access = self.register_access(device, current_frame, d);
+
+            Ok(self.access_initializing(access).unwrap())
         } else {
             Err(())
         }

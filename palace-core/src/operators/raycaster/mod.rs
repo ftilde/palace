@@ -726,10 +726,22 @@ pub fn raycast(
                         *progress_state = RaycastingState::Empty.into();
                     });
                 });
+                let out_info = m_out.chunk_info(pos);
 
-                if ctx.past_deadline().is_none()
+                let (reused, gpu_brick_out) =
+                    if let Ok(w) = ctx.try_promote_previous_preview(device, pos) {
+                        (true, w)
+                    } else {
+                        (
+                            false,
+                            ctx.submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                                .await,
+                        )
+                    };
+
+                if !reused
+                    || ctx.past_deadline().is_none()
                     || progress_state.unpack() < RaycastingState::RenderingFull
-                    || ctx.try_promote_previous_preview(device, pos).is_err()
                 {
                     let request_table_size = 256;
 
@@ -786,7 +798,6 @@ pub fn raycast(
                     let tf_data_gpu = ctx
                         .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
                         .await;
-                    let out_info = m_out.chunk_info(pos);
 
                     let chunk_size = out_info.mem_dimensions.raw();
                     let tf_data = tf.data();
@@ -873,9 +884,6 @@ pub fn raycast(
                         )
                         .await
                     };
-                    let gpu_brick_out = ctx
-                        .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
-                        .await;
                     let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                     // Actual rendering
@@ -969,11 +977,6 @@ pub fn raycast(
                         }
                     };
 
-                    let src_info = SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_WRITE,
-                    };
-
                     let new_state = match progress_state.unpack() {
                         RaycastingState::Empty | RaycastingState::RenderingPreview => {
                             if timed_out {
@@ -995,18 +998,19 @@ pub fn raycast(
                     };
                     //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
                     *progress_state = new_state.into();
+                }
 
-                    if matches!(new_state, RaycastingState::Done) {
-                        unsafe { gpu_brick_out.initialized(*ctx, src_info) };
-                    } else {
-                        unsafe {
-                            gpu_brick_out.initialized_version(
-                                *ctx,
-                                src_info,
-                                DataVersionType::Preview,
-                            )
-                        };
-                    }
+                let src_info = SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_WRITE,
+                };
+
+                if matches!(progress_state.unpack(), RaycastingState::Done) {
+                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                } else {
+                    unsafe {
+                        gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
+                    };
                 }
 
                 Ok(())
