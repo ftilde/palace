@@ -369,7 +369,7 @@ impl Drop for StateCacheHandle<'_> {
             &mut vram_entry.access,
             &mut lru_manager,
             self.device,
-            LRUItem::Cache(self.id, self.frame),
+            LRUItem::Data(self.id, DataVersion::Preview(self.frame)),
             longevity,
         );
     }
@@ -575,7 +575,6 @@ impl<'a> Drop for IndexHandle<'a> {
 #[derive(Copy, Clone)]
 enum LRUItem {
     Data(DataId, DataVersion),
-    Cache(DataId, FrameNumber),
     Index(OperatorId),
 }
 
@@ -754,10 +753,22 @@ impl Storage {
                                 };
                                 (None, epoch)
                             };
+
                         if !device.cmd_buffer_completed(epoch) {
                             // All following LRU items will have the same or a later epoch so cannot be deleted
                             // either
                             break;
+                        }
+                        if matches!(longevity, DataLongevity::Cache) {
+                            // This is a "young" cache item (i.e. possibly from the last frame) so
+                            // we do not (yet) want to delete it.
+                            if data_version
+                                .of_frame()
+                                .map(|v| current_frame.diff(v) < 2)
+                                .unwrap_or(false)
+                            {
+                                break;
+                            }
                         }
 
                         let state = if let Some(old_preview_frame) = old_preview_frame {
@@ -773,26 +784,6 @@ impl Storage {
 
                         self.new_data.remove(key);
                         match state {
-                            StorageEntryState::Registered => panic!("Should not be in LRU list"),
-                            StorageEntryState::Initializing(info)
-                            | StorageEntryState::Initialized(info, _, _) => info,
-                        }
-                    }
-                    LRUItem::Cache(key, frame_number) => {
-                        let entry = index.get_mut(&key).unwrap();
-                        let AccessState::None(_, f) = entry.access else {
-                            panic!("Should not be in LRU list");
-                        };
-                        if !device.cmd_buffer_completed(f) || current_frame.diff(frame_number) < 2 {
-                            // All following LRU items will have the same or a later epoch and/or frame_number so cannot be deleted
-                            // either
-                            break;
-                        }
-
-                        let entry = index.remove(&key).unwrap();
-
-                        self.new_data.remove(key);
-                        match entry.state {
                             StorageEntryState::Registered => panic!("Should not be in LRU list"),
                             StorageEntryState::Initializing(info)
                             | StorageEntryState::Initialized(info, _, _) => info,

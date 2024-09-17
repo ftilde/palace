@@ -770,6 +770,7 @@ pub enum StateCacheResult<'a, T: ?Sized, Allocator> {
 }
 
 impl<'a, T: AsInit + ?Sized, Allocator> StateCacheResult<'a, T, Allocator> {
+    // Safety: The caller must actually initialize all values in the write handle
     pub unsafe fn init(
         self,
         f: impl FnOnce(&mut WriteHandle<'a, T, DropUnref<'a, Allocator>>),
