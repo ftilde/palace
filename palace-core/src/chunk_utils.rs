@@ -8,7 +8,7 @@ use crate::{
     dtypes::StaticElementType,
     operators::tensor::TensorOperator,
     storage::{
-        gpu::{Allocation, IndexHandle},
+        gpu::{Allocation, IndexHandle, StateCacheHandle, StateCacheResult},
         Element,
     },
     task::{OpaqueTaskContext, Request},
@@ -99,6 +99,84 @@ impl ChunkRequestTable {
 impl VulkanState for ChunkRequestTable {
     unsafe fn deinitialize(&mut self, context: &DeviceContext) {
         self.allocation.deinitialize(context);
+    }
+}
+
+pub struct ChunkRequestTable2<'a> {
+    inner: StateCacheHandle<'a>,
+    pub newly_initialized: bool,
+}
+
+impl<'a> ChunkRequestTable2<'a> {
+    // Note: a barrier is needed after initialization to make values visible
+    pub fn new(device: &DeviceContext, inner: StateCacheResult<'a>) -> Self {
+        let mut newly_initialized = false;
+        let inner = inner.init(|v| {
+            device.with_cmd_buffer(|cmd| unsafe {
+                device.functions().cmd_fill_buffer(
+                    cmd.raw(),
+                    v.buffer,
+                    0,
+                    vk::WHOLE_SIZE,
+                    RTElement::max_value(),
+                );
+            });
+            newly_initialized = true;
+        });
+        Self {
+            inner,
+            newly_initialized,
+        }
+    }
+    // Note: a barrier is needed after clearing to make values visible
+    pub fn clear(&self, cmd: &mut CommandBuffer) {
+        unsafe {
+            cmd.functions().cmd_fill_buffer(
+                cmd.raw(),
+                self.inner.buffer,
+                0,
+                vk::WHOLE_SIZE,
+                RTElement::max_value(),
+            )
+        };
+    }
+
+    fn num_elements(&self) -> usize {
+        crate::util::num_elms_in_array::<RTElement>(self.inner.size as usize)
+    }
+
+    pub fn buffer(&self) -> vk::Buffer {
+        self.inner.buffer
+    }
+
+    // Note: any changes to the buffer have to be made visible to the cpu side via a barrier first
+    pub async fn download_requested<'cref, 'inv>(
+        &self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        device: &'cref DeviceContext,
+    ) -> Vec<RTElement> {
+        let num_elements = self.num_elements();
+        let layout = std::alloc::Layout::array::<RTElement>(num_elements).unwrap();
+        let mut request_table_cpu = vec![0u32; num_elements];
+        let request_table_cpu_bytes: &mut [u8] =
+            bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
+        unsafe {
+            crate::vulkan::memory::copy_to_cpu(
+                ctx,
+                device,
+                self.inner.buffer,
+                layout,
+                request_table_cpu_bytes.as_mut_ptr().cast(),
+            )
+            .await
+        };
+
+        let to_request_linear = request_table_cpu
+            .into_iter()
+            .filter(|v| *v != RTElement::max_value())
+            .collect::<Vec<RTElement>>();
+
+        to_request_linear
     }
 }
 

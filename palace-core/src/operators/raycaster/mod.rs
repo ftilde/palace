@@ -7,7 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkRequestTable,
+    chunk_utils::ChunkRequestTable2,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -677,7 +677,7 @@ pub fn raycast(
                     _ => config.lod_coarseness,
                 };
 
-                let reset_state = matches!(
+                let mut reset_state = matches!(
                     progress_state.unpack(),
                     RaycastingState::Empty | RaycastingState::PreviewDone
                 );
@@ -728,6 +728,22 @@ pub fn raycast(
                 });
                 let out_info = m_out.chunk_info(pos);
 
+                let request_table_size = 256;
+                let raw_request_tables = ctx
+                    .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
+                        ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            &format!("lod_table{}", i),
+                            Layout::array::<Vector<D4, u8>>(request_table_size).unwrap(),
+                        )
+                    })))
+                    .await;
+                let request_tables = raw_request_tables
+                    .into_iter()
+                    .map(|raw| ChunkRequestTable2::new(device, raw))
+                    .collect::<Vec<_>>();
+
                 let reuse_res = ctx.alloc_try_reuse_gpu(device, pos, out_info.mem_elements());
                 let gpu_brick_out = ctx.submit(reuse_res.request).await;
 
@@ -735,8 +751,6 @@ pub fn raycast(
                     || ctx.past_deadline().is_none()
                     || progress_state.unpack() < RaycastingState::RenderingFull
                 {
-                    let request_table_size = 256;
-
                     let pipeline = device.request_state(
                         RessourceId::new("pipeline")
                             .of(ctx.current_op())
@@ -793,19 +807,12 @@ pub fn raycast(
 
                     let chunk_size = out_info.mem_dimensions.raw();
                     let tf_data = tf.data();
-                    let consts = PushConstants {
-                        tf_min: tf_data.min,
-                        tf_max: tf_data.max,
-                        tf_len: tf_data.len,
-                        out_mem_dim: chunk_size.into(),
-                        oversampling_factor: config.oversampling_factor,
-                        lod_coarseness,
-                        reset_state: reset_state as u32,
-                    };
 
                     let mut lods = Vec::new();
                     let mut lod_data = Vec::new();
-                    for level in &input.levels {
+                    for (level, request_table) in
+                        input.levels.iter().zip(request_tables.into_iter())
+                    {
                         let m_in = level.metadata;
                         let emd = level.embedding_data;
                         let num_bricks = m_in.dimension_in_chunks().hmul();
@@ -827,14 +834,8 @@ pub fn raycast(
                         let index_addr =
                             unsafe { device.functions().get_buffer_device_address(&info) };
 
-                        let request_table = TempRessource::new(
-                            device,
-                            ctx.submit(ChunkRequestTable::new(request_table_size, device))
-                                .await,
-                        );
-
                         let info = ash::vk::BufferDeviceAddressInfo::builder()
-                            .buffer(request_table.buffer().buffer);
+                            .buffer(request_table.buffer());
                         let req_table_addr =
                             unsafe { device.functions().get_buffer_device_address(&info) };
 
@@ -849,6 +850,7 @@ pub fn raycast(
                             _padding: 0,
                         });
                     }
+
                     let layout = Layout::array::<LOD>(lods.len()).unwrap();
                     let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
                         | ash::vk::BufferUsageFlags::TRANSFER_DST;
@@ -880,7 +882,60 @@ pub fn raycast(
 
                     // Actual rendering
                     let timed_out = 'outer: loop {
-                        let loop_start = std::time::Instant::now();
+                        // Make requests visible
+                        ctx.submit(device.barrier(
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_READ,
+                            },
+                        ))
+                        .await;
+
+                        let mut done = true;
+                        let mut timeout = false;
+                        for ((level, request_batch_size), data) in (input
+                            .levels
+                            .iter()
+                            .zip(request_batch_size.iter_mut())
+                            .zip(lod_data.iter_mut()))
+                        .rev()
+                        {
+                            if !data.1.newly_initialized && !reset_state {
+                                let mut to_request_linear =
+                                    data.1.download_requested(*ctx, device).await;
+
+                                if to_request_linear.is_empty() {
+                                    continue;
+                                }
+
+                                done = false;
+
+                                if let Err(crate::chunk_utils::Timeout) =
+                                    crate::chunk_utils::request_to_index_with_timeout(
+                                        &*ctx,
+                                        device,
+                                        &mut to_request_linear,
+                                        level,
+                                        &data.0,
+                                        request_batch_size,
+                                    )
+                                    .await
+                                {
+                                    timeout = true;
+                                }
+
+                                // Clear request table for the next iteration
+                                device.with_cmd_buffer(|cmd| data.1.clear(cmd));
+                            } else {
+                                data.1.newly_initialized = false;
+                                done = false;
+                            }
+                        }
+
                         // Make writes to the request table visible (including initialization)
                         ctx.submit(device.barrier(
                             SrcBarrierInfo {
@@ -907,6 +962,17 @@ pub fn raycast(
                                 &tf_data_gpu,
                             ]);
 
+                            let consts = PushConstants {
+                                tf_min: tf_data.min,
+                                tf_max: tf_data.max,
+                                tf_len: tf_data.len,
+                                out_mem_dim: chunk_size.into(),
+                                oversampling_factor: config.oversampling_factor,
+                                lod_coarseness,
+                                reset_state: reset_state as u32,
+                            };
+                            reset_state = false;
+
                             unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
 
@@ -916,56 +982,12 @@ pub fn raycast(
                             }
                         });
 
-                        // Make requests visible
-                        ctx.submit(device.barrier(
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
-                            },
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_READ,
-                            },
-                        ))
-                        .await;
-
-                        let mut requested_anything = false;
-                        for ((level, request_batch_size), data) in (input
-                            .levels
-                            .iter()
-                            .zip(request_batch_size.iter_mut())
-                            .zip(lod_data.iter()))
-                        .rev()
-                        {
-                            let mut to_request_linear =
-                                data.1.download_requested(*ctx, device).await;
-
-                            if to_request_linear.is_empty() {
-                                continue;
-                            }
-                            println!("Draw time: {}ms", loop_start.elapsed().as_millis());
-                            requested_anything = true;
-
-                            if let Err(crate::chunk_utils::Timeout) =
-                                crate::chunk_utils::request_to_index_with_timeout(
-                                    &*ctx,
-                                    device,
-                                    &mut to_request_linear,
-                                    level,
-                                    &data.0,
-                                    request_batch_size,
-                                )
-                                .await
-                            {
-                                break 'outer true;
-                            }
-
-                            // Clear request table for the next iteration
-                            device.with_cmd_buffer(|cmd| data.1.clear(cmd));
+                        if done {
+                            break 'outer false;
                         }
 
-                        if !requested_anything {
-                            break 'outer false;
+                        if timeout {
+                            break 'outer true;
                         }
                     };
 
@@ -988,6 +1010,11 @@ pub fn raycast(
                     };
                     //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
                     *progress_state = new_state.into();
+
+                    //println!(
+                    //    "Request table size ================ {:?}",
+                    //    &*request_batch_size
+                    //);
                 }
 
                 let src_info = SrcBarrierInfo {
