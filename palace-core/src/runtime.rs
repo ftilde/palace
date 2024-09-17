@@ -253,7 +253,7 @@ impl Deadline {
     pub fn for_frame_duration(last_frame: Instant, duration: Duration) -> Self {
         Self {
             interactive: last_frame + duration,
-            refinement: last_frame + 5 * duration,
+            refinement: last_frame + 3 * duration,
         }
     }
 
