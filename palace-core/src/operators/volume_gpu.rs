@@ -14,8 +14,8 @@ use crate::{
     dtypes::{DType, ElementType, StaticElementType},
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
-    storage::gpu,
-    task::RequestStream,
+    storage::{gpu, DataVersionType},
+    task::{Request, RequestStream},
     vulkan::{
         pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig, DynPushConstants},
         shader::{Config, ShaderDefines},
@@ -425,7 +425,7 @@ void main() {
                     },
                 )?;
 
-                let requests = positions.into_iter().map(|(pos, _)| {
+                let caches = positions.into_iter().map(|(pos, _)| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();
@@ -443,31 +443,75 @@ void main() {
                             )
                         })
                         .collect::<Vec<_>>();
-                    let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                        input.chunks.request_gpu(
-                            device.id,
-                            *pos,
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_READ,
-                            },
-                        )
-                    }));
 
-                    (intersecting_bricks, (pos, in_brick_positions))
+                    let tile_done =
+                        ctx.access_state_cache::<u8>(pos, "tile_done", in_brick_positions.len());
+                    (tile_done, (pos, in_brick_positions))
                 });
 
-                let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
-                    *ctx,
-                    |(intersecting_bricks, (pos, in_brick_positions))| {
+                let mut stream = ctx
+                    .submit_unordered_with_data(caches)
+                    .then_req_with_data(*ctx, |(tile_done, (pos, in_brick_positions))| {
+                        let mut tile_done = unsafe {
+                            tile_done.init(|r| {
+                                crate::data::fill_uninit(r, 0);
+                            })
+                        };
+                        let (redo_all, out_request) = if let Ok(gpu_brick_out) =
+                            ctx.try_promote_previous_preview(device, pos)
+                        {
+                            (false, Request::ready(gpu_brick_out))
+                        } else {
+                            (
+                                true,
+                                ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements()),
+                            )
+                        };
+
+                        if redo_all {
+                            //println!("lost prev version :(");
+                            tile_done.fill(0);
+                        }
+
+                        let in_brick_positions_to_fill: Vec<_> = in_brick_positions
+                            .into_iter()
+                            .enumerate()
+                            .filter_map(|(i, position)| {
+                                (tile_done[i] == 0).then_some((i, position))
+                            })
+                            .collect();
+
+                        let brick_requests =
+                            ctx.group(in_brick_positions_to_fill.iter().map(|(_, pos)| {
+                                input.chunks.request_gpu(
+                                    device.id,
+                                    *pos,
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                )
+                            }));
+
                         (
-                            ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements()),
-                            (intersecting_bricks, pos, in_brick_positions),
+                            brick_requests,
+                            (out_request, pos, in_brick_positions_to_fill, tile_done),
                         )
-                    },
-                );
-                while let Some((gpu_brick_out, (intersecting_bricks, pos, in_brick_positions))) =
-                    stream.next().await
+                    })
+                    .then_req_with_data(
+                        *ctx,
+                        |(in_bricks, (out_request, pos, in_brick_positions_to_fill, tile_done))| {
+                            (
+                                out_request,
+                                (in_bricks, pos, in_brick_positions_to_fill, tile_done),
+                            )
+                        },
+                    );
+
+                while let Some((
+                    gpu_brick_out,
+                    (intersecting_bricks, pos, in_brick_positions, mut tile_done),
+                )) = stream.next().await
                 {
                     let out_info = m_out.chunk_info(pos);
 
@@ -475,7 +519,12 @@ void main() {
                         let out_begin = out_info.begin();
                         let out_end = out_info.end();
 
-                        for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                        //let skip = tile_done.len() - intersecting_bricks.len();
+                        //if skip > 0 {
+                        //    println!("skipping {}", skip);
+                        //}
+
+                        for (gpu_brick_in, (tile_index, in_brick_pos)) in intersecting_bricks
                             .iter()
                             .zip(in_brick_positions.into_iter())
                         {
@@ -514,6 +563,10 @@ void main() {
 
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(global_size);
+                            }
+
+                            if gpu_brick_in.version == DataVersionType::Final {
+                                tile_done[tile_index] = 1;
                             }
                         }
                     });
