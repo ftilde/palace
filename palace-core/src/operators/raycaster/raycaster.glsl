@@ -170,12 +170,9 @@ void main()
         LOD root_level = vol.levels[0];
         bool valid = sample_ee(out_pos, eep, root_level);
 
-        u8vec4 color;
         if(valid) {
             float t = consts.reset_state != 0 ? 0.0 : state_cache.values[gID];
-            bool rendered_anything = false;
-            u8vec4 stored_state_color = state_colors.values[gID];
-            u8vec4 state_color = t == 0.0 ? u8vec4(0) : stored_state_color;
+            u8vec4 state_color = t == 0.0 ? u8vec4(0) : state_colors.values[gID];
 
             if(t != T_DONE) {
 
@@ -273,7 +270,6 @@ void main()
                         float norm_step = step / diag;
                         update_state(t, state_color, sample_col, norm_step);
 
-                        rendered_anything = true;
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
@@ -286,24 +282,18 @@ void main()
                 }
                 if(t > t_end) {
                     t = T_DONE;
-                    //if(level_num > 0) {
-                    //    state.intensity = 0.0;
-                    //}
                 }
 
                 state_cache.values[gID] = t;
+                state_colors.values[gID] = state_color;
 
-                if(rendered_anything) {
-                    stored_state_color = state_color;
-                    state_colors.values[gID] = state_color;
+                // If we have rendered anything at all (or we are done) we can
+                // overwrite the actual (non-internal) frame buffer. This way
+                // we get a nice update from interactive to refinement frames.
+                if(t == T_DONE || state_color != u8vec4(0)) {
+                    output_data.values[gID] = state_color;
                 }
             }
-
-            color = stored_state_color;
-        } else {
-            color = u8vec4(0);
         }
-
-        output_data.values[gID] = color;
     }
 }

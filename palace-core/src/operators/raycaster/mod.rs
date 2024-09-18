@@ -746,36 +746,49 @@ pub fn raycast(
                     .map(|raw| ChunkRequestTable2::new(device, raw))
                     .collect::<Vec<_>>();
 
+                let pipeline = device.request_state(
+                    RessourceId::new("pipeline")
+                        .of(ctx.current_op())
+                        .dependent_on(&input.levels.len())
+                        .dependent_on(&config.compositing_mode)
+                        .dependent_on(&config.shading),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                include_str!("raycaster.glsl"),
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstants>()
+                                    .add("NUM_LEVELS", input.levels.len())
+                                    .add("REQUEST_TABLE_SIZE", request_table_size)
+                                    .add(config.compositing_mode.define_name(), 1)
+                                    .add(config.shading.define_name(), 1),
+                            ),
+                            false,
+                        )
+                    },
+                )?;
+
                 let reuse_res = ctx.alloc_try_reuse_gpu(device, pos, out_info.mem_elements());
                 let gpu_brick_out = ctx.submit(reuse_res.request).await;
+                if reuse_res.new {
+                    device.with_cmd_buffer(|cmd| {
+                        unsafe {
+                            device.functions().cmd_fill_buffer(
+                                cmd.raw(),
+                                gpu_brick_out.buffer,
+                                0,
+                                gpu_brick_out.size,
+                                0x0,
+                            )
+                        };
+                    });
+                }
 
                 if reuse_res.new
                     || ctx.past_deadline(in_preview).is_none()
                     || progress_state.unpack() < RaycastingState::RenderingFull
                 {
-                    let pipeline = device.request_state(
-                        RessourceId::new("pipeline")
-                            .of(ctx.current_op())
-                            .dependent_on(&input.levels.len())
-                            .dependent_on(&config.compositing_mode)
-                            .dependent_on(&config.shading),
-                        || {
-                            ComputePipeline::new(
-                                device,
-                                (
-                                    include_str!("raycaster.glsl"),
-                                    ShaderDefines::new()
-                                        .push_const_block::<PushConstants>()
-                                        .add("NUM_LEVELS", input.levels.len())
-                                        .add("REQUEST_TABLE_SIZE", request_table_size)
-                                        .add(config.compositing_mode.define_name(), 1)
-                                        .add(config.shading.define_name(), 1),
-                                ),
-                                false,
-                            )
-                        },
-                    )?;
-
                     let request_batch_size = ctx
                         .submit(ctx.access_state_cache(
                             pos,
