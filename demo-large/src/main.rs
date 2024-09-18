@@ -527,10 +527,10 @@ fn eval_network(
                         );
                         ui.add(
                             egui::Slider::new(
-                                &mut app_state.raycasting.config.preview_lod_coarseness,
-                                0.01..=100.0,
+                                &mut app_state.raycasting.config.preview_lod_coarseness_modifier,
+                                1.0..=100.0,
                             )
-                            .text("Preview LOD c.")
+                            .text("Preview detail reduction")
                             .logarithmic(true),
                         );
                         ui.add(

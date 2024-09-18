@@ -492,7 +492,7 @@ pub struct RaycasterConfig {
     #[pyo3(get, set)]
     pub lod_coarseness: f32,
     #[pyo3(get, set)]
-    pub preview_lod_coarseness: f32,
+    pub preview_lod_coarseness_modifier: f32,
     #[pyo3(get, set)]
     pub oversampling_factor: f32,
     #[pyo3(get, set)]
@@ -517,7 +517,7 @@ impl Default for RaycasterConfig {
     fn default() -> Self {
         RaycasterConfig {
             lod_coarseness: 1.0,
-            preview_lod_coarseness: 4.0,
+            preview_lod_coarseness_modifier: 4.0,
             oversampling_factor: 1.0,
             compositing_mode: CompositingMode::MOP,
             shading: Shading::None,
@@ -672,7 +672,7 @@ pub fn raycast(
 
                 let lod_coarseness = match progress_state.unpack() {
                     RaycastingState::Empty | RaycastingState::RenderingPreview => {
-                        config.lod_coarseness * 10.0
+                        config.lod_coarseness * config.preview_lod_coarseness_modifier
                     }
                     _ => config.lod_coarseness,
                 };
