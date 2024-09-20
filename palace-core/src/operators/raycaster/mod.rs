@@ -173,8 +173,14 @@ pub fn entry_exit_points(
     projection_mat: Matrix<D4, f32>,
 ) -> ImageOperator<StaticElementType<[f32; 8]>> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        transform: cgmath::Matrix4<f32>,
+    struct PushConstantsFirstEEP {
+        norm_to_projection: cgmath::Matrix4<f32>,
+        out_mem_dim: cgmath::Vector2<u32>,
+    }
+
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstantsInVolumeFix {
+        projection_to_norm: cgmath::Matrix4<f32>,
         out_mem_dim: cgmath::Vector2<u32>,
     }
 
@@ -202,7 +208,8 @@ pub fn entry_exit_points(
                     &(&m_in.dimensions.map(|v| v.raw as f32) * &embedding_data.spacing),
                 )
                 .to_homogeneous();
-                let transform = *transform * &norm_to_world;
+                let norm_to_projection = *transform * &norm_to_world;
+                let projection_to_norm = norm_to_projection.invert().unwrap();
 
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),
@@ -234,19 +241,19 @@ pub fn entry_exit_points(
                         .unwrap())
                     },
                 )?;
-                let pipeline = device.request_state(
+                let pipeline_eep = device.request_state(
                     RessourceId::new("pipeline").of(ctx.current_op()),
                     || {
                         GraphicsPipeline::new(
                             device,
                             (
                                 include_str!("entryexitpoints.vert"),
-                                ShaderDefines::new().push_const_block::<PushConstants>(),
+                                ShaderDefines::new().push_const_block::<PushConstantsFirstEEP>(),
                             ),
                             (
                                 include_str!("entryexitpoints.frag"),
                                 ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
+                                    .push_const_block::<PushConstantsFirstEEP>()
                                     .add("BRICK_MEM_SIZE", out_info.mem_elements()),
                             ),
                             |shader_stages, pipeline_layout, build_pipeline| {
@@ -321,6 +328,21 @@ pub fn entry_exit_points(
                                 build_pipeline(&info)
                             },
                             true,
+                        )
+                    },
+                )?;
+                let pipeline_in_volume_fix = device.request_state(
+                    RessourceId::new("fix_eep_pipeline").of(ctx.current_op()),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                include_str!("entrypoints_inside.glsl"),
+                                ShaderDefines::new()
+                                    .push_const_block::<PushConstantsInVolumeFix>()
+                                    .add("BRICK_MEM_SIZE", out_info.mem_elements()),
+                            ),
+                            false,
                         )
                     },
                 )?;
@@ -404,14 +426,14 @@ pub fn entry_exit_points(
                     .offset(vk::Offset2D::builder().x(0).y(0).build())
                     .extent(extent);
 
-                let push_constants = PushConstants {
+                let push_constants = PushConstantsFirstEEP {
                     out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap().into(),
-                    transform: transform.into(),
+                    norm_to_projection: norm_to_projection.into(),
                 };
                 let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
                 device.with_cmd_buffer(|cmd| unsafe {
-                    let mut pipeline = pipeline.bind(cmd);
+                    let mut pipeline = pipeline_eep.bind(cmd);
 
                     device.functions().cmd_begin_render_pass(
                         pipeline.cmd().raw(),
@@ -437,11 +459,44 @@ pub fn entry_exit_points(
                     device.functions().cmd_end_render_pass(cmd.raw());
                 });
 
+                // Fix entry points in case the camera is inside the volume:
+
+                ctx.submit(device.barrier(
+                    SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
+                    },
+                    DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                    },
+                ))
+                .await;
+
+                let global_size = out_info.mem_dimensions.raw().push_dim_large(1);
+
+                device.with_cmd_buffer(|cmd| {
+                    let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
+
+                    let consts = PushConstantsInVolumeFix {
+                        projection_to_norm: projection_to_norm.into(),
+                        out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap().into(),
+                    };
+
+                    unsafe {
+                        let mut pipeline = pipeline_in_volume_fix.bind(cmd);
+
+                        pipeline.push_constant(consts);
+                        pipeline.write_descriptor_set(0, descriptor_config);
+                        pipeline.dispatch3d(global_size);
+                    }
+                });
+
                 unsafe {
                     gpu_brick_out.initialized(
                         *ctx,
                         SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                             access: vk::AccessFlags2::SHADER_WRITE,
                         },
                     )

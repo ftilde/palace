@@ -1,0 +1,29 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : require
+
+#include <util.glsl>
+
+layout (local_size_x = 32, local_size_y = 32) in;
+
+layout(scalar, binding = 0) buffer OutputBuffer{
+    vec4[2] values[BRICK_MEM_SIZE];
+} eep;
+
+declare_push_consts(consts);
+
+void main() {
+    uvec2 pos = gl_GlobalInvocationID.xy;
+
+    if(pos.x < consts.out_mem_dim.x && pos.y < consts.out_mem_dim.y) {
+        uint linear_pos = to_linear(pos, consts.out_mem_dim);
+        if(eep.values[linear_pos][0].w < 1.0) {
+            vec2 pos_norm = vec2(pos)/vec2(consts.out_mem_dim);
+            vec4 ndc_near_plane = vec4(2.0 * pos_norm - 1.0, -1.0, 1.0);
+
+            vec4 normalized_pos = consts.projection_to_norm * ndc_near_plane;
+            normalized_pos /= normalized_pos.w;
+
+            eep.values[linear_pos][0] = normalized_pos;
+        }
+    }
+}

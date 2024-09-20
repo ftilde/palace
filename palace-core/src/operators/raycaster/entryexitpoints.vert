@@ -22,6 +22,6 @@ vec3 positions[14] = vec3[](
 layout(location = 0) out vec3 norm_pos;
 
 void main() {
-    gl_Position = consts.transform * vec4(positions[gl_VertexIndex], 1.0);
+    gl_Position = consts.norm_to_projection * vec4(positions[gl_VertexIndex], 1.0);
     norm_pos = positions[gl_VertexIndex];
 }
