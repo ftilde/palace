@@ -313,13 +313,13 @@ impl ZarrSourceState {
                             let handle = chunk_handle.into_main_handle(&device);
 
                             device.with_cmd_buffer(|cmd| {
-                                let copy_info = vk::BufferCopy::builder().size(handle.size as _);
+                                let copy_info = vk::BufferCopy::default().size(handle.size as _);
                                 unsafe {
                                     device.functions().cmd_copy_buffer(
                                         cmd.raw(),
                                         staging_buf.buffer,
                                         handle.buffer,
-                                        &[*copy_info],
+                                        &[copy_info],
                                     );
                                 }
                             });

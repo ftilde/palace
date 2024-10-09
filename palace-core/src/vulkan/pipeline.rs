@@ -58,7 +58,7 @@ impl ComputePipeline {
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
 
-        let pipeline_info = vk::PipelineShaderStageCreateInfo::builder()
+        let pipeline_info = vk::PipelineShaderStageCreateInfo::default()
             .module(shader.module)
             .name(&entry_point_name_c)
             .stage(vk::ShaderStageFlags::COMPUTE);
@@ -81,7 +81,7 @@ impl ComputePipeline {
             .as_ref()
             .map(std::slice::from_ref)
             .unwrap_or(&[]);
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
 
@@ -91,13 +91,13 @@ impl ComputePipeline {
         }
         .unwrap();
 
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .stage(*pipeline_info)
+        let pipeline_info = vk::ComputePipelineCreateInfo::default()
+            .stage(pipeline_info)
             .layout(pipeline_layout);
 
         let pipelines = unsafe {
             df.device
-                .create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)
+                .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
         }
         .unwrap();
 
@@ -166,12 +166,12 @@ impl GraphicsPipeline {
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
 
-        let vertex_c_info = vk::PipelineShaderStageCreateInfo::builder()
+        let vertex_c_info = vk::PipelineShaderStageCreateInfo::default()
             .module(vertex_shader.module)
             .name(&entry_point_name_c)
             .stage(vk::ShaderStageFlags::VERTEX);
 
-        let fragment_c_info = vk::PipelineShaderStageCreateInfo::builder()
+        let fragment_c_info = vk::PipelineShaderStageCreateInfo::default()
             .module(fragment_shader.module)
             .name(&entry_point_name_c)
             .stage(vk::ShaderStageFlags::FRAGMENT);
@@ -199,7 +199,7 @@ impl GraphicsPipeline {
         let (descriptor_set_layouts, ds_pools) = descriptor_bindings
             .create_descriptor_set_layout(&device.functions, use_push_descriptor);
 
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
 
@@ -209,7 +209,7 @@ impl GraphicsPipeline {
         }
         .unwrap();
 
-        let shader_stages = [*vertex_c_info, *fragment_c_info];
+        let shader_stages = [vertex_c_info, fragment_c_info];
 
         let pipeline_cache = vk::PipelineCache::null();
 
@@ -281,14 +281,13 @@ impl DynamicDescriptorSetPool {
                 .type_counts
                 .iter()
                 .map(|(ty, count)| {
-                    vk::DescriptorPoolSize::builder()
+                    vk::DescriptorPoolSize::default()
                         .ty(*ty)
                         .descriptor_count(count * num)
-                        .build()
                 })
                 .collect::<Vec<_>>();
 
-            let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+            let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
                 .pool_sizes(&pool_sizes)
                 .max_sets(num as _);
 
@@ -300,7 +299,7 @@ impl DynamicDescriptorSetPool {
 
             let layouts = vec![self.layout; num as usize];
 
-            let ds_info = vk::DescriptorSetAllocateInfo::builder()
+            let ds_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(descriptor_pool)
                 .set_layouts(&layouts);
             let new_ds = unsafe { cmd.functions.allocate_descriptor_sets(&ds_info) }.unwrap();
@@ -449,46 +448,41 @@ trait AsBufferDescriptor {
 
 impl AsBufferDescriptor for Allocation {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::builder()
+        vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.size)
-            .build()
     }
 }
 
 impl<'a> AsBufferDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::builder()
+        vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.layout.size() as _)
-            .build()
     }
 }
 
 impl<'a> AsBufferDescriptor for WriteHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::builder()
+        vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.size as _)
-            .build()
     }
 }
 
 impl<'a> AsBufferDescriptor for IndexHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::builder()
+        vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range((self.num_chunks * std::mem::size_of::<vk::DeviceAddress>()) as _)
-            .build()
     }
 }
 
 impl<'a> AsBufferDescriptor for StateCacheHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::builder()
+        vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.size as _)
-            .build()
     }
 }
 
@@ -504,11 +498,10 @@ impl<T: AsBufferDescriptor> AsDescriptors for T {
 
 impl AsDescriptors for (vk::ImageView, vk::ImageLayout, vk::Sampler) {
     fn gen_buffer_info(&self) -> DescriptorInfos {
-        DescriptorInfos::CombinedImageSampler(vec![vk::DescriptorImageInfo::builder()
+        DescriptorInfos::CombinedImageSampler(vec![vk::DescriptorImageInfo::default()
             .image_view(self.0)
             .image_layout(self.1)
-            .sampler(self.2)
-            .build()])
+            .sampler(self.2)])
     }
 }
 
@@ -545,20 +538,18 @@ impl DescriptorConfig {
             .iter()
             .enumerate()
             .map(|(i, v)| match v {
-                DescriptorInfos::Buffer(b) => vk::WriteDescriptorSet::builder()
+                DescriptorInfos::Buffer(b) => vk::WriteDescriptorSet::default()
                     .dst_binding(i as u32)
                     .dst_array_element(0)
                     .dst_set(set)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&b)
-                    .build(),
-                DescriptorInfos::CombinedImageSampler(b) => vk::WriteDescriptorSet::builder()
+                    .buffer_info(&b),
+                DescriptorInfos::CombinedImageSampler(b) => vk::WriteDescriptorSet::default()
                     .dst_binding(i as u32)
                     .dst_array_element(0)
                     .dst_set(set)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .image_info(&b)
-                    .build(),
+                    .image_info(&b),
             })
             .collect()
     }

@@ -82,25 +82,24 @@ fn create_surface(
         window.display_handle().unwrap().as_raw(),
     ) {
         (RawWindowHandle::Wayland(window), RawDisplayHandle::Wayland(display)) => {
-            use ash::extensions::khr::WaylandSurface;
-            let loader = WaylandSurface::new(entry, instance);
+            use ash::khr::wayland_surface;
+            let loader = wayland_surface::Instance::new(entry, instance);
 
-            let create_info = vk::WaylandSurfaceCreateInfoKHR::builder()
+            let create_info = vk::WaylandSurfaceCreateInfoKHR::default()
                 .display(display.display.as_ptr() as _)
-                .surface(window.surface.as_ptr() as _)
-                .build();
+                .surface(window.surface.as_ptr() as _);
 
             unsafe { loader.create_wayland_surface(&create_info, None) }.unwrap()
         }
         (RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
-            use ash::extensions::khr::XlibSurface;
+            use ash::khr::xlib_surface;
             let x11_display = display.display.unwrap().as_ptr();
             let x11_window = window.window;
-            let create_info = vk::XlibSurfaceCreateInfoKHR::builder()
+            let create_info = vk::XlibSurfaceCreateInfoKHR::default()
                 .window(x11_window as vk::Window)
                 .dpy(x11_display as *mut vk::Display);
 
-            let xlib_surface_loader = XlibSurface::new(entry, instance);
+            let xlib_surface_loader = xlib_surface::Instance::new(entry, instance);
             unsafe {
                 xlib_surface_loader
                     .create_xlib_surface(&create_info, None)
@@ -108,14 +107,14 @@ fn create_surface(
             }
         }
         (RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
-            use ash::extensions::khr::XcbSurface;
+            use ash::khr::xcb_surface;
             let connection = display.connection.unwrap().as_ptr();
             let window: u32 = window.window.into();
-            let create_info = vk::XcbSurfaceCreateInfoKHR::builder()
+            let create_info = vk::XcbSurfaceCreateInfoKHR::default()
                 .connection(connection as *mut vk::xcb_connection_t)
                 .window(window as vk::xcb_window_t);
 
-            let xlib_surface_loader = XcbSurface::new(entry, instance);
+            let xlib_surface_loader = xcb_surface::Instance::new(entry, instance);
             unsafe {
                 xlib_surface_loader
                     .create_xcb_surface(&create_info, None)
@@ -123,15 +122,13 @@ fn create_surface(
             }
         }
         (RawWindowHandle::Win32(window), RawDisplayHandle::Windows(_display)) => {
-            use std::os::raw::c_void;
-
             let hinstance: isize = window.hinstance.unwrap().into();
             let hwnd: isize = window.hwnd.into();
-            let win32_create_info = vk::Win32SurfaceCreateInfoKHR::builder()
-                .hinstance(hinstance as *const c_void)
-                .hwnd(hwnd as *const c_void);
+            let win32_create_info = vk::Win32SurfaceCreateInfoKHR::default()
+                .hinstance(hinstance)
+                .hwnd(hwnd);
 
-            let win32_surface_loader = ash::extensions::khr::Win32Surface::new(entry, instance);
+            let win32_surface_loader = ash::khr::win32_surface::Instance::new(entry, instance);
             unsafe { win32_surface_loader.create_win32_surface(&win32_create_info, None) }.unwrap()
         }
         _ => panic!("Unexpected window handle variant"),

@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(64.into());
+    let brick_size = LocalVoxelPosition::fill(128.into());
 
     let vol = match args.input {
         Input::File(path) => {
@@ -206,8 +206,8 @@ fn eval_network(
 
     let md = ImageMetaData {
         dimensions: window.size(),
-        chunk_size: window.size().local(),
-        //chunk_size: Vector::fill(512.into()),
+        //chunk_size: window.size().local(),
+        chunk_size: Vector::fill(512.into()),
     };
 
     let matrix = camera_state.projection_mat(md.dimensions);

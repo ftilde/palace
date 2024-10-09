@@ -10,7 +10,7 @@ memmap = "0.7.0"
 bytemuck = { version = "1.12", features = ["derive", "min_const_generics"] }
 itertools = "0.10"
 derive_more = "0.99"
-ash = { version = "0.37.0" }
+ash = { version = "0.38.0" }
 futures = "0.3"
 good_memory_allocator = "0.1.7"
 oneshot = { version = "0.1.5", default-features = false }
@@ -18,7 +18,7 @@ ndarray = "0.15.6"
 xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
 num_cpus = "1.15.0"
 pin-project = "1.0"
-gpu-allocator = "0.22.0"
+gpu-allocator = "0.27.0"
 cstr = "0.2.11"
 spirv-compiler = "0.2"
 crevice = { version="0.12.0", features = ["cgmath"] }

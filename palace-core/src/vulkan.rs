@@ -2,16 +2,16 @@ use crate::storage::gpu::Allocator;
 use crate::storage::gpu::MemoryLocation;
 use crate::task::Request;
 use crate::Error;
-use ash::extensions::ext::DebugUtils;
-use ash::extensions::khr::PushDescriptor;
-use ash::extensions::khr::Surface as SurfaceExt;
-use ash::extensions::khr::Swapchain;
+use ash::ext::debug_utils;
+use ash::khr::push_descriptor;
+use ash::khr::surface as surface_ext;
+use ash::khr::swapchain;
 
 #[cfg(target_family = "unix")]
-use ash::extensions::khr::{WaylandSurface, XcbSurface, XlibSurface};
+use ash::khr::{wayland_surface, xcb_surface, xlib_surface};
 
 #[cfg(target_family = "windows")]
-use ash::extensions::khr::Win32Surface;
+use ash::khr::win32_surface;
 
 pub use ash::vk;
 use std::borrow::Cow;
@@ -33,19 +33,19 @@ pub mod state;
 pub mod window;
 
 const REQUIRED_EXTENSION_NAMES: &[*const std::ffi::c_char] = &[
-    DebugUtils::name().as_ptr(),
-    SurfaceExt::name().as_ptr(),
+    debug_utils::NAME.as_ptr(),
+    surface_ext::NAME.as_ptr(),
     #[cfg(target_family = "unix")]
-    XlibSurface::name().as_ptr(),
+    xlib_surface::NAME.as_ptr(),
     #[cfg(target_family = "unix")]
-    XcbSurface::name().as_ptr(),
+    xcb_surface::NAME.as_ptr(),
     #[cfg(target_family = "unix")]
-    WaylandSurface::name().as_ptr(),
+    wayland_surface::NAME.as_ptr(),
     #[cfg(target_family = "windows")]
-    Win32Surface::name().as_ptr(),
+    win32_surface::NAME.as_ptr(),
 ];
 const REQUIRED_DEVICE_EXTENSION_NAMES: &[*const std::ffi::c_char] =
-    &[PushDescriptor::name().as_ptr(), Swapchain::name().as_ptr()];
+    &[push_descriptor::NAME.as_ptr(), swapchain::NAME.as_ptr()];
 
 #[cfg(debug_assertions)]
 const DEFAULT_LAYER_NAMES: &[&CStr] = &[cstr::cstr!("VK_LAYER_KHRONOS_validation")];
@@ -94,8 +94,8 @@ unsafe extern "system" fn vulkan_debug_callback(
 
 #[derive(Clone)]
 pub struct GlobalFunctions {
-    debug_utils_ext: DebugUtils,
-    surface_ext: SurfaceExt,
+    debug_utils_ext: debug_utils::Instance,
+    surface_ext: surface_ext::Instance,
 }
 
 #[allow(dead_code)]
@@ -116,7 +116,7 @@ impl VulkanContext {
 
             // Create instance
             let application_name = cstr::cstr!("palace");
-            let application_info = vk::ApplicationInfo::builder()
+            let application_info = vk::ApplicationInfo::default()
                 .application_name(application_name)
                 .engine_name(application_name)
                 .api_version(vk::API_VERSION_1_3);
@@ -126,7 +126,7 @@ impl VulkanContext {
                 .map(|raw_name| raw_name.as_ptr())
                 .collect();
 
-            let create_info = vk::InstanceCreateInfo::builder()
+            let create_info = vk::InstanceCreateInfo::default()
                 .application_info(&application_info)
                 .enabled_layer_names(&layer_names_raw)
                 .enabled_extension_names(REQUIRED_EXTENSION_NAMES);
@@ -135,7 +135,7 @@ impl VulkanContext {
                 .expect("Instance creation failed.");
 
             // Register debug callback
-            let create_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            let create_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
                 .message_severity(
                     vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                         | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING, // | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
@@ -146,8 +146,8 @@ impl VulkanContext {
                         | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
                 )
                 .pfn_user_callback(Some(vulkan_debug_callback));
-            let debug_utils_ext = DebugUtils::new(&entry, &instance);
-            let surface_ext = SurfaceExt::new(&entry, &instance);
+            let debug_utils_ext = debug_utils::Instance::new(&entry, &instance);
+            let surface_ext = surface_ext::Instance::new(&entry, &instance);
             let functions = GlobalFunctions {
                 surface_ext,
                 debug_utils_ext,
@@ -243,8 +243,8 @@ unsafe fn strcmp(v1: *const std::ffi::c_char, v2: *const std::ffi::c_char) -> bo
 #[derive(Clone)]
 pub struct DeviceFunctions {
     pub device: ash::Device,
-    pub push_descriptor_ext: PushDescriptor,
-    pub swap_chain_ext: Swapchain, //TODO: Make optional?
+    pub push_descriptor_ext: push_descriptor::Device,
+    pub swap_chain_ext: swapchain::Device, //TODO: Make optional?
 }
 
 impl std::ops::Deref for DeviceFunctions {
@@ -266,8 +266,8 @@ pub struct CommandBuffer {
     functions: DeviceFunctions,
     oldest_finished_epoch: CmdBufferEpoch,
     used_since: Cell<Option<std::time::Instant>>,
-    wait_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
-    signal_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo>>,
+    wait_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo<'static>>>,
+    signal_semaphores: RefCell<Vec<vk::SemaphoreSubmitInfo<'static>>>,
 }
 
 impl CommandBuffer {
@@ -283,12 +283,12 @@ impl CommandBuffer {
         &self.functions
     }
 
-    pub fn wait_semaphore(&mut self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
-        self.wait_semaphores.borrow_mut().push(*s);
+    pub fn wait_semaphore(&mut self, s: vk::SemaphoreSubmitInfo<'static>) {
+        self.wait_semaphores.borrow_mut().push(s);
     }
 
-    pub fn signal_semaphore(&mut self, s: impl std::ops::Deref<Target = vk::SemaphoreSubmitInfo>) {
-        self.signal_semaphores.borrow_mut().push(*s);
+    pub fn signal_semaphore(&mut self, s: vk::SemaphoreSubmitInfo<'static>) {
+        self.signal_semaphores.borrow_mut().push(s);
     }
 
     pub fn age(&self) -> std::time::Duration {
@@ -393,28 +393,26 @@ impl DeviceContext {
 
             // Create logical device
             let queue_priorities = vec![0 as f32; queue_count as usize];
-            let queue_create_info = vk::DeviceQueueCreateInfo::builder()
+            let queue_create_info = vk::DeviceQueueCreateInfo::default()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&queue_priorities);
-            let mut enabled_features_13 = vk::PhysicalDeviceVulkan13Features::builder()
-                .synchronization2(true)
-                .build();
-            let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::builder()
+            let mut enabled_features_13 =
+                vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
+            let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::default()
                 .shader_buffer_int64_atomics(true)
                 .buffer_device_address(true)
                 .scalar_block_layout(true)
                 .runtime_descriptor_array(true)
                 .storage_buffer8_bit_access(true)
-                .shader_int8(true)
-                .build();
+                .shader_int8(true);
             let mut enabled_features_11 =
-                vk::PhysicalDeviceVulkan11Features::builder().storage_buffer16_bit_access(true);
+                vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true);
 
-            let enabled_features = vk::PhysicalDeviceFeatures::builder()
+            let enabled_features = vk::PhysicalDeviceFeatures::default()
                 .shader_int64(true)
                 .shader_int16(true)
                 .shader_float64(false);
-            let create_info = vk::DeviceCreateInfo::builder()
+            let create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
                 .enabled_features(&enabled_features)
@@ -425,8 +423,8 @@ impl DeviceContext {
                 .create_device(physical_device, &create_info, None)
                 .expect("Device creation failed.");
 
-            let push_descriptor_ext = PushDescriptor::new(instance, &device);
-            let swap_chain_ext = Swapchain::new(instance, &device);
+            let push_descriptor_ext = push_descriptor::Device::new(instance, &device);
+            let swap_chain_ext = swapchain::Device::new(instance, &device);
 
             // Get device queues
             let queues: Vec<vk::Queue> = (0..queue_count)
@@ -434,7 +432,7 @@ impl DeviceContext {
                 .collect();
 
             // Create command pool
-            let create_info = vk::CommandPoolCreateInfo::builder()
+            let create_info = vk::CommandPoolCreateInfo::default()
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
                 .queue_family_index(queue_family_index);
             let command_pool = device
@@ -475,7 +473,7 @@ impl DeviceContext {
             };
 
             let current_command_buffer = Self::create_command_buffer(command_pool, &functions);
-            let begin_info = vk::CommandBufferBeginInfo::builder()
+            let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             functions
                 .begin_command_buffer(current_command_buffer.buffer, &begin_info)
@@ -567,7 +565,7 @@ impl DeviceContext {
         functions: &DeviceFunctions,
     ) -> RawCommandBuffer {
         // Create command buffer
-        let create_info = vk::CommandBufferAllocateInfo::builder()
+        let create_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(command_pool)
             .command_buffer_count(1);
         let command_buffer = unsafe {
@@ -645,7 +643,7 @@ impl DeviceContext {
             Ok(false)
         );
 
-        let begin_info = vk::CommandBufferBeginInfo::builder()
+        let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
             self.functions
@@ -665,14 +663,13 @@ impl DeviceContext {
         let wait_semaphores = prev_cmd_buffer.wait_semaphores.borrow();
         let signal_semaphores = prev_cmd_buffer.signal_semaphores.borrow();
 
-        let cmd_infos = [vk::CommandBufferSubmitInfo::builder()
-            .command_buffer(prev_cmd_buffer.buffer)
-            .build()];
-        let submit = vk::SubmitInfo2::builder()
+        let cmd_infos =
+            [vk::CommandBufferSubmitInfo::default().command_buffer(prev_cmd_buffer.buffer)];
+        let submit = vk::SubmitInfo2::default()
             .command_buffer_infos(&cmd_infos)
             .wait_semaphore_infos(&wait_semaphores)
             .signal_semaphore_infos(&signal_semaphores);
-        let submits = [submit.build()];
+        let submits = [submit];
         unsafe {
             self.functions
                 .queue_submit2(

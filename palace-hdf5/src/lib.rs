@@ -278,13 +278,13 @@ impl Hdf5VolumeSourceState {
 
                             device.with_cmd_buffer(|cmd| {
                                 let copy_info =
-                                    vk::BufferCopy::builder().size(brick_handle.size as _);
+                                    vk::BufferCopy::default().size(brick_handle.size as _);
                                 unsafe {
                                     device.functions().cmd_copy_buffer(
                                         cmd.raw(),
                                         staging_buf.buffer,
                                         brick_handle.buffer,
-                                        &[*copy_info],
+                                        &[copy_info],
                                     );
                                 }
                             });

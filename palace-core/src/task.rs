@@ -117,7 +117,7 @@ pub enum AllocationRequest {
     ),
     VRamImageRaw(
         usize,
-        ash::vk::ImageCreateInfo,
+        ash::vk::ImageCreateInfo<'static>,
         oneshot::Sender<crate::storage::gpu::ImageAllocation>,
     ),
 }

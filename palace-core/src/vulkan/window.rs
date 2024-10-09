@@ -127,7 +127,7 @@ fn create_swap_chain(
         image_count
     };
 
-    let sc_info = vk::SwapchainCreateInfoKHR::builder()
+    let sc_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
         .min_image_count(image_count)
         .image_format(config.format.format)
@@ -157,7 +157,7 @@ fn create_render_pass(
     device: &DeviceContext,
     swap_chain_config: &SwapChainConfiguration,
 ) -> vk::RenderPass {
-    let color_attachment = vk::AttachmentDescription::builder()
+    let color_attachment = vk::AttachmentDescription::default()
         .format(swap_chain_config.format.format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -167,16 +167,16 @@ fn create_render_pass(
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-    let color_attachment_ref = vk::AttachmentReference::builder()
+    let color_attachment_ref = vk::AttachmentReference::default()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    let color_attachment_refs = &[*color_attachment_ref];
-    let subpass = vk::SubpassDescription::builder()
+    let color_attachment_refs = &[color_attachment_ref];
+    let subpass = vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(color_attachment_refs);
 
-    let dependency_info = vk::SubpassDependency::builder()
+    let dependency_info = vk::SubpassDependency::default()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
         .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
@@ -184,10 +184,10 @@ fn create_render_pass(
         .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-    let attachments = &[*color_attachment];
-    let subpasses = &[*subpass];
-    let dependency_infos = &[*dependency_info];
-    let render_pass_info = vk::RenderPassCreateInfo::builder()
+    let attachments = &[color_attachment];
+    let subpasses = &[subpass];
+    let dependency_infos = &[dependency_info];
+    let render_pass_info = vk::RenderPassCreateInfo::default()
         .attachments(attachments)
         .subpasses(subpasses)
         .dependencies(dependency_infos);
@@ -205,7 +205,7 @@ fn create_framebuffers(
         .iter()
         .map(|iv| {
             let attachments = [*iv];
-            let framebuffer_info = vk::FramebufferCreateInfo::builder()
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
                 .render_pass(render_pass)
                 .attachments(&attachments)
                 .width(extent.width)
@@ -245,19 +245,18 @@ impl SwapChainData {
         let image_views = images
             .iter()
             .map(|img| {
-                let info = vk::ImageViewCreateInfo::builder()
+                let info = vk::ImageViewCreateInfo::default()
                     .image(*img)
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(config.format.format)
-                    .components(vk::ComponentMapping::builder().build())
+                    .components(vk::ComponentMapping::default())
                     .subresource_range(
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_mip_level(0)
                             .level_count(1)
                             .base_array_layer(0)
-                            .layer_count(1)
-                            .build(),
+                            .layer_count(1),
                     );
                 unsafe { device.functions.create_image_view(&info, None) }.unwrap()
             })
@@ -288,7 +287,7 @@ impl SwapChainData {
 }
 
 fn create_sync_objects(device: &DeviceContext) -> SyncObjects {
-    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    let semaphore_info = vk::SemaphoreCreateInfo::default();
 
     SyncObjects {
         image_available_semaphore: unsafe {
@@ -415,19 +414,19 @@ impl Window {
             |shader_stages, pipeline_layout, build_pipeline| {
                 let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
                 let dynamic_info =
-                    vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+                    vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-                let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
+                let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
 
-                let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+                let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
                     .primitive_restart_enable(false)
                     .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
-                let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
+                let viewport_state_info = vk::PipelineViewportStateCreateInfo::default()
                     .viewport_count(1)
                     .scissor_count(1);
 
-                let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::builder()
+                let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::default()
                     .depth_clamp_enable(false)
                     .rasterizer_discard_enable(false)
                     .polygon_mode(vk::PolygonMode::FILL)
@@ -436,11 +435,11 @@ impl Window {
                     .front_face(vk::FrontFace::CLOCKWISE)
                     .depth_bias_enable(false);
 
-                let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::builder()
+                let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::default()
                     .sample_shading_enable(false)
                     .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-                let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+                let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(
                         vk::ColorComponentFlags::R
                             | vk::ColorComponentFlags::G
@@ -449,12 +448,12 @@ impl Window {
                     )
                     .blend_enable(false);
 
-                let color_blend_attachments = [*color_blend_attachment];
-                let color_blending = vk::PipelineColorBlendStateCreateInfo::builder()
+                let color_blend_attachments = [color_blend_attachment];
+                let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
                     .logic_op_enable(false)
                     .attachments(&color_blend_attachments);
 
-                let info = vk::GraphicsPipelineCreateInfo::builder()
+                let info = vk::GraphicsPipelineCreateInfo::default()
                     .stages(shader_stages)
                     .vertex_input_state(&vertex_input_info)
                     .input_assembly_state(&input_assembly_info)
@@ -465,8 +464,7 @@ impl Window {
                     .dynamic_state(&dynamic_info)
                     .layout(pipeline_layout)
                     .render_pass(render_pass)
-                    .subpass(0)
-                    .build();
+                    .subpass(0);
                 build_pipeline(&info)
             },
             true,
@@ -563,18 +561,17 @@ impl Window {
             },
         }];
 
-        let render_pass_info = vk::RenderPassBeginInfo::builder()
+        let render_pass_info = vk::RenderPassBeginInfo::default()
             .render_pass(self.render_pass)
             .framebuffer(self.swap_chain.framebuffers[image_index as usize])
             .render_area(
-                vk::Rect2D::builder()
-                    .offset(vk::Offset2D::builder().x(0).y(0).build())
-                    .extent(self.swap_chain.extent)
-                    .build(),
+                vk::Rect2D::default()
+                    .offset(vk::Offset2D::default().x(0).y(0))
+                    .extent(self.swap_chain.extent),
             )
             .clear_values(&clear_values);
 
-        let viewport = vk::Viewport::builder()
+        let viewport = vk::Viewport::default()
             .x(0.0)
             .y(0.0)
             .width(self.swap_chain.extent.width as f32)
@@ -582,8 +579,8 @@ impl Window {
             .min_depth(0.0)
             .max_depth(1.0);
 
-        let scissor = vk::Rect2D::builder()
-            .offset(vk::Offset2D::builder().x(0).y(0).build())
+        let scissor = vk::Rect2D::default()
+            .offset(vk::Offset2D::default().x(0).y(0))
             .extent(self.swap_chain.extent);
 
         let push_constants = PushConstants {
@@ -602,10 +599,10 @@ impl Window {
             );
             device
                 .functions()
-                .cmd_set_viewport(pipeline.cmd().raw(), 0, &[*viewport]);
+                .cmd_set_viewport(pipeline.cmd().raw(), 0, &[viewport]);
             device
                 .functions()
-                .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
+                .cmd_set_scissor(pipeline.cmd().raw(), 0, &[scissor]);
 
             pipeline.push_descriptor_set(0, descriptor_config);
 
@@ -616,12 +613,12 @@ impl Window {
             device.functions().cmd_end_render_pass(cmd.raw());
 
             cmd.wait_semaphore(
-                vk::SemaphoreSubmitInfo::builder()
+                vk::SemaphoreSubmitInfo::default()
                     .semaphore(sync_object.image_available_semaphore)
                     .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
             );
             cmd.signal_semaphore(
-                vk::SemaphoreSubmitInfo::builder().semaphore(sync_object.render_finished_semaphore),
+                vk::SemaphoreSubmitInfo::default().semaphore(sync_object.render_finished_semaphore),
             );
         });
 
@@ -631,7 +628,7 @@ impl Window {
         let swap_chains = &[self.swap_chain.inner];
         let image_indices = &[image_index];
         let wait_sem = &[sync_object.render_finished_semaphore];
-        let present_info = vk::PresentInfoKHR::builder()
+        let present_info = vk::PresentInfoKHR::default()
             .swapchains(swap_chains)
             .image_indices(image_indices)
             .wait_semaphores(wait_sem);

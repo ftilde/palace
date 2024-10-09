@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 palace-core = {path= "../palace-core"}
 winit = "0.30"
-ash = "0.37"
+ash = "0.38"
 raw-window-handle = "0.6.2"

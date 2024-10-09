@@ -53,13 +53,12 @@ impl BarrierManager {
         self.current_epoch.set(starting);
         let ending = BarrierEpoch(ending);
 
-        let memory_barriers = &[vk::MemoryBarrier2::builder()
+        let memory_barriers = &[vk::MemoryBarrier2::default()
             .src_stage_mask(src.stage)
             .src_access_mask(src.access)
             .dst_stage_mask(dst.stage)
-            .dst_access_mask(dst.access)
-            .build()];
-        let barrier_info = vk::DependencyInfo::builder().memory_barriers(memory_barriers);
+            .dst_access_mask(dst.access)];
+        let barrier_info = vk::DependencyInfo::default().memory_barriers(memory_barriers);
 
         unsafe {
             let cmd_raw = cmd.raw();
@@ -521,7 +520,7 @@ impl<'a> IndexHandle<'a> {
         // We are somewhat fine with racing here, but not sure how to convince the validation
         // layers of this...
         self.device.with_cmd_buffer(|cmd| unsafe {
-            let info = ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_buffer);
+            let info = ash::vk::BufferDeviceAddressInfo::default().buffer(brick_buffer);
             let addr = self.device.functions().get_buffer_device_address(&info);
             let offset = pos * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
 
@@ -1078,7 +1077,7 @@ impl Storage {
     pub fn request_allocate_image<'a, 'inv>(
         &self,
         device: &DeviceContext,
-        create_desc: vk::ImageCreateInfo,
+        create_desc: vk::ImageCreateInfo<'static>,
     ) -> Request<'a, 'inv, ImageAllocation> {
         let (result_sender, result_receiver) = oneshot::channel();
 
@@ -1480,6 +1479,8 @@ impl Allocator {
                 physical_device,
                 debug_settings: Default::default(),
                 buffer_device_address: true,
+                allocation_sizes: Default::default(), //TODO: See if we can read good values from
+                                                      //device
             })
             .unwrap(),
         ));
@@ -1504,7 +1505,7 @@ impl Allocator {
         let size = layout.size() as u64;
 
         // Setup vulkan info
-        let vk_info = vk::BufferCreateInfo::builder()
+        let vk_info = vk::BufferCreateInfo::default()
             .size(size)
             .usage(use_flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
 

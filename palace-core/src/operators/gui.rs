@@ -109,7 +109,7 @@ impl GuiStateInner {
                 height: delta.image.height() as u32,
                 depth: 1,
             };
-            let create_info = vk::ImageCreateInfo::builder()
+            let create_info = vk::ImageCreateInfo::default()
                 .array_layers(1)
                 .extent(extent)
                 .flags(vk::ImageCreateFlags::empty())
@@ -124,8 +124,7 @@ impl GuiStateInner {
                     vk::ImageUsageFlags::SAMPLED
                         | vk::ImageUsageFlags::TRANSFER_DST
                         | vk::ImageUsageFlags::TRANSFER_SRC,
-                )
-                .build();
+                );
 
             let buffer_layout = std::alloc::Layout::array::<u8>(data.len()).unwrap();
             // TODO: Provide and use some general staging buffer infrastructure
@@ -152,25 +151,23 @@ impl GuiStateInner {
             let img = ctx
                 .submit(device.storage.request_allocate_image(device, create_info))
                 .await;
-            let region = vk::BufferImageCopy::builder()
+            let region = vk::BufferImageCopy::default()
                 .buffer_offset(0)
                 .buffer_row_length(delta.image.width() as u32)
                 .buffer_image_height(delta.image.height() as u32)
                 .image_subresource(
-                    vk::ImageSubresourceLayers::builder()
+                    vk::ImageSubresourceLayers::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .base_array_layer(0)
                         .layer_count(1)
-                        .mip_level(0)
-                        .build(),
+                        .mip_level(0),
                 )
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_extent(vk::Extent3D {
                     width: delta.image.width() as u32,
                     height: delta.image.height() as u32,
                     depth: 1,
-                })
-                .build();
+                });
 
             transistion_image_layout_with_barrier(
                 device,
@@ -199,22 +196,20 @@ impl GuiStateInner {
             if let Some(_pos) = delta.pos {
                 panic!("Texture update not yet implemented");
             } else {
-                let create_info = vk::ImageViewCreateInfo::builder()
+                let create_info = vk::ImageViewCreateInfo::default()
                     .components(vk::ComponentMapping::default())
                     .flags(vk::ImageViewCreateFlags::empty())
                     .format(vk::Format::R8G8B8A8_UNORM)
                     .image(img.image)
                     .subresource_range(
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0)
                             .base_mip_level(0)
                             .layer_count(1)
-                            .level_count(1)
-                            .build(),
+                            .level_count(1),
                     )
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .build();
+                    .view_type(vk::ImageViewType::TYPE_2D);
                 let img_view = unsafe {
                     device
                         .functions()
@@ -476,25 +471,22 @@ fn transistion_image_layout_with_barrier(
     //TODO: Figure out finer grained synchronization here. We do not actually require ALL_COMMANDS
     //and MEMORY_READ/MEMORY_WRITE for src/dst. I _think_ this is not problematic though (at least
     //for now) since the barrier is associated with this specific image.
-    let barriers = [vk::ImageMemoryBarrier2::builder()
+    let barriers = [vk::ImageMemoryBarrier2::default()
         .image(image)
         .subresource_range(
-            vk::ImageSubresourceRange::builder()
+            vk::ImageSubresourceRange::default()
                 .level_count(1)
                 .layer_count(1)
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .build(),
+                .aspect_mask(vk::ImageAspectFlags::COLOR),
         )
         .old_layout(from)
         .new_layout(to)
         .src_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
         .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .build()];
-    let dep_info = vk::DependencyInfo::builder()
-        .image_memory_barriers(&barriers)
-        .build();
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+
     device.with_cmd_buffer(|cmd| unsafe {
         device
             .functions()
@@ -581,7 +573,7 @@ void main() {
                     let render_pass = device.request_state(
                         RessourceId::new("renderpass").of(ctx.current_op()),
                         || {
-                            let color_attachment = vk::AttachmentDescription::builder()
+                            let color_attachment = vk::AttachmentDescription::default()
                                 .format(format)
                                 .samples(vk::SampleCountFlags::TYPE_1)
                                 .load_op(vk::AttachmentLoadOp::LOAD)
@@ -591,17 +583,17 @@ void main() {
                                 .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                                 .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-                            let color_attachment_ref = vk::AttachmentReference::builder()
+                            let color_attachment_ref = vk::AttachmentReference::default()
                                 .attachment(0)
                                 .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-                            let color_attachment_refs = &[*color_attachment_ref];
+                            let color_attachment_refs = &[color_attachment_ref];
 
-                            let subpass = vk::SubpassDescription::builder()
+                            let subpass = vk::SubpassDescription::default()
                                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                                 .color_attachments(color_attachment_refs);
 
-                            let dependency_info = vk::SubpassDependency::builder()
+                            let dependency_info = vk::SubpassDependency::default()
                                 .src_subpass(vk::SUBPASS_EXTERNAL)
                                 .dst_subpass(0)
                                 .src_stage_mask(vk::PipelineStageFlags::ALL_COMMANDS)
@@ -609,10 +601,10 @@ void main() {
                                 .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
                                 .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-                            let subpasses = &[*subpass];
-                            let dependency_infos = &[*dependency_info];
-                            let attachments = &[*color_attachment];
-                            let render_pass_info = vk::RenderPassCreateInfo::builder()
+                            let subpasses = &[subpass];
+                            let dependency_infos = &[dependency_info];
+                            let attachments = &[color_attachment];
+                            let render_pass_info = vk::RenderPassCreateInfo::default()
                                 .attachments(attachments)
                                 .subpasses(subpasses)
                                 .dependencies(dependency_infos);
@@ -643,60 +635,56 @@ void main() {
                                     let dynamic_states =
                                         [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
                                     let dynamic_info =
-                                        vk::PipelineDynamicStateCreateInfo::builder()
+                                        vk::PipelineDynamicStateCreateInfo::default()
                                             .dynamic_states(&dynamic_states);
 
                                     let vertex_bindings =
-                                        [vk::VertexInputBindingDescription::builder()
+                                        [vk::VertexInputBindingDescription::default()
                                             .binding(0)
                                             .input_rate(vk::VertexInputRate::VERTEX)
                                             .stride(
                                                 4 * std::mem::size_of::<f32>() as u32
                                                     + 4 * std::mem::size_of::<u8>() as u32,
-                                            )
-                                            .build()];
+                                            )];
 
                                     let vertex_attributes = [
                                         // position
-                                        vk::VertexInputAttributeDescription::builder()
+                                        vk::VertexInputAttributeDescription::default()
                                             .binding(0)
                                             .offset(0)
                                             .location(0)
-                                            .format(vk::Format::R32G32_SFLOAT)
-                                            .build(),
+                                            .format(vk::Format::R32G32_SFLOAT),
                                         // uv
-                                        vk::VertexInputAttributeDescription::builder()
+                                        vk::VertexInputAttributeDescription::default()
                                             .binding(0)
                                             .offset(8)
                                             .location(1)
-                                            .format(vk::Format::R32G32_SFLOAT)
-                                            .build(),
+                                            .format(vk::Format::R32G32_SFLOAT),
                                         // color
-                                        vk::VertexInputAttributeDescription::builder()
+                                        vk::VertexInputAttributeDescription::default()
                                             .binding(0)
                                             .offset(16)
                                             .location(2)
-                                            .format(vk::Format::R8G8B8A8_UNORM)
-                                            .build(),
+                                            .format(vk::Format::R8G8B8A8_UNORM),
                                     ];
 
                                     let vertex_input_info =
-                                        vk::PipelineVertexInputStateCreateInfo::builder()
+                                        vk::PipelineVertexInputStateCreateInfo::default()
                                             .vertex_attribute_descriptions(&vertex_attributes)
                                             .vertex_binding_descriptions(&vertex_bindings);
 
                                     let input_assembly_info =
-                                        vk::PipelineInputAssemblyStateCreateInfo::builder()
+                                        vk::PipelineInputAssemblyStateCreateInfo::default()
                                             .primitive_restart_enable(false)
                                             .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
                                     let viewport_state_info =
-                                        vk::PipelineViewportStateCreateInfo::builder()
+                                        vk::PipelineViewportStateCreateInfo::default()
                                             .viewport_count(1)
                                             .scissor_count(1);
 
                                     let rasterizer_info =
-                                        vk::PipelineRasterizationStateCreateInfo::builder()
+                                        vk::PipelineRasterizationStateCreateInfo::default()
                                             .depth_clamp_enable(false)
                                             .rasterizer_discard_enable(false)
                                             .polygon_mode(vk::PolygonMode::FILL)
@@ -706,12 +694,12 @@ void main() {
                                             .depth_bias_enable(false);
 
                                     let multi_sampling_info =
-                                        vk::PipelineMultisampleStateCreateInfo::builder()
+                                        vk::PipelineMultisampleStateCreateInfo::default()
                                             .sample_shading_enable(false)
                                             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
                                     let color_blend_attachment =
-                                        vk::PipelineColorBlendAttachmentState::builder()
+                                        vk::PipelineColorBlendAttachmentState::default()
                                             .color_write_mask(
                                                 vk::ColorComponentFlags::R
                                                     | vk::ColorComponentFlags::G
@@ -730,12 +718,12 @@ void main() {
                                             .alpha_blend_op(vk::BlendOp::MAX)
                                             .blend_enable(true);
 
-                                    let color_blend_attachments = [*color_blend_attachment];
+                                    let color_blend_attachments = [color_blend_attachment];
                                     let color_blending =
-                                        vk::PipelineColorBlendStateCreateInfo::builder()
+                                        vk::PipelineColorBlendStateCreateInfo::default()
                                             .attachments(&color_blend_attachments);
 
-                                    let info = vk::GraphicsPipelineCreateInfo::builder()
+                                    let info = vk::GraphicsPipelineCreateInfo::default()
                                         .stages(shader_stages)
                                         .vertex_input_state(&vertex_input_info)
                                         .input_assembly_state(&input_assembly_info)
@@ -756,7 +744,7 @@ void main() {
                     let sampler = device.request_state(
                         RessourceId::new("sampler").of(ctx.current_op()),
                         || {
-                            let create_info = vk::SamplerCreateInfo::builder()
+                            let create_info = vk::SamplerCreateInfo::default()
                                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                                 .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                                 .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -778,9 +766,9 @@ void main() {
                     let out_dim = out_info.logical_dimensions;
                     let width = out_dim.x().into();
                     let height = out_dim.y().into();
-                    let extent = vk::Extent2D::builder().width(width).height(height).build();
+                    let extent = vk::Extent2D::default().width(width).height(height);
 
-                    let img_info = vk::ImageCreateInfo::builder()
+                    let img_info = vk::ImageCreateInfo::default()
                         .image_type(vk::ImageType::TYPE_2D)
                         .extent(extent.into())
                         .mip_levels(1)
@@ -794,8 +782,7 @@ void main() {
                                 | vk::ImageUsageFlags::TRANSFER_DST,
                         )
                         .samples(vk::SampleCountFlags::TYPE_1)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .build();
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                     let output_texture = TempRessource::new(
                         device,
@@ -803,19 +790,18 @@ void main() {
                             .await,
                     );
 
-                    let info = vk::ImageViewCreateInfo::builder()
+                    let info = vk::ImageViewCreateInfo::default()
                         .image(output_texture.image)
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .format(format)
-                        .components(vk::ComponentMapping::builder().build())
+                        .components(vk::ComponentMapping::default())
                         .subresource_range(
-                            vk::ImageSubresourceRange::builder()
+                            vk::ImageSubresourceRange::default()
                                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                                 .base_mip_level(0)
                                 .level_count(1)
                                 .base_array_layer(0)
-                                .layer_count(1)
-                                .build(),
+                                .layer_count(1),
                         );
 
                     let img_view = TempRessource::new(
@@ -825,7 +811,7 @@ void main() {
 
                     let attachments = [*img_view];
 
-                    let framebuffer_info = vk::FramebufferCreateInfo::builder()
+                    let framebuffer_info = vk::FramebufferCreateInfo::default()
                         .render_pass(*render_pass)
                         .attachments(&attachments)
                         .width(width)
@@ -854,18 +840,16 @@ void main() {
                         ))
                         .await;
 
-                    let copy_info = vk::BufferImageCopy::builder()
+                    let copy_info = vk::BufferImageCopy::default()
                         .image_extent(extent.into())
                         .buffer_row_length(width)
                         .buffer_image_height(height)
                         .image_subresource(
-                            vk::ImageSubresourceLayers::builder()
+                            vk::ImageSubresourceLayers::default()
                                 .mip_level(0)
                                 .layer_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .build(),
-                        )
-                        .build();
+                                .aspect_mask(vk::ImageAspectFlags::COLOR),
+                        );
 
                     transistion_image_layout_with_barrier(
                         device,
@@ -892,21 +876,20 @@ void main() {
                     );
 
                     // Actual rendering
-                    let render_pass_info = vk::RenderPassBeginInfo::builder()
+                    let render_pass_info = vk::RenderPassBeginInfo::default()
                         .render_pass(*render_pass)
                         .framebuffer(*framebuffer)
                         .render_area(
-                            vk::Rect2D::builder()
-                                .offset(vk::Offset2D::builder().x(0).y(0).build())
-                                .extent(extent)
-                                .build(),
+                            vk::Rect2D::default()
+                                .offset(vk::Offset2D::default().x(0).y(0))
+                                .extent(extent),
                         )
                         .clear_values(&[]);
 
                     let mut state_i = state.inner.borrow_mut();
                     let size2d = m_out.dimensions.raw();
                     let vp_size = size2d.map(|v| v as f32 * state_i.scale_factor);
-                    let viewport = vk::Viewport::builder()
+                    let viewport = vk::Viewport::default()
                         .x(0.0)
                         .y(0.0)
                         .width(vp_size.x())
@@ -934,16 +917,14 @@ void main() {
                         *clip_rect.right_mut() *= state_i.scale_factor;
                         *clip_rect.top_mut() *= state_i.scale_factor;
                         *clip_rect.bottom_mut() *= state_i.scale_factor;
-                        let clip_rect_extent = vk::Extent2D::builder()
+                        let clip_rect_extent = vk::Extent2D::default()
                             .width(clip_rect.width().round() as u32)
-                            .height(clip_rect.height().round() as u32)
-                            .build();
-                        let scissor = vk::Rect2D::builder()
+                            .height(clip_rect.height().round() as u32);
+                        let scissor = vk::Rect2D::default()
                             .offset(
-                                vk::Offset2D::builder()
+                                vk::Offset2D::default()
                                     .x(clip_rect.left().round() as i32)
-                                    .y(clip_rect.top().round() as i32)
-                                    .build(),
+                                    .y(clip_rect.top().round() as i32),
                             )
                             .extent(clip_rect_extent);
 
@@ -1032,13 +1013,11 @@ void main() {
                             device.functions().cmd_set_viewport(
                                 pipeline.cmd().raw(),
                                 0,
-                                &[*viewport],
+                                &[viewport],
                             );
-                            device.functions().cmd_set_scissor(
-                                pipeline.cmd().raw(),
-                                0,
-                                &[*scissor],
-                            );
+                            device
+                                .functions()
+                                .cmd_set_scissor(pipeline.cmd().raw(), 0, &[scissor]);
 
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.push_constant_at(push_constants, vk::ShaderStageFlags::VERTEX);
@@ -1063,18 +1042,16 @@ void main() {
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     );
 
-                    let copy_info = vk::BufferImageCopy::builder()
+                    let copy_info = vk::BufferImageCopy::default()
                         .image_extent(extent.into())
                         .buffer_row_length(width)
                         .buffer_image_height(height)
                         .image_subresource(
-                            vk::ImageSubresourceLayers::builder()
+                            vk::ImageSubresourceLayers::default()
                                 .mip_level(0)
                                 .layer_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .build(),
-                        )
-                        .build();
+                                .aspect_mask(vk::ImageAspectFlags::COLOR),
+                        );
 
                     let gpu_brick_out = ctx
                         .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))

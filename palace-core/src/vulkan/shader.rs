@@ -142,7 +142,7 @@ impl ShaderSource for (&str, ShaderDefines, Config) {
 
 #[derive(Default)]
 pub struct DescriptorSetLayoutBindings {
-    inner: BTreeMap<u32, vk::DescriptorSetLayoutBinding>,
+    inner: BTreeMap<u32, vk::DescriptorSetLayoutBinding<'static>>,
 }
 
 impl DescriptorSetLayoutBindings {
@@ -202,7 +202,7 @@ impl DescriptorBindings {
                 }
                 let binding_array = bindings.binding_array();
                 let mut dsl_info =
-                    vk::DescriptorSetLayoutCreateInfo::builder().bindings(&binding_array);
+                    vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding_array);
                 if use_push_descriptor {
                     dsl_info =
                         dsl_info.flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
@@ -235,7 +235,7 @@ impl ShaderSource for &str {
 
 impl Shader {
     pub fn from_compiled(f: &DeviceFunctions, code: &[u32]) -> Self {
-        let info = vk::ShaderModuleCreateInfo::builder().code(&code);
+        let info = vk::ShaderModuleCreateInfo::default().code(&code);
 
         let entry_points = ReflectConfig::new()
             .spv(code)
@@ -313,22 +313,20 @@ impl Shader {
                         DescriptorType::InputAttachment(_) => todo!(),
                         DescriptorType::AccelStruct() => todo!(),
                     };
-                    let binding = vk::DescriptorSetLayoutBinding::builder()
+                    let binding = vk::DescriptorSetLayoutBinding::default()
                         .binding(desc_bind.bind())
                         .descriptor_type(d_type)
                         .descriptor_count(*nbind)
-                        .stage_flags(stage)
-                        .build();
+                        .stage_flags(stage);
 
                     let set = desc_bind.set();
                     let set_bindings = ret.descriptor_bindings.inner.entry(set).or_default();
                     set_bindings.inner.insert(desc_bind.bind(), binding);
                 }
                 Variable::PushConstant { name: _, ty } => {
-                    let c = vk::PushConstantRange::builder()
+                    let c = vk::PushConstantRange::default()
                         .size(ty.nbyte().unwrap().try_into().unwrap())
-                        .stage_flags(stage)
-                        .build();
+                        .stage_flags(stage);
                     let prev = ret.push_const.replace(c);
                     assert!(prev.is_none(), "Should only have on push constant");
                 }

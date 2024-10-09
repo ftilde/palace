@@ -214,11 +214,11 @@ pub fn entry_exit_points(
                 let render_pass = device.request_state(
                     RessourceId::new("renderpass").of(ctx.current_op()),
                     || {
-                        let subpass = vk::SubpassDescription::builder()
+                        let subpass = vk::SubpassDescription::default()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                             .color_attachments(&[]);
 
-                        let dependency_info = vk::SubpassDependency::builder()
+                        let dependency_info = vk::SubpassDependency::default()
                             .src_subpass(vk::SUBPASS_EXTERNAL)
                             .dst_subpass(0)
                             .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
@@ -226,9 +226,9 @@ pub fn entry_exit_points(
                             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
                             .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-                        let subpasses = &[*subpass];
-                        let dependency_infos = &[*dependency_info];
-                        let render_pass_info = vk::RenderPassCreateInfo::builder()
+                        let subpasses = &[subpass];
+                        let dependency_infos = &[dependency_info];
+                        let render_pass_info = vk::RenderPassCreateInfo::default()
                             .attachments(&[])
                             .subpasses(subpasses)
                             .dependencies(dependency_infos);
@@ -259,24 +259,24 @@ pub fn entry_exit_points(
                             |shader_stages, pipeline_layout, build_pipeline| {
                                 let dynamic_states =
                                     [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                                let dynamic_info = vk::PipelineDynamicStateCreateInfo::builder()
+                                let dynamic_info = vk::PipelineDynamicStateCreateInfo::default()
                                     .dynamic_states(&dynamic_states);
 
                                 let vertex_input_info =
-                                    vk::PipelineVertexInputStateCreateInfo::builder();
+                                    vk::PipelineVertexInputStateCreateInfo::default();
 
                                 let input_assembly_info =
-                                    vk::PipelineInputAssemblyStateCreateInfo::builder()
+                                    vk::PipelineInputAssemblyStateCreateInfo::default()
                                         .primitive_restart_enable(false)
                                         .topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
 
                                 let viewport_state_info =
-                                    vk::PipelineViewportStateCreateInfo::builder()
+                                    vk::PipelineViewportStateCreateInfo::default()
                                         .viewport_count(1)
                                         .scissor_count(1);
 
                                 let rasterizer_info =
-                                    vk::PipelineRasterizationStateCreateInfo::builder()
+                                    vk::PipelineRasterizationStateCreateInfo::default()
                                         .depth_clamp_enable(false)
                                         .rasterizer_discard_enable(false)
                                         .polygon_mode(vk::PolygonMode::FILL)
@@ -286,12 +286,12 @@ pub fn entry_exit_points(
                                         .depth_bias_enable(false);
 
                                 let multi_sampling_info =
-                                    vk::PipelineMultisampleStateCreateInfo::builder()
+                                    vk::PipelineMultisampleStateCreateInfo::default()
                                         .sample_shading_enable(false)
                                         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
                                 let color_blend_attachment =
-                                    vk::PipelineColorBlendAttachmentState::builder()
+                                    vk::PipelineColorBlendAttachmentState::default()
                                         .color_write_mask(
                                             vk::ColorComponentFlags::R
                                                 | vk::ColorComponentFlags::G
@@ -307,13 +307,13 @@ pub fn entry_exit_points(
                                         .blend_enable(true);
 
                                 let color_blend_attachments =
-                                    [*color_blend_attachment, *color_blend_attachment];
+                                    [color_blend_attachment, color_blend_attachment];
                                 let color_blending =
-                                    vk::PipelineColorBlendStateCreateInfo::builder()
+                                    vk::PipelineColorBlendStateCreateInfo::default()
                                         .logic_op_enable(false)
                                         .attachments(&color_blend_attachments);
 
-                                let info = vk::GraphicsPipelineCreateInfo::builder()
+                                let info = vk::GraphicsPipelineCreateInfo::default()
                                     .stages(shader_stages)
                                     .vertex_input_state(&vertex_input_info)
                                     .input_assembly_state(&input_assembly_info)
@@ -350,9 +350,9 @@ pub fn entry_exit_points(
                 let out_dim = out_info.logical_dimensions;
                 let width = out_dim.x().into();
                 let height = out_dim.y().into();
-                let extent = vk::Extent2D::builder().width(width).height(height).build();
+                let extent = vk::Extent2D::default().width(width).height(height);
 
-                let framebuffer_info = vk::FramebufferCreateInfo::builder()
+                let framebuffer_info = vk::FramebufferCreateInfo::default()
                     .render_pass(*render_pass)
                     .attachments(&[])
                     .width(width)
@@ -397,14 +397,13 @@ pub fn entry_exit_points(
                 ))
                 .await;
 
-                let render_pass_info = vk::RenderPassBeginInfo::builder()
+                let render_pass_info = vk::RenderPassBeginInfo::default()
                     .render_pass(*render_pass)
                     .framebuffer(*framebuffer)
                     .render_area(
-                        vk::Rect2D::builder()
-                            .offset(vk::Offset2D::builder().x(0).y(0).build())
-                            .extent(extent)
-                            .build(),
+                        vk::Rect2D::default()
+                            .offset(vk::Offset2D::default().x(0).y(0))
+                            .extent(extent),
                     )
                     .clear_values(&[]);
 
@@ -414,7 +413,7 @@ pub fn entry_exit_points(
                 let tile_size = out_info.logical_dimensions.map(|v| v.raw as f32);
                 let scale_factor = full_size / tile_size;
                 let size = tile_size * scale_factor;
-                let viewport = vk::Viewport::builder()
+                let viewport = vk::Viewport::default()
                     .x(-offset.x())
                     .y(-offset.y())
                     .width(size.x())
@@ -422,8 +421,8 @@ pub fn entry_exit_points(
                     .min_depth(0.0)
                     .max_depth(1.0);
 
-                let scissor = vk::Rect2D::builder()
-                    .offset(vk::Offset2D::builder().x(0).y(0).build())
+                let scissor = vk::Rect2D::default()
+                    .offset(vk::Offset2D::default().x(0).y(0))
                     .extent(extent);
 
                 let push_constants = PushConstantsFirstEEP {
@@ -442,10 +441,10 @@ pub fn entry_exit_points(
                     );
                     device
                         .functions()
-                        .cmd_set_viewport(pipeline.cmd().raw(), 0, &[*viewport]);
+                        .cmd_set_viewport(pipeline.cmd().raw(), 0, &[viewport]);
                     device
                         .functions()
-                        .cmd_set_scissor(pipeline.cmd().raw(), 0, &[*scissor]);
+                        .cmd_set_scissor(pipeline.cmd().raw(), 0, &[scissor]);
 
                     pipeline.push_descriptor_set(0, descriptor_config);
 
@@ -900,11 +899,11 @@ pub fn raycast(
                             .await;
 
                         let info =
-                            ash::vk::BufferDeviceAddressInfo::builder().buffer(brick_index.buffer);
+                            ash::vk::BufferDeviceAddressInfo::default().buffer(brick_index.buffer);
                         let index_addr =
                             unsafe { device.functions().get_buffer_device_address(&info) };
 
-                        let info = ash::vk::BufferDeviceAddressInfo::builder()
+                        let info = ash::vk::BufferDeviceAddressInfo::default()
                             .buffer(request_table.buffer());
                         let req_table_addr =
                             unsafe { device.functions().get_buffer_device_address(&info) };

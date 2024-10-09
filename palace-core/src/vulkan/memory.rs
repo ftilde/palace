@@ -442,13 +442,13 @@ pub async unsafe fn copy_to_gpu<'cref, 'inv>(
     .await;
 
     device.with_cmd_buffer(|cmd| {
-        let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
+        let copy_info = vk::BufferCopy::default().size(layout.size() as _);
         unsafe {
             device.functions().cmd_copy_buffer(
                 cmd.raw(),
                 staging_buf.buffer,
                 buffer_out,
-                &[*copy_info],
+                &[copy_info],
             );
         }
     });
@@ -480,13 +480,13 @@ pub async unsafe fn copy_to_cpu<'cref, 'inv>(
         .await;
 
     device.with_cmd_buffer(|cmd| {
-        let copy_info = vk::BufferCopy::builder().size(layout.size() as _);
+        let copy_info = vk::BufferCopy::default().size(layout.size() as _);
         unsafe {
             device.functions().cmd_copy_buffer(
                 cmd.raw(),
                 buffer_in,
                 staging_buf.buffer,
-                &[*copy_info],
+                &[copy_info],
             );
         }
     });
