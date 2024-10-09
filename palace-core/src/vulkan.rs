@@ -411,7 +411,8 @@ impl DeviceContext {
             let enabled_features = vk::PhysicalDeviceFeatures::default()
                 .shader_int64(true)
                 .shader_int16(true)
-                .shader_float64(false);
+                .shader_float64(false)
+                .fragment_stores_and_atomics(true);
             let create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(std::slice::from_ref(&queue_create_info))
                 .enabled_extension_names(REQUIRED_DEVICE_EXTENSION_NAMES)
