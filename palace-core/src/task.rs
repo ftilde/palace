@@ -905,10 +905,12 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
 }
 
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {
-    pub fn write_scalar(&self, value: Output) -> Request<()> {
+    #[must_use]
+    pub fn write_scalar<'a>(&'a self, value: Output) -> Request<'a, 'inv, ()> {
+        let ctx = **self;
         self.alloc_slot(ChunkIndex(0), 1).map(move |mut slot| {
             slot[0].write(value);
-            unsafe { slot.initialized(**self) };
+            unsafe { slot.initialized(ctx) };
         })
     }
 }

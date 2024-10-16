@@ -39,7 +39,7 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
             move |ctx, (s, data, f)| {
                 async move {
                     let v = ctx.submit(s.request_scalar()).await;
-                    ctx.write_scalar(f(v, data));
+                    ctx.submit(ctx.write_scalar(f(v, data))).await;
                     Ok(())
                 }
                 .into()
@@ -82,7 +82,7 @@ pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementTy
     let op_id = OperatorDescriptor::new(std::any::type_name::<T>()).dependent_on_data(&val);
     scalar(op_id, (), move |ctx, _| {
         async move {
-            ctx.write_scalar(val);
+            ctx.submit(ctx.write_scalar(val)).await;
             Ok(())
         }
         .into()
