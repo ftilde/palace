@@ -5,6 +5,7 @@ pub mod imageviewer;
 pub mod kernels;
 pub mod png;
 pub mod procedural;
+pub mod randomwalker;
 pub mod rasterize_function;
 pub mod raw;
 pub mod raycaster;
