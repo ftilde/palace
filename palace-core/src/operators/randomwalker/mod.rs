@@ -89,14 +89,16 @@ fn num_seeds(
                     .submit(tensor_to_rows_table.chunks.request(ChunkIndex(0)))
                     .await;
 
-                let mut num_rows = 0;
+                let mut max_row = 0;
                 for i in s.iter() {
                     if *i != 0xffffffff {
-                        num_rows = num_rows.max(*i);
+                        max_row = max_row.max(*i);
                     }
                 }
 
-                ctx.submit(ctx.write_scalar(num_rows)).await;
+                let num_seeds = s.len() as u32 - max_row - 1;
+
+                ctx.submit(ctx.write_scalar(num_seeds)).await;
 
                 Ok(())
             }
@@ -168,11 +170,12 @@ pub fn random_walker_inner(
                     );
                 });
 
-                //TODO: See if we can merge this barrier with the one from init_weights
+                //TODO: Make result and weights initialization visible
                 ctx.submit(device.barrier(
                     SrcBarrierInfo {
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                        stage: vk::PipelineStageFlags2::TRANSFER
+                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::SHADER_WRITE,
                     },
                     DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -368,7 +371,7 @@ async fn init_weights<'req, 'inv>(
         )),
         ctx.submit(device.storage.request_allocate_raw(
             device,
-            Layout::array::<f32>(tensor_size).unwrap(),
+            Layout::array::<f32>(mat_rows).unwrap(),
             flags,
             GpuOnly,
         ))
@@ -482,7 +485,7 @@ async fn conjugate_gradient<'req, 'inv>(
     let mut allocs = ctx.submit(ctx.group(alloc_requests)).await.into_iter();
 
     let x = result;
-    let tmp = vec;
+    let b = vec;
     let r = TempRessource::new(device, allocs.next().unwrap());
     let d = TempRessource::new(device, allocs.next().unwrap());
     let z = TempRessource::new(device, allocs.next().unwrap());
@@ -494,6 +497,11 @@ async fn conjugate_gradient<'req, 'inv>(
 
     // Initialization
 
+    //dbg!(download::<u32>(ctx, device, &mat.index).await);
+    //dbg!(download::<f32>(ctx, device, &mat.values).await);
+    //dbg!(download::<f32>(ctx, device, x).await);
+    //dbg!(download::<f32>(ctx, device, b).await);
+
     // For jacobi preconditioning
     extract_inv_diag(device, &mat, &c)?;
 
@@ -501,10 +509,8 @@ async fn conjugate_gradient<'req, 'inv>(
     sparse_mat_prod(device, &mat, x, &r)?;
     // Make r_tmp visible (also also c)
     ctx.submit(device.barrier(srw_src, srw_dst)).await;
-    // r (aka r_0) = tmp (aka b) - r_tmp (aka A*x_0)
-    scale_and_sum(device, -1.0, &r, &tmp, &r)?;
-
-    ctx.submit(device.barrier(srw_src, srw_dst)).await;
+    // r (aka r_0) = b - r_tmp (aka A*x_0)
+    scale_and_sum(device, -1.0, &r, &b, &r)?;
 
     // For jacobi preconditioning
     // d := C * r;
@@ -518,12 +524,14 @@ async fn conjugate_gradient<'req, 'inv>(
         // z = A * d;
         sparse_mat_prod(device, &mat, &d, &z)?;
 
+        fill(device, &o, 0.0);
+        fill(device, &u, 0.0);
         // Make z visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
         // o := dot(r, h)
-        dot_product(device, &r, &h, &o)?;
+        dot_product_add(device, &r, &h, &o)?;
         // u := dot(d, z)
-        dot_product(device, &r, &z, &u)?;
+        dot_product_add(device, &d, &z, &u)?;
 
         // Make o and u visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
@@ -537,23 +545,61 @@ async fn conjugate_gradient<'req, 'inv>(
         // h_n := C * r_n
         point_wise_mul(device, &c, &r, &h)?;
 
+        fill(device, &u, 0.0);
         // Make h visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
         // o_n := dot(r_n, h_n)
-        dot_product(device, &r, &h, &u)?;
+        dot_product_add(device, &r, &h, &u)?;
 
         // READ: ||r_n||_2
         // TODO
 
         // Make u (i.e., o_n) visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
+
         // d_n := 1.0 * (o_n/o) * d + h_n
         scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
     }
     Ok(())
 }
 
-fn dot_product(
+//async fn download<'a, 'b, T: crate::storage::Element + Default>(
+//    ctx: OpaqueTaskContext<'a, 'b>,
+//    device: &DeviceContext,
+//    x: &impl AsBufferDescriptor,
+//) -> Vec<T> {
+//    let src = SrcBarrierInfo {
+//        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+//        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+//    };
+//    let dst = DstBarrierInfo {
+//        stage: vk::PipelineStageFlags2::TRANSFER,
+//        access: vk::AccessFlags2::TRANSFER_READ,
+//    };
+//    ctx.submit(device.barrier(src, dst)).await;
+//
+//    let info = x.gen_buffer_info();
+//    let size = info.range as usize / std::mem::size_of::<T>();
+//    let out = vec![T::default(); size];
+//    let out_ptr = out.as_ptr() as _;
+//    let layout = Layout::array::<T>(size).unwrap();
+//    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
+//    out
+//}
+
+fn fill(device: &DeviceContext, buf: &Allocation, value: f32) {
+    device.with_cmd_buffer(|cmd| unsafe {
+        cmd.functions().cmd_fill_buffer(
+            cmd.raw(),
+            buf.buffer,
+            0,
+            vk::WHOLE_SIZE,
+            f32::to_bits(value),
+        );
+    });
+}
+
+fn dot_product_add(
     device: &DeviceContext,
     x: &Allocation,
     y: &Allocation,
@@ -679,10 +725,12 @@ fn sparse_mat_prod(
     let size = x_info.range;
     assert_eq!(size, result_info.range);
 
-    let num_rows = size as usize / std::mem::size_of::<f32>();
+    let num_rows = mat.num_rows;
 
     let pipeline = device.request_state(
-        RessourceId::new("sparse_mat_prod").dependent_on(&num_rows),
+        RessourceId::new("sparse_mat_prod")
+            .dependent_on(&num_rows)
+            .dependent_on(&mat.max_entries_per_row),
         || {
             ComputePipeline::new(
                 device,
@@ -824,11 +872,12 @@ mod test {
 
     #[test]
     fn tiny() {
-        let size = VoxelPosition::fill(2.into());
-        let brick_size = LocalVoxelPosition::fill(2.into());
+        let s = [5, 5, 5];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            if v.x().raw == 0 {
+            if v.x().raw <= size.x().raw / 2 {
                 0.1
             } else {
                 0.9
@@ -837,16 +886,16 @@ mod test {
 
         let seeds = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             if v == VoxelPosition::fill(0.into()) {
-                0.1
-            } else if v == VoxelPosition::fill(1.into()) {
-                0.9
+                0.0
+            } else if v == VoxelPosition::from(s) - VoxelPosition::fill(1.into()) {
+                1.0
             } else {
                 UNSEEDED
             }
         });
 
         let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            if v.x().raw == 0 {
+            if v.x().raw <= size.x().raw / 2 {
                 0.001
             } else {
                 0.999

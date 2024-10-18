@@ -33,7 +33,7 @@ void main() {
     for(int i=0; i<MAX_ENTRIES_PER_ROW; ++i) {
         uint col = mat_index.values[row][i];
         if(col != MAT_INDEX_EMPTY) {
-            sum += mat_values.values[row][col] * x.values[col];
+            sum += mat_values.values[row][i] * x.values[col];
         }
     }
     result.values[row] = sum;

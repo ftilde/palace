@@ -1498,6 +1498,7 @@ impl Allocator {
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
     ) -> gpu_allocator::Result<Allocation> {
+        assert_ne!(layout.size(), 0);
         if self.num_alloced.get() + layout.size() as u64 > self.capacity {
             return Err(gpu_allocator::AllocationError::OutOfMemory);
         }

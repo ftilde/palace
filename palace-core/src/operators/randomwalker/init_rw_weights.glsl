@@ -42,7 +42,7 @@ uint get_mat_index(uint row, uint col) {
             return r;
         } else if (mat_index.values[row][r] == MAT_INDEX_EMPTY) {
             //TODO: Maybe we can skip the above comparison
-            if (atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, r) == MAT_INDEX_EMPTY) {
+            if (atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, col) == MAT_INDEX_EMPTY) {
                 return r;
             }
         }
@@ -61,13 +61,13 @@ void mat_assign(uint row, uint col, float value) {
 }
 
 float edge_weight(uint p1, uint p2) {
-    float beta = 0.001;
+    float beta = 100.1;
     float diff = input_buf.values[p1] - input_buf.values[p2];
     return exp(-beta * diff * diff);
 }
 
 bool is_seed_point(uint linear_p) {
-    return seeds_buf.values[linear_p] != -1;
+    return seeds_buf.values[linear_p] != -2.0;
 }
 
 void main() {
