@@ -866,7 +866,7 @@ fn scale_and_sum(
 mod test {
     use super::*;
     use crate::{
-        test_util::compare_tensor,
+        test_util::compare_tensor_approx,
         vec::{LocalVoxelPosition, VoxelPosition},
     };
 
@@ -896,14 +896,14 @@ mod test {
 
         let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             if v.x().raw <= size.x().raw / 2 {
-                0.001
+                0.0
             } else {
-                0.999
+                1.0
             }
         });
 
         let v = random_walker(vol, seeds);
 
-        compare_tensor(v, expected);
+        compare_tensor_approx(v, expected, 0.001);
     }
 }

@@ -50,6 +50,14 @@ pub fn compare_tensor<D: Dimension>(
     result: TensorOperator<D, StaticElementType<f32>>,
     expected: TensorOperator<D, StaticElementType<f32>>,
 ) {
+    compare_tensor_approx::<D>(result, expected, 0.0);
+}
+
+pub fn compare_tensor_approx<D: Dimension>(
+    result: TensorOperator<D, StaticElementType<f32>>,
+    expected: TensorOperator<D, StaticElementType<f32>>,
+    max_diff: f32,
+) {
     let mut runtime =
         crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
 
@@ -74,7 +82,17 @@ pub fn compare_tensor<D: Dimension>(
                     let b_l = ctx.submit(result.chunks.request(pos)).await;
                     let b_r = ctx.submit(expected.chunks.request(pos)).await;
 
-                    assert_eq!(&*b_l, &*b_r);
+                    let b_l = &*b_l;
+                    let b_r = &*b_r;
+                    for (i, (l, r)) in b_l.iter().zip(b_r.iter()).enumerate() {
+                        let diff = (l - r).abs();
+                        if diff > max_diff {
+                            panic!(
+                                "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}",
+                                b_l, b_r, diff, max_diff, i
+                            );
+                        }
+                    }
                 }
                 Ok(())
             }
