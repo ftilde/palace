@@ -1,6 +1,12 @@
 use std::alloc::Layout;
 
+// NO_PUSH_main: TODO: We probably do not want NUM_ROWS to be a constant, because it will change everytime we
+// NO_PUSH_main: TODO: Oh god, free those allocations
+// add/remove seeds
+
 use ash::vk;
+use crevice::{glsl::GlslStruct, std140::AsStd140};
+use gpu_allocator::MemoryLocation::GpuOnly;
 
 use super::{
     scalar::{scalar, ScalarOperator},
@@ -14,16 +20,19 @@ use crate::{
     storage::gpu::Allocation,
     task::OpaqueTaskContext,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig, DynPushConstants},
+        memory::TempRessource,
+        pipeline::{AsBufferDescriptor, ComputePipeline, DescriptorConfig, DynPushConstants},
         shader::ShaderDefines,
         state::{RessourceId, VulkanState},
-        DstBarrierInfo, SrcBarrierInfo,
+        DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
 struct SparseMatrix {
     values: Allocation,
     index: Allocation,
+    max_entries_per_row: u32,
+    num_rows: u32,
 }
 
 impl VulkanState for SparseMatrix {
@@ -118,27 +127,189 @@ pub fn random_walker_inner(
         (tensor, seeds, tensor_to_rows_table, num_seeds),
         move |ctx, _pos, _, (tensor, seeds, tensor_to_rows_table, num_seeds)| {
             async move {
-                let _device = ctx.preferred_device();
+                let device = ctx.preferred_device();
 
-                let (_matrix, _vec) =
-                    init_weights(*ctx, tensor, seeds, tensor_to_rows_table, num_seeds).await?;
+                let (mat, vec) = init_weights(
+                    *ctx,
+                    &device,
+                    tensor,
+                    seeds,
+                    tensor_to_rows_table,
+                    num_seeds,
+                )
+                .await?;
 
-                todo!();
+                let mat = TempRessource::new(device, mat);
+                let vec = TempRessource::new(device, vec);
+
+                let num_rows = vec.size as usize / std::mem::size_of::<f32>();
+
+                let flags = vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::TRANSFER_SRC;
+
+                let result = ctx
+                    .submit(device.storage.request_allocate_raw(
+                        device,
+                        Layout::array::<f32>(num_rows).unwrap(),
+                        flags,
+                        GpuOnly,
+                    ))
+                    .await;
+                let result = TempRessource::new(device, result);
+
+                device.with_cmd_buffer(|cmd| unsafe {
+                    cmd.functions().cmd_fill_buffer(
+                        cmd.raw(),
+                        result.buffer,
+                        0,
+                        vk::WHOLE_SIZE,
+                        f32::to_bits(0.5),
+                    );
+                });
+
+                //TODO: See if we can merge this barrier with the one from init_weights
+                ctx.submit(device.barrier(
+                    SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                    },
+                    DstBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                    },
+                ))
+                .await;
+
+                conjugate_gradient(*ctx, device, &mat, &vec, &result).await?;
+
+                let out_chunk = ctx
+                    .submit(ctx.alloc_slot_gpu(
+                        &device,
+                        ChunkIndex(0),
+                        tensor.metadata.dimensions.hmul(),
+                    ))
+                    .await;
+
+                results_to_tensor(
+                    *ctx,
+                    device,
+                    seeds,
+                    tensor_to_rows_table,
+                    &result,
+                    &out_chunk,
+                )
+                .await?;
+
+                unsafe {
+                    out_chunk.initialized(
+                        *ctx,
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    )
+                };
+
+                Ok(())
             }
             .into()
         },
     )
 }
 
+async fn results_to_tensor<'req, 'inv>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &DeviceContext,
+    seeds: &'inv TensorOperator<D3, StaticElementType<f32>>,
+    tensor_to_rows_table: &'inv TensorOperator<D1, StaticElementType<u32>>,
+    result_vec: &Allocation,
+    out_allocation: &impl AsBufferDescriptor,
+) -> Result<(), crate::Error> {
+    let nd = seeds.dim().n();
+
+    assert_eq!(
+        seeds.metadata.dimensions.raw(),
+        seeds.metadata.chunk_size.raw()
+    );
+    assert_eq!(
+        tensor_to_rows_table.metadata.dimensions,
+        tensor_to_rows_table.metadata.dimensions
+    );
+
+    let num_rows = result_vec.size as usize / std::mem::size_of::<f32>();
+    let tensor_size = seeds.metadata.dimensions.hmul();
+
+    let push_constants = DynPushConstants::new().vec::<u32>(nd, "tensor_dim");
+
+    let pipeline = device
+        .request_state(
+            RessourceId::new("results_to_tensor")
+                .dependent_on(&seeds.metadata.chunk_size)
+                .dependent_on(&num_rows)
+                .dependent_on(&nd),
+            || {
+                ComputePipeline::new(
+                    device,
+                    (
+                        include_str!("results_to_tensor.glsl"),
+                        ShaderDefines::new()
+                            .push_const_block_dyn(&push_constants)
+                            .add("BRICK_MEM_SIZE", tensor_size)
+                            .add("NUM_ROWS", num_rows)
+                            .add("ND", nd),
+                    ),
+                    false,
+                )
+            },
+        )
+        .unwrap();
+    let global_size = seeds.metadata.chunk_size.raw();
+    let tensor_dim = seeds.metadata.chunk_size.raw();
+
+    let read_info = DstBarrierInfo {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+        access: vk::AccessFlags2::SHADER_READ,
+    };
+
+    let (seeds, tensor_to_rows_table) = futures::join!(
+        ctx.submit(
+            seeds
+                .chunks
+                .request_gpu(device.id, ChunkIndex(0), read_info),
+        ),
+        ctx.submit(
+            tensor_to_rows_table
+                .chunks
+                .request_gpu(device.id, ChunkIndex(0), read_info),
+        ),
+    );
+
+    let descriptor_config =
+        DescriptorConfig::new([&seeds, &tensor_to_rows_table, result_vec, out_allocation]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.push_constant_dyn(&push_constants, |consts| {
+            consts.vec(&tensor_dim)?;
+            Ok(())
+        });
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch3d(global_size);
+    });
+
+    Ok(())
+}
+
 async fn init_weights<'req, 'inv>(
     ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &DeviceContext,
     t: &'inv TensorOperator<D3, StaticElementType<f32>>,
     seeds: &'inv TensorOperator<D3, StaticElementType<f32>>,
     tensor_to_rows_table: &'inv TensorOperator<D1, StaticElementType<u32>>,
     num_seeds: &'inv ScalarOperator<StaticElementType<u32>>,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
-    let device = ctx.preferred_device();
-
     let nd = t.dim().n();
 
     let num_seeds = ctx.submit(num_seeds.request_scalar()).await;
@@ -170,7 +341,7 @@ async fn init_weights<'req, 'inv>(
                     ShaderDefines::new()
                         .push_const_block_dyn(&push_constants)
                         .add("BRICK_MEM_SIZE", tensor_size)
-                        .add("MAT_ROWS", mat_rows)
+                        .add("NUM_ROWS", mat_rows)
                         .add("ND", nd),
                 ),
                 false,
@@ -181,26 +352,25 @@ async fn init_weights<'req, 'inv>(
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::TRANSFER_SRC;
-    let buf_type = gpu_allocator::MemoryLocation::GpuOnly;
 
     let (values, index, vec) = futures::join!(
         ctx.submit(device.storage.request_allocate_raw(
             device,
             Layout::array::<f32>(mat_size).unwrap(),
             flags,
-            buf_type,
+            GpuOnly,
         )),
         ctx.submit(device.storage.request_allocate_raw(
             device,
             Layout::array::<u32>(mat_size).unwrap(),
             flags,
-            buf_type,
+            GpuOnly,
         )),
         ctx.submit(device.storage.request_allocate_raw(
             device,
             Layout::array::<f32>(tensor_size).unwrap(),
             flags,
-            buf_type,
+            GpuOnly,
         ))
     );
 
@@ -213,8 +383,8 @@ async fn init_weights<'req, 'inv>(
 
     ctx.submit(device.barrier(
         SrcBarrierInfo {
-            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-            access: vk::AccessFlags2::SHADER_WRITE,
+            stage: vk::PipelineStageFlags2::TRANSFER,
+            access: vk::AccessFlags2::TRANSFER_WRITE,
         },
         DstBarrierInfo {
             stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -258,7 +428,390 @@ async fn init_weights<'req, 'inv>(
         pipeline.dispatch3d(global_size);
     });
 
-    Ok((SparseMatrix { values, index }, vec))
+    Ok((
+        SparseMatrix {
+            values,
+            index,
+            max_entries_per_row: max_entries as _,
+            num_rows: mat_rows as _,
+        },
+        vec,
+    ))
+}
+
+async fn conjugate_gradient<'req, 'inv>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &DeviceContext,
+    mat: &SparseMatrix,
+    vec: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    let num_rows = vec.size as usize / std::mem::size_of::<f32>();
+
+    let srw_src = SrcBarrierInfo {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+    };
+    let srw_dst = DstBarrierInfo {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+        access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+    };
+
+    //TODO
+    let flags = vk::BufferUsageFlags::STORAGE_BUFFER
+        | vk::BufferUsageFlags::TRANSFER_DST
+        | vk::BufferUsageFlags::TRANSFER_SRC;
+
+    let mut alloc_requests = Vec::new();
+    for _ in 0..5 {
+        alloc_requests.push(device.storage.request_allocate_raw(
+            device,
+            Layout::array::<f32>(num_rows).unwrap(),
+            flags,
+            GpuOnly,
+        ))
+    }
+    for _ in 0..2 {
+        alloc_requests.push(device.storage.request_allocate_raw(
+            device,
+            Layout::new::<f32>(),
+            flags,
+            GpuOnly,
+        ))
+    }
+    let mut allocs = ctx.submit(ctx.group(alloc_requests)).await.into_iter();
+
+    let x = result;
+    let tmp = vec;
+    let r = TempRessource::new(device, allocs.next().unwrap());
+    let d = TempRessource::new(device, allocs.next().unwrap());
+    let z = TempRessource::new(device, allocs.next().unwrap());
+    let c = TempRessource::new(device, allocs.next().unwrap());
+    let h = TempRessource::new(device, allocs.next().unwrap());
+
+    let o = TempRessource::new(device, allocs.next().unwrap());
+    let u = TempRessource::new(device, allocs.next().unwrap());
+
+    // Initialization
+
+    // For jacobi preconditioning
+    extract_inv_diag(device, &mat, &c)?;
+
+    // r_tmp = A*x_0
+    sparse_mat_prod(device, &mat, x, &r)?;
+    // Make r_tmp visible (also also c)
+    ctx.submit(device.barrier(srw_src, srw_dst)).await;
+    // r (aka r_0) = tmp (aka b) - r_tmp (aka A*x_0)
+    scale_and_sum(device, -1.0, &r, &tmp, &r)?;
+
+    ctx.submit(device.barrier(srw_src, srw_dst)).await;
+
+    // For jacobi preconditioning
+    // d := C * r;
+    point_wise_mul(device, &c, &r, &d)?;
+    // h := C * r
+    point_wise_mul(device, &c, &r, &h)?;
+
+    for _ in 0..100 {
+        // Make d and h visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // z = A * d;
+        sparse_mat_prod(device, &mat, &d, &z)?;
+
+        // Make z visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // o := dot(r, h)
+        dot_product(device, &r, &h, &o)?;
+        // u := dot(d, z)
+        dot_product(device, &r, &z, &u)?;
+
+        // Make o and u visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // x_n := (o/u) * d + x
+        scale_and_sum_quotient(device, 1.0, &o, &u, &d, x, x)?;
+        // r_n := -1 * (o/u) * z + r
+        scale_and_sum_quotient(device, -1.0, &o, &u, &z, &r, &r)?;
+
+        // Make r visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // h_n := C * r_n
+        point_wise_mul(device, &c, &r, &h)?;
+
+        // Make h visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // o_n := dot(r_n, h_n)
+        dot_product(device, &r, &h, &u)?;
+
+        // READ: ||r_n||_2
+        // TODO
+
+        // Make u (i.e., o_n) visible
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        // d_n := 1.0 * (o_n/o) * d + h_n
+        scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
+    }
+    Ok(())
+}
+
+fn dot_product(
+    device: &DeviceContext,
+    x: &Allocation,
+    y: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    let x_info = x.gen_buffer_info();
+    let y_info = y.gen_buffer_info();
+
+    let size = x_info.range;
+    assert_eq!(size, y_info.range);
+
+    let num_rows = size as usize / std::mem::size_of::<f32>();
+
+    let pipeline = device.request_state(
+        RessourceId::new("dot_product").dependent_on(&num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("dot_product.glsl"),
+                    ShaderDefines::new().add("NUM_ROWS", num_rows),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(num_rows as _);
+    });
+
+    Ok(())
+}
+
+fn extract_inv_diag(
+    device: &DeviceContext,
+    mat: &SparseMatrix,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    let pipeline = device.request_state(
+        RessourceId::new("extract_inv_diag").dependent_on(&mat.num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("extract_inv_diag.glsl"),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", mat.num_rows)
+                        .add("MAX_ENTRIES_PER_ROW", mat.max_entries_per_row),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&mat.values, &mat.index, result]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(mat.num_rows as _);
+    });
+
+    Ok(())
+}
+
+fn point_wise_mul(
+    device: &DeviceContext,
+    x: &Allocation,
+    y: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    let x_info = x.gen_buffer_info();
+    let y_info = y.gen_buffer_info();
+    let result_info = result.gen_buffer_info();
+
+    let size = x_info.range;
+    assert_eq!(size, y_info.range);
+    assert_eq!(size, result_info.range);
+
+    let num_rows = size as usize / std::mem::size_of::<f32>();
+
+    let pipeline = device.request_state(
+        RessourceId::new("point_wise_mul").dependent_on(&num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("point_wise_mul.glsl"),
+                    ShaderDefines::new().add("NUM_ROWS", num_rows),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(num_rows as _);
+    });
+
+    Ok(())
+}
+
+fn sparse_mat_prod(
+    device: &DeviceContext,
+    mat: &SparseMatrix,
+    x: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    let x_info = x.gen_buffer_info();
+    let result_info = result.gen_buffer_info();
+
+    let size = x_info.range;
+    assert_eq!(size, result_info.range);
+
+    let num_rows = size as usize / std::mem::size_of::<f32>();
+
+    let pipeline = device.request_state(
+        RessourceId::new("sparse_mat_prod").dependent_on(&num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("sparse_mat_prod.glsl"),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", num_rows)
+                        .add("MAX_ENTRIES_PER_ROW", mat.max_entries_per_row),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&mat.values, &mat.index, &*x, &*result]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(num_rows as _);
+    });
+
+    Ok(())
+}
+// result := alpha * (o/u) *x + y
+fn scale_and_sum_quotient(
+    device: &DeviceContext,
+    alpha: f32,
+    o: &Allocation,
+    u: &Allocation,
+    x: &Allocation,
+    y: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        alpha: f32,
+    }
+
+    let x_info = x.gen_buffer_info();
+    let y_info = y.gen_buffer_info();
+    let result_info = result.gen_buffer_info();
+
+    let size = x_info.range;
+    assert_eq!(size, y_info.range);
+    assert_eq!(size, result_info.range);
+
+    let num_rows = size as usize / std::mem::size_of::<f32>();
+
+    let pipeline = device.request_state(
+        RessourceId::new("scale_and_sum_quotient").dependent_on(&num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("scale_and_sum_quotient.glsl"),
+                    ShaderDefines::new()
+                        .push_const_block::<PushConstants>()
+                        .add("NUM_ROWS", num_rows),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&*o, &*u, &*x, &*y, &*result]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.push_constant(PushConstants { alpha });
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(num_rows as _);
+    });
+
+    Ok(())
+}
+
+// result := alpha * x + y
+fn scale_and_sum(
+    device: &DeviceContext,
+    alpha: f32,
+    x: &Allocation,
+    y: &Allocation,
+    result: &Allocation,
+) -> Result<(), crate::Error> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstants {
+        alpha: f32,
+    }
+
+    let x_info = x.gen_buffer_info();
+    let y_info = y.gen_buffer_info();
+    let result_info = result.gen_buffer_info();
+
+    let size = x_info.range;
+    assert_eq!(size, y_info.range);
+    assert_eq!(size, result_info.range);
+
+    let num_rows = size as usize / std::mem::size_of::<f32>();
+
+    let pipeline = device.request_state(
+        RessourceId::new("scale_and_sum").dependent_on(&num_rows),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("scale_and_sum.glsl"),
+                    ShaderDefines::new()
+                        .push_const_block::<PushConstants>()
+                        .add("NUM_ROWS", num_rows),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.push_constant(PushConstants { alpha });
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(num_rows as _);
+    });
+
+    Ok(())
 }
 
 #[cfg(test)]

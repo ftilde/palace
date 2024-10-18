@@ -442,7 +442,7 @@ pub enum DescriptorInfos {
     CombinedImageSampler(Vec<vk::DescriptorImageInfo>),
 }
 
-trait AsBufferDescriptor {
+pub trait AsBufferDescriptor {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo;
 }
 
