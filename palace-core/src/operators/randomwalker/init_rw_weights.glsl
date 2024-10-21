@@ -38,13 +38,9 @@ declare_push_consts(consts)
 
 uint get_mat_index(uint row, uint col) {
     for (uint r = 0; r < MAX_ENTRIES_PER_ROW; ++r) {
-        if (mat_index.values[row][r] == col) {
+        uint old = atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, col);
+        if(old == MAT_INDEX_EMPTY || old == col) {
             return r;
-        } else if (mat_index.values[row][r] == MAT_INDEX_EMPTY) {
-            //TODO: Maybe we can skip the above comparison
-            if (atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, col) == MAT_INDEX_EMPTY) {
-                return r;
-            }
         }
     }
     return -1;
