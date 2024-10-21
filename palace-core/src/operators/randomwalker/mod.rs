@@ -509,10 +509,14 @@ async fn conjugate_gradient<'req, 'inv>(
 
     // r_tmp = A*x_0
     sparse_mat_prod(device, &mat, x, &r)?;
+
     // Make r_tmp visible (also also c)
     ctx.submit(device.barrier(srw_src, srw_dst)).await;
     // r (aka r_0) = b - r_tmp (aka A*x_0)
     scale_and_sum(device, -1.0, &r, &b, &r)?;
+
+    // Make r visible (also also c)
+    ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
     // For jacobi preconditioning
     // d := C * r;
