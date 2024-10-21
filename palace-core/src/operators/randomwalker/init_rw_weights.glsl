@@ -6,6 +6,14 @@
 #include <vec.glsl>
 #include <atomic.glsl>
 
+#if N == 1
+layout (local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+#elif N == 2
+layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+#else
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+#endif
+
 #define MAX_ENTRIES_PER_ROW (2*ND + 1)
 
 layout(std430, binding = 0) readonly buffer Input {

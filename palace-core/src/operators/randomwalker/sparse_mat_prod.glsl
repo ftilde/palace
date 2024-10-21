@@ -2,6 +2,8 @@
 
 #extension GL_EXT_scalar_block_layout : require
 
+layout (local_size_x = 1024) in;
+
 layout(std430, binding = 0) readonly buffer MatValues {
     float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
 } mat_values;
