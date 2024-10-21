@@ -1,4 +1,4 @@
-use std::alloc::Layout;
+use std::{alloc::Layout, mem::MaybeUninit};
 
 // NO_PUSH_main: TODO: We probably do not want NUM_ROWS to be a constant, because it will change everytime we
 // NO_PUSH_main: TODO: Oh god, free those allocations
@@ -7,6 +7,7 @@ use std::alloc::Layout;
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use gpu_allocator::MemoryLocation::GpuOnly;
+use id::Identify;
 
 use super::{
     scalar::{scalar, ScalarOperator},
@@ -109,9 +110,10 @@ fn num_seeds(
 pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     seeds: TensorOperator<D3, StaticElementType<f32>>,
+    cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     let v2rt = volume_to_rows_table(seeds.clone());
-    random_walker_inner(tensor, seeds.clone(), v2rt.clone(), num_seeds(v2rt))
+    random_walker_inner(tensor, seeds.clone(), v2rt.clone(), num_seeds(v2rt), cfg)
 }
 
 pub fn random_walker_inner(
@@ -119,15 +121,17 @@ pub fn random_walker_inner(
     seeds: TensorOperator<D3, StaticElementType<f32>>,
     tensor_to_rows_table: TensorOperator<D1, StaticElementType<u32>>,
     num_seeds: ScalarOperator<StaticElementType<u32>>,
+    cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     TensorOperator::unbatched(
         OperatorDescriptor::new("random_walker")
             .dependent_on(&tensor)
-            .dependent_on(&seeds),
+            .dependent_on(&seeds)
+            .dependent_on_data(&cfg),
         Default::default(),
         tensor.metadata.clone(),
-        (tensor, seeds, tensor_to_rows_table, num_seeds),
-        move |ctx, _pos, _, (tensor, seeds, tensor_to_rows_table, num_seeds)| {
+        (tensor, seeds, tensor_to_rows_table, num_seeds, cfg),
+        move |ctx, _pos, _, (tensor, seeds, tensor_to_rows_table, num_seeds, cfg)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -184,7 +188,7 @@ pub fn random_walker_inner(
                 ))
                 .await;
 
-                conjugate_gradient(*ctx, device, &mat, &vec, &result).await?;
+                conjugate_gradient(*ctx, device, &mat, &vec, &result, cfg).await?;
 
                 let out_chunk = ctx
                     .submit(ctx.alloc_slot_gpu(
@@ -444,12 +448,30 @@ async fn init_weights<'req, 'inv>(
     ))
 }
 
+#[derive(Identify, Copy, Clone)]
+pub struct SolverConfig {
+    pub max_residuum_norm: f32,
+    pub residuum_check_period: usize,
+    pub max_iterations: usize,
+}
+
+impl Default for SolverConfig {
+    fn default() -> Self {
+        SolverConfig {
+            max_residuum_norm: 1.0e-3,
+            residuum_check_period: 2,
+            max_iterations: 1000,
+        }
+    }
+}
+
 async fn conjugate_gradient<'req, 'inv>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &DeviceContext,
     mat: &SparseMatrix,
     vec: &Allocation,
     result: &Allocation,
+    cfg: &SolverConfig,
 ) -> Result<(), crate::Error> {
     let num_rows = vec.size as usize / std::mem::size_of::<f32>();
 
@@ -476,7 +498,7 @@ async fn conjugate_gradient<'req, 'inv>(
             GpuOnly,
         ))
     }
-    for _ in 0..2 {
+    for _ in 0..3 {
         alloc_requests.push(device.storage.request_allocate_raw(
             device,
             Layout::new::<f32>(),
@@ -496,6 +518,7 @@ async fn conjugate_gradient<'req, 'inv>(
 
     let o = TempRessource::new(device, allocs.next().unwrap());
     let u = TempRessource::new(device, allocs.next().unwrap());
+    let r_norm_sq_buf = TempRessource::new(device, allocs.next().unwrap());
 
     // Initialization
 
@@ -524,7 +547,7 @@ async fn conjugate_gradient<'req, 'inv>(
     // h := C * r
     point_wise_mul(device, &c, &r, &h)?;
 
-    for _ in 0..100 {
+    for iteration in 0..cfg.max_iterations {
         // Make d and h visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
         // z = A * d;
@@ -552,16 +575,45 @@ async fn conjugate_gradient<'req, 'inv>(
         point_wise_mul(device, &c, &r, &h)?;
 
         fill(device, &u, 0.0);
+        fill(device, &r_norm_sq_buf, 0.0);
         // Make h visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
         // o_n := dot(r_n, h_n)
         dot_product_add(device, &r, &h, &u)?;
 
-        // READ: ||r_n||_2
-        // TODO
+        if iteration % cfg.residuum_check_period == 0 {
+            dot_product_add(device, &r, &r, &r_norm_sq_buf)?;
+        }
 
         // Make u (i.e., o_n) visible
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        ctx.submit(device.barrier(
+            srw_src,
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::SHADER_READ,
+            },
+        ))
+        .await;
+
+        // read ||r_n||_2^2
+        if iteration % cfg.residuum_check_period == 0 {
+            let mut r_norm_sq = 0.0f32;
+            unsafe {
+                crate::vulkan::memory::copy_to_cpu(
+                    ctx,
+                    device,
+                    r_norm_sq_buf.buffer,
+                    Layout::new::<f32>(),
+                    &mut r_norm_sq as *mut f32 as *mut MaybeUninit<u8>,
+                )
+                .await
+            };
+
+            if dbg!(r_norm_sq.sqrt()) < cfg.max_residuum_norm {
+                println!("Break after {} it", iteration);
+                break;
+            }
+        }
 
         // d_n := 1.0 * (o_n/o) * d + h_n
         scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
@@ -908,8 +960,10 @@ mod test {
             }
         });
 
-        let v = random_walker(vol, seeds);
+        let cfg = Default::default();
 
-        compare_tensor_approx(v, expected, 0.001);
+        let v = random_walker(vol, seeds, cfg);
+
+        compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }
 }
