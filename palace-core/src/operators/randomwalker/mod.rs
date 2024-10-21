@@ -609,7 +609,7 @@ async fn conjugate_gradient<'req, 'inv>(
                 .await
             };
 
-            if dbg!(r_norm_sq.sqrt()) < cfg.max_residuum_norm {
+            if r_norm_sq.sqrt() < cfg.max_residuum_norm {
                 println!("Break after {} it", iteration);
                 break;
             }
@@ -929,8 +929,8 @@ mod test {
     };
 
     #[test]
-    fn tiny() {
-        let s = [5, 5, 5];
+    fn simple() {
+        let s = [32, 32, 32];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
