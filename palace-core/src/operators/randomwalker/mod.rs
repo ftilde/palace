@@ -879,7 +879,7 @@ mod test {
         let brick_size = LocalVoxelPosition::from(s);
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            if v.x().raw <= size.x().raw / 2 {
+            if v.x().raw < size.x().raw / 2 {
                 0.1
             } else {
                 0.9
@@ -897,7 +897,7 @@ mod test {
         });
 
         let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
-            if v.x().raw <= size.x().raw / 2 {
+            if v.x().raw < size.x().raw / 2 {
                 0.0
             } else {
                 1.0
