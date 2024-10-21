@@ -382,6 +382,8 @@ async fn init_weights<'req, 'inv>(
             .cmd_fill_buffer(cmd.raw(), index.buffer, 0, vk::WHOLE_SIZE, 0xffffffff);
         cmd.functions()
             .cmd_fill_buffer(cmd.raw(), values.buffer, 0, vk::WHOLE_SIZE, 0);
+        cmd.functions()
+            .cmd_fill_buffer(cmd.raw(), vec.buffer, 0, vk::WHOLE_SIZE, 0);
     });
 
     ctx.submit(device.barrier(
