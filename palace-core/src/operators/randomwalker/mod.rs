@@ -174,7 +174,8 @@ pub fn random_walker_inner(
                     );
                 });
 
-                //TODO: Make result and weights initialization visible
+                //TODO: Try to reduce barriers here. We have one in init_weights already
+                //Make result and weights initialization visible
                 ctx.submit(device.barrier(
                     SrcBarrierInfo {
                         stage: vk::PipelineStageFlags2::TRANSFER
