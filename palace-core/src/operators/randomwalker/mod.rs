@@ -213,6 +213,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
 pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     seeds: TensorOperator<D3, StaticElementType<f32>>,
+    weight_function: WeightFunction,
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     assert_eq!(
@@ -229,6 +230,7 @@ pub fn random_walker(
         OperatorDescriptor::new("random_walker")
             .dependent_on(&tensor)
             .dependent_on(&seeds)
+            .dependent_on_data(&weight_function)
             .dependent_on_data(&cfg),
         Default::default(),
         tensor.metadata.clone(),
@@ -280,6 +282,7 @@ pub fn random_walker(
                     &tensor_to_rows_table,
                     tensor_size,
                     num_rows,
+                    weight_function,
                 )
                 .await?;
 
@@ -425,10 +428,13 @@ async fn init_weights<'req, 'inv>(
     tensor_to_rows_table: &Allocation,
     tensor_size: Vector<D3, GlobalCoordinate>,
     num_rows: u32,
+    weight_function: WeightFunction,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
     let nd = tensor_size.dim().n();
 
-    let push_constants = DynPushConstants::new().vec::<u32>(nd, "tensor_dim_in");
+    let push_constants = DynPushConstants::new()
+        .vec::<u32>(nd, "tensor_dim_in")
+        .scalar::<f32>("grady_beta");
 
     let tensor_elements = tensor_size.hmul() as usize;
     let max_entries = nd * 2 + 1;
@@ -437,7 +443,8 @@ async fn init_weights<'req, 'inv>(
     let pipeline = device.request_state(
         RessourceId::new("init_rw_weights")
             .dependent_on(&tensor_size)
-            .dependent_on(&num_rows),
+            .dependent_on(&num_rows)
+            .dependent_on(&weight_function),
         || {
             ComputePipeline::new(
                 device,
@@ -447,7 +454,8 @@ async fn init_weights<'req, 'inv>(
                         .push_const_block_dyn(&push_constants)
                         .add("BRICK_MEM_SIZE", tensor_elements)
                         .add("NUM_ROWS", num_rows)
-                        .add("ND", nd),
+                        .add("ND", nd)
+                        .add(weight_function.define_name(), 1),
                 ),
                 false,
             )
@@ -510,6 +518,9 @@ async fn init_weights<'req, 'inv>(
 
         pipeline.push_constant_dyn(&push_constants, |consts| {
             consts.vec(&tensor_size.raw())?;
+            consts.scalar(match weight_function {
+                WeightFunction::Grady { beta } => beta,
+            })?;
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
@@ -525,6 +536,19 @@ async fn init_weights<'req, 'inv>(
         },
         vec,
     ))
+}
+
+#[derive(Copy, Clone, Identify)]
+pub enum WeightFunction {
+    Grady { beta: f32 },
+}
+
+impl WeightFunction {
+    fn define_name(&self) -> &'static str {
+        match self {
+            WeightFunction::Grady { .. } => "WEIGHT_FUNCTION_GRADY",
+        }
+    }
 }
 
 #[derive(Identify, Copy, Clone)]
@@ -1019,7 +1043,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [256, 256, 256];
+        let s = [40, 40, 40];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
@@ -1051,7 +1075,7 @@ mod test {
 
         let cfg = Default::default();
 
-        let v = random_walker(vol, seeds, cfg);
+        let v = random_walker(vol, seeds, WeightFunction::Grady { beta: 100.0 }, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }

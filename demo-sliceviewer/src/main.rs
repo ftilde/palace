@@ -126,9 +126,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }"#,
                     );
-                    operators::randomwalker::random_walker(ball.into(), seeds, Default::default())
-                        .embedded(Default::default())
-                        .single_level_lod()
+                    operators::randomwalker::random_walker(
+                        ball.into(),
+                        seeds,
+                        operators::randomwalker::WeightFunction::Grady { beta: 1000.0 },
+                        Default::default(),
+                    )
+                    .embedded(Default::default())
+                    .single_level_lod()
                 }
             }
         }

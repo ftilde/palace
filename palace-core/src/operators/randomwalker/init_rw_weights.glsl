@@ -63,11 +63,12 @@ void mat_assign(uint row, uint col, float value) {
     mat_values.values[row][col_index] = floatBitsToUint(value);
 }
 
+#ifdef WEIGHT_FUNCTION_GRADY
 float edge_weight(uint p1, uint p2) {
-    float beta = 100.1;
     float diff = input_buf.values[p1] - input_buf.values[p2];
-    return exp(-beta * diff * diff);
+    return exp(-consts.grady_beta * diff * diff);
 }
+#endif
 
 bool is_seed_point(uint linear_p) {
     return is_seed_value(seeds_buf.values[linear_p]);
