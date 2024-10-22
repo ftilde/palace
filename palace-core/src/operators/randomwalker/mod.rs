@@ -1,7 +1,6 @@
 use std::{alloc::Layout, mem::MaybeUninit};
 
 // NO_PUSH_main: TODO: We probably do not want NUM_ROWS to be a constant, because it will change everytime we
-// NO_PUSH_main: TODO: Oh god, free those allocations
 // add/remove seeds
 
 use ash::vk;
@@ -9,17 +8,16 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use gpu_allocator::MemoryLocation::GpuOnly;
 use id::Identify;
 
-use super::{
-    scalar::{scalar, ScalarOperator},
-    tensor::TensorOperator,
-};
+use super::tensor::TensorOperator;
 use crate::{
-    array::{ChunkIndex, TensorMetaData},
-    dim::{DynDimension, D1, D3},
+    array::ChunkIndex,
+    coordinate::GlobalCoordinate,
+    dim::{DynDimension, D3},
     dtypes::StaticElementType,
     operator::OperatorDescriptor,
     storage::gpu::Allocation,
     task::OpaqueTaskContext,
+    vec::Vector,
     vulkan::{
         memory::TempRessource,
         pipeline::{AsBufferDescriptor, ComputePipeline, DescriptorConfig, DynPushConstants},
@@ -43,86 +41,190 @@ impl VulkanState for SparseMatrix {
     }
 }
 
-const UNSEEDED: f32 = -2.0;
+async fn tensor_to_rows_table<'a, 'req, 'inv>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &'a DeviceContext,
+    seeds: &impl AsBufferDescriptor,
+    tensor_size: usize,
+) -> Result<(TempRessource<'a, Allocation>, u32), crate::Error> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstantsStep {
+        s: u32,
+    }
 
-fn volume_to_rows_table(
-    seeds: TensorOperator<D3, StaticElementType<f32>>,
-) -> TensorOperator<D1, StaticElementType<u32>> {
-    let size = seeds.metadata.dimensions.hmul();
-    TensorOperator::unbatched(
-        OperatorDescriptor::new("volume_to_rows_table").dependent_on(&seeds),
-        Default::default(),
-        TensorMetaData::single_chunk([size as u32].into()),
-        seeds,
-        move |ctx, _pos, _, seeds| {
-            async move {
-                let mut out = ctx.submit(ctx.alloc_slot(ChunkIndex(0), size)).await;
-                let s = ctx.submit(seeds.chunks.request(ChunkIndex(0))).await;
+    let local_size = 1024;
 
-                let mut row_counter = 0;
-                for (i, o) in s.iter().zip(out.iter_mut()) {
-                    if *i == UNSEEDED {
-                        o.write(row_counter);
-                        row_counter += 1;
-                    } else {
-                        o.write(0xffffffff);
-                    }
-                }
-
-                unsafe { out.initialized(*ctx) };
-
-                Ok(())
-            }
-            .into()
+    let pipeline_init = device.request_state(
+        RessourceId::new("tensor_vec_table_init")
+            .dependent_on(&tensor_size)
+            .dependent_on(&local_size),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("tensor_vec_table_init.glsl"),
+                    ShaderDefines::new()
+                        .add("BRICK_MEM_SIZE", tensor_size)
+                        .add("LOCAL_SIZE", local_size),
+                ),
+                false,
+            )
         },
-    )
+    )?;
+
+    let pipeline_step = device.request_state(
+        RessourceId::new("tensor_vec_table_step")
+            .dependent_on(&tensor_size)
+            .dependent_on(&local_size),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("tensor_vec_table_step.glsl"),
+                    ShaderDefines::new()
+                        .push_const_block::<PushConstantsStep>()
+                        .add("BRICK_MEM_SIZE", tensor_size)
+                        .add("LOCAL_SIZE", local_size),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let pipeline_finish = device.request_state(
+        RessourceId::new("tensor_vec_table_finish")
+            .dependent_on(&tensor_size)
+            .dependent_on(&local_size),
+        || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("tensor_vec_table_finish.glsl"),
+                    ShaderDefines::new()
+                        .add("BRICK_MEM_SIZE", tensor_size)
+                        .add("LOCAL_SIZE", local_size),
+                ),
+                false,
+            )
+        },
+    )?;
+
+    let flags = vk::BufferUsageFlags::STORAGE_BUFFER
+        | vk::BufferUsageFlags::TRANSFER_DST
+        | vk::BufferUsageFlags::TRANSFER_SRC;
+
+    let (table, num_rows) = futures::join!(
+        ctx.submit(device.storage.request_allocate_raw(
+            device,
+            Layout::array::<u32>(tensor_size).unwrap(),
+            flags,
+            GpuOnly,
+        )),
+        ctx.submit(device.storage.request_allocate_raw(
+            device,
+            Layout::new::<u32>(),
+            flags,
+            GpuOnly,
+        )),
+    );
+
+    let table = TempRessource::new(device, table);
+    let num_rows = TempRessource::new(device, num_rows);
+
+    // Init table:
+    let descriptor_config = DescriptorConfig::new([seeds, &*table]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline_init.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(tensor_size as _);
+    });
+
+    // Global reduce
+    let mut s = local_size as u32;
+    while s as usize <= tensor_size {
+        ctx.submit(device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+        ))
+        .await;
+
+        let descriptor_config = DescriptorConfig::new([&*table]);
+
+        device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = pipeline_step.bind(cmd);
+
+            pipeline.push_constant(PushConstantsStep { s });
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(tensor_size as _);
+        });
+
+        s *= 2;
+    }
+
+    ctx.submit(device.barrier(
+        SrcBarrierInfo {
+            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+        },
+        DstBarrierInfo {
+            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+        },
+    ))
+    .await;
+
+    // Finish
+    let descriptor_config = DescriptorConfig::new([seeds, &*table, &*num_rows]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline_finish.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(tensor_size as _);
+    });
+
+    ctx.submit(device.barrier(
+        SrcBarrierInfo {
+            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+        },
+        DstBarrierInfo {
+            stage: vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COMPUTE_SHADER,
+            access: vk::AccessFlags2::SHADER_READ
+                | vk::AccessFlags2::SHADER_WRITE
+                | vk::AccessFlags2::TRANSFER_READ,
+        },
+    ))
+    .await;
+
+    let num_rows = read_scalar(ctx, device, &*num_rows).await;
+
+    Ok((table, num_rows))
 }
 
-fn num_seeds(
-    tensor_to_rows_table: TensorOperator<D1, StaticElementType<u32>>,
-) -> ScalarOperator<StaticElementType<u32>> {
-    scalar(
-        OperatorDescriptor::new("num_seeds").dependent_on(&tensor_to_rows_table),
-        tensor_to_rows_table,
-        move |ctx, tensor_to_rows_table| {
-            async move {
-                let s = ctx
-                    .submit(tensor_to_rows_table.chunks.request(ChunkIndex(0)))
-                    .await;
-
-                let mut max_row = 0;
-                for i in s.iter() {
-                    if *i != 0xffffffff {
-                        max_row = max_row.max(*i);
-                    }
-                }
-
-                let num_seeds = s.len() as u32 - max_row - 1;
-
-                ctx.submit(ctx.write_scalar(num_seeds)).await;
-
-                Ok(())
-            }
-            .into()
-        },
-    )
-}
 pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     seeds: TensorOperator<D3, StaticElementType<f32>>,
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
-    let v2rt = volume_to_rows_table(seeds.clone());
-    random_walker_inner(tensor, seeds.clone(), v2rt.clone(), num_seeds(v2rt), cfg)
-}
+    assert_eq!(
+        tensor.metadata.dimensions.raw(),
+        tensor.metadata.chunk_size.raw()
+    );
+    assert_eq!(
+        seeds.metadata.dimensions.raw(),
+        seeds.metadata.chunk_size.raw()
+    );
+    assert_eq!(tensor.metadata.dimensions, seeds.metadata.dimensions);
 
-pub fn random_walker_inner(
-    tensor: TensorOperator<D3, StaticElementType<f32>>,
-    seeds: TensorOperator<D3, StaticElementType<f32>>,
-    tensor_to_rows_table: TensorOperator<D1, StaticElementType<u32>>,
-    num_seeds: ScalarOperator<StaticElementType<u32>>,
-    cfg: SolverConfig,
-) -> TensorOperator<D3, StaticElementType<f32>> {
     TensorOperator::unbatched(
         OperatorDescriptor::new("random_walker")
             .dependent_on(&tensor)
@@ -130,25 +232,55 @@ pub fn random_walker_inner(
             .dependent_on_data(&cfg),
         Default::default(),
         tensor.metadata.clone(),
-        (tensor, seeds, tensor_to_rows_table, num_seeds, cfg),
-        move |ctx, _pos, _, (tensor, seeds, tensor_to_rows_table, num_seeds, cfg)| {
+        (tensor, seeds, cfg),
+        move |ctx, _pos, _, (tensor, seeds, cfg)| {
             async move {
                 let device = ctx.preferred_device();
+
+                let tensor_size = tensor.metadata.dimensions;
+                let tensor_elements = tensor_size.hmul();
+
+                if tensor_elements > u32::MAX as usize {
+                    return Err(format!(
+                        "Tensor cannot have more than 2^32 elements, but it has {}",
+                        tensor_elements,
+                    )
+                    .into());
+                }
+
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+                let (input, seeds) = futures::join!(
+                    ctx.submit(
+                        tensor
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info)
+                    ),
+                    ctx.submit(
+                        seeds
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    ),
+                );
+
+                let (tensor_to_rows_table, num_rows) =
+                    tensor_to_rows_table(*ctx, device, &seeds, tensor_elements).await?;
 
                 let (mat, vec) = init_weights(
                     *ctx,
                     &device,
-                    tensor,
-                    seeds,
-                    tensor_to_rows_table,
-                    num_seeds,
+                    &input,
+                    &seeds,
+                    &tensor_to_rows_table,
+                    tensor_size,
+                    num_rows,
                 )
                 .await?;
 
                 let mat = TempRessource::new(device, mat);
                 let vec = TempRessource::new(device, vec);
-
-                let num_rows = vec.size as usize / std::mem::size_of::<f32>();
 
                 let flags = vk::BufferUsageFlags::STORAGE_BUFFER
                     | vk::BufferUsageFlags::TRANSFER_DST
@@ -157,7 +289,7 @@ pub fn random_walker_inner(
                 let result = ctx
                     .submit(device.storage.request_allocate_raw(
                         device,
-                        Layout::array::<f32>(num_rows).unwrap(),
+                        Layout::array::<f32>(num_rows as usize).unwrap(),
                         flags,
                         GpuOnly,
                     ))
@@ -200,12 +332,13 @@ pub fn random_walker_inner(
                     .await;
 
                 results_to_tensor(
-                    *ctx,
                     device,
-                    seeds,
-                    tensor_to_rows_table,
+                    &seeds,
+                    &tensor_to_rows_table,
                     &result,
                     &out_chunk,
+                    tensor_size,
+                    num_rows,
                 )
                 .await?;
 
@@ -227,35 +360,24 @@ pub fn random_walker_inner(
 }
 
 async fn results_to_tensor<'req, 'inv>(
-    ctx: OpaqueTaskContext<'req, 'inv>,
     device: &DeviceContext,
-    seeds: &'inv TensorOperator<D3, StaticElementType<f32>>,
-    tensor_to_rows_table: &'inv TensorOperator<D1, StaticElementType<u32>>,
+    seeds: &impl AsBufferDescriptor,
+    tensor_to_rows_table: &Allocation,
     result_vec: &Allocation,
     out_allocation: &impl AsBufferDescriptor,
+    tensor_size: Vector<D3, GlobalCoordinate>,
+    num_rows: u32,
 ) -> Result<(), crate::Error> {
-    let nd = seeds.dim().n();
-
-    assert_eq!(
-        seeds.metadata.dimensions.raw(),
-        seeds.metadata.chunk_size.raw()
-    );
-    assert_eq!(
-        tensor_to_rows_table.metadata.dimensions,
-        tensor_to_rows_table.metadata.dimensions
-    );
-
-    let num_rows = result_vec.size as usize / std::mem::size_of::<f32>();
-    let tensor_size = seeds.metadata.dimensions.hmul();
+    let nd = tensor_size.dim().n();
+    let tensor_elements = tensor_size.hmul();
 
     let push_constants = DynPushConstants::new().vec::<u32>(nd, "tensor_dim");
 
     let pipeline = device
         .request_state(
             RessourceId::new("results_to_tensor")
-                .dependent_on(&seeds.metadata.chunk_size)
-                .dependent_on(&num_rows)
-                .dependent_on(&nd),
+                .dependent_on(&tensor_size)
+                .dependent_on(&num_rows),
             || {
                 ComputePipeline::new(
                     device,
@@ -263,7 +385,7 @@ async fn results_to_tensor<'req, 'inv>(
                         include_str!("results_to_tensor.glsl"),
                         ShaderDefines::new()
                             .push_const_block_dyn(&push_constants)
-                            .add("BRICK_MEM_SIZE", tensor_size)
+                            .add("BRICK_MEM_SIZE", tensor_elements)
                             .add("NUM_ROWS", num_rows)
                             .add("ND", nd),
                     ),
@@ -272,35 +394,16 @@ async fn results_to_tensor<'req, 'inv>(
             },
         )
         .unwrap();
-    let global_size = seeds.metadata.chunk_size.raw();
-    let tensor_dim = seeds.metadata.chunk_size.raw();
-
-    let read_info = DstBarrierInfo {
-        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-        access: vk::AccessFlags2::SHADER_READ,
-    };
-
-    let (seeds, tensor_to_rows_table) = futures::join!(
-        ctx.submit(
-            seeds
-                .chunks
-                .request_gpu(device.id, ChunkIndex(0), read_info),
-        ),
-        ctx.submit(
-            tensor_to_rows_table
-                .chunks
-                .request_gpu(device.id, ChunkIndex(0), read_info),
-        ),
-    );
+    let global_size = tensor_size.raw();
 
     let descriptor_config =
-        DescriptorConfig::new([&seeds, &tensor_to_rows_table, result_vec, out_allocation]);
+        DescriptorConfig::new([seeds, tensor_to_rows_table, result_vec, out_allocation]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.push_constant_dyn(&push_constants, |consts| {
-            consts.vec(&tensor_dim)?;
+            consts.vec(&tensor_size.raw())?;
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
@@ -313,34 +416,24 @@ async fn results_to_tensor<'req, 'inv>(
 async fn init_weights<'req, 'inv>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &DeviceContext,
-    t: &'inv TensorOperator<D3, StaticElementType<f32>>,
-    seeds: &'inv TensorOperator<D3, StaticElementType<f32>>,
-    tensor_to_rows_table: &'inv TensorOperator<D1, StaticElementType<u32>>,
-    num_seeds: &'inv ScalarOperator<StaticElementType<u32>>,
+    t: &impl AsBufferDescriptor,
+    seeds: &impl AsBufferDescriptor,
+    tensor_to_rows_table: &Allocation,
+    tensor_size: Vector<D3, GlobalCoordinate>,
+    num_rows: u32,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
-    let nd = t.dim().n();
-
-    let num_seeds = ctx.submit(num_seeds.request_scalar()).await;
-
-    assert_eq!(t.metadata.dimensions.raw(), t.metadata.chunk_size.raw());
-    assert_eq!(
-        seeds.metadata.dimensions.raw(),
-        seeds.metadata.chunk_size.raw()
-    );
-    assert_eq!(t.metadata.dimensions, seeds.metadata.dimensions);
+    let nd = tensor_size.dim().n();
 
     let push_constants = DynPushConstants::new().vec::<u32>(nd, "tensor_dim_in");
 
-    let tensor_size = t.metadata.chunk_size.hmul();
-    let mat_rows = tensor_size - num_seeds as usize;
+    let tensor_elements = tensor_size.hmul() as usize;
     let max_entries = nd * 2 + 1;
-    let mat_size = mat_rows * max_entries;
+    let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
         RessourceId::new("init_rw_weights")
-            .dependent_on(&t.metadata.chunk_size)
-            .dependent_on(&mat_rows)
-            .dependent_on(&nd),
+            .dependent_on(&tensor_size)
+            .dependent_on(&num_rows),
         || {
             ComputePipeline::new(
                 device,
@@ -348,8 +441,8 @@ async fn init_weights<'req, 'inv>(
                     include_str!("init_rw_weights.glsl"),
                     ShaderDefines::new()
                         .push_const_block_dyn(&push_constants)
-                        .add("BRICK_MEM_SIZE", tensor_size)
-                        .add("NUM_ROWS", mat_rows)
+                        .add("BRICK_MEM_SIZE", tensor_elements)
+                        .add("NUM_ROWS", num_rows)
                         .add("ND", nd),
                 ),
                 false,
@@ -376,7 +469,7 @@ async fn init_weights<'req, 'inv>(
         )),
         ctx.submit(device.storage.request_allocate_raw(
             device,
-            Layout::array::<f32>(mat_rows).unwrap(),
+            Layout::array::<f32>(num_rows as usize).unwrap(),
             flags,
             GpuOnly,
         ))
@@ -403,35 +496,16 @@ async fn init_weights<'req, 'inv>(
     ))
     .await;
 
-    let global_size = t.metadata.chunk_size.raw();
-
-    let read_info = DstBarrierInfo {
-        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-        access: vk::AccessFlags2::SHADER_READ,
-    };
-
-    let (input, seeds, tensor_to_rows_table) = futures::join!(
-        ctx.submit(t.chunks.request_gpu(device.id, ChunkIndex(0), read_info)),
-        ctx.submit(
-            seeds
-                .chunks
-                .request_gpu(device.id, ChunkIndex(0), read_info),
-        ),
-        ctx.submit(
-            tensor_to_rows_table
-                .chunks
-                .request_gpu(device.id, ChunkIndex(0), read_info),
-        ),
-    );
+    let global_size = tensor_size.raw();
 
     let descriptor_config =
-        DescriptorConfig::new([&input, &seeds, &tensor_to_rows_table, &values, &index, &vec]);
+        DescriptorConfig::new([t, seeds, tensor_to_rows_table, &values, &index, &vec]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.push_constant_dyn(&push_constants, |consts| {
-            consts.vec(&t.metadata.chunk_size.raw())?;
+            consts.vec(&tensor_size.raw())?;
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
@@ -443,7 +517,7 @@ async fn init_weights<'req, 'inv>(
             values,
             index,
             max_entries_per_row: max_entries as _,
-            num_rows: mat_rows as _,
+            num_rows: num_rows as _,
         },
         vec,
     ))
@@ -598,17 +672,7 @@ async fn conjugate_gradient<'req, 'inv>(
 
         // read ||r_n||_2^2
         if iteration % cfg.residuum_check_period == 0 {
-            let mut r_norm_sq = 0.0f32;
-            unsafe {
-                crate::vulkan::memory::copy_to_cpu(
-                    ctx,
-                    device,
-                    r_norm_sq_buf.buffer,
-                    Layout::new::<f32>(),
-                    &mut r_norm_sq as *mut f32 as *mut MaybeUninit<u8>,
-                )
-                .await
-            };
+            let r_norm_sq = read_scalar::<f32>(ctx, device, &r_norm_sq_buf).await;
 
             if r_norm_sq.sqrt() < cfg.max_residuum_norm {
                 println!("Break after {} it", iteration);
@@ -620,6 +684,26 @@ async fn conjugate_gradient<'req, 'inv>(
         scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
     }
     Ok(())
+}
+
+// Note: buf's value must be visible for transfers already
+async fn read_scalar<'req, 'inv, T: Copy + Default>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &DeviceContext,
+    buf: &Allocation,
+) -> T {
+    let mut out = T::default();
+    unsafe {
+        crate::vulkan::memory::copy_to_cpu(
+            ctx,
+            device,
+            buf.buffer,
+            Layout::new::<T>(),
+            &mut out as *mut T as *mut MaybeUninit<u8>,
+        )
+        .await
+    };
+    out
 }
 
 //async fn download<'a, 'b, T: crate::storage::Element + Default>(
@@ -931,7 +1015,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [32, 32, 32];
+        let s = [256, 256, 256];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
@@ -949,7 +1033,7 @@ mod test {
             } else if v == VoxelPosition::from(s) - VoxelPosition::fill(1.into()) {
                 1.0
             } else {
-                UNSEEDED
+                -2.0
             }
         });
 
