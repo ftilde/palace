@@ -23,6 +23,7 @@ enum Type {
     Ball,
     Full,
     Mandelbulb,
+    RandomWalker,
 }
 
 #[derive(Parser, Clone)]
@@ -124,6 +125,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Type::Ball => operators::procedural::ball(md),
                 Type::Full => operators::procedural::full(md),
                 Type::Mandelbulb => operators::procedural::mandelbulb(md),
+                Type::RandomWalker => {
+                    let md = array::VolumeMetaData {
+                        dimensions: VoxelPosition::fill(args.size.into()),
+                        chunk_size: LocalVoxelPosition::fill(args.size.into()),
+                    };
+                    let ball = operators::procedural::ball(md).levels[0].clone();
+                    let seeds = operators::procedural::rasterize(
+                        md,
+                        r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
+                            float center_dist = length(to_glsl(pos_normalized)-vec3(0.5));
+                            if (center_dist < 0.1) {
+                                return 1.0;
+                            } else if (center_dist > 0.75) {
+                                return 0.0;
+                            } else {
+                                return -2.0;
+                            }
+                        }"#,
+                    );
+                    operators::randomwalker::random_walker(ball.into(), seeds, Default::default())
+                        .embedded(Default::default())
+                        .single_level_lod()
+                }
             }
         }
     };
