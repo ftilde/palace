@@ -99,6 +99,9 @@ void main() {
             uint neighbor_linear = to_linear(neighbor, consts.tensor_dim_in);
 
             float weight = edge_weight(current_linear, neighbor_linear);
+            //TODO: make configurable
+            float min_edge_weight = 0.00001;
+            weight = max(weight, min_edge_weight);
 
             if(is_seed_point(neighbor_linear)) {
                 if(!current_is_seed) {
