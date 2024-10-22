@@ -109,6 +109,14 @@ pub struct TensorEmbeddingData<D: DynDimension> {
     // NOTE: need to change identify impl if we want to add members
 }
 
+impl<D: Dimension> Default for TensorEmbeddingData<D> {
+    fn default() -> Self {
+        Self {
+            spacing: Vector::fill(1.0),
+        }
+    }
+}
+
 impl<D: Dimension> Copy for TensorEmbeddingData<D> where Vector<D, f32>: Copy {}
 
 impl<D: DynDimension> TensorEmbeddingData<D> {
