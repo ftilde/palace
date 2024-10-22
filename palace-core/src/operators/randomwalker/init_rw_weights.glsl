@@ -5,6 +5,7 @@
 #include <util.glsl>
 #include <vec.glsl>
 #include <atomic.glsl>
+#include <randomwalker_shared.glsl>
 
 #if N == 1
 layout (local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
@@ -42,8 +43,6 @@ layout(std430, binding = 5) buffer Vec {
 
 declare_push_consts(consts)
 
-#define MAT_INDEX_EMPTY 0xffffffff
-
 uint get_mat_index(uint row, uint col) {
     for (uint r = 0; r < MAX_ENTRIES_PER_ROW; ++r) {
         uint old = atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, col);
@@ -71,7 +70,7 @@ float edge_weight(uint p1, uint p2) {
 }
 
 bool is_seed_point(uint linear_p) {
-    return seeds_buf.values[linear_p] != -2.0;
+    return is_seed_value(seeds_buf.values[linear_p]);
 }
 
 void main() {

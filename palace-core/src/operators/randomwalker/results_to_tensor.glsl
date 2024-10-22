@@ -5,6 +5,7 @@
 #include <util.glsl>
 #include <vec.glsl>
 #include <atomic.glsl>
+#include <randomwalker_shared.glsl>
 
 #if N == 1
 layout (local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
@@ -31,8 +32,6 @@ layout(std430, binding = 3) buffer Results {
 } out_buf;
 
 declare_push_consts(consts)
-
-#define MAT_INDEX_EMPTY 0xffffffff
 
 void main() {
     uvec3 current_glsl = gl_GlobalInvocationID.xyz;
