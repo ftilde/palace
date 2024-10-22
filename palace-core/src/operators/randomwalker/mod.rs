@@ -268,6 +268,10 @@ pub fn random_walker(
                 let (tensor_to_rows_table, num_rows) =
                     tensor_to_rows_table(*ctx, device, &seeds, tensor_elements).await?;
 
+                if num_rows == 0 {
+                    return Err(format!("Tensor has 0 unseeded elements",).into());
+                }
+
                 let (mat, vec) = init_weights(
                     *ctx,
                     &device,
