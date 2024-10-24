@@ -17,9 +17,9 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 #define MAX_ENTRIES_PER_ROW (2*ND + 1)
 
-layout(std430, binding = 0) readonly buffer Input {
-    float values[BRICK_MEM_SIZE];
-} input_buf;
+layout(std430, binding = 0) readonly buffer Weights {
+    float values[BRICK_MEM_SIZE][ND];
+} weights;
 
 layout(std430, binding = 1) readonly buffer Seeds {
     float values[BRICK_MEM_SIZE];
@@ -63,18 +63,12 @@ void mat_assign(uint row, uint col, float value) {
     mat_values.values[row][col_index] = floatBitsToUint(value);
 }
 
-#ifdef WEIGHT_FUNCTION_GRADY
-float edge_weight(uint p1, uint p2) {
-    float diff = input_buf.values[p1] - input_buf.values[p2];
-    return exp(-consts.grady_beta * diff * diff);
-}
-#endif
-
 bool is_seed_point(uint linear_p) {
     return is_seed_value(seeds_buf.values[linear_p]);
 }
 
 void main() {
+    //TODO: Does not work for ND > 3. Take and generalize code from convolution
     uvec3 current_glsl = gl_GlobalInvocationID.xyz;
 
     uint[ND] current = from_glsl(current_glsl);
@@ -89,49 +83,38 @@ void main() {
 
     float weight_sum = 0;
 
-    bool current_is_seed = is_seed_point(current_linear);
+    if(is_seed_point(current_linear)) {
+        return;
+    }
+    uint cur_row = tensor_to_rows.values[current_linear];
 
     for(int dim=0; dim<ND; ++dim) {
-        if(current[dim] > 0) {
-            uint[ND] neighbor = current;
-            neighbor[dim] -= 1;
+        for(int offset = -1; offset<2; offset += 2) {
 
-            uint neighbor_linear = to_linear(neighbor, consts.tensor_dim_in);
+            if(current[dim] > -offset && current[dim] < consts.tensor_dim_in[dim]-1-offset) {
+                uint[ND] neighbor = current;
+                neighbor[dim] += offset;
+                uint neighbor_linear = to_linear(neighbor, consts.tensor_dim_in);
 
-            float weight = edge_weight(current_linear, neighbor_linear);
-            //TODO: make configurable
-            float min_edge_weight = 0.00001;
-            weight = max(weight, min_edge_weight);
+                uint[ND] weight_pos = current;
+                weight_pos[dim] = min(current[dim], neighbor[dim]);
+                uint weight_pos_linear = to_linear(weight_pos, consts.tensor_dim_in);
 
-            if(is_seed_point(neighbor_linear)) {
-                if(!current_is_seed) {
-                    uint cur_row = tensor_to_rows.values[current_linear];
+                float weight = weights.values[weight_pos_linear][dim];
 
+                if(is_seed_point(neighbor_linear)) {
                     float to_add = weight * seeds_buf.values[neighbor_linear];
                     atomic_add_float(vec.values[cur_row], to_add);
-                }
-            } else {
-                uint n_row = tensor_to_rows.values[neighbor_linear];
-                if(!current_is_seed) {
-                    uint cur_row = tensor_to_rows.values[current_linear];
+                } else {
+                    uint n_row = tensor_to_rows.values[neighbor_linear];
 
                     mat_assign(cur_row, n_row, -weight);
-                    mat_assign(n_row, cur_row, -weight);
-                } else {
-                    float to_add = weight * seeds_buf.values[current_linear];
-                    atomic_add_float(vec.values[n_row], to_add);
                 }
 
-                // Update weight sum of neighbor with smaller index.
-                mat_add(n_row, n_row, weight);
+                weight_sum += weight;
             }
-
-            weight_sum += weight;
         }
     }
 
-    if(!current_is_seed) {
-        uint cur_row = tensor_to_rows.values[current_linear];
-        mat_add(cur_row, cur_row, weight_sum);
-    }
+    mat_assign(cur_row, cur_row, weight_sum);
 }

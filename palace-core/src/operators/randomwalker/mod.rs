@@ -10,9 +10,9 @@ use id::Identify;
 
 use super::tensor::TensorOperator;
 use crate::{
-    array::ChunkIndex,
+    array::{ChunkIndex, TensorMetaData},
     coordinate::GlobalCoordinate,
-    dim::{DynDimension, D3},
+    dim::{DynDimension, LargerDim, D3},
     dtypes::StaticElementType,
     operator::OperatorDescriptor,
     storage::gpu::Allocation,
@@ -209,37 +209,149 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
 
     Ok((table, num_rows))
 }
+pub fn random_walker_weights(
+    tensor: TensorOperator<D3, StaticElementType<f32>>,
+    weight_function: WeightFunction,
+) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+    assert_eq!(
+        tensor.metadata.dimensions.raw(),
+        tensor.metadata.chunk_size.raw()
+    );
 
+    let nd = tensor.metadata.dim().n();
+    let out_size = tensor
+        .metadata
+        .dimensions
+        .push_dim_small((nd as u32).into());
+
+    let out_md = TensorMetaData::single_chunk(out_size);
+
+    TensorOperator::unbatched(
+        OperatorDescriptor::new("random_walker_weights")
+            .dependent_on(&tensor)
+            .dependent_on_data(&weight_function),
+        Default::default(),
+        out_md,
+        tensor,
+        move |ctx, _pos, _, tensor| {
+            async move {
+                let device = ctx.preferred_device();
+
+                let in_size = tensor.metadata.dimensions;
+
+                let push_constants = DynPushConstants::new()
+                    .vec::<u32>(nd, "tensor_dim_in")
+                    .scalar::<f32>("grady_beta");
+
+                let pipeline = device.request_state(
+                    RessourceId::new("randomwalker_weights").dependent_on(&in_size),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                include_str!("randomwalker_weights.glsl"),
+                                ShaderDefines::new()
+                                    .push_const_block_dyn(&push_constants)
+                                    .add("BRICK_MEM_SIZE", in_size.hmul())
+                                    .add("ND", nd)
+                                    .add(weight_function.define_name(), 1),
+                            ),
+                            false,
+                        )
+                    },
+                )?;
+
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+                let input = ctx
+                    .submit(
+                        tensor
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    )
+                    .await;
+
+                let out_chunk = ctx
+                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), out_md.dimensions.hmul()))
+                    .await;
+
+                let global_size = in_size.raw();
+
+                let descriptor_config = DescriptorConfig::new([&input, &out_chunk]);
+
+                device.with_cmd_buffer(|cmd| unsafe {
+                    let mut pipeline = pipeline.bind(cmd);
+
+                    pipeline.push_constant_dyn(&push_constants, |consts| {
+                        consts.vec(&in_size.raw())?;
+                        consts.scalar(match weight_function {
+                            WeightFunction::Grady { beta } => beta,
+                        })?;
+                        Ok(())
+                    });
+                    pipeline.write_descriptor_set(0, descriptor_config);
+                    pipeline.dispatch3d(global_size);
+                });
+
+                unsafe {
+                    out_chunk.initialized(
+                        *ctx,
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    )
+                };
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+}
 pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     seeds: TensorOperator<D3, StaticElementType<f32>>,
     weight_function: WeightFunction,
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
+    let weights = random_walker_weights(tensor, weight_function);
+    random_walker_inner(weights, seeds, cfg)
+}
+
+pub fn random_walker_inner(
+    weights: TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>>,
+    seeds: TensorOperator<D3, StaticElementType<f32>>,
+    cfg: SolverConfig,
+) -> TensorOperator<D3, StaticElementType<f32>> {
     assert_eq!(
-        tensor.metadata.dimensions.raw(),
-        tensor.metadata.chunk_size.raw()
+        weights.metadata.dimensions.raw(),
+        weights.metadata.chunk_size.raw()
     );
     assert_eq!(
         seeds.metadata.dimensions.raw(),
         seeds.metadata.chunk_size.raw()
     );
-    assert_eq!(tensor.metadata.dimensions, seeds.metadata.dimensions);
+    assert_eq!(
+        weights.metadata.dimensions.pop_dim_small(),
+        seeds.metadata.dimensions
+    );
 
     TensorOperator::unbatched(
         OperatorDescriptor::new("random_walker")
-            .dependent_on(&tensor)
+            .dependent_on(&weights)
             .dependent_on(&seeds)
-            .dependent_on_data(&weight_function)
             .dependent_on_data(&cfg),
         Default::default(),
-        tensor.metadata.clone(),
-        (tensor, seeds, cfg),
-        move |ctx, _pos, _, (tensor, seeds, cfg)| {
+        seeds.metadata.clone(),
+        (weights, seeds, cfg),
+        move |ctx, _pos, _, (weights, seeds, cfg)| {
             async move {
                 let device = ctx.preferred_device();
 
-                let tensor_size = tensor.metadata.dimensions;
+                let tensor_size = seeds.metadata.dimensions;
                 let tensor_elements = tensor_size.hmul();
 
                 if tensor_elements > u32::MAX as usize {
@@ -254,9 +366,9 @@ pub fn random_walker(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
-                let (input, seeds) = futures::join!(
+                let (weights, seeds) = futures::join!(
                     ctx.submit(
-                        tensor
+                        weights
                             .chunks
                             .request_gpu(device.id, ChunkIndex(0), read_info)
                     ),
@@ -274,15 +386,14 @@ pub fn random_walker(
                     return Err(format!("Tensor has 0 unseeded elements",).into());
                 }
 
-                let (mat, vec) = init_weights(
+                let (mat, vec) = mat_setup(
                     *ctx,
                     &device,
-                    &input,
+                    &weights,
                     &seeds,
                     &tensor_to_rows_table,
                     tensor_size,
                     num_rows,
-                    weight_function,
                 )
                 .await?;
 
@@ -331,11 +442,7 @@ pub fn random_walker(
                 conjugate_gradient(*ctx, device, &mat, &vec, &result, cfg).await?;
 
                 let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(
-                        &device,
-                        ChunkIndex(0),
-                        tensor.metadata.dimensions.hmul(),
-                    ))
+                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), tensor_elements))
                     .await;
 
                 results_to_tensor(
@@ -420,42 +527,37 @@ async fn results_to_tensor<'req, 'inv>(
     Ok(())
 }
 
-async fn init_weights<'req, 'inv>(
+async fn mat_setup<'req, 'inv>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &DeviceContext,
-    t: &impl AsBufferDescriptor,
+    weights: &impl AsBufferDescriptor,
     seeds: &impl AsBufferDescriptor,
     tensor_to_rows_table: &Allocation,
     tensor_size: Vector<D3, GlobalCoordinate>,
     num_rows: u32,
-    weight_function: WeightFunction,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
     let nd = tensor_size.dim().n();
 
-    let push_constants = DynPushConstants::new()
-        .vec::<u32>(nd, "tensor_dim_in")
-        .scalar::<f32>("grady_beta");
+    let push_constants = DynPushConstants::new().vec::<u32>(nd, "tensor_dim_in");
 
     let tensor_elements = tensor_size.hmul() as usize;
     let max_entries = nd * 2 + 1;
     let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
-        RessourceId::new("init_rw_weights")
+        RessourceId::new("randomwalker_mat_setup")
             .dependent_on(&tensor_size)
-            .dependent_on(&num_rows)
-            .dependent_on(&weight_function),
+            .dependent_on(&num_rows),
         || {
             ComputePipeline::new(
                 device,
                 (
-                    include_str!("init_rw_weights.glsl"),
+                    include_str!("randomwalker_mat_setup.glsl"),
                     ShaderDefines::new()
                         .push_const_block_dyn(&push_constants)
                         .add("BRICK_MEM_SIZE", tensor_elements)
                         .add("NUM_ROWS", num_rows)
-                        .add("ND", nd)
-                        .add(weight_function.define_name(), 1),
+                        .add("ND", nd),
                 ),
                 false,
             )
@@ -511,16 +613,13 @@ async fn init_weights<'req, 'inv>(
     let global_size = tensor_size.raw();
 
     let descriptor_config =
-        DescriptorConfig::new([t, seeds, tensor_to_rows_table, &values, &index, &vec]);
+        DescriptorConfig::new([weights, seeds, tensor_to_rows_table, &values, &index, &vec]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.push_constant_dyn(&push_constants, |consts| {
             consts.vec(&tensor_size.raw())?;
-            consts.scalar(match weight_function {
-                WeightFunction::Grady { beta } => beta,
-            })?;
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
@@ -625,10 +724,10 @@ async fn conjugate_gradient<'req, 'inv>(
 
     // Initialization
 
-    //dbg!(download::<u32>(ctx, device, &mat.index).await);
-    //dbg!(download::<f32>(ctx, device, &mat.values).await);
-    //dbg!(download::<f32>(ctx, device, x).await);
-    //dbg!(download::<f32>(ctx, device, b).await);
+    dbg!(download::<u32>(ctx, device, &mat.index).await);
+    dbg!(download::<f32>(ctx, device, &mat.values).await);
+    dbg!(download::<f32>(ctx, device, x).await);
+    dbg!(download::<f32>(ctx, device, b).await);
 
     // For jacobi preconditioning
     extract_inv_diag(device, &mat, &c)?;
@@ -734,29 +833,29 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
     out
 }
 
-//async fn download<'a, 'b, T: crate::storage::Element + Default>(
-//    ctx: OpaqueTaskContext<'a, 'b>,
-//    device: &DeviceContext,
-//    x: &impl AsBufferDescriptor,
-//) -> Vec<T> {
-//    let src = SrcBarrierInfo {
-//        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-//        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
-//    };
-//    let dst = DstBarrierInfo {
-//        stage: vk::PipelineStageFlags2::TRANSFER,
-//        access: vk::AccessFlags2::TRANSFER_READ,
-//    };
-//    ctx.submit(device.barrier(src, dst)).await;
-//
-//    let info = x.gen_buffer_info();
-//    let size = info.range as usize / std::mem::size_of::<T>();
-//    let out = vec![T::default(); size];
-//    let out_ptr = out.as_ptr() as _;
-//    let layout = Layout::array::<T>(size).unwrap();
-//    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
-//    out
-//}
+async fn download<'a, 'b, T: crate::storage::Element + Default>(
+    ctx: OpaqueTaskContext<'a, 'b>,
+    device: &DeviceContext,
+    x: &impl AsBufferDescriptor,
+) -> Vec<T> {
+    let src = SrcBarrierInfo {
+        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+    };
+    let dst = DstBarrierInfo {
+        stage: vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::TRANSFER_READ,
+    };
+    ctx.submit(device.barrier(src, dst)).await;
+
+    let info = x.gen_buffer_info();
+    let size = info.range as usize / std::mem::size_of::<T>();
+    let out = vec![T::default(); size];
+    let out_ptr = out.as_ptr() as _;
+    let layout = Layout::array::<T>(size).unwrap();
+    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
+    out
+}
 
 fn fill(device: &DeviceContext, buf: &Allocation, value: f32) {
     device.with_cmd_buffer(|cmd| unsafe {
@@ -1043,7 +1142,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [40, 40, 40];
+        let s = [1, 2, 2];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
