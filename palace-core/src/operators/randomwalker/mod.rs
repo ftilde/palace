@@ -52,7 +52,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         s: u32,
     }
 
-    let local_size = 1024;
+    let local_size = 1024.min(tensor_size);
 
     let pipeline_init = device.request_state(
         RessourceId::new("tensor_vec_table_init")

@@ -33,7 +33,7 @@ void main() {
 
     uint s = gl_SubgroupSize;
 
-    while(s != LOCAL_SIZE) {
+    while(s < LOCAL_SIZE) {
         barrier();
 
         bool is_right_block = (local_id & s) != 0;
