@@ -38,7 +38,7 @@ layout(std430, binding = 4) buffer MatIndex {
 } mat_index;
 
 layout(std430, binding = 5) buffer Vec {
-    uint values[NUM_ROWS];
+    float values[NUM_ROWS];
 } vec;
 
 declare_push_consts(consts)
@@ -81,7 +81,8 @@ void main() {
 
     uint current_linear = to_linear(current, consts.tensor_dim_in);
 
-    float weight_sum = 0;
+    float weight_sum = 0.0;
+    float vec_sum = 0.0;
 
     if(is_seed_point(current_linear)) {
         return;
@@ -90,21 +91,25 @@ void main() {
 
     for(int dim=0; dim<ND; ++dim) {
         for(int offset = -1; offset<2; offset += 2) {
+        //int offset = -1;{
+            int[ND] neighbor = to_int(current);
+            neighbor[dim] += offset;
 
-            if(current[dim] > -offset && current[dim] < consts.tensor_dim_in[dim]-1-offset) {
-                uint[ND] neighbor = current;
-                neighbor[dim] += offset;
-                uint neighbor_linear = to_linear(neighbor, consts.tensor_dim_in);
+            int low = min(int(current[dim]), neighbor[dim]);
+            int high = max(int(current[dim]), neighbor[dim]);
 
-                uint[ND] weight_pos = current;
-                weight_pos[dim] = min(current[dim], neighbor[dim]);
-                uint weight_pos_linear = to_linear(weight_pos, consts.tensor_dim_in);
+            if(low >= 0 && uint(high) < consts.tensor_dim_in[dim]) {
+                int[ND] weight_pos = to_int(current);
+                weight_pos[dim] = min(int(current[dim]), neighbor[dim]);
+
+                uint neighbor_linear = to_linear(to_uint(neighbor), consts.tensor_dim_in);
+                uint weight_pos_linear = to_linear(to_uint(weight_pos), consts.tensor_dim_in);
 
                 float weight = weights.values[weight_pos_linear][dim];
 
                 if(is_seed_point(neighbor_linear)) {
                     float to_add = weight * seeds_buf.values[neighbor_linear];
-                    atomic_add_float(vec.values[cur_row], to_add);
+                    vec_sum += to_add;
                 } else {
                     uint n_row = tensor_to_rows.values[neighbor_linear];
 
@@ -116,5 +121,6 @@ void main() {
         }
     }
 
+    vec.values[cur_row] = vec_sum;
     mat_assign(cur_row, cur_row, weight_sum);
 }
