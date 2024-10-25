@@ -4,7 +4,6 @@
 
 #include <util.glsl>
 #include <vec.glsl>
-#include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 
 #if N == 1
@@ -30,7 +29,7 @@ layout(std430, binding = 2) readonly buffer T2R {
 } tensor_to_rows;
 
 layout(std430, binding = 3) buffer MatValues {
-    uint values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
+    float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
 } mat_values;
 
 layout(std430, binding = 4) buffer MatIndex {
@@ -45,22 +44,21 @@ declare_push_consts(consts)
 
 uint get_mat_index(uint row, uint col) {
     for (uint r = 0; r < MAX_ENTRIES_PER_ROW; ++r) {
-        uint old = atomicCompSwap(mat_index.values[row][r], MAT_INDEX_EMPTY, col);
-        if(old == MAT_INDEX_EMPTY || old == col) {
+        uint old = mat_index.values[row][r];
+        if(old == col) {
+            return r;
+        }
+        if(old == MAT_INDEX_EMPTY) {
+            mat_index.values[row][r] = col;
             return r;
         }
     }
     return -1;
 }
 
-void mat_add(uint row, uint col, float value) {
-    uint col_index = get_mat_index(row, col);
-    atomic_add_float(mat_values.values[row][col_index], value);
-}
-
 void mat_assign(uint row, uint col, float value) {
     uint col_index = get_mat_index(row, col);
-    mat_values.values[row][col_index] = floatBitsToUint(value);
+    mat_values.values[row][col_index] = value;
 }
 
 bool is_seed_point(uint linear_p) {
