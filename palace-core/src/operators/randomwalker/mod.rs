@@ -141,9 +141,11 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         pipeline.dispatch(tensor_size as _);
     });
 
+    //dbg!(download::<u32>(ctx, device, &*table).await);
+
     // Global reduce
     let mut s = local_size as u32;
-    while s as usize <= tensor_size {
+    while (s as usize) < tensor_size {
         ctx.submit(device.barrier(
             SrcBarrierInfo {
                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -165,6 +167,8 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
             pipeline.write_descriptor_set(0, descriptor_config);
             pipeline.dispatch(tensor_size as _);
         });
+
+        //dbg!(download::<u32>(ctx, device, &*table).await);
 
         s *= 2;
     }
@@ -190,6 +194,8 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         pipeline.write_descriptor_set(0, descriptor_config);
         pipeline.dispatch(tensor_size as _);
     });
+
+    //dbg!(download::<u32>(ctx, device, &*table).await);
 
     ctx.submit(device.barrier(
         SrcBarrierInfo {
@@ -589,6 +595,9 @@ async fn mat_setup<'req, 'inv>(
         ))
     );
 
+    //dbg!(download::<u32>(ctx, device, &*tensor_to_rows_table).await);
+    //dbg!(download::<f32>(ctx, device, &*weights).await);
+
     device.with_cmd_buffer(|cmd| unsafe {
         cmd.functions()
             .cmd_fill_buffer(cmd.raw(), index.buffer, 0, vk::WHOLE_SIZE, 0xffffffff);
@@ -724,10 +733,10 @@ async fn conjugate_gradient<'req, 'inv>(
 
     // Initialization
 
-    dbg!(download::<u32>(ctx, device, &mat.index).await);
-    dbg!(download::<f32>(ctx, device, &mat.values).await);
-    dbg!(download::<f32>(ctx, device, x).await);
-    dbg!(download::<f32>(ctx, device, b).await);
+    //dbg!(download::<u32>(ctx, device, &mat.index).await);
+    //dbg!(download::<f32>(ctx, device, &mat.values).await);
+    //dbg!(download::<f32>(ctx, device, x).await);
+    //dbg!(download::<f32>(ctx, device, b).await);
 
     // For jacobi preconditioning
     extract_inv_diag(device, &mat, &c)?;
@@ -833,29 +842,29 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
     out
 }
 
-async fn download<'a, 'b, T: crate::storage::Element + Default>(
-    ctx: OpaqueTaskContext<'a, 'b>,
-    device: &DeviceContext,
-    x: &impl AsBufferDescriptor,
-) -> Vec<T> {
-    let src = SrcBarrierInfo {
-        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
-    };
-    let dst = DstBarrierInfo {
-        stage: vk::PipelineStageFlags2::TRANSFER,
-        access: vk::AccessFlags2::TRANSFER_READ,
-    };
-    ctx.submit(device.barrier(src, dst)).await;
-
-    let info = x.gen_buffer_info();
-    let size = info.range as usize / std::mem::size_of::<T>();
-    let out = vec![T::default(); size];
-    let out_ptr = out.as_ptr() as _;
-    let layout = Layout::array::<T>(size).unwrap();
-    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
-    out
-}
+//async fn download<'a, 'b, T: crate::storage::Element + Default>(
+//    ctx: OpaqueTaskContext<'a, 'b>,
+//    device: &DeviceContext,
+//    x: &impl AsBufferDescriptor,
+//) -> Vec<T> {
+//    let src = SrcBarrierInfo {
+//        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+//        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+//    };
+//    let dst = DstBarrierInfo {
+//        stage: vk::PipelineStageFlags2::TRANSFER,
+//        access: vk::AccessFlags2::TRANSFER_READ,
+//    };
+//    ctx.submit(device.barrier(src, dst)).await;
+//
+//    let info = x.gen_buffer_info();
+//    let size = info.range as usize / std::mem::size_of::<T>();
+//    let out = vec![T::default(); size];
+//    let out_ptr = out.as_ptr() as _;
+//    let layout = Layout::array::<T>(size).unwrap();
+//    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
+//    out
+//}
 
 fn fill(device: &DeviceContext, buf: &Allocation, value: f32) {
     device.with_cmd_buffer(|cmd| unsafe {
@@ -1142,7 +1151,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [1, 2, 2];
+        let s = [4, 4, 4];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
