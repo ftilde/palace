@@ -59,7 +59,7 @@ void main() {
 
             weights.values[current_linear][dim] = weight;
         } else {
-            weights.values[current_linear][dim] = 1.23456789;
+            weights.values[current_linear][dim] = NaN;
         }
     }
 }
