@@ -1,6 +1,6 @@
 use std::{alloc::Layout, mem::MaybeUninit};
 
-// NO_PUSH_main: TODO: We probably do not want NUM_ROWS to be a constant, because it will change everytime we
+// TODO: We probably do not want NUM_ROWS to be a constant, because it will change everytime we
 // add/remove seeds
 
 use ash::vk;
