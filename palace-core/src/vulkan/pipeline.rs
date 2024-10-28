@@ -637,7 +637,7 @@ impl DynPushConstants {
         for member in &self.members {
             member.write(&mut out).unwrap();
         }
-        write!(&mut out, "}} __name;").unwrap();
+        write!(&mut out, "}} __name").unwrap();
         out
     }
 

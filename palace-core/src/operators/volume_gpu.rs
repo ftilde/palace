@@ -354,7 +354,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     T values[];
 } outputData;
 
-declare_push_consts(constants)
+declare_push_consts(constants);
 
 void main() {
     uint gID = gl_GlobalInvocationID.x;
@@ -628,7 +628,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
     T values[BRICK_MEM_SIZE];
 } outputData;
 
-declare_push_consts(consts)
+declare_push_consts(consts);
 
 K kernel_val(int p) {
     int kernel_buf_index = consts.extent - p;

@@ -182,7 +182,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
     T values[];
 } outputData;
 
-declare_push_consts(consts)
+declare_push_consts(consts);
 
 void main() {
 

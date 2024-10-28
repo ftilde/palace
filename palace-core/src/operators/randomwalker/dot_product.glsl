@@ -19,7 +19,7 @@ layout(std430, binding = 2) buffer Result {
     uint value;
 } result;
 
-//declare_push_consts(consts)
+//declare_push_consts(consts);
 
 shared uint shared_sum;
 

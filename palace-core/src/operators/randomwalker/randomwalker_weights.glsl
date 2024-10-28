@@ -23,7 +23,7 @@ layout(std430, binding = 1) buffer Seeds {
     float values[BRICK_MEM_SIZE][ND];
 } weights;
 
-declare_push_consts(consts)
+declare_push_consts(consts);
 
 #ifdef WEIGHT_FUNCTION_GRADY
 float edge_weight(uint p1, uint p2) {

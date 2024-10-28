@@ -40,7 +40,7 @@ layout(std430, binding = 5) buffer Vec {
     float values[NUM_ROWS];
 } vec;
 
-declare_push_consts(consts)
+declare_push_consts(consts);
 
 uint get_mat_index(uint row, uint col) {
     for (uint r = 0; r < MAX_ENTRIES_PER_ROW; ++r) {

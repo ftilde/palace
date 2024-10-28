@@ -22,7 +22,7 @@ layout(std430, binding = 3) buffer Vec {
     float values[NUM_ROWS];
 } result;
 
-//declare_push_consts(consts)
+//declare_push_consts(consts);
 
 void main() {
     uint row = gl_GlobalInvocationID.x;

@@ -31,7 +31,7 @@ layout(std430, binding = 3) buffer Results {
     float values[BRICK_MEM_SIZE];
 } out_buf;
 
-declare_push_consts(consts)
+declare_push_consts(consts);
 
 void main() {
     uvec3 current_glsl = gl_GlobalInvocationID.xyz;
