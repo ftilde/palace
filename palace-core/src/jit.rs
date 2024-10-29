@@ -655,3 +655,55 @@ impl<D: DynDimension> TryInto<TensorOperator<D, DType>> for JitTensorOperator<D>
         self.compile()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        test_util::compare_tensor,
+        vec::{LocalVoxelPosition, VoxelPosition},
+    };
+
+    #[test]
+    fn two_inputs() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let input_fn_1 = |v: VoxelPosition| (v.x().raw * v.y().raw * v.z().raw) as f32;
+        let input_fn_2 = |v: VoxelPosition| (v.x().raw + v.y().raw + v.z().raw) as f32;
+
+        let input1 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_1).into());
+        let input2 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_2).into());
+
+        let output = input1
+            .cast(ScalarType::I32.into())
+            .unwrap()
+            .neg()
+            .unwrap()
+            .add(
+                input2
+                    .clone()
+                    .cast(ScalarType::I32.into())
+                    .unwrap()
+                    .mul(input2.cast(ScalarType::I32.into()).unwrap())
+                    .unwrap(),
+            )
+            .unwrap()
+            .cast(ScalarType::F32.into())
+            .unwrap()
+            .compile()
+            .unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            let input1 = input_fn_1(v);
+            let input2 = input_fn_2(v);
+
+            (-(input1 as i32) + (input2 as i32) * (input2 as i32)) as f32
+        });
+
+        compare_tensor(output.try_into().unwrap(), expected);
+    }
+}
