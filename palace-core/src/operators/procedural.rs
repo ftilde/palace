@@ -156,6 +156,7 @@ pub fn rasterize<D: Dimension>(
 
 #include <util.glsl>
 #include <vec.glsl>
+#include <size_util.glsl>
 
 layout(scalar, push_constant) uniform PushConsts {
     uint[N] offset;
@@ -164,7 +165,7 @@ layout(scalar, push_constant) uniform PushConsts {
     uint[N] vol_dim;
 } consts;
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -179,7 +180,7 @@ layout(std430, binding = 0) buffer OutputBuffer{
 
 void main()
 {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
         uint[N] out_local = from_linear(gID, consts.mem_dim);
@@ -243,7 +244,7 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
-                        let global_size = brick_info.mem_elements();
+                        let global_size = brick_info.mem_dimensions.raw();
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
@@ -255,7 +256,7 @@ void main()
                                 vol_dim: m.dimensions.into_elem::<u32>(),
                             });
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch_dyn(device, global_size);
                         }
                     });
 

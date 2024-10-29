@@ -330,9 +330,11 @@ impl DynamicDescriptorSetPool {
 
 pub struct BoundPipeline<'a, T> {
     pipeline: &'a Pipeline<T>,
-    cmd: &'a mut CommandBuffer, //Note: Since we take a mutable reference to the command buffer
-                                //here, we ensure that this pipeline is bound for the remainder of
-                                //the BoundPipeline's lifetime (barring unsafe operations).
+
+    //Note: Since we take a mutable reference to the command buffer
+    //here, we ensure that this pipeline is bound for the remainder of
+    //the BoundPipeline's lifetime (barring unsafe operations).
+    cmd: &'a mut CommandBuffer,
 }
 impl<'a, T: PipelineType> BoundPipeline<'a, T> {
     pub fn cmd(&mut self) -> &mut CommandBuffer {
@@ -417,6 +419,36 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
             .functions()
             .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
     }
+
+    pub unsafe fn dispatch_dyn<D: DynDimension>(
+        &mut self,
+        ctx: &DeviceContext,
+        global_size: Vector<D, u32>,
+    ) {
+        let linear_size = global_size.hmul();
+        let linear_local = self.pipeline.type_.local_size.hmul();
+
+        let required_workgroups = linear_size.div_ceil(linear_local);
+
+        let max_workgroups = Vector::<D3, usize>::from_fn(|i| {
+            ctx.physical_device_properties()
+                .limits
+                .max_compute_work_group_count[2 - i] as usize
+        });
+        let num_wgs = Vector::from([
+            required_workgroups.div_ceil(max_workgroups.x() * max_workgroups.y()) as u32,
+            required_workgroups
+                .div_ceil(max_workgroups.x())
+                .min(max_workgroups.y()) as u32,
+            required_workgroups.min(max_workgroups.x()) as u32,
+        ]);
+
+        let cmd_raw = self.cmd.raw();
+        self.cmd
+            .functions()
+            .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
+    }
+
     pub fn push_constant<V: AsStd140>(&mut self, val: V) {
         self.push_constant_at(val, vk::ShaderStageFlags::COMPUTE);
     }

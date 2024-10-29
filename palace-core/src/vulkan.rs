@@ -341,6 +341,7 @@ pub struct BarrierInfo {
 pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
     physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    physical_device_properties: vk::PhysicalDeviceProperties,
     queue_family_index: u32,
     queue_count: u32,
 
@@ -462,6 +463,9 @@ impl DeviceContext {
             let physical_device_memory_properties =
                 instance.get_physical_device_memory_properties(physical_device);
 
+            let physical_device_properties =
+                instance.get_physical_device_properties(physical_device);
+
             // We start epochs at one so that oldest_finished (with value 0) means that none are
             // finished, yet.
             let oldest_finished = Cell::new(CmdBufferEpoch::ancient());
@@ -493,6 +497,7 @@ impl DeviceContext {
             Ok(DeviceContext {
                 physical_device,
                 physical_device_memory_properties,
+                physical_device_properties,
                 queue_family_index,
                 queue_count,
 
@@ -527,6 +532,10 @@ impl DeviceContext {
         init: impl FnOnce() -> Result<T, crate::Error> + 'a,
     ) -> Result<&'a T, crate::Error> {
         self.vulkan_states.get(identifier, || init())
+    }
+
+    pub fn physical_device_properties(&self) -> &vk::PhysicalDeviceProperties {
+        &self.physical_device_properties
     }
 
     pub fn find_memory_type_index(

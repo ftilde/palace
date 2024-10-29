@@ -685,6 +685,11 @@ impl<D: DynDimension, T: CoordinateType> Vector<D, Coordinate<T>> {
         self.iter().map(|v| v.raw as usize).product()
     }
 }
+impl<D: DynDimension> Vector<D, u32> {
+    pub fn hmul(&self) -> usize {
+        self.iter().map(|v| *v as usize).product()
+    }
+}
 
 //impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
 //    pub fn to_ndarray_dim(self) -> D::NDArrayDim {
@@ -720,13 +725,21 @@ pub fn to_linear<D: DynDimension, T: CoordinateType>(
 }
 
 pub fn from_linear<D: DynDimension, T: CoordinateType>(
-    mut linear_pos: usize,
+    linear_pos: usize,
     dim: &Vector<D, Coordinate<T>>,
 ) -> Vector<D, Coordinate<T>> {
-    let mut out = Vector::<D, Coordinate<T>>::from_fn_and_len(dim.len(), |_| 0.into());
+    let raw = from_linear_u32(linear_pos, &dim.raw());
+    Vector::from_fn_and_len(raw.len(), |i| raw[i].into())
+}
+//TODO: clean this up
+pub fn from_linear_u32<D: DynDimension>(
+    mut linear_pos: usize,
+    dim: &Vector<D, u32>,
+) -> Vector<D, u32> {
+    let mut out = Vector::<D, u32>::from_fn_and_len(dim.len(), |_| 0u32);
     for i in (0..dim.len()).rev() {
-        let ddim = dim[i].raw as usize;
-        out[i] = ((linear_pos % ddim) as u32).into();
+        let ddim = dim[i] as usize;
+        out[i] = (linear_pos % ddim) as u32;
         linear_pos /= ddim;
     }
     out
