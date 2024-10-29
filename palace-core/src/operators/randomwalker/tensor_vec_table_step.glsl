@@ -14,14 +14,16 @@ declare_push_consts(consts);
 void main() {
     uint global_id = gl_GlobalInvocationID.x;
 
-    if(global_id >= BRICK_MEM_SIZE) {
+
+    uint half_mask = consts.s-1;
+    uint id_lower_half = global_id & half_mask;
+    uint id_upper_half = global_id & (~half_mask);
+    uint id = (id_upper_half << 1) | consts.s | id_lower_half ;
+
+    if(id >= BRICK_MEM_SIZE) {
         return;
     }
 
-
-    bool is_right_block = (global_id & consts.s) != 0;
-    if(is_right_block) {
-        uint right_block_left_neighbor = (global_id & ~(consts.s-1)) - 1;
-        tensor_to_vec_table.values[global_id] += tensor_to_vec_table.values[right_block_left_neighbor];
-    }
+    uint right_block_left_neighbor = (id & ~half_mask) - 1;
+    tensor_to_vec_table.values[id] += tensor_to_vec_table.values[right_block_left_neighbor];
 }

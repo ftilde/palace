@@ -169,7 +169,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
 
             pipeline.push_constant(PushConstantsStep { s });
             pipeline.write_descriptor_set(0, descriptor_config);
-            pipeline.dispatch(tensor_size as _);
+            pipeline.dispatch(tensor_size.div_ceil(2) as _);
         });
 
         //dbg!(download::<u32>(ctx, device, &*table).await);
