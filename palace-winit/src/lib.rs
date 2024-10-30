@@ -209,7 +209,7 @@ impl<
                             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
                         }
                         let next_last_frame = Instant::now();
-                        println!("Last frame took {:?}", next_last_frame - self.last_frame);
+                        //println!("Last frame took {:?}", next_last_frame - self.last_frame);
                         self.last_frame = next_last_frame;
 
                         window.0.request_redraw();

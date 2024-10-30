@@ -357,6 +357,8 @@ pub fn random_walker_inner(
                 let tensor_size = seeds.metadata.dimensions;
                 let tensor_elements = tensor_size.hmul();
 
+                let start = std::time::Instant::now();
+
                 if tensor_elements > u32::MAX as usize {
                     return Err(format!(
                         "Tensor cannot have more than 2^32 elements, but it has {}",
@@ -442,7 +444,8 @@ pub fn random_walker_inner(
                 ))
                 .await;
 
-                conjugate_gradient(*ctx, device, &mat, &vec, &result, cfg).await?;
+                let num_iterations =
+                    conjugate_gradient(*ctx, device, &mat, &vec, &result, cfg).await?;
 
                 let out_chunk = ctx
                     .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), tensor_elements))
@@ -458,6 +461,12 @@ pub fn random_walker_inner(
                     num_rows,
                 )
                 .await?;
+
+                println!(
+                    "RW took {}ms, {} iter",
+                    start.elapsed().as_millis(),
+                    num_iterations
+                );
 
                 unsafe {
                     out_chunk.initialized(
@@ -680,7 +689,7 @@ async fn conjugate_gradient<'req, 'inv>(
     vec: &Allocation,
     result: &Allocation,
     cfg: &SolverConfig,
-) -> Result<(), crate::Error> {
+) -> Result<usize, crate::Error> {
     let num_rows = vec.size as usize / std::mem::size_of::<f32>();
 
     let srw_src = SrcBarrierInfo {
@@ -755,6 +764,7 @@ async fn conjugate_gradient<'req, 'inv>(
     // h := C * r
     point_wise_mul(device, &c, &r, &h)?;
 
+    let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
         // Make d and h visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
@@ -808,7 +818,7 @@ async fn conjugate_gradient<'req, 'inv>(
             let r_norm_sq = read_scalar::<f32>(ctx, device, &r_norm_sq_buf).await;
 
             if r_norm_sq.sqrt() < cfg.max_residuum_norm {
-                println!("Break after {} it", iteration);
+                total_it = iteration + 1;
                 break;
             }
         }
@@ -816,7 +826,7 @@ async fn conjugate_gradient<'req, 'inv>(
         // d_n := 1.0 * (o_n/o) * d + h_n
         scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
     }
-    Ok(())
+    Ok(total_it)
 }
 
 // Note: buf's value must be visible for transfers already
