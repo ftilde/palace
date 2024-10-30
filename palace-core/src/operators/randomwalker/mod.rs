@@ -391,6 +391,13 @@ pub fn random_walker_inner(
                     return Err(format!("Tensor has 0 unseeded elements",).into());
                 }
 
+                assert!(
+                    num_rows as usize <= tensor_elements,
+                    "invalid num_rows: {}, too large for tensor_elements: {}",
+                    num_rows,
+                    tensor_elements
+                );
+
                 let (mat, vec) = mat_setup(
                     *ctx,
                     &device,

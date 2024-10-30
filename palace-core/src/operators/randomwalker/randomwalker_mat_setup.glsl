@@ -63,7 +63,7 @@ bool is_seed_point(uint linear_p) {
 void main() {
     uint current_linear = global_position_linear;
 
-    uint[N] current = from_linear(current_linear, consts.tensor_dim_in);
+    uint[ND] current = from_linear(current_linear, consts.tensor_dim_in);
 
     for(int d = 0; d < ND; ++d) {
         if (current[d] >= consts.tensor_dim_in[d]) {

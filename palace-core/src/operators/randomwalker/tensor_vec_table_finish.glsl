@@ -20,8 +20,7 @@ layout(std430, binding = 2) buffer NumRows {
 } num_rows;
 
 void main() {
-    uint global_id = gl_GlobalInvocationID.x;
-    uint row = global_position_linear;
+    uint global_id = global_position_linear;
 
     if(global_id >= BRICK_MEM_SIZE) {
         return;
