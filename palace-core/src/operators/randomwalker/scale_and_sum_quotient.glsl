@@ -2,7 +2,9 @@
 
 #extension GL_EXT_scalar_block_layout : require
 
-layout (local_size_x = 1024) in;
+#include <size_util.glsl>
+
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer O {
     float value;
@@ -27,7 +29,7 @@ layout(std430, binding = 4) buffer Result {
 declare_push_consts(consts);
 
 void main() {
-    uint row = gl_GlobalInvocationID.x;
+    uint row = global_position_linear;
 
     if(row >= NUM_ROWS) {
         return;

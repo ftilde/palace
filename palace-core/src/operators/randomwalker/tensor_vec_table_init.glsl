@@ -5,6 +5,7 @@
 
 #include <atomic.glsl>
 #include <randomwalker_shared.glsl>
+#include <size_util.glsl>
 
 layout (local_size_x = LOCAL_SIZE) in;
 
@@ -19,7 +20,7 @@ layout(std430, binding = 1) buffer Table {
 shared uint[LOCAL_SIZE] local_vals;
 
 void main() {
-    uint global_id = gl_GlobalInvocationID.x;
+    uint global_id = global_position_linear;
     uint local_id = gl_LocalInvocationID.x;
 
     if(global_id >= BRICK_MEM_SIZE) {

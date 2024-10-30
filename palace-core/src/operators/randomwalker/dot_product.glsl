@@ -4,6 +4,7 @@
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <atomic.glsl>
+#include <size_util.glsl>
 
 layout (local_size_x = 1024) in;
 
@@ -24,7 +25,7 @@ layout(std430, binding = 2) buffer Result {
 shared uint shared_sum;
 
 void main() {
-    uint row = gl_GlobalInvocationID.x;
+    uint row = global_position_linear;
 
     if(gl_LocalInvocationIndex == 0) {
         shared_sum = floatBitsToUint(0.0);

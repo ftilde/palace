@@ -3,8 +3,9 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #include <randomwalker_shared.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = LOCAL_SIZE) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer Seeds {
     float values[BRICK_MEM_SIZE];
@@ -20,6 +21,7 @@ layout(std430, binding = 2) buffer NUM_ROWS {
 
 void main() {
     uint global_id = gl_GlobalInvocationID.x;
+    uint row = global_position_linear;
 
     if(global_id >= BRICK_MEM_SIZE) {
         return;

@@ -407,28 +407,10 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
 }
 
 impl<'a> BoundPipeline<'a, ComputePipelineType> {
-    pub unsafe fn dispatch(&mut self, global_size: usize) {
-        self.dispatch3d([1u32, 1, global_size.try_into().unwrap()].into())
-    }
-
-    pub unsafe fn dispatch3d(&mut self, global_size: Vector<D3, u32>) {
-        let num_wgs = crate::util::div_round_up(global_size, self.pipeline.type_.local_size);
-
-        let cmd_raw = self.cmd.raw();
-        self.cmd
-            .functions()
-            .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
-    }
-
-    pub unsafe fn dispatch_dyn<D: DynDimension>(
-        &mut self,
-        ctx: &DeviceContext,
-        global_size: Vector<D, u32>,
-    ) {
-        let linear_size = global_size.hmul();
+    pub unsafe fn dispatch(&mut self, ctx: &DeviceContext, global_size: usize) {
         let linear_local = self.pipeline.type_.local_size.hmul();
 
-        let required_workgroups = linear_size.div_ceil(linear_local);
+        let required_workgroups = global_size.div_ceil(linear_local);
 
         let max_workgroups = Vector::<D3, usize>::from_fn(|i| {
             ctx.physical_device_properties()
@@ -447,6 +429,24 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
         self.cmd
             .functions()
             .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
+    }
+
+    pub unsafe fn dispatch3d(&mut self, global_size: Vector<D3, u32>) {
+        let num_wgs = crate::util::div_round_up(global_size, self.pipeline.type_.local_size);
+
+        let cmd_raw = self.cmd.raw();
+        self.cmd
+            .functions()
+            .cmd_dispatch(cmd_raw, num_wgs.x(), num_wgs.y(), num_wgs.z());
+    }
+
+    pub unsafe fn dispatch_dyn<D: DynDimension>(
+        &mut self,
+        ctx: &DeviceContext,
+        global_size: Vector<D, u32>,
+    ) {
+        let linear_size = global_size.hmul();
+        self.dispatch(ctx, linear_size);
     }
 
     pub fn push_constant<V: AsStd140>(&mut self, val: V) {

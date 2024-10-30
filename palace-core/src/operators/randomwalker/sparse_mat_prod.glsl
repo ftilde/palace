@@ -3,8 +3,9 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #include <randomwalker_shared.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 1024) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer MatValues {
     float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
@@ -25,7 +26,7 @@ layout(std430, binding = 3) buffer Vec {
 //declare_push_consts(consts);
 
 void main() {
-    uint row = gl_GlobalInvocationID.x;
+    uint row = global_position_linear;
 
     if(row >= NUM_ROWS) {
         return;

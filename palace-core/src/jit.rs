@@ -360,7 +360,8 @@ fn compile<D: DynDimension>(
     let mut shader = String::new();
     let mut config = Config::new();
 
-    writeln!(&mut shader, "layout (local_size_x = 256) in;")?;
+    writeln!(&mut shader, "#include<size_util.glsl>")?;
+    writeln!(&mut shader, "AUTO_LOCAL_SIZE_LAYOUT;")?;
 
     for (i, input) in inputs.iter().enumerate() {
         writeln!(
@@ -392,7 +393,7 @@ fn compile<D: DynDimension>(
         &mut shader,
         r#"
             void main() {{
-                uint gID = gl_GlobalInvocationID.x;
+                uint gID = global_position_linear;
 
                 if(gID < BRICK_MEM_SIZE) {{
             "#
@@ -617,7 +618,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                 let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch(global_size);
+                                pipeline.dispatch(device, global_size);
                             }
                         });
 

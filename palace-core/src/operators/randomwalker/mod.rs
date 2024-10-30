@@ -52,7 +52,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         s: u32,
     }
 
-    let local_size = device
+    let max_local_size = device
         .physical_device_properties()
         .limits
         .max_compute_work_group_size[0]
@@ -61,7 +61,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     let pipeline_init = device.request_state(
         RessourceId::new("tensor_vec_table_init")
             .dependent_on(&tensor_size)
-            .dependent_on(&local_size),
+            .dependent_on(&max_local_size),
         || {
             ComputePipeline::new(
                 device,
@@ -69,7 +69,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
                     include_str!("tensor_vec_table_init.glsl"),
                     ShaderDefines::new()
                         .add("BRICK_MEM_SIZE", tensor_size)
-                        .add("LOCAL_SIZE", local_size),
+                        .add("LOCAL_SIZE", max_local_size),
                 ),
                 false,
             )
@@ -77,9 +77,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     )?;
 
     let pipeline_step = device.request_state(
-        RessourceId::new("tensor_vec_table_step")
-            .dependent_on(&tensor_size)
-            .dependent_on(&local_size),
+        RessourceId::new("tensor_vec_table_step").dependent_on(&tensor_size),
         || {
             ComputePipeline::new(
                 device,
@@ -87,8 +85,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
                     include_str!("tensor_vec_table_step.glsl"),
                     ShaderDefines::new()
                         .push_const_block::<PushConstantsStep>()
-                        .add("BRICK_MEM_SIZE", tensor_size)
-                        .add("LOCAL_SIZE", local_size),
+                        .add("BRICK_MEM_SIZE", tensor_size),
                 ),
                 false,
             )
@@ -96,17 +93,13 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     )?;
 
     let pipeline_finish = device.request_state(
-        RessourceId::new("tensor_vec_table_finish")
-            .dependent_on(&tensor_size)
-            .dependent_on(&local_size),
+        RessourceId::new("tensor_vec_table_finish").dependent_on(&tensor_size),
         || {
             ComputePipeline::new(
                 device,
                 (
                     include_str!("tensor_vec_table_finish.glsl"),
-                    ShaderDefines::new()
-                        .add("BRICK_MEM_SIZE", tensor_size)
-                        .add("LOCAL_SIZE", local_size),
+                    ShaderDefines::new().add("BRICK_MEM_SIZE", tensor_size),
                 ),
                 false,
             )
@@ -142,13 +135,13 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         let mut pipeline = pipeline_init.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(tensor_size as _);
+        pipeline.dispatch(device, tensor_size as _);
     });
 
     //dbg!(download::<u32>(ctx, device, &*table).await);
 
     // Global reduce
-    let mut s = local_size as u32;
+    let mut s = max_local_size as u32;
     while (s as usize) < tensor_size {
         ctx.submit(device.barrier(
             SrcBarrierInfo {
@@ -169,7 +162,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
 
             pipeline.push_constant(PushConstantsStep { s });
             pipeline.write_descriptor_set(0, descriptor_config);
-            pipeline.dispatch(tensor_size.div_ceil(2) as _);
+            pipeline.dispatch(device, tensor_size.div_ceil(2) as _);
         });
 
         //dbg!(download::<u32>(ctx, device, &*table).await);
@@ -196,7 +189,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         let mut pipeline = pipeline_finish.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(tensor_size as _);
+        pipeline.dispatch(device, tensor_size as _);
     });
 
     //dbg!(download::<u32>(ctx, device, &*table).await);
@@ -916,7 +909,7 @@ fn dot_product_add(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(num_rows as _);
+        pipeline.dispatch(device, num_rows as _);
     });
 
     Ok(())
@@ -949,7 +942,7 @@ fn extract_inv_diag(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(mat.num_rows as _);
+        pipeline.dispatch(device, mat.num_rows as _);
     });
 
     Ok(())
@@ -990,7 +983,7 @@ fn point_wise_mul(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(num_rows as _);
+        pipeline.dispatch(device, num_rows as _);
     });
 
     Ok(())
@@ -1034,7 +1027,7 @@ fn sparse_mat_prod(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(num_rows as _);
+        pipeline.dispatch(device, num_rows as _);
     });
 
     Ok(())
@@ -1087,7 +1080,7 @@ fn scale_and_sum_quotient(
 
         pipeline.push_constant(PushConstants { alpha });
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(num_rows as _);
+        pipeline.dispatch(device, num_rows as _);
     });
 
     Ok(())
@@ -1139,7 +1132,7 @@ fn scale_and_sum(
 
         pipeline.push_constant(PushConstants { alpha });
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(num_rows as _);
+        pipeline.dispatch(device, num_rows as _);
     });
 
     Ok(())

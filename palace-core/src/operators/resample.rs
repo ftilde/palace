@@ -158,6 +158,9 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
 #include <mat.glsl>
 #include <vec.glsl>
 #include <util.glsl>
+#include <size_util.glsl>
+
+AUTO_LOCAL_SIZE_LAYOUT;
 
 #define ChunkValue T
 
@@ -185,23 +188,9 @@ layout(std430, binding = 1) buffer OutputBuffer{
 declare_push_consts(consts);
 
 void main() {
+    uint gID = global_position_linear;
 
-    // Reverse the invocation mapping which squashes higher dims into z
-
-    uint[N] out_brick_pos;
-    out_brick_pos[N-1] = gl_GlobalInvocationID.x;
-#if N >= 2
-    out_brick_pos[N-2] = gl_GlobalInvocationID.y;
-#endif
-#if N >= 3
-    uint[N-2] coarse_dims;
-    for(int i = 0; i < N-2; i+=1) {
-        coarse_dims[i] = consts.mem_size_out[i];
-    }
-    uint[N-2] coarse_pos = from_linear(gl_GlobalInvocationID.z, coarse_dims);
-    for(int i = 0; i < N-2; i+=1) {
-        out_brick_pos[i] = coarse_pos[i];
-    }
+    uint[N] out_brick_pos = from_linear(gID, consts.mem_dim);
 #endif
 
     if(all(less_than(out_brick_pos, consts.mem_size_out))) {
@@ -388,14 +377,7 @@ void main() {
 
                     let descriptor_config = DescriptorConfig::new([&chunk_index, &gpu_brick_out]);
 
-                    // map [u, w, z, y, x] to [uwz, y, x]
-                    // and [y, x] to [1, y, x]
-                    let full_size = m_out.chunk_size.raw();
-                    let mut size = Vector::<D3, u32>::fill(1);
-                    for i in 0..nd {
-                        let oi = i.saturating_sub(nd.saturating_sub(D3::N));
-                        size[oi] *= full_size[i];
-                    }
+                    let size = m_out.chunk_size.raw();
 
                     device.with_cmd_buffer(|cmd| unsafe {
                         let mut pipeline = pipeline.bind(cmd);
@@ -410,7 +392,7 @@ void main() {
                         });
 
                         pipeline.push_descriptor_set(0, descriptor_config);
-                        pipeline.dispatch3d(size);
+                        pipeline.dispatch_dyn(device, size);
                     });
                     unsafe {
                         gpu_brick_out.initialized(

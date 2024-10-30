@@ -26,8 +26,9 @@ fn bin_op<D: Dimension>(
 #version 450
 
 #include <util.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
@@ -45,7 +46,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
 
 void main()
 {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
         float v1 = sourceData1.values[gID];
@@ -130,7 +131,7 @@ void main()
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch(device, global_size);
                         }
                     });
 

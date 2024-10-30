@@ -71,6 +71,9 @@ pub fn vesselness(
 
 #include <eigenvalues.glsl>
 #include <vesselness.glsl>
+#include <size_util.glsl>
+
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout (local_size_x = 256) in;
 
@@ -105,7 +108,7 @@ layout(std430, binding = 6) buffer OutputBuffer{
 //declare_push_consts(consts);
 
 void main() {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
 
@@ -218,7 +221,7 @@ void main() {
 
                             //pipeline.push_constant(consts);
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch(device, global_size);
                         }
                     });
 

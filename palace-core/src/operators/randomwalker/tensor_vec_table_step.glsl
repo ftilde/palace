@@ -2,8 +2,9 @@
 
 #extension GL_EXT_scalar_block_layout : require
 
-layout (local_size_x = LOCAL_SIZE) in;
+#include <size_util.glsl>
 
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) buffer Table {
     uint values[BRICK_MEM_SIZE];
@@ -12,8 +13,7 @@ layout(std430, binding = 0) buffer Table {
 declare_push_consts(consts);
 
 void main() {
-    uint global_id = gl_GlobalInvocationID.x;
-
+    uint global_id = global_position_linear;
 
     uint half_mask = consts.s-1;
     uint id_lower_half = global_id & half_mask;

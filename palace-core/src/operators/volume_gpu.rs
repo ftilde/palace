@@ -47,8 +47,9 @@ pub fn apply_tf<'op, D: DynDimension>(
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -73,7 +74,7 @@ u8vec4 classify(float val) {
 
 void main()
 {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
         float v = sourceData.values[gID];
@@ -154,7 +155,7 @@ void main()
                             pipeline.push_constant(consts);
 
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch(device, global_size);
                         }
                     });
 
@@ -187,8 +188,9 @@ pub fn threshold<'op, D: DynDimension>(
 #version 450
 
 #include <util.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
@@ -204,7 +206,7 @@ declare_push_consts(consts);
 
 void main()
 {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
         outputData.values[gID] = sourceData.values[gID] < consts.threshold ? 0.0 : 1.0;
@@ -283,7 +285,7 @@ void main()
                             pipeline.push_constant(consts);
 
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch(device, global_size);
                         }
                     });
 
@@ -343,8 +345,9 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
     const SHADER: &'static str = r#"
 #include <util.glsl>
 #include <vec.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     T values[BRICK_MEM_SIZE_IN];
@@ -357,7 +360,7 @@ layout(std430, binding = 1) buffer OutputBuffer{
 declare_push_consts(constants);
 
 void main() {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < constants.global_size) {
         uint[N] region_pos = from_linear(gID, constants.region_size);
@@ -559,7 +562,7 @@ void main() {
                                 });
 
                                 pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch(global_size);
+                                pipeline.dispatch(device, global_size);
                             }
 
                             if gpu_brick_in.version == DataVersionType::Final {
@@ -613,8 +616,9 @@ pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
     const SHADER: &'static str = r#"
 #include <util.glsl>
 #include <vec.glsl>
+#include <size_util.glsl>
 
-layout (local_size_x = 256) in;
+AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     T values[BRICK_MEM_SIZE];
@@ -641,7 +645,7 @@ T sample_brick(uint[N] pos, int brick) {
 }
 
 void main() {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
 
     if(gID < BRICK_MEM_SIZE) {
         uint[N] out_local = from_linear(gID, consts.mem_dim);
@@ -899,7 +903,7 @@ void main() {
                                 Ok(())
                             });
                             pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(global_size);
+                            pipeline.dispatch(device, global_size);
                         }
                     });
 
@@ -1015,12 +1019,14 @@ fn scalar_aggregation<'op>(
     const SHADER: &'static str = r#"
 #version 450
 
-#include <util.glsl>
-#include <atomic.glsl>
-
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
+#include <util.glsl>
+#include <atomic.glsl>
+#include <size_util.glsl>
+
 layout (local_size_x = 1024) in;
+
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -1036,7 +1042,7 @@ shared uint shared_sum;
 
 void main()
 {
-    uint gID = gl_GlobalInvocationID.x;
+    uint gID = global_position_linear;
     if(gl_LocalInvocationIndex == 0) {
         shared_sum = floatBitsToUint(NEUTRAL_VAL);
     }
@@ -1181,7 +1187,7 @@ void main()
                                     norm_factor: normalization_factor,
                                 });
                                 pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch(global_size);
+                                pipeline.dispatch(device, global_size);
                             }
                         });
                     }
