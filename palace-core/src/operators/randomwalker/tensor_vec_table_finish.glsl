@@ -15,7 +15,7 @@ layout(std430, binding = 1) buffer Table {
     uint values[BRICK_MEM_SIZE];
 } tensor_to_vec_table;
 
-layout(std430, binding = 2) buffer NUM_ROWS {
+layout(std430, binding = 2) buffer NumRows {
     uint value;
 } num_rows;
 
@@ -34,7 +34,7 @@ void main() {
     if (is_seed_value(seeds_buf.values[global_id])) {
         tensor_to_vec_table.values[global_id] = TENSOR_TO_VEC_TABLE_SEED;
     } else {
-        // ids into memory start at 0 instead of 1
+        // row ids start at 0 instead of 1
         tensor_to_vec_table.values[global_id] -= 1;
     }
 }
