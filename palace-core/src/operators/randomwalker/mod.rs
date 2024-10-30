@@ -638,7 +638,7 @@ async fn mat_setup<'req, 'inv>(
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch3d(global_size);
+        pipeline.dispatch_dyn(device, global_size);
     });
 
     Ok((

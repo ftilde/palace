@@ -5,14 +5,9 @@
 #include <util.glsl>
 #include <vec.glsl>
 #include <randomwalker_shared.glsl>
+#include <size_util.glsl>
 
-#if N == 1
-layout (local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
-#elif N == 2
-layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
-#else
-layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
-#endif
+AUTO_LOCAL_SIZE_LAYOUT;
 
 #define MAX_ENTRIES_PER_ROW (2*ND + 1)
 
@@ -66,18 +61,15 @@ bool is_seed_point(uint linear_p) {
 }
 
 void main() {
-    //TODO: Does not work for ND > 3. Take and generalize code from convolution
-    uvec3 current_glsl = gl_GlobalInvocationID.xyz;
+    uint current_linear = global_position_linear;
 
-    uint[ND] current = from_glsl(current_glsl);
+    uint[N] current = from_linear(current_linear, consts.tensor_dim_in);
 
     for(int d = 0; d < ND; ++d) {
         if (current[d] >= consts.tensor_dim_in[d]) {
             return;
         }
     }
-
-    uint current_linear = to_linear(current, consts.tensor_dim_in);
 
     float weight_sum = 0.0;
     float vec_sum = 0.0;
