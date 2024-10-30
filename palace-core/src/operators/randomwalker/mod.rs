@@ -751,25 +751,7 @@ async fn conjugate_gradient<'req, 'inv>(
     //dbg!(download::<f32>(ctx, device, x).await);
     //dbg!(download::<f32>(ctx, device, b).await);
 
-    // For jacobi preconditioning
-    extract_inv_diag(device, &mat, &c)?;
-
-    // r_tmp = A*x_0
-    sparse_mat_prod(device, &mat, x, &r)?;
-
-    // Make r_tmp visible (also also c)
-    ctx.submit(device.barrier(srw_src, srw_dst)).await;
-    // r (aka r_0) = b - r_tmp (aka A*x_0)
-    scale_and_sum(device, -1.0, &r, &b, &r)?;
-
-    // Make r visible (also also c)
-    ctx.submit(device.barrier(srw_src, srw_dst)).await;
-
-    // For jacobi preconditioning
-    // d := C * r;
-    point_wise_mul(device, &c, &r, &d)?;
-    // h := C * r
-    point_wise_mul(device, &c, &r, &h)?;
+    cg_init(device, mat, x, b, &*c, &*r, &*h, &*d)?;
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
@@ -892,6 +874,46 @@ fn fill(device: &DeviceContext, buf: &Allocation, value: f32) {
     });
 }
 
+fn cg_init(
+    device: &DeviceContext,
+    // Input
+    a: &SparseMatrix,
+    x0: &Allocation,
+    b: &Allocation,
+    // Results
+    c: &Allocation,
+    r: &Allocation,
+    h: &Allocation,
+    d: &Allocation,
+) -> Result<(), crate::Error> {
+    let num_rows = a.num_rows;
+
+    let pipeline =
+        device.request_state(RessourceId::new("cg_init").dependent_on(&num_rows), || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("cg_init.glsl"),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", num_rows)
+                        .add("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
+                ),
+                false,
+            )
+        })?;
+
+    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(device, num_rows as _);
+    });
+
+    Ok(())
+}
+
 fn dot_product_add(
     device: &DeviceContext,
     x: &Allocation,
@@ -927,39 +949,6 @@ fn dot_product_add(
 
         pipeline.write_descriptor_set(0, descriptor_config);
         pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
-
-fn extract_inv_diag(
-    device: &DeviceContext,
-    mat: &SparseMatrix,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    let pipeline = device.request_state(
-        RessourceId::new("extract_inv_diag").dependent_on(&mat.num_rows),
-        || {
-            ComputePipeline::new(
-                device,
-                (
-                    include_str!("extract_inv_diag.glsl"),
-                    ShaderDefines::new()
-                        .add("NUM_ROWS", mat.num_rows)
-                        .add("MAX_ENTRIES_PER_ROW", mat.max_entries_per_row),
-                ),
-                false,
-            )
-        },
-    )?;
-
-    let descriptor_config = DescriptorConfig::new([&mat.values, &mat.index, result]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, mat.num_rows as _);
     });
 
     Ok(())
@@ -1091,58 +1080,6 @@ fn scale_and_sum_quotient(
     )?;
 
     let descriptor_config = DescriptorConfig::new([&*o, &*u, &*x, &*y, &*result]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.push_constant(PushConstants { alpha });
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
-
-// result := alpha * x + y
-fn scale_and_sum(
-    device: &DeviceContext,
-    alpha: f32,
-    x: &Allocation,
-    y: &Allocation,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        alpha: f32,
-    }
-
-    let x_info = x.gen_buffer_info();
-    let y_info = y.gen_buffer_info();
-    let result_info = result.gen_buffer_info();
-
-    let size = x_info.range;
-    assert_eq!(size, y_info.range);
-    assert_eq!(size, result_info.range);
-
-    let num_rows = size as usize / std::mem::size_of::<f32>();
-
-    let pipeline = device.request_state(
-        RessourceId::new("scale_and_sum").dependent_on(&num_rows),
-        || {
-            ComputePipeline::new(
-                device,
-                (
-                    include_str!("scale_and_sum.glsl"),
-                    ShaderDefines::new()
-                        .push_const_block::<PushConstants>()
-                        .add("NUM_ROWS", num_rows),
-                ),
-                false,
-            )
-        },
-    )?;
-
-    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
