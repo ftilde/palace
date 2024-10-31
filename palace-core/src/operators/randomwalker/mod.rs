@@ -683,7 +683,7 @@ impl Default for SolverConfig {
     fn default() -> Self {
         SolverConfig {
             max_residuum_norm: 1.0e-3,
-            residuum_check_period: 2,
+            residuum_check_period: 4,
             max_iterations: 1000,
         }
     }
