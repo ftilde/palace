@@ -58,7 +58,7 @@ void main() {
     }
 
     float matprod;
-    MAT_PROD_ROW(a_index.values, a_values.values, x0.values, matprod);
+    MAT_PROD_ROW(a_index.values, a_values.values, x0.values, row, matprod);
 
     c.values[row] = c_value;
     r.values[row] = b.values[row] - matprod;

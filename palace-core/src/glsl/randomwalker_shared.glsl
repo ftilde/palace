@@ -6,7 +6,7 @@ bool is_seed_value(float val) {
     return val != UNSEEDED;
 }
 
-#define MAT_PROD_ROW(mat_index, mat_values, x, result) { \
+#define MAT_PROD_ROW(mat_index, mat_values, x, row, result) { \
     result = 0.0; \
     for(int i=0; i<MAX_ENTRIES_PER_ROW; ++i) { \
         uint col = (mat_index)[row][i]; \
@@ -14,4 +14,30 @@ bool is_seed_value(float val) {
             result += (mat_values)[row][i] * (x)[col]; \
         } \
     } \
+}
+
+#define DOT_PRODUCT(x, y, row, num_rows, local_result, global_result) { \
+    if(gl_LocalInvocationIndex == 0) {\
+        local_result = floatBitsToUint(0.0);\
+    }\
+    barrier();\
+\
+    float val;\
+    if(row < num_rows) {\
+        val = x[row] * y[row];\
+    } else {\
+        val = 0.0;\
+    }\
+\
+    float sg_agg = subgroupAdd(val);\
+\
+    if(gl_SubgroupInvocationID == 0) {\
+        atomic_add_float(local_result, sg_agg);\
+    }\
+\
+    barrier();\
+\
+    if(gl_LocalInvocationIndex == 0) {\
+        atomic_add_float(global_result, uintBitsToFloat(shared_sum));\
+    }\
 }

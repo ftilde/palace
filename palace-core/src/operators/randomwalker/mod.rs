@@ -755,10 +755,7 @@ async fn conjugate_gradient<'req, 'inv>(
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
-        // Make d and h visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
-        // z = A * d;
-        sparse_mat_prod(device, &mat, &d, &z)?;
 
         fill(device, &o, 0.0);
         fill(device, &u, 0.0);
@@ -766,8 +763,7 @@ async fn conjugate_gradient<'req, 'inv>(
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
         // o := dot(r, h)
         dot_product_add(device, &r, &h, &o)?;
-        // u := dot(d, z)
-        dot_product_add(device, &d, &z, &u)?;
+        cg_alpha(device, mat, &d, &z, &u)?;
 
         // Make o and u visible
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
@@ -914,6 +910,49 @@ fn cg_init(
     Ok(())
 }
 
+fn cg_alpha(
+    device: &DeviceContext,
+    // Input
+    a: &SparseMatrix,
+    d: &Allocation,
+    // Results
+    z: &Allocation,
+    dtz: &Allocation,
+) -> Result<(), crate::Error> {
+    let num_rows = a.num_rows;
+
+    let max_local_size = device
+        .physical_device_properties()
+        .limits
+        .max_compute_work_group_size[0];
+
+    let pipeline =
+        device.request_state(RessourceId::new("cg_alpha").dependent_on(&num_rows), || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("cg_alpha.glsl"),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", num_rows)
+                        .add("LOCAL_SIZE", max_local_size)
+                        .add("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
+                ),
+                false,
+            )
+        })?;
+
+    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, d, z, dtz]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(device, num_rows as _);
+    });
+
+    Ok(())
+}
+
 fn dot_product_add(
     device: &DeviceContext,
     x: &Allocation,
@@ -995,49 +1034,6 @@ fn point_wise_mul(
     Ok(())
 }
 
-fn sparse_mat_prod(
-    device: &DeviceContext,
-    mat: &SparseMatrix,
-    x: &Allocation,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    let x_info = x.gen_buffer_info();
-    let result_info = result.gen_buffer_info();
-
-    let size = x_info.range;
-    assert_eq!(size, result_info.range);
-
-    let num_rows = mat.num_rows;
-
-    let pipeline = device.request_state(
-        RessourceId::new("sparse_mat_prod")
-            .dependent_on(&num_rows)
-            .dependent_on(&mat.max_entries_per_row),
-        || {
-            ComputePipeline::new(
-                device,
-                (
-                    include_str!("sparse_mat_prod.glsl"),
-                    ShaderDefines::new()
-                        .add("NUM_ROWS", num_rows)
-                        .add("MAX_ENTRIES_PER_ROW", mat.max_entries_per_row),
-                ),
-                false,
-            )
-        },
-    )?;
-
-    let descriptor_config = DescriptorConfig::new([&mat.values, &mat.index, &*x, &*result]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
 // result := alpha * (o/u) *x + y
 fn scale_and_sum_quotient(
     device: &DeviceContext,
@@ -1102,7 +1098,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [4, 4, 4];
+        let s = [32, 32, 32];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
