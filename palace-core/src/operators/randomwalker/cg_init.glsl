@@ -1,8 +1,10 @@
 #version 450
 
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <size_util.glsl>
+#include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 
 AUTO_LOCAL_SIZE_LAYOUT;
@@ -39,6 +41,12 @@ layout(std430, binding = 7) buffer D {
     float values[NUM_ROWS];
 } d;
 
+layout(std430, binding = 8) buffer RTH {
+    uint value;
+} rth;
+
+shared uint shared_sum;
+
 //declare_push_consts(consts);
 
 void main() {
@@ -64,4 +72,7 @@ void main() {
     r.values[row] = b.values[row] - matprod;
     h.values[row] = c_value * r.values[row];
     d.values[row] = h.values[row];
+
+    // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
+    DOT_PRODUCT(r.values, h.values, row, NUM_ROWS, shared_sum, rth.value);
 }

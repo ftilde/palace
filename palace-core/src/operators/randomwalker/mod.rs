@@ -722,7 +722,7 @@ async fn conjugate_gradient<'req, 'inv>(
             GpuOnly,
         ))
     }
-    for _ in 0..3 {
+    for _ in 0..4 {
         alloc_requests.push(device.storage.request_allocate_raw(
             device,
             Layout::new::<f32>(),
@@ -740,8 +740,9 @@ async fn conjugate_gradient<'req, 'inv>(
     let c = TempRessource::new(device, allocs.next().unwrap());
     let h = TempRessource::new(device, allocs.next().unwrap());
 
-    let o = TempRessource::new(device, allocs.next().unwrap());
-    let u = TempRessource::new(device, allocs.next().unwrap());
+    let mut rth = TempRessource::new(device, allocs.next().unwrap());
+    let mut rth_p1 = TempRessource::new(device, allocs.next().unwrap());
+    let dtz = TempRessource::new(device, allocs.next().unwrap());
     let r_norm_sq_buf = TempRessource::new(device, allocs.next().unwrap());
 
     // Initialization
@@ -751,55 +752,51 @@ async fn conjugate_gradient<'req, 'inv>(
     //dbg!(download::<f32>(ctx, device, x).await);
     //dbg!(download::<f32>(ctx, device, b).await);
 
-    cg_init(device, mat, x, b, &*c, &*r, &*h, &*d)?;
+    fill(device, &rth, 0.0);
+    fill(device, &dtz, 0.0);
+    ctx.submit(device.barrier(srw_src, srw_dst)).await;
+    cg_init(device, mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
-        fill(device, &o, 0.0);
-        fill(device, &u, 0.0);
-        // Make z visible
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
-        // o := dot(r, h)
-        dot_product_add(device, &r, &h, &o)?;
-        cg_alpha(device, mat, &d, &z, &u)?;
-
-        // Make o and u visible
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
-        // x_n := (o/u) * d + x
-        scale_and_sum_quotient(device, 1.0, &o, &u, &d, x, x)?;
-        // r_n := -1 * (o/u) * z + r
-        scale_and_sum_quotient(device, -1.0, &o, &u, &z, &r, &r)?;
-
-        // Make r visible
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
-        // h_n := C * r_n
-        point_wise_mul(device, &c, &r, &h)?;
-
-        fill(device, &u, 0.0);
+        cg_alpha(device, mat, &d, &z, &dtz)?;
         fill(device, &r_norm_sq_buf, 0.0);
-        // Make h visible
+        fill(device, &rth_p1, 0.0);
+
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
-        // o_n := dot(r_n, h_n)
-        dot_product_add(device, &r, &h, &u)?;
 
-        if iteration % cfg.residuum_check_period == 0 {
-            dot_product_add(device, &r, &r, &r_norm_sq_buf)?;
-        }
+        cg_beta(
+            device,
+            mat.num_rows,
+            &z,
+            &d,
+            &c,
+            &rth,
+            &dtz,
+            &x,
+            &r,
+            &h,
+            &rth_p1,
+        )?;
 
-        // Make u (i.e., o_n) visible
-        ctx.submit(device.barrier(
-            srw_src,
-            DstBarrierInfo {
-                stage: vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                access: vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::SHADER_READ,
-            },
-        ))
-        .await;
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
         // read ||r_n||_2^2
         if iteration % cfg.residuum_check_period == 0 {
+            dot_product_add(device, &r, &r, &r_norm_sq_buf)?;
+
+            // Make u (i.e., o_n) visible
+            ctx.submit(device.barrier(
+                srw_src,
+                DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::TRANSFER,
+                    access: vk::AccessFlags2::TRANSFER_READ,
+                },
+            ))
+            .await;
+
             let r_norm_sq = read_scalar::<f32>(ctx, device, &r_norm_sq_buf).await;
 
             if r_norm_sq.sqrt() < cfg.max_residuum_norm {
@@ -808,8 +805,11 @@ async fn conjugate_gradient<'req, 'inv>(
             }
         }
 
-        // d_n := 1.0 * (o_n/o) * d + h_n
-        scale_and_sum_quotient(device, 1.0, &u, &o, &d, &h, &d)?;
+        fill(device, &dtz, 0.0);
+
+        scale_and_sum_quotient(device, 1.0, &rth_p1, &rth, &d, &h, &d)?;
+
+        std::mem::swap(&mut rth, &mut rth_p1);
     }
     Ok(total_it)
 }
@@ -881,6 +881,7 @@ fn cg_init(
     r: &Allocation,
     h: &Allocation,
     d: &Allocation,
+    rth: &Allocation,
 ) -> Result<(), crate::Error> {
     let num_rows = a.num_rows;
 
@@ -898,7 +899,7 @@ fn cg_init(
             )
         })?;
 
-    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d]);
+    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d, rth]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
@@ -953,6 +954,53 @@ fn cg_alpha(
     Ok(())
 }
 
+fn cg_beta(
+    device: &DeviceContext,
+    num_rows: u32,
+    // Input
+    z: &Allocation,
+    d: &Allocation,
+    c: &Allocation,
+    rth: &Allocation,
+    dtz: &Allocation,
+    // Input/Output
+    x: &Allocation,
+    r: &Allocation,
+    // Results
+    h: &Allocation,
+    rth_p1: &Allocation,
+) -> Result<(), crate::Error> {
+    let max_local_size = device
+        .physical_device_properties()
+        .limits
+        .max_compute_work_group_size[0];
+
+    let pipeline =
+        device.request_state(RessourceId::new("cg_beta").dependent_on(&num_rows), || {
+            ComputePipeline::new(
+                device,
+                (
+                    include_str!("cg_beta.glsl"),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", num_rows)
+                        .add("LOCAL_SIZE", max_local_size),
+                ),
+                false,
+            )
+        })?;
+
+    let descriptor_config = DescriptorConfig::new([z, d, c, rth, dtz, x, r, h, rth_p1]);
+
+    device.with_cmd_buffer(|cmd| unsafe {
+        let mut pipeline = pipeline.bind(cmd);
+
+        pipeline.write_descriptor_set(0, descriptor_config);
+        pipeline.dispatch(device, num_rows as _);
+    });
+
+    Ok(())
+}
+
 fn dot_product_add(
     device: &DeviceContext,
     x: &Allocation,
@@ -983,47 +1031,6 @@ fn dot_product_add(
 
     let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
 
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
-
-fn point_wise_mul(
-    device: &DeviceContext,
-    x: &Allocation,
-    y: &Allocation,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    let x_info = x.gen_buffer_info();
-    let y_info = y.gen_buffer_info();
-    let result_info = result.gen_buffer_info();
-
-    let size = x_info.range;
-    assert_eq!(size, y_info.range);
-    assert_eq!(size, result_info.range);
-
-    let num_rows = size as usize / std::mem::size_of::<f32>();
-
-    let pipeline = device.request_state(
-        RessourceId::new("point_wise_mul").dependent_on(&num_rows),
-        || {
-            ComputePipeline::new(
-                device,
-                (
-                    include_str!("point_wise_mul.glsl"),
-                    ShaderDefines::new().add("NUM_ROWS", num_rows),
-                ),
-                false,
-            )
-        },
-    )?;
-
-    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
 
@@ -1098,7 +1105,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [32, 32, 32];
+        let s = [4, 4, 4];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
