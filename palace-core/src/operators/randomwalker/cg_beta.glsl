@@ -52,15 +52,13 @@ shared uint shared_sum;
 void main() {
     uint row = global_position_linear;
 
-    if(row >= NUM_ROWS) {
-        return;
+    if(row < NUM_ROWS) {
+        float alpha = (rth.value == dtz.value) ? 1.0 : rth.value / dtz.value;
+
+        x.values[row] += alpha * d.values[row];
+        r.values[row] -= alpha * z.values[row];
+        h.values[row] = c.values[row] * r.values[row];
     }
-
-    float alpha = (rth.value == dtz.value) ? 1.0 : rth.value / dtz.value;
-
-    x.values[row] += alpha * d.values[row];
-    r.values[row] -= alpha * z.values[row];
-    h.values[row] = c.values[row] * r.values[row];
 
     // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
     DOT_PRODUCT(r.values, h.values, row, NUM_ROWS, shared_sum, rth_p1.value);

@@ -52,26 +52,24 @@ shared uint shared_sum;
 void main() {
     uint row = global_position_linear;
 
-    if(row >= NUM_ROWS) {
-        return;
-    }
-
-    float c_value;
-    float clip_value = 1e-6;
-    for(int i=0; i<MAX_ENTRIES_PER_ROW; ++i) {
-        if(a_index.values[row][i] == row) {
-            float diag_value = a_values.values[row][i];
-            c_value = 1.0/max(clip_value, diag_value);
+    if(row < NUM_ROWS) {
+        float c_value;
+        float clip_value = 1e-6;
+        for(int i=0; i<MAX_ENTRIES_PER_ROW; ++i) {
+            if(a_index.values[row][i] == row) {
+                float diag_value = a_values.values[row][i];
+                c_value = 1.0/max(clip_value, diag_value);
+            }
         }
+
+        float matprod;
+        MAT_PROD_ROW(a_index.values, a_values.values, x0.values, row, matprod);
+
+        c.values[row] = c_value;
+        r.values[row] = b.values[row] - matprod;
+        h.values[row] = c_value * r.values[row];
+        d.values[row] = h.values[row];
     }
-
-    float matprod;
-    MAT_PROD_ROW(a_index.values, a_values.values, x0.values, row, matprod);
-
-    c.values[row] = c_value;
-    r.values[row] = b.values[row] - matprod;
-    h.values[row] = c_value * r.values[row];
-    d.values[row] = h.values[row];
 
     // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
     DOT_PRODUCT(r.values, h.values, row, NUM_ROWS, shared_sum, rth.value);

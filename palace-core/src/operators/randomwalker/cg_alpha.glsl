@@ -36,14 +36,12 @@ shared uint shared_sum;
 void main() {
     uint row = global_position_linear;
 
-    if(row >= NUM_ROWS) {
-        return;
+    if(row < NUM_ROWS) {
+        float matprod;
+        MAT_PROD_ROW(a_index.values, a_values.values, d.values, row, matprod);
+
+        z.values[row] = matprod;
     }
-
-    float matprod;
-    MAT_PROD_ROW(a_index.values, a_values.values, d.values, row, matprod);
-
-    z.values[row] = matprod;
 
     // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
     DOT_PRODUCT(d.values, z.values, row, NUM_ROWS, shared_sum, dtz.value);
