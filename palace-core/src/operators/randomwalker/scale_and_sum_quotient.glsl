@@ -26,8 +26,6 @@ layout(std430, binding = 4) buffer Result {
     float values[NUM_ROWS];
 } result;
 
-declare_push_consts(consts);
-
 void main() {
     uint row = global_position_linear;
 
@@ -35,7 +33,7 @@ void main() {
         return;
     }
 
-    float scale = consts.alpha * (o.value == u.value ? 1.0 : o.value/u.value);
+    float scale = o.value == u.value ? 1.0 : o.value/u.value;
 
     result.values[row] = scale * x.values[row] + y.values[row];
 }

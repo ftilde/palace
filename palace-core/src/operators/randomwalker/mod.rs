@@ -807,7 +807,7 @@ async fn conjugate_gradient<'req, 'inv>(
 
         fill(device, &dtz, 0.0);
 
-        scale_and_sum_quotient(device, 1.0, &rth_p1, &rth, &d, &h, &d)?;
+        scale_and_sum_quotient(device, &rth_p1, &rth, &d, &h, &d)?;
 
         std::mem::swap(&mut rth, &mut rth_p1);
     }
@@ -1041,21 +1041,15 @@ fn dot_product_add(
     Ok(())
 }
 
-// result := alpha * (o/u) *x + y
+// result := (o/u) *x + y
 fn scale_and_sum_quotient(
     device: &DeviceContext,
-    alpha: f32,
     o: &Allocation,
     u: &Allocation,
     x: &Allocation,
     y: &Allocation,
     result: &Allocation,
 ) -> Result<(), crate::Error> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        alpha: f32,
-    }
-
     let x_info = x.gen_buffer_info();
     let y_info = y.gen_buffer_info();
     let result_info = result.gen_buffer_info();
@@ -1073,9 +1067,7 @@ fn scale_and_sum_quotient(
                 device,
                 (
                     include_str!("scale_and_sum_quotient.glsl"),
-                    ShaderDefines::new()
-                        .push_const_block::<PushConstants>()
-                        .add("NUM_ROWS", num_rows),
+                    ShaderDefines::new().add("NUM_ROWS", num_rows),
                 ),
                 false,
             )
@@ -1087,7 +1079,6 @@ fn scale_and_sum_quotient(
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
 
-        pipeline.push_constant(PushConstants { alpha });
         pipeline.write_descriptor_set(0, descriptor_config);
         pipeline.dispatch(device, num_rows as _);
     });
