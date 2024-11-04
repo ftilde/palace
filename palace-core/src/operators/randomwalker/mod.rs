@@ -1010,6 +1010,11 @@ fn dot_product_add(
     let x_info = x.gen_buffer_info();
     let y_info = y.gen_buffer_info();
 
+    let max_local_size = device
+        .physical_device_properties()
+        .limits
+        .max_compute_work_group_size[0];
+
     let size = x_info.range;
     assert_eq!(size, y_info.range);
 
@@ -1022,7 +1027,9 @@ fn dot_product_add(
                 device,
                 (
                     include_str!("dot_product.glsl"),
-                    ShaderDefines::new().add("NUM_ROWS", num_rows),
+                    ShaderDefines::new()
+                        .add("NUM_ROWS", num_rows)
+                        .add("LOCAL_SIZE", max_local_size),
                 ),
                 false,
             )

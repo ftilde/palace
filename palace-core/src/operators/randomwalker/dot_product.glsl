@@ -6,7 +6,7 @@
 #include <atomic.glsl>
 #include <size_util.glsl>
 
-layout (local_size_x = 1024) in;
+layout (local_size_x = LOCAL_SIZE) in;
 
 layout(std430, binding = 0) readonly buffer X {
     float values[NUM_ROWS];
