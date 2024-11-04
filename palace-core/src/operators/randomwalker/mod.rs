@@ -703,6 +703,12 @@ async fn conjugate_gradient<'req, 'inv>(
         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
     };
+    let srw_io_src = SrcBarrierInfo {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::SHADER_READ
+            | vk::AccessFlags2::SHADER_WRITE
+            | vk::AccessFlags2::TRANSFER_WRITE,
+    };
     let srw_dst = DstBarrierInfo {
         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
@@ -754,18 +760,18 @@ async fn conjugate_gradient<'req, 'inv>(
 
     fill(device, &rth, 0.0);
     fill(device, &dtz, 0.0);
-    ctx.submit(device.barrier(srw_src, srw_dst)).await;
+    ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
     cg_init(device, mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
 
         cg_alpha(device, mat, &d, &z, &dtz)?;
         fill(device, &r_norm_sq_buf, 0.0);
         fill(device, &rth_p1, 0.0);
 
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
 
         cg_beta(
             device,
