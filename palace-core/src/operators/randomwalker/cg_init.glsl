@@ -7,7 +7,7 @@
 #include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 
-AUTO_LOCAL_SIZE_LAYOUT;
+layout (local_size_x = LOCAL_SIZE) in;
 
 layout(std430, binding = 0) readonly buffer MatValues {
     float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];

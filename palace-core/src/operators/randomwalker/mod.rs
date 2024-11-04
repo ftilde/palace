@@ -891,6 +891,11 @@ fn cg_init(
 ) -> Result<(), crate::Error> {
     let num_rows = a.num_rows;
 
+    let max_local_size = device
+        .physical_device_properties()
+        .limits
+        .max_compute_work_group_size[0];
+
     let pipeline =
         device.request_state(RessourceId::new("cg_init").dependent_on(&num_rows), || {
             ComputePipeline::new(
@@ -899,6 +904,7 @@ fn cg_init(
                     include_str!("cg_init.glsl"),
                     ShaderDefines::new()
                         .add("NUM_ROWS", num_rows)
+                        .add("LOCAL_SIZE", max_local_size)
                         .add("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
                 ),
                 false,
