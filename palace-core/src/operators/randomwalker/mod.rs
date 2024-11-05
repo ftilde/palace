@@ -714,6 +714,13 @@ async fn conjugate_gradient<'req, 'inv>(
         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
     };
 
+    let srw_io_dst = DstBarrierInfo {
+        stage: vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::SHADER_READ
+            | vk::AccessFlags2::SHADER_WRITE
+            | vk::AccessFlags2::TRANSFER_WRITE,
+    };
+
     //TODO
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
@@ -765,7 +772,7 @@ async fn conjugate_gradient<'req, 'inv>(
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
-        ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
+        ctx.submit(device.barrier(srw_io_src, srw_io_dst)).await;
 
         cg_alpha(device, mat, &d, &z, &dtz)?;
         fill(device, &r_norm_sq_buf, 0.0);
