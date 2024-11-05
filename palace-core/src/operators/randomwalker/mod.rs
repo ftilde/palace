@@ -794,7 +794,7 @@ async fn conjugate_gradient<'req, 'inv>(
             &rth_p1,
         )?;
 
-        ctx.submit(device.barrier(srw_src, srw_dst)).await;
+        ctx.submit(device.barrier(srw_src, srw_io_dst)).await;
 
         // read ||r_n||_2^2
         if iteration % cfg.residuum_check_period == 0 {
