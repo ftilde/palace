@@ -53,11 +53,16 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         s: u32,
     }
 
-    let max_local_size = device
-        .physical_device_properties()
-        .limits
-        .max_compute_work_group_size[0]
-        .min(tensor_size as u32);
+    let max_local_size = {
+        let tensor_size = tensor_size as u32;
+        tensor_size.next_power_of_two().clamp(
+            device.physical_device_properties_13().max_subgroup_size,
+            device
+                .physical_device_properties()
+                .limits
+                .max_compute_work_group_size[0],
+        )
+    };
 
     let pipeline_init = device.request_state(
         RessourceId::new("tensor_vec_table_init")
