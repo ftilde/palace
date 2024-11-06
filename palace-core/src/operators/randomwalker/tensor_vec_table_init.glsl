@@ -23,11 +23,12 @@ void main() {
     uint global_id = global_position_linear;
     uint local_id = gl_LocalInvocationID.x;
 
-    if(global_id >= BRICK_MEM_SIZE) {
-        return;
+    uint local_val;
+    if(global_id < BRICK_MEM_SIZE) {
+        local_val = is_seed_value(seeds_buf.values[global_id]) ? 0 : 1;
+    } else {
+        local_val = 0;
     }
-
-    uint local_val = is_seed_value(seeds_buf.values[global_id]) ? 0 : 1;
 
     uint subgroupAccumulated = subgroupInclusiveAdd(local_val);
     local_vals[local_id] = subgroupAccumulated;
@@ -46,5 +47,7 @@ void main() {
         s *= 2;
     }
 
-    tensor_to_vec_table.values[global_id] = local_vals[local_id];
+    if(global_id < BRICK_MEM_SIZE) {
+        tensor_to_vec_table.values[global_id] = local_vals[local_id];
+    }
 }
