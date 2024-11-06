@@ -342,6 +342,7 @@ pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
     physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
     physical_device_properties: vk::PhysicalDeviceProperties,
+    physical_device_properties_13: vk::PhysicalDeviceVulkan13Properties<'static>,
     queue_family_index: u32,
     queue_count: u32,
 
@@ -397,8 +398,9 @@ impl DeviceContext {
             let queue_create_info = vk::DeviceQueueCreateInfo::default()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&queue_priorities);
-            let mut enabled_features_13 =
-                vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
+            let mut enabled_features_13 = vk::PhysicalDeviceVulkan13Features::default()
+                .synchronization2(true)
+                .compute_full_subgroups(true);
             let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::default()
                 .shader_buffer_int64_atomics(true)
                 .buffer_device_address(true)
@@ -466,6 +468,13 @@ impl DeviceContext {
             let physical_device_properties =
                 instance.get_physical_device_properties(physical_device);
 
+            let mut physical_device_properties_13 =
+                ash::vk::PhysicalDeviceVulkan13Properties::default();
+            let mut props2 = ash::vk::PhysicalDeviceProperties2::default()
+                .push_next(&mut physical_device_properties_13);
+
+            instance.get_physical_device_properties2(physical_device, &mut props2);
+
             // We start epochs at one so that oldest_finished (with value 0) means that none are
             // finished, yet.
             let oldest_finished = Cell::new(CmdBufferEpoch::ancient());
@@ -498,6 +507,7 @@ impl DeviceContext {
                 physical_device,
                 physical_device_memory_properties,
                 physical_device_properties,
+                physical_device_properties_13,
                 queue_family_index,
                 queue_count,
 
@@ -536,6 +546,10 @@ impl DeviceContext {
 
     pub fn physical_device_properties(&self) -> &vk::PhysicalDeviceProperties {
         &self.physical_device_properties
+    }
+
+    pub fn physical_device_properties_13(&self) -> &vk::PhysicalDeviceVulkan13Properties {
+        &self.physical_device_properties_13
     }
 
     pub fn find_memory_type_index(
