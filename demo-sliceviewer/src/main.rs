@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -7,6 +8,7 @@ use palace_core::dim::*;
 use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::jit::jit;
+use palace_core::operators::array::from_rc;
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::TransFuncOperator;
 use palace_core::operators::tensor::FrameOperator;
@@ -16,7 +18,7 @@ use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
 
-use palace_core::array::{self, ImageMetaData};
+use palace_core::array::{self, ImageMetaData, TensorEmbeddingData};
 
 #[derive(Subcommand, Clone)]
 enum Type {
@@ -113,22 +115,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         chunk_size: LocalVoxelPosition::fill(args.size.into()),
                     };
                     let ball = operators::procedural::ball(md).levels[0].clone();
-                    let seeds = operators::procedural::rasterize(
-                        md,
-                        r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
-                            float center_dist = length(to_glsl(pos_normalized)-vec3(0.5));
-                            if (center_dist < 0.1) {
-                                return 1.0;
-                            } else if (center_dist > 0.75) {
-                                return 0.0;
-                            } else {
-                                return -2.0;
-                            }
-                        }"#,
+                    let seeds_fg = from_rc(Rc::new([Vector::<D3, f32>::fill(0.5)])).into();
+                    let seeds_bg =
+                        from_rc(Rc::new([Vector::<D3, f32>::fill(0.1), Vector::fill(0.9)])).into();
+
+                    let seeds = operators::randomwalker::rasterize_seed_points(
+                        seeds_fg,
+                        seeds_bg,
+                        ball.metadata,
+                        TensorEmbeddingData {
+                            spacing: md.dimensions.map(|v| 1.0 / v.raw as f32),
+                        },
                     );
                     operators::randomwalker::random_walker(
                         ball.into(),
-                        seeds,
+                        seeds.inner,
                         operators::randomwalker::WeightFunction::Grady { beta: 1000.0 },
                         Default::default(),
                     )

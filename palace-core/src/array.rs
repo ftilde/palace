@@ -85,6 +85,10 @@ impl<D: DynDimension> TensorMetaData<D> {
         assert_eq!(d, self.chunk_size.dim());
         d
     }
+
+    pub fn is_single_chunk(&self) -> bool {
+        self.dimension_in_chunks().raw() == Vector::fill_with_len(1u32, self.dimensions.len())
+    }
 }
 
 // We have to do this manually since bytemuck cannot verify this in general due to the const

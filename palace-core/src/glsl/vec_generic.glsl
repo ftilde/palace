@@ -94,6 +94,14 @@ float[_N] max(float[_N] l, float[_N] r) {
     return res;
 }
 
+float[_N] abs(float[_N] l) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = abs(l[i]);
+    }
+    return res;
+}
+
 uint[_N] fill(uint[_N] dummy, uint val) {
     uint[_N] res;
     for(int i=0; i<_N; i+=1) {
@@ -103,6 +111,13 @@ uint[_N] fill(uint[_N] dummy, uint val) {
 }
 int[_N] fill(int[_N] dummy, int val) {
     int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = val;
+    }
+    return res;
+}
+float[_N] fill(float[_N] dummy, float val) {
+    float[_N] res;
     for(int i=0; i<_N; i+=1) {
         res[i] = val;
     }
@@ -147,6 +162,14 @@ bool[_N] less_than(uint[_N] l, uint[_N] r) {
 }
 
 bool[_N] less_than_equal(int[_N] l, int[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] <= r[i];
+    }
+    return res;
+}
+
+bool[_N] less_than_equal(float[_N] l, float[_N] r) {
     bool[_N] res;
     for(int i=0; i<_N; i+=1) {
         res[i] = l[i] <= r[i];
@@ -218,4 +241,3 @@ uint[_N] to_uint(int[_N] v) {
     }
     return res;
 }
-

@@ -8,12 +8,13 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 use gpu_allocator::MemoryLocation::GpuOnly;
 use id::Identify;
 
-use super::tensor::TensorOperator;
+use super::tensor::{EmbeddedTensorOperator, TensorOperator};
 use crate::{
-    array::{ChunkIndex, TensorMetaData},
+    array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
     coordinate::GlobalCoordinate,
-    dim::{DynDimension, LargerDim, D3},
-    dtypes::StaticElementType,
+    dim::{DynDimension, LargerDim, D1, D3},
+    dtypes::{DType, ScalarType, StaticElementType},
+    mat::Matrix,
     operator::OperatorDescriptor,
     storage::gpu::Allocation,
     task::OpaqueTaskContext,
@@ -313,6 +314,119 @@ pub fn random_walker_weights(
             .into()
         },
     )
+}
+
+pub fn rasterize_seed_points(
+    points_fg: TensorOperator<D1, DType>,
+    points_bg: TensorOperator<D1, DType>,
+    md: TensorMetaData<D3>,
+    ed: TensorEmbeddingData<D3>,
+) -> EmbeddedTensorOperator<D3, StaticElementType<f32>> {
+    let in_dtype = points_fg.dtype();
+    assert_eq!(in_dtype, points_bg.dtype());
+    assert_eq!(in_dtype.size, 3);
+    assert_eq!(in_dtype.scalar, ScalarType::F32);
+    assert!(md.is_single_chunk());
+
+    let nd = md.dim().n();
+
+    TensorOperator::unbatched(
+        OperatorDescriptor::new("rasterize_seed_points")
+            .dependent_on(&points_fg)
+            .dependent_on(&points_bg)
+            .dependent_on_data(&md)
+            .dependent_on_data(&ed),
+        Default::default(),
+        md,
+        (points_fg, points_bg),
+        move |ctx, _pos, _, (points_fg, points_bg)| {
+            async move {
+                let device = ctx.preferred_device();
+
+                let in_size = md.dimensions;
+
+                let push_constants = DynPushConstants::new()
+                    .mat::<f32>(nd + 1, "to_grid")
+                    .vec::<u32>(nd, "tensor_dim");
+
+                let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
+
+                let pipeline = device.request_state(
+                    RessourceId::new("rasterize_seed_points").dependent_on(&in_size),
+                    || {
+                        ComputePipeline::new(
+                            device,
+                            (
+                                include_str!("rasterize_points.glsl"),
+                                ShaderDefines::new()
+                                    .push_const_block_dyn(&push_constants)
+                                    .add("BRICK_MEM_SIZE", in_size.hmul())
+                                    .add("NUM_POINTS_FG", points_fg.metadata.dimensions[0].raw)
+                                    .add("NUM_POINTS_BG", points_bg.metadata.dimensions[0].raw)
+                                    .add("ND", nd),
+                            ),
+                            false,
+                        )
+                    },
+                )?;
+
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+                let points_fg = ctx
+                    .submit(
+                        points_fg
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    )
+                    .await;
+                let points_bg = ctx
+                    .submit(
+                        points_bg
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    )
+                    .await;
+
+                let out_chunk = ctx
+                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), md.dimensions.hmul()))
+                    .await;
+
+                let global_size = in_size.raw();
+
+                let descriptor_config = DescriptorConfig::new([&points_fg, &points_bg, &out_chunk]);
+
+                device.with_cmd_buffer(|cmd| unsafe {
+                    let mut pipeline = pipeline.bind(cmd);
+
+                    pipeline.push_constant_dyn(&push_constants, |consts| {
+                        consts.mat(&to_grid)?;
+                        consts.vec(&in_size.raw())?;
+                        Ok(())
+                    });
+                    pipeline.write_descriptor_set(0, descriptor_config);
+                    pipeline.dispatch3d(global_size);
+                });
+
+                unsafe {
+                    out_chunk.initialized(
+                        *ctx,
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    )
+                };
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+    .embedded(ed)
+    .try_into_static()
+    .unwrap()
 }
 pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
@@ -1122,7 +1236,7 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [4, 4, 4];
+        let s = [3, 3, 2];
         let size = VoxelPosition::from(s);
         let brick_size = LocalVoxelPosition::from(s);
 
