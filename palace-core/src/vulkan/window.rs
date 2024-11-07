@@ -5,7 +5,9 @@ use crevice::std140::AsStd140;
 use super::pipeline::{DescriptorConfig, GraphicsPipeline};
 use super::shader::ShaderDefines;
 use super::state::VulkanState;
-use super::{CmdBufferEpoch, DeviceContext, DeviceId, VulkanContext};
+use super::{
+    CmdBufferEpoch, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo, VulkanContext,
+};
 use crate::array::ChunkIndex;
 use crate::data::{GlobalCoordinate, Vector};
 use crate::dim::*;
@@ -523,7 +525,7 @@ impl Window {
             .submit(input.chunks.request_gpu(
                 device.id,
                 ChunkIndex(0),
-                super::DstBarrierInfo {
+                DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 },
@@ -621,6 +623,20 @@ impl Window {
                 vk::SemaphoreSubmitInfo::default().semaphore(sync_object.render_finished_semaphore),
             );
         });
+
+        // Avoid Present-after-Write hazard (swapchain after image layout transition). Seems like
+        // this works? I cannot find much information about this specific hazard
+        ctx.submit(device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                access: vk::AccessFlags2::SHADER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::TRANSFER_READ,
+            },
+        ))
+        .await;
 
         ctx.submit(device.wait_for_current_cmd_buffer_submission())
             .await;
