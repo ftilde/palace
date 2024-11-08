@@ -9,8 +9,8 @@ use crate::{
     operators::tensor::TensorOperator,
     vec::Vector,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig},
+        shader::ShaderInfo,
         state::RessourceId,
         SrcBarrierInfo,
     },
@@ -105,7 +105,7 @@ float run(float[2] pos_normalized, uint[2] pos_voxel) {
 
 pub fn rasterize_lod<D: Dimension>(
     base_metadata: TensorMetaData<D>,
-    body: &str,
+    body: &'static str,
 ) -> LODTensorOperator<D, StaticElementType<f32>> {
     let mut levels = Vec::new();
     let mut spacing = Vector::fill(1.0f32);
@@ -132,7 +132,7 @@ pub fn rasterize_lod<D: Dimension>(
 
 pub fn rasterize<D: Dimension>(
     metadata: TensorMetaData<D>,
-    gen_fn: &str,
+    gen_fn: &'static str,
 ) -> TensorOperator<D, StaticElementType<f32>> {
     #[derive(Clone, bytemuck::Zeroable)]
     #[repr(C)]
@@ -147,11 +147,8 @@ pub fn rasterize<D: Dimension>(
     //TODO: This is fine for the current layout, but we really want a better general approach
     unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
 
-    let shader = format!(
-        "{}{}{}",
+    let shader_parts = vec![
         r#"
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
@@ -164,8 +161,6 @@ layout(scalar, push_constant) uniform PushConsts {
     uint[N] logical_dim;
     uint[N] vol_dim;
 } consts;
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -197,10 +192,10 @@ void main()
         outputData.values[gID] = result;
     }
 }
-"#
-    );
+"#,
+    ];
 
-    let shader_id = shader.id();
+    let shader_id = shader_parts.id();
 
     TensorOperator::with_state(
         OperatorDescriptor::new("rasterize_gpu")
@@ -208,8 +203,8 @@ void main()
             .dependent_on_data(&metadata),
         Default::default(),
         metadata,
-        (metadata, shader),
-        move |ctx, positions, (metadata, shader)| {
+        (metadata, shader_parts),
+        move |ctx, positions, (metadata, shader_parts)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -222,16 +217,13 @@ void main()
                         .dependent_on(&m.chunk_size)
                         .dependent_on(&D::N),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                shader.as_str(),
-                                ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
-                                    .add("N", D::N),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::from_parts(shader_parts.clone())
+                                .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                .define("N", D::N),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 

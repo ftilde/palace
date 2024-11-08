@@ -15,6 +15,7 @@ use crate::{
     vulkan::shader::Shader,
 };
 
+use super::shader::ShaderInfo;
 use super::{
     shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext,
 };
@@ -43,38 +44,102 @@ pub struct Pipeline<T> {
     type_: T,
 }
 
+impl ComputePipeline {
+    pub fn local_size(&self) -> &Vector<D3, u32> {
+        &self.type_.local_size
+    }
+}
+
+const DEFAULT_LOCAL_SIZE: u32 = 256;
+const DEFAULT_LOCAL_SIZE_2D: u32 = 16;
+
+pub enum LocalSizeConfig {
+    Small,
+    Large,
+    Auto,
+    Auto2D,
+    Specific(Vector<D3, u32>),
+}
+
 pub type ComputePipeline = Pipeline<ComputePipelineType>;
 pub type GraphicsPipeline = Pipeline<GraphicsPipelineType>;
 
-impl ComputePipeline {
-    pub fn new(
-        device: &DeviceContext,
-        shader: impl ShaderSource,
-        use_push_descriptor: bool,
-    ) -> Result<Self, crate::Error> {
+pub struct ComputePipelineBuilder<'a> {
+    shader: ShaderInfo<'a>,
+    use_push_descriptor: bool,
+    local_size: LocalSizeConfig,
+}
+
+impl<'a> ComputePipelineBuilder<'a> {
+    pub fn new(shader: ShaderInfo<'a>) -> Self {
+        Self {
+            shader,
+            use_push_descriptor: false,
+            local_size: LocalSizeConfig::Auto,
+        }
+    }
+
+    pub fn use_push_descriptor(mut self, use_them: bool) -> Self {
+        self.use_push_descriptor = use_them;
+        self
+    }
+
+    pub fn local_size(mut self, local_size: LocalSizeConfig) -> Self {
+        self.local_size = local_size;
+        self
+    }
+
+    pub fn build(self, device: &DeviceContext) -> Result<ComputePipeline, crate::Error> {
         let df = device.functions();
+
+        let min_size = device.physical_device_properties_13().max_subgroup_size;
+        let max_size = device
+            .physical_device_properties()
+            .limits
+            .max_compute_work_group_size[0];
+
+        let local_size = match self.local_size {
+            LocalSizeConfig::Small => Vector::from([1, 1, min_size]),
+            LocalSizeConfig::Large => Vector::from([1, 1, max_size]),
+            LocalSizeConfig::Auto => {
+                Vector::from([1, 1, DEFAULT_LOCAL_SIZE.clamp(min_size, max_size)])
+            }
+            LocalSizeConfig::Auto2D => {
+                Vector::from([1, DEFAULT_LOCAL_SIZE_2D, DEFAULT_LOCAL_SIZE_2D])
+            }
+            LocalSizeConfig::Specific(s) => s,
+        };
+
+        let flags = match self.local_size {
+            LocalSizeConfig::Auto2D => vk::PipelineShaderStageCreateFlags::default(),
+            _ => vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS,
+        };
+
+        let local_size_str = format!(
+            "layout (local_size_x = {}, local_size_y = {}, local_size_z = {}) in;\n",
+            local_size.x(),
+            local_size.y(),
+            local_size.z()
+        );
+        let mut shader = self.shader;
+        shader.program_parts.insert(0, &local_size_str);
+
         let mut shader = Shader::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
 
+        let info = shader.collect_info(entry_point_name);
+
         let pipeline_info = vk::PipelineShaderStageCreateInfo::default()
             .module(shader.module)
             .name(&entry_point_name_c)
             .stage(vk::ShaderStageFlags::COMPUTE)
-            .flags(vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS);
-
-        let info = shader.collect_info(entry_point_name);
-
-        let local_size = info
-            .local_size
-            .expect("local size should have been specified in shader")
-            .try_into()
-            .unwrap();
+            .flags(flags);
 
         let (descriptor_set_layouts, ds_pools) = info
             .descriptor_bindings
-            .create_descriptor_set_layout(&device.functions, use_push_descriptor);
+            .create_descriptor_set_layout(&device.functions, self.use_push_descriptor);
 
         let push_constant_size = info.push_const.map(|i| i.size as usize);
         let push_constant_ranges = info
@@ -107,7 +172,7 @@ impl ComputePipeline {
 
         let pipeline = pipelines[0];
 
-        Ok(Self {
+        Ok(ComputePipeline {
             pipeline,
             pipeline_layout,
             ds_pools,

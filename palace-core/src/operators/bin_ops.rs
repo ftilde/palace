@@ -6,8 +6,8 @@ use crate::{
     dtypes::StaticElementType,
     operator::OperatorDescriptor,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig},
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -23,12 +23,8 @@ fn bin_op<D: Dimension>(
     let shader = format!(
         "{}{}{}",
         r#"
-#version 450
-
 #include <util.glsl>
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
@@ -89,14 +85,12 @@ void main()
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                shader.as_str(),
-                                ShaderDefines::new().add("BRICK_MEM_SIZE", m.chunk_size.hmul()),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(shader.as_str())
+                                .define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 

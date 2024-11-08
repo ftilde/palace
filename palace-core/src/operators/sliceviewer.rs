@@ -22,8 +22,8 @@ use crate::{
     storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
-        pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -291,8 +291,6 @@ pub fn render_slice(
     }
 
     const SHADER: &'static str = r#"
-#version 450
-
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
@@ -305,8 +303,6 @@ pub fn render_slice(
 #include <color.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
-
-layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(scalar, binding = 0) buffer OutputBuffer{
     u8vec4 values[];
@@ -462,18 +458,15 @@ void main()
                         .dependent_on(&num_bricks)
                         .dependent_on(&request_table_size),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
-                                    .add("NUM_BRICKS", num_bricks)
-                                    .add("REQUEST_TABLE_SIZE", request_table_size),
-                            ),
-                            false,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .push_const_block::<PushConstants>()
+                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("NUM_BRICKS", num_bricks)
+                                .define("REQUEST_TABLE_SIZE", request_table_size),
                         )
+                        .local_size(LocalSizeConfig::Auto2D)
+                        .build(device)
                     },
                 )?;
 

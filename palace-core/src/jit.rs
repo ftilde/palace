@@ -13,8 +13,8 @@ use crate::{
     storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
     task::{Request, RequestStream},
     vulkan::{
-        pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig},
-        shader::{Config, ShaderDefines},
+        pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig},
+        shader::{Config, ShaderInfo},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -361,7 +361,6 @@ fn compile<D: DynDimension>(
     let mut config = Config::new();
 
     writeln!(&mut shader, "#include<size_util.glsl>")?;
-    writeln!(&mut shader, "AUTO_LOCAL_SIZE_LAYOUT;")?;
 
     for (i, input) in inputs.iter().enumerate() {
         writeln!(
@@ -519,15 +518,13 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                 &jit_operator.operators.0,
                             )?;
                             //println!("{}", shader.as_str());
-                            ComputePipeline::new(
-                                device,
-                                (
-                                    shader.as_str(),
-                                    ShaderDefines::new().add("BRICK_MEM_SIZE", num_chunk_elements),
-                                    config,
-                                ),
-                                true,
+                            ComputePipelineBuilder::new(
+                                ShaderInfo::new(shader.as_str())
+                                    .define("BRICK_MEM_SIZE", num_chunk_elements)
+                                    .with_config(config),
                             )
+                            .use_push_descriptor(true)
+                            .build(device)
                         },
                     )?;
 

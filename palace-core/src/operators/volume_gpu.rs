@@ -17,8 +17,11 @@ use crate::{
     storage::{gpu, DataVersionType},
     task::RequestStream,
     vulkan::{
-        pipeline::{AsDescriptors, ComputePipeline, DescriptorConfig, DynPushConstants},
-        shader::{Config, ShaderDefines},
+        pipeline::{
+            AsDescriptors, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
+            LocalSizeConfig,
+        },
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -42,14 +45,10 @@ pub fn apply_tf<'op, D: DynDimension>(
         tf_len: u32,
     }
     const SHADER: &'static str = r#"
-#version 450
-
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
 #include <util.glsl>
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -114,16 +113,13 @@ void main()
                         .of(ctx.current_op())
                         .dependent_on(&m.num_chunk_elements()),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.num_chunk_elements())
-                                    .push_const_block::<PushConstants>(),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .define("BRICK_MEM_SIZE", m.num_chunk_elements())
+                                .push_const_block::<PushConstants>(),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 
@@ -185,12 +181,8 @@ pub fn threshold<'op, D: DynDimension>(
         threshold: f32,
     }
     const SHADER: &'static str = r#"
-#version 450
-
 #include <util.glsl>
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 // Note: We cannot use `restrict` here and below since we bind the same buffer to sourceData and
 // outputData in the inplace update case.
@@ -237,16 +229,13 @@ void main()
                         .of(ctx.current_op())
                         .dependent_on(&m.num_chunk_elements()),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE", m.num_chunk_elements())
-                                    .push_const_block::<PushConstants>(),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .define("BRICK_MEM_SIZE", m.num_chunk_elements())
+                                .push_const_block::<PushConstants>(),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 
@@ -347,8 +336,6 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
 #include <vec.glsl>
 #include <size_util.glsl>
 
-AUTO_LOCAL_SIZE_LAYOUT;
-
 layout(std430, binding = 0) readonly buffer InputBuffer{
     T values[BRICK_MEM_SIZE_IN];
 } sourceData;
@@ -410,21 +397,17 @@ void main() {
                         .dependent_on(&dtype)
                         .dependent_on(&nd),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .add("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
-                                    .add("N", nd)
-                                    .add("T", dtype.glsl_type())
-                                    .push_const_block_dyn(&push_constants),
-                                Config::new()
-                                    .ext(dtype.glsl_ext())
-                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .define("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
+                                .define("N", nd)
+                                .define("T", dtype.glsl_type())
+                                .push_const_block_dyn(&push_constants)
+                                .ext(dtype.glsl_ext())
+                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 
@@ -618,8 +601,6 @@ pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
 #include <vec.glsl>
 #include <size_util.glsl>
 
-AUTO_LOCAL_SIZE_LAYOUT;
-
 layout(std430, binding = 0) readonly buffer InputBuffer{
     T values[BRICK_MEM_SIZE];
 } sourceData[MAX_BRICKS];
@@ -812,26 +793,22 @@ void main() {
                         .dependent_on(&m_in.chunk_size)
                         .dependent_on(&kernel_size),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .add("MAX_BRICKS", max_bricks)
-                                    .add("DIM", dim)
-                                    .add("N", nd)
-                                    .add("T", dtype.glsl_type())
-                                    .add("K", kernel_dtype.glsl_type())
-                                    .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
-                                    .add("KERNEL_SIZE", kernel_size)
-                                    .push_const_block_dyn(&push_constants),
-                                Config::new()
-                                    .ext(dtype.glsl_ext())
-                                    .ext(kernel_dtype.glsl_ext())
-                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .define("MAX_BRICKS", max_bricks)
+                                .define("DIM", dim)
+                                .define("N", nd)
+                                .define("T", dtype.glsl_type())
+                                .define("K", kernel_dtype.glsl_type())
+                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("KERNEL_SIZE", kernel_size)
+                                .push_const_block_dyn(&push_constants)
+                                .ext(dtype.glsl_ext())
+                                .ext(kernel_dtype.glsl_ext())
+                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 
@@ -1017,16 +994,11 @@ fn scalar_aggregation<'op>(
         norm_factor: f32,
     }
     const SHADER: &'static str = r#"
-#version 450
-
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <util.glsl>
 #include <atomic.glsl>
 #include <size_util.glsl>
-
-layout (local_size_x = 1024) in;
-
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -1043,7 +1015,8 @@ shared uint shared_sum;
 void main()
 {
     uint gID = global_position_linear;
-    if(gl_LocalInvocationIndex == 0) {
+    uint lID = local_index_subgroup_order;
+    if(lID == 0) {
         shared_sum = floatBitsToUint(NEUTRAL_VAL);
     }
     barrier();
@@ -1066,7 +1039,7 @@ void main()
 
     barrier();
 
-    if(gl_LocalInvocationIndex == 0) {
+    if(lID == 0) {
         AGG_FUNCTION(sum.value, uintBitsToFloat(shared_sum));
     }
 }
@@ -1108,22 +1081,20 @@ void main()
                     || {
                         let neutral_val_str =
                             format!("uintBitsToFloat({})", method.neutral_val().to_bits());
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m.chunk_size.hmul())
-                                    .add("AGG_FUNCTION", method.aggregration_function_glsl())
-                                    .add(
-                                        "AGG_FUNCTION_SUBGROUP",
-                                        method.subgroup_aggregration_function_glsl(),
-                                    )
-                                    .add("NEUTRAL_VAL", neutral_val_str),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .push_const_block::<PushConstants>()
+                                .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                .define("AGG_FUNCTION", method.aggregration_function_glsl())
+                                .define(
+                                    "AGG_FUNCTION_SUBGROUP",
+                                    method.subgroup_aggregration_function_glsl(),
+                                )
+                                .define("NEUTRAL_VAL", neutral_val_str),
                         )
+                        .local_size(LocalSizeConfig::Large)
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 

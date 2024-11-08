@@ -1,13 +1,9 @@
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 
 #include <size_util.glsl>
 #include <vec.glsl>
 #include <mat.glsl>
 #include <randomwalker_shared.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) readonly buffer FG {
     float values[NUM_POINTS_FG][ND];

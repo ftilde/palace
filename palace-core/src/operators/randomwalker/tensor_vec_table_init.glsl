@@ -1,13 +1,9 @@
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 #include <size_util.glsl>
-
-layout (local_size_x = LOCAL_SIZE) in;
 
 layout(std430, binding = 0) readonly buffer Seeds {
     float values[BRICK_MEM_SIZE];
@@ -17,11 +13,12 @@ layout(std430, binding = 1) buffer Table {
     uint values[BRICK_MEM_SIZE];
 } tensor_to_vec_table;
 
+const uint LOCAL_SIZE = gl_WorkGroupSize.x;
 shared uint[LOCAL_SIZE] local_vals;
 
 void main() {
     uint global_id = global_position_linear;
-    uint local_id = gl_LocalInvocationID.x;
+    uint local_id = local_index_subgroup_order;
 
     uint local_val;
     if(global_id < BRICK_MEM_SIZE) {

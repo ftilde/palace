@@ -1,10 +1,6 @@
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 layout(std430, binding = 0) buffer Table {
     uint values[BRICK_MEM_SIZE];

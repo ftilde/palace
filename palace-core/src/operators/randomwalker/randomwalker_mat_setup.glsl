@@ -1,13 +1,9 @@
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
 #include <vec.glsl>
 #include <randomwalker_shared.glsl>
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 #define MAX_ENTRIES_PER_ROW (2*ND + 1)
 

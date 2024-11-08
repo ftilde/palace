@@ -7,8 +7,8 @@ use crate::jit::jit;
 use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
-use crate::vulkan::pipeline::{ComputePipeline, DescriptorConfig};
-use crate::vulkan::shader::ShaderDefines;
+use crate::vulkan::pipeline::{ComputePipelineBuilder, DescriptorConfig};
+use crate::vulkan::shader::ShaderInfo;
 use crate::vulkan::state::RessourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 
@@ -67,13 +67,9 @@ pub fn vesselness(
     scale: f32,
 ) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
     const SHADER: &'static str = r#"
-#version 450
-
 #include <eigenvalues.glsl>
 #include <vesselness.glsl>
 #include <size_util.glsl>
-
-AUTO_LOCAL_SIZE_LAYOUT;
 
 layout (local_size_x = 256) in;
 
@@ -184,14 +180,11 @@ void main() {
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new().add("BRICK_MEM_SIZE", m.chunk_size.hmul()), //.push_const_block::<PushConstants>(),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER).define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
 

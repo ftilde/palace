@@ -1,13 +1,9 @@
-#version 450
-
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <atomic.glsl>
 #include <size_util.glsl>
 #include <randomwalker_shared.glsl>
-
-layout (local_size_x = LOCAL_SIZE) in;
 
 layout(std430, binding = 0) readonly buffer Z {
     float values[NUM_ROWS];

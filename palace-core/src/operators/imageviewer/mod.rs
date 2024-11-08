@@ -19,8 +19,8 @@ use crate::{
     storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
-        pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -181,18 +181,15 @@ pub fn view_image(
                 let pipeline = device.request_state(
                     RessourceId::new("pipeline").of(ctx.current_op()),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                include_str!("imageviewer.glsl"),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
-                                    .add("NUM_BRICKS", num_bricks)
-                                    .add("REQUEST_TABLE_SIZE", request_table_size),
-                            ),
-                            false,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(include_str!("imageviewer.glsl"))
+                                .push_const_block::<PushConstants>()
+                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("NUM_BRICKS", num_bricks)
+                                .define("REQUEST_TABLE_SIZE", request_table_size),
                         )
+                        .local_size(LocalSizeConfig::Auto2D)
+                        .build(device)
                     },
                 )?;
 

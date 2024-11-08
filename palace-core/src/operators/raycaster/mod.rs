@@ -16,8 +16,8 @@ use crate::{
     storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
-        pipeline::{ComputePipeline, DescriptorConfig, GraphicsPipeline},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, GraphicsPipeline, LocalSizeConfig},
+        shader::{ShaderDefines, ShaderInfo},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -334,16 +334,13 @@ pub fn entry_exit_points(
                 let pipeline_in_volume_fix = device.request_state(
                     RessourceId::new("fix_eep_pipeline").of(ctx.current_op()),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                include_str!("entrypoints_inside.glsl"),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstantsInVolumeFix>()
-                                    .add("BRICK_MEM_SIZE", out_info.mem_elements()),
-                            ),
-                            false,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(include_str!("entrypoints_inside.glsl"))
+                                .push_const_block::<PushConstantsInVolumeFix>()
+                                .define("BRICK_MEM_SIZE", out_info.mem_elements()),
                         )
+                        .local_size(LocalSizeConfig::Auto2D)
+                        .build(device)
                     },
                 )?;
 
@@ -807,19 +804,16 @@ pub fn raycast(
                         .dependent_on(&config.compositing_mode)
                         .dependent_on(&config.shading),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                include_str!("raycaster.glsl"),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstants>()
-                                    .add("NUM_LEVELS", input.levels.len())
-                                    .add("REQUEST_TABLE_SIZE", request_table_size)
-                                    .add(config.compositing_mode.define_name(), 1)
-                                    .add(config.shading.define_name(), 1),
-                            ),
-                            false,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(include_str!("raycaster.glsl"))
+                                .push_const_block::<PushConstants>()
+                                .define("NUM_LEVELS", input.levels.len())
+                                .define("REQUEST_TABLE_SIZE", request_table_size)
+                                .define(config.compositing_mode.define_name(), 1)
+                                .define(config.shading.define_name(), 1),
                         )
+                        .local_size(LocalSizeConfig::Auto2D)
+                        .build(device)
                     },
                 )?;
 

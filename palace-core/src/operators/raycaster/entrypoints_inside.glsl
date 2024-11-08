@@ -1,9 +1,6 @@
-#version 450
 #extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
-
-layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(scalar, binding = 0) buffer OutputBuffer{
     vec4[2] values[BRICK_MEM_SIZE];

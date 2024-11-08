@@ -11,8 +11,8 @@ use crate::{
     operator::{OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig, DynPushConstants},
-        shader::{Config, ShaderDefines},
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -160,22 +160,11 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
 #include <util.glsl>
 #include <size_util.glsl>
 
-AUTO_LOCAL_SIZE_LAYOUT;
-
 #define ChunkValue T
 
 #define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
-
-#if N == 1
-layout (local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
-#elif N == 2
-layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
-#else
-layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
-#endif
-
 
 layout(std430, binding = 0) buffer RefBuffer {
     Chunk values[NUM_CHUNKS];
@@ -254,24 +243,20 @@ void main() {
                         .dependent_on(&nd)
                         .dependent_on(&dtype_dyn),
                     || {
-                        ComputePipeline::new(
-                            device,
-                            (
-                                SHADER,
-                                ShaderDefines::new()
-                                    .add("NUM_CHUNKS", num_chunks)
-                                    .add("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
-                                    .add("N", nd)
-                                    .add("T", dtype_dyn.glsl_type())
-                                    .push_const_block_dyn(&push_constants),
-                                Config::new()
-                                    .ext(dtype_dyn.glsl_ext())
-                                    .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
-                                    .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
-                                    .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
-                            ),
-                            true,
+                        ComputePipelineBuilder::new(
+                            ShaderInfo::new(SHADER)
+                                .define("NUM_CHUNKS", num_chunks)
+                                .define("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
+                                .define("N", nd)
+                                .define("T", dtype_dyn.glsl_type())
+                                .push_const_block_dyn(&push_constants)
+                                .ext(dtype_dyn.glsl_ext())
+                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
+                                .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
+                                .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
                         )
+                        .use_push_descriptor(true)
+                        .build(device)
                     },
                 )?;
                 positions.sort_by_key(|(v, _)| v.0);

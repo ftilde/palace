@@ -9,8 +9,8 @@ use crate::{
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     vulkan::{
-        pipeline::{ComputePipeline, DescriptorConfig},
-        shader::ShaderDefines,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -119,12 +119,8 @@ impl Splitter {
             split_dim: u32, //TODO we could also make this a constant in the shader...
         }
         const SHADER: &'static str = r#"
-#version 450
-
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_scalar_block_layout : require
-
-layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(scalar, binding = 0) readonly buffer InputBufferL{
     u8vec4 values[];
@@ -199,7 +195,13 @@ void main()
 
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
-                            ComputePipeline::new(device, (SHADER, ShaderDefines::new().push_const_block::<PushConstants>()), true)
+                            ComputePipelineBuilder::new(
+                                ShaderInfo::new(SHADER)
+                                .push_const_block::<PushConstants>()
+                            )
+                                .local_size(LocalSizeConfig::Auto2D)
+                                .use_push_descriptor(true)
+                                .build(device)
                         })?;
 
                     assert!(positions.len() == 1);

@@ -1,5 +1,3 @@
-#version 450
-
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
@@ -12,8 +10,6 @@
 #include <color.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
-
-layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(scalar, binding = 0) buffer OutputBuffer{
     u8vec4 values[];

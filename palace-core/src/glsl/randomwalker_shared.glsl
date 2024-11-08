@@ -17,7 +17,7 @@ bool is_seed_value(float val) {
 }
 
 #define DOT_PRODUCT(x, y, row, num_rows, local_result, global_result) { \
-    if(gl_LocalInvocationIndex == 0) {\
+    if(local_index_subgroup_order == 0) {\
         local_result = floatBitsToUint(0.0);\
     }\
     barrier();\
@@ -37,7 +37,7 @@ bool is_seed_value(float val) {
 \
     barrier();\
 \
-    if(gl_LocalInvocationIndex == 0) {\
+    if(local_index_subgroup_order == 0) {\
         atomic_add_float(global_result, uintBitsToFloat(shared_sum));\
     }\
 }

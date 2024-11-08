@@ -57,6 +57,62 @@ pub mod ext {
     pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
 }
 
+pub struct ShaderInfo<'a> {
+    pub program_parts: Vec<&'a str>,
+    pub config: Config,
+    pub defines: ShaderDefines,
+}
+
+impl<'a> ShaderInfo<'a> {
+    pub fn new(program: &'a str) -> Self {
+        Self {
+            program_parts: vec![program],
+            config: Config::new(),
+            defines: ShaderDefines::new(),
+        }
+    }
+
+    pub fn from_parts(program_parts: Vec<&'a str>) -> Self {
+        Self {
+            program_parts,
+            config: Config::new(),
+            defines: ShaderDefines::new(),
+        }
+    }
+
+    pub fn ext(mut self, opt_ext: Option<&'static str>) -> Self {
+        self.config = self.config.ext(opt_ext);
+        self
+    }
+
+    pub fn with_config(mut self, config: Config) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn define(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.defines = self.defines.add(key, value);
+        self
+    }
+
+    pub fn push_const_block<T: crevice::glsl::GlslStruct>(mut self) -> Self {
+        self.defines = self.defines.push_const_block::<T>();
+        self
+    }
+
+    pub fn push_const_block_dyn(mut self, push_consts_def: &DynPushConstants) -> Self {
+        self.defines = self.defines.push_const_block_dyn(push_consts_def);
+        self
+    }
+}
+
+impl<'a> ShaderSource for ShaderInfo<'a> {
+    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
+        let program = self.program_parts.join("");
+        (program.as_str(), self.defines, self.config).build(kind)
+    }
+}
+
 pub struct Shader {
     pub module: vk::ShaderModule,
     pub entry_points: Vec<spirq::entry_point::EntryPoint>,
@@ -109,7 +165,8 @@ impl ShaderSource for (&str, ShaderDefines) {
             .with_source_language(SourceLanguage::GLSL)
             .generate_debug_info()
             .with_opt_level(OptimizationLevel::Performance)
-            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_2)
+            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3)
+            .with_target_spirv(SpirvVersion::V1_6)
             .with_include_dir(env!("GLSL_INCLUDE_DIR"));
 
         for (k, v) in defines.defines.into_iter() {
