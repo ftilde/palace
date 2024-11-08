@@ -63,7 +63,10 @@ impl Display for WriteUnary {
 pub enum BinOp {
     Add,
     Mul,
+    Sub,
+    Div,
     Max,
+    Min,
 }
 
 impl BinOp {
@@ -110,8 +113,11 @@ impl Display for WriteBin {
         let r = WriteValue(self.2, self.3);
         match self.0 {
             BinOp::Add => write!(f, "{} + {}", l, r),
+            BinOp::Sub => write!(f, "{} - {}", l, r),
             BinOp::Mul => write!(f, "{} * {}", l, r),
+            BinOp::Div => write!(f, "{} / {}", l, r),
             BinOp::Max => write!(f, "max({}, {})", l, r),
+            BinOp::Min => write!(f, "min({}, {})", l, r),
         }
     }
 }

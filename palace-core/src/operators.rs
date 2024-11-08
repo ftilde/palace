@@ -1,5 +1,4 @@
 pub mod array;
-pub mod bin_ops;
 pub mod gui;
 pub mod imageviewer;
 pub mod kernels;
