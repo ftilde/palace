@@ -5,9 +5,7 @@ use crevice::std140::AsStd140;
 use super::pipeline::{DescriptorConfig, GraphicsPipeline, GraphicsPipelineBuilder};
 use super::shader::Shader;
 use super::state::VulkanState;
-use super::{
-    CmdBufferEpoch, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo, VulkanContext,
-};
+use super::{CmdBufferEpoch, DeviceContext, DeviceId, DstBarrierInfo, VulkanContext};
 use crate::array::ChunkIndex;
 use crate::data::{GlobalCoordinate, Vector};
 use crate::dim::*;
@@ -178,7 +176,7 @@ fn create_render_pass(
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(color_attachment_refs);
 
-    let dependency_info = vk::SubpassDependency::default()
+    let dependency_info_dst = vk::SubpassDependency::default()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
         .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
@@ -186,9 +184,17 @@ fn create_render_pass(
         .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
+    let dependency_info_src = vk::SubpassDependency::default()
+        .src_subpass(0)
+        .dst_subpass(vk::SUBPASS_EXTERNAL)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::empty());
+
     let attachments = &[color_attachment];
     let subpasses = &[subpass];
-    let dependency_infos = &[dependency_info];
+    let dependency_infos = &[dependency_info_dst, dependency_info_src];
     let render_pass_info = vk::RenderPassCreateInfo::default()
         .attachments(attachments)
         .subpasses(subpasses)
@@ -616,23 +622,11 @@ impl Window {
                     .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
             );
             cmd.signal_semaphore(
-                vk::SemaphoreSubmitInfo::default().semaphore(sync_object.render_finished_semaphore),
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(sync_object.render_finished_semaphore)
+                    .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
             );
         });
-
-        // Avoid Present-after-Write hazard (swapchain after image layout transition). Seems like
-        // this works? I cannot find much information about this specific hazard
-        ctx.submit(device.barrier(
-            SrcBarrierInfo {
-                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                access: vk::AccessFlags2::SHADER_WRITE,
-            },
-            DstBarrierInfo {
-                stage: vk::PipelineStageFlags2::TRANSFER,
-                access: vk::AccessFlags2::TRANSFER_READ,
-            },
-        ))
-        .await;
 
         ctx.submit(device.wait_for_current_cmd_buffer_submission())
             .await;
