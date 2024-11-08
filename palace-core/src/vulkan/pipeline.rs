@@ -12,10 +12,10 @@ use crate::{
     dim::*,
     storage::gpu::{Allocation, IndexHandle, ReadHandle, StateCacheHandle, WriteHandle},
     util::Map,
-    vulkan::shader::Shader,
+    vulkan::shader::ShaderModule,
 };
 
-use super::shader::ShaderInfo;
+use super::shader::Shader;
 use super::{state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext};
 
 pub trait PipelineType {
@@ -63,13 +63,13 @@ pub type ComputePipeline = Pipeline<ComputePipelineType>;
 pub type GraphicsPipeline = Pipeline<GraphicsPipelineType>;
 
 pub struct ComputePipelineBuilder<'a> {
-    shader: ShaderInfo<'a>,
+    shader: Shader<'a>,
     use_push_descriptor: bool,
     local_size: LocalSizeConfig,
 }
 
 impl<'a> ComputePipelineBuilder<'a> {
-    pub fn new(shader: ShaderInfo<'a>) -> Self {
+    pub fn new(shader: Shader<'a>) -> Self {
         Self {
             shader,
             use_push_descriptor: false,
@@ -122,7 +122,8 @@ impl<'a> ComputePipelineBuilder<'a> {
         let mut shader = self.shader;
         shader.program_parts.insert(0, &local_size_str);
 
-        let mut shader = Shader::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;
+        let mut shader =
+            ShaderModule::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -207,12 +208,12 @@ impl<T: 'static> VulkanState for Pipeline<T> {
 }
 
 pub struct GraphicsPipelineBuilder<'a> {
-    vertex_shader: ShaderInfo<'a>,
-    fragment_shader: ShaderInfo<'a>,
+    vertex_shader: Shader<'a>,
+    fragment_shader: Shader<'a>,
     use_push_descriptor: bool,
 }
 impl<'a> GraphicsPipelineBuilder<'a> {
-    pub fn new(vertex_shader: ShaderInfo<'a>, fragment_shader: ShaderInfo<'a>) -> Self {
+    pub fn new(vertex_shader: Shader<'a>, fragment_shader: Shader<'a>) -> Self {
         Self {
             vertex_shader,
             fragment_shader,
@@ -239,8 +240,8 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     ) -> Result<GraphicsPipeline, crate::Error> {
         let df = device.functions();
         let mut vertex_shader =
-            Shader::from_source(df, self.vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
-        let mut fragment_shader = Shader::from_source(
+            ShaderModule::from_source(df, self.vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
+        let mut fragment_shader = ShaderModule::from_source(
             df,
             self.fragment_shader,
             spirv_compiler::ShaderKind::Fragment,

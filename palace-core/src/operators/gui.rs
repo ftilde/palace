@@ -26,7 +26,7 @@ use crate::{
     vulkan::{
         memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipelineBuilder},
-        shader::ShaderInfo,
+        shader::Shader,
         state::{RessourceId, VulkanState},
         DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
@@ -617,8 +617,8 @@ void main() {
                         RessourceId::new("pipeline").of(ctx.current_op()),
                         || {
                             GraphicsPipelineBuilder::new(
-                                ShaderInfo::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
-                                ShaderInfo::new(FRAG_SHADER)
+                                Shader::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
+                                Shader::new(FRAG_SHADER)
                                     .define("BRICK_MEM_SIZE", out_info.mem_elements()),
                             )
                             .use_push_descriptor(true)

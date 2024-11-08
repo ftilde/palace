@@ -20,7 +20,7 @@ use crate::{
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -182,7 +182,7 @@ pub fn view_image(
                     RessourceId::new("pipeline").of(ctx.current_op()),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(include_str!("imageviewer.glsl"))
+                            Shader::new(include_str!("imageviewer.glsl"))
                                 .push_const_block::<PushConstants>()
                                 .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                 .define("NUM_BRICKS", num_bricks)

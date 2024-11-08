@@ -12,7 +12,7 @@ use crate::{
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -244,7 +244,7 @@ void main() {
                         .dependent_on(&dtype_dyn),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .define("NUM_CHUNKS", num_chunks)
                                 .define("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
                                 .define("N", nd)

@@ -21,7 +21,7 @@ use crate::{
             AsDescriptors, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
             LocalSizeConfig,
         },
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -114,7 +114,7 @@ void main()
                         .dependent_on(&m.num_chunk_elements()),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .define("BRICK_MEM_SIZE", m.num_chunk_elements())
                                 .push_const_block::<PushConstants>(),
                         )
@@ -230,7 +230,7 @@ void main()
                         .dependent_on(&m.num_chunk_elements()),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .define("BRICK_MEM_SIZE", m.num_chunk_elements())
                                 .push_const_block::<PushConstants>(),
                         )
@@ -398,7 +398,7 @@ void main() {
                         .dependent_on(&nd),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .define("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
                                 .define("N", nd)
                                 .define("T", dtype.glsl_type())
@@ -794,7 +794,7 @@ void main() {
                         .dependent_on(&kernel_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .define("MAX_BRICKS", max_bricks)
                                 .define("DIM", dim)
                                 .define("N", nd)
@@ -1082,7 +1082,7 @@ void main()
                         let neutral_val_str =
                             format!("uintBitsToFloat({})", method.neutral_val().to_bits());
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()
                                 .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
                                 .define("AGG_FUNCTION", method.aggregration_function_glsl())

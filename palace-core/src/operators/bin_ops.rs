@@ -7,7 +7,7 @@ use crate::{
     operator::OperatorDescriptor,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -86,7 +86,7 @@ void main()
                         .dependent_on(&m.chunk_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(shader.as_str())
+                            Shader::new(shader.as_str())
                                 .define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                         )
                         .use_push_descriptor(true)

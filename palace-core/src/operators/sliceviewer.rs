@@ -23,7 +23,7 @@ use crate::{
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -459,7 +459,7 @@ void main()
                         .dependent_on(&request_table_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER)
+                            Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()
                                 .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
                                 .define("NUM_BRICKS", num_bricks)

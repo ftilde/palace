@@ -57,13 +57,13 @@ pub mod ext {
     pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
 }
 
-pub struct ShaderInfo<'a> {
+pub struct Shader<'a> {
     pub program_parts: Vec<&'a str>,
     pub config: Config,
     pub defines: ShaderDefines,
 }
 
-impl<'a> ShaderInfo<'a> {
+impl<'a> Shader<'a> {
     pub fn new(program: &'a str) -> Self {
         Self {
             program_parts: vec![program],
@@ -141,7 +141,7 @@ impl<'a> ShaderInfo<'a> {
     }
 }
 
-pub struct Shader {
+pub struct ShaderModule {
     pub module: vk::ShaderModule,
     pub entry_points: Vec<spirq::entry_point::EntryPoint>,
 }
@@ -264,7 +264,7 @@ pub struct ShaderBindingInfo {
     pub descriptor_bindings: DescriptorBindings,
 }
 
-impl Shader {
+impl ShaderModule {
     pub fn from_compiled(f: &DeviceFunctions, code: &[u32]) -> Self {
         let info = vk::ShaderModuleCreateInfo::default().code(&code);
 
@@ -283,7 +283,7 @@ impl Shader {
     }
     pub fn from_source(
         f: &DeviceFunctions,
-        source: ShaderInfo,
+        source: Shader,
         kind: ShaderKind,
     ) -> Result<Self, crate::Error> {
         Ok(Self::from_compiled(f, &source.build(kind)?))
@@ -390,7 +390,7 @@ impl Shader {
     }
 }
 
-impl VulkanState for Shader {
+impl VulkanState for ShaderModule {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         unsafe {
             context

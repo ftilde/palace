@@ -14,7 +14,7 @@ use crate::{
     task::{Request, RequestStream},
     vulkan::{
         pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig},
-        shader::{Config, ShaderInfo},
+        shader::{Config, Shader},
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -519,7 +519,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                             )?;
                             //println!("{}", shader.as_str());
                             ComputePipelineBuilder::new(
-                                ShaderInfo::new(shader.as_str())
+                                Shader::new(shader.as_str())
                                     .define("BRICK_MEM_SIZE", num_chunk_elements)
                                     .with_config(config),
                             )

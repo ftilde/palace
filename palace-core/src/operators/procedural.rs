@@ -10,7 +10,7 @@ use crate::{
     vec::Vector,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         SrcBarrierInfo,
     },
@@ -218,7 +218,7 @@ void main()
                         .dependent_on(&D::N),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::from_parts(shader_parts.clone())
+                            Shader::from_parts(shader_parts.clone())
                                 .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
                                 .define("N", D::N),
                         )

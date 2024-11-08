@@ -8,7 +8,7 @@ use crate::operator::OperatorDescriptor;
 use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipelineBuilder, DescriptorConfig};
-use crate::vulkan::shader::ShaderInfo;
+use crate::vulkan::shader::Shader;
 use crate::vulkan::state::RessourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 
@@ -181,7 +181,7 @@ void main() {
                         .dependent_on(&m.chunk_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(SHADER).define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
+                            Shader::new(SHADER).define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
                         )
                         .use_push_descriptor(true)
                         .build(device)

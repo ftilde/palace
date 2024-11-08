@@ -10,7 +10,7 @@ use crate::{
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -196,7 +196,7 @@ void main()
                     let pipeline = device
                         .request_state(RessourceId::new("pipeline").of(ctx.current_op()), || {
                             ComputePipelineBuilder::new(
-                                ShaderInfo::new(SHADER)
+                                Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()
                             )
                                 .local_size(LocalSizeConfig::Auto2D)

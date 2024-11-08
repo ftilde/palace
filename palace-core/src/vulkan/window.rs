@@ -3,7 +3,7 @@ use crevice::glsl::GlslStruct;
 use crevice::std140::AsStd140;
 
 use super::pipeline::{DescriptorConfig, GraphicsPipeline, GraphicsPipelineBuilder};
-use super::shader::ShaderInfo;
+use super::shader::Shader;
 use super::state::VulkanState;
 use super::{
     CmdBufferEpoch, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo, VulkanContext,
@@ -407,8 +407,8 @@ impl Window {
         );
 
         let pipeline = GraphicsPipelineBuilder::new(
-            ShaderInfo::new(VERTEX_SHADER),
-            ShaderInfo::new(FRAG_SHADER).push_const_block::<PushConstants>(),
+            Shader::new(VERTEX_SHADER),
+            Shader::new(FRAG_SHADER).push_const_block::<PushConstants>(),
         )
         .use_push_descriptor(true)
         .build(device, |shader_stages, pipeline_layout, build_pipeline| {

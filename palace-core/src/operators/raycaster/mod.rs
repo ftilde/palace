@@ -19,7 +19,7 @@ use crate::{
         pipeline::{
             ComputePipelineBuilder, DescriptorConfig, GraphicsPipelineBuilder, LocalSizeConfig,
         },
-        shader::ShaderInfo,
+        shader::Shader,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -247,9 +247,9 @@ pub fn entry_exit_points(
                     RessourceId::new("pipeline").of(ctx.current_op()),
                     || {
                         GraphicsPipelineBuilder::new(
-                            ShaderInfo::new(include_str!("entryexitpoints.vert"))
+                            Shader::new(include_str!("entryexitpoints.vert"))
                                 .push_const_block::<PushConstantsFirstEEP>(),
-                            ShaderInfo::new(include_str!("entryexitpoints.frag"))
+                            Shader::new(include_str!("entryexitpoints.frag"))
                                 .push_const_block::<PushConstantsFirstEEP>()
                                 .define("BRICK_MEM_SIZE", out_info.mem_elements()),
                         )
@@ -334,7 +334,7 @@ pub fn entry_exit_points(
                     RessourceId::new("fix_eep_pipeline").of(ctx.current_op()),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(include_str!("entrypoints_inside.glsl"))
+                            Shader::new(include_str!("entrypoints_inside.glsl"))
                                 .push_const_block::<PushConstantsInVolumeFix>()
                                 .define("BRICK_MEM_SIZE", out_info.mem_elements()),
                         )
@@ -804,7 +804,7 @@ pub fn raycast(
                         .dependent_on(&config.shading),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(include_str!("raycaster.glsl"))
+                            Shader::new(include_str!("raycaster.glsl"))
                                 .push_const_block::<PushConstants>()
                                 .define("NUM_LEVELS", input.levels.len())
                                 .define("REQUEST_TABLE_SIZE", request_table_size)

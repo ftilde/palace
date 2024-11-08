@@ -25,7 +25,7 @@ use crate::{
             AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
             LocalSizeConfig,
         },
-        shader::ShaderInfo,
+        shader::Shader,
         state::{RessourceId, VulkanState},
         DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
@@ -60,7 +60,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         RessourceId::new("tensor_vec_table_init").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("tensor_vec_table_init.glsl"))
+                Shader::new(include_str!("tensor_vec_table_init.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size),
             )
             .local_size(LocalSizeConfig::Large)
@@ -72,7 +72,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         RessourceId::new("tensor_vec_table_step").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("tensor_vec_table_step.glsl"))
+                Shader::new(include_str!("tensor_vec_table_step.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size)
                     .push_const_block::<PushConstantsStep>(),
             )
@@ -84,7 +84,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         RessourceId::new("tensor_vec_table_finish").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("tensor_vec_table_finish.glsl"))
+                Shader::new(include_str!("tensor_vec_table_finish.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size),
             )
             .build(device)
@@ -235,7 +235,7 @@ pub fn random_walker_weights(
                     RessourceId::new("randomwalker_weights").dependent_on(&in_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(include_str!("randomwalker_weights.glsl"))
+                            Shader::new(include_str!("randomwalker_weights.glsl"))
                                 .push_const_block_dyn(&push_constants)
                                 .define("BRICK_MEM_SIZE", in_size.hmul())
                                 .define("ND", nd)
@@ -335,7 +335,7 @@ pub fn rasterize_seed_points(
                     RessourceId::new("rasterize_seed_points").dependent_on(&in_size),
                     || {
                         ComputePipelineBuilder::new(
-                            ShaderInfo::new(include_str!("rasterize_points.glsl"))
+                            Shader::new(include_str!("rasterize_points.glsl"))
                                 .push_const_block_dyn(&push_constants)
                                 .define("BRICK_MEM_SIZE", in_size.hmul())
                                 .define("NUM_POINTS_FG", points_fg.metadata.dimensions[0].raw)
@@ -601,7 +601,7 @@ async fn results_to_tensor<'req, 'inv>(
                 .dependent_on(&num_rows),
             || {
                 ComputePipelineBuilder::new(
-                    ShaderInfo::new(include_str!("results_to_tensor.glsl"))
+                    Shader::new(include_str!("results_to_tensor.glsl"))
                         .define("BRICK_MEM_SIZE", tensor_elements)
                         .define("NUM_ROWS", num_rows)
                         .define("ND", nd),
@@ -648,7 +648,7 @@ async fn mat_setup<'req, 'inv>(
             .dependent_on(&num_rows),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("randomwalker_mat_setup.glsl"))
+                Shader::new(include_str!("randomwalker_mat_setup.glsl"))
                     .push_const_block_dyn(&push_constants)
                     .define("BRICK_MEM_SIZE", tensor_elements)
                     .define("NUM_ROWS", num_rows)
@@ -976,7 +976,7 @@ fn cg_init(
     let pipeline =
         device.request_state(RessourceId::new("cg_init").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("cg_init.glsl"))
+                Shader::new(include_str!("cg_init.glsl"))
                     .define("NUM_ROWS", num_rows)
                     .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
             )
@@ -1010,7 +1010,7 @@ fn cg_alpha(
     let pipeline =
         device.request_state(RessourceId::new("cg_alpha").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("cg_alpha.glsl"))
+                Shader::new(include_str!("cg_alpha.glsl"))
                     .define("NUM_ROWS", num_rows)
                     .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
             )
@@ -1049,7 +1049,7 @@ fn cg_beta(
     let pipeline =
         device.request_state(RessourceId::new("cg_beta").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("cg_beta.glsl")).define("NUM_ROWS", num_rows),
+                Shader::new(include_str!("cg_beta.glsl")).define("NUM_ROWS", num_rows),
             )
             .local_size(LocalSizeConfig::Large)
             .build(device)
@@ -1085,7 +1085,7 @@ fn dot_product_add(
         RessourceId::new("dot_product").dependent_on(&num_rows),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("dot_product.glsl")).define("NUM_ROWS", num_rows),
+                Shader::new(include_str!("dot_product.glsl")).define("NUM_ROWS", num_rows),
             )
             .local_size(LocalSizeConfig::Large)
             .build(device)
@@ -1127,7 +1127,7 @@ fn scale_and_sum_quotient(
         RessourceId::new("scale_and_sum_quotient").dependent_on(&num_rows),
         || {
             ComputePipelineBuilder::new(
-                ShaderInfo::new(include_str!("scale_and_sum_quotient.glsl"))
+                Shader::new(include_str!("scale_and_sum_quotient.glsl"))
                     .define("NUM_ROWS", num_rows),
             )
             .build(device)
