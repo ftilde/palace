@@ -25,8 +25,8 @@ use crate::{
     util::Map,
     vulkan::{
         memory::TempRessource,
-        pipeline::{DescriptorConfig, GraphicsPipeline},
-        shader::ShaderDefines,
+        pipeline::{DescriptorConfig, GraphicsPipelineBuilder},
+        shader::ShaderInfo,
         state::{RessourceId, VulkanState},
         DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
@@ -502,8 +502,6 @@ impl GuiRenderState {
         }
 
         const VERTEX_SHADER: &str = "
-#version 450
-
 layout(location = 0) in vec2 pos;
 layout(location = 1) in vec2 uv;
 layout(location = 2) in vec4 color;
@@ -530,8 +528,6 @@ void main() {
 ";
 
         const FRAG_SHADER: &str = "
-#version 450
-
 #include <util.glsl>
 
 layout(location = 0) in vec4 color;
@@ -620,17 +616,14 @@ void main() {
                     let pipeline = device.request_state(
                         RessourceId::new("pipeline").of(ctx.current_op()),
                         || {
-                            GraphicsPipeline::new(
+                            GraphicsPipelineBuilder::new(
+                                ShaderInfo::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
+                                ShaderInfo::new(FRAG_SHADER)
+                                    .define("BRICK_MEM_SIZE", out_info.mem_elements()),
+                            )
+                            .use_push_descriptor(true)
+                            .build(
                                 device,
-                                (
-                                    VERTEX_SHADER,
-                                    ShaderDefines::new().push_const_block::<PushConstants>(),
-                                ),
-                                (
-                                    FRAG_SHADER,
-                                    ShaderDefines::new()
-                                        .add("BRICK_MEM_SIZE", out_info.mem_elements()),
-                                ),
                                 |shader_stages, pipeline_layout, build_pipeline| {
                                     let dynamic_states =
                                         [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
@@ -737,7 +730,6 @@ void main() {
                                         .subpass(0);
                                     build_pipeline(&info)
                                 },
-                                true,
                             )
                         },
                     )?;

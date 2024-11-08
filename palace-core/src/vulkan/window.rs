@@ -2,8 +2,8 @@ use ash::vk;
 use crevice::glsl::GlslStruct;
 use crevice::std140::AsStd140;
 
-use super::pipeline::{DescriptorConfig, GraphicsPipeline};
-use super::shader::ShaderDefines;
+use super::pipeline::{DescriptorConfig, GraphicsPipeline, GraphicsPipelineBuilder};
+use super::shader::ShaderInfo;
 use super::state::VulkanState;
 use super::{
     CmdBufferEpoch, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo, VulkanContext,
@@ -406,71 +406,67 @@ impl Window {
             initial_size,
         );
 
-        let pipeline = GraphicsPipeline::new(
-            device,
-            VERTEX_SHADER,
-            (
-                FRAG_SHADER,
-                ShaderDefines::new().push_const_block::<PushConstants>(),
-            ),
-            |shader_stages, pipeline_layout, build_pipeline| {
-                let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                let dynamic_info =
-                    vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+        let pipeline = GraphicsPipelineBuilder::new(
+            ShaderInfo::new(VERTEX_SHADER),
+            ShaderInfo::new(FRAG_SHADER).push_const_block::<PushConstants>(),
+        )
+        .use_push_descriptor(true)
+        .build(device, |shader_stages, pipeline_layout, build_pipeline| {
+            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+            let dynamic_info =
+                vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-                let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
+            let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
 
-                let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
-                    .primitive_restart_enable(false)
-                    .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
+                .primitive_restart_enable(false)
+                .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
-                let viewport_state_info = vk::PipelineViewportStateCreateInfo::default()
-                    .viewport_count(1)
-                    .scissor_count(1);
+            let viewport_state_info = vk::PipelineViewportStateCreateInfo::default()
+                .viewport_count(1)
+                .scissor_count(1);
 
-                let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::default()
-                    .depth_clamp_enable(false)
-                    .rasterizer_discard_enable(false)
-                    .polygon_mode(vk::PolygonMode::FILL)
-                    .line_width(1.0)
-                    .cull_mode(vk::CullModeFlags::BACK)
-                    .front_face(vk::FrontFace::CLOCKWISE)
-                    .depth_bias_enable(false);
+            let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::default()
+                .depth_clamp_enable(false)
+                .rasterizer_discard_enable(false)
+                .polygon_mode(vk::PolygonMode::FILL)
+                .line_width(1.0)
+                .cull_mode(vk::CullModeFlags::BACK)
+                .front_face(vk::FrontFace::CLOCKWISE)
+                .depth_bias_enable(false);
 
-                let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::default()
-                    .sample_shading_enable(false)
-                    .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            let multi_sampling_info = vk::PipelineMultisampleStateCreateInfo::default()
+                .sample_shading_enable(false)
+                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-                let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-                    .color_write_mask(
-                        vk::ColorComponentFlags::R
-                            | vk::ColorComponentFlags::G
-                            | vk::ColorComponentFlags::B
-                            | vk::ColorComponentFlags::A,
-                    )
-                    .blend_enable(false);
+            let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+                .color_write_mask(
+                    vk::ColorComponentFlags::R
+                        | vk::ColorComponentFlags::G
+                        | vk::ColorComponentFlags::B
+                        | vk::ColorComponentFlags::A,
+                )
+                .blend_enable(false);
 
-                let color_blend_attachments = [color_blend_attachment];
-                let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
-                    .logic_op_enable(false)
-                    .attachments(&color_blend_attachments);
+            let color_blend_attachments = [color_blend_attachment];
+            let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
+                .logic_op_enable(false)
+                .attachments(&color_blend_attachments);
 
-                let info = vk::GraphicsPipelineCreateInfo::default()
-                    .stages(shader_stages)
-                    .vertex_input_state(&vertex_input_info)
-                    .input_assembly_state(&input_assembly_info)
-                    .viewport_state(&viewport_state_info)
-                    .rasterization_state(&rasterizer_info)
-                    .multisample_state(&multi_sampling_info)
-                    .color_blend_state(&color_blending)
-                    .dynamic_state(&dynamic_info)
-                    .layout(pipeline_layout)
-                    .render_pass(render_pass)
-                    .subpass(0);
-                build_pipeline(&info)
-            },
-            true,
-        )?;
+            let info = vk::GraphicsPipelineCreateInfo::default()
+                .stages(shader_stages)
+                .vertex_input_state(&vertex_input_info)
+                .input_assembly_state(&input_assembly_info)
+                .viewport_state(&viewport_state_info)
+                .rasterization_state(&rasterizer_info)
+                .multisample_state(&multi_sampling_info)
+                .color_blend_state(&color_blending)
+                .dynamic_state(&dynamic_info)
+                .layout(pipeline_layout)
+                .render_pass(render_pass)
+                .subpass(0);
+            build_pipeline(&info)
+        })?;
 
         let sync_objects = std::array::from_fn(|_| create_sync_objects(device));
 
@@ -671,8 +667,6 @@ struct PushConstants {
 }
 
 const VERTEX_SHADER: &str = "
-#version 450
-
 vec2 positions[3] = vec2[](
     vec2(-1.0,-3.0),
     vec2( 3.0, 1.0),
@@ -694,8 +688,6 @@ void main() {
 ";
 
 const FRAG_SHADER: &str = "
-#version 450
-
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_scalar_block_layout : require
 

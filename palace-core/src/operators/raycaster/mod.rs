@@ -16,8 +16,10 @@ use crate::{
     storage::DataVersionType,
     vulkan::{
         memory::TempRessource,
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, GraphicsPipeline, LocalSizeConfig},
-        shader::{ShaderDefines, ShaderInfo},
+        pipeline::{
+            ComputePipelineBuilder, DescriptorConfig, GraphicsPipelineBuilder, LocalSizeConfig,
+        },
+        shader::ShaderInfo,
         state::RessourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -244,18 +246,16 @@ pub fn entry_exit_points(
                 let pipeline_eep = device.request_state(
                     RessourceId::new("pipeline").of(ctx.current_op()),
                     || {
-                        GraphicsPipeline::new(
+                        GraphicsPipelineBuilder::new(
+                            ShaderInfo::new(include_str!("entryexitpoints.vert"))
+                                .push_const_block::<PushConstantsFirstEEP>(),
+                            ShaderInfo::new(include_str!("entryexitpoints.frag"))
+                                .push_const_block::<PushConstantsFirstEEP>()
+                                .define("BRICK_MEM_SIZE", out_info.mem_elements()),
+                        )
+                        .use_push_descriptor(true)
+                        .build(
                             device,
-                            (
-                                include_str!("entryexitpoints.vert"),
-                                ShaderDefines::new().push_const_block::<PushConstantsFirstEEP>(),
-                            ),
-                            (
-                                include_str!("entryexitpoints.frag"),
-                                ShaderDefines::new()
-                                    .push_const_block::<PushConstantsFirstEEP>()
-                                    .add("BRICK_MEM_SIZE", out_info.mem_elements()),
-                            ),
                             |shader_stages, pipeline_layout, build_pipeline| {
                                 let dynamic_states =
                                     [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
@@ -327,7 +327,6 @@ pub fn entry_exit_points(
                                     .subpass(0);
                                 build_pipeline(&info)
                             },
-                            true,
                         )
                     },
                 )?;

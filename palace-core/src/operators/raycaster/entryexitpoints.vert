@@ -1,5 +1,3 @@
-#version 450
-
 declare_push_consts(consts);
 
 vec3 positions[14] = vec3[](

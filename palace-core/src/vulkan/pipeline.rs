@@ -16,9 +16,7 @@ use crate::{
 };
 
 use super::shader::ShaderInfo;
-use super::{
-    shader::ShaderSource, state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext,
-};
+use super::{state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext};
 
 pub trait PipelineType {
     const BINDPOINT: vk::PipelineBindPoint;
@@ -208,26 +206,45 @@ impl<T: 'static> VulkanState for Pipeline<T> {
     }
 }
 
-impl GraphicsPipeline {
-    pub fn new<
-        'a,
+pub struct GraphicsPipelineBuilder<'a> {
+    vertex_shader: ShaderInfo<'a>,
+    fragment_shader: ShaderInfo<'a>,
+    use_push_descriptor: bool,
+}
+impl<'a> GraphicsPipelineBuilder<'a> {
+    pub fn new(vertex_shader: ShaderInfo<'a>, fragment_shader: ShaderInfo<'a>) -> Self {
+        Self {
+            vertex_shader,
+            fragment_shader,
+            use_push_descriptor: false,
+        }
+    }
+
+    pub fn use_push_descriptor(mut self, use_them: bool) -> Self {
+        self.use_push_descriptor = use_them;
+        self
+    }
+
+    pub fn build<
+        'b,
         B: FnOnce(
             &[vk::PipelineShaderStageCreateInfo],
             vk::PipelineLayout,
-            Box<dyn FnOnce(&vk::GraphicsPipelineCreateInfo) -> vk::Pipeline + 'a>,
+            Box<dyn FnOnce(&vk::GraphicsPipelineCreateInfo) -> vk::Pipeline + 'b>,
         ) -> vk::Pipeline,
     >(
-        device: &'a DeviceContext,
-        vertex_shader: impl ShaderSource,
-        fragment_shader: impl ShaderSource,
+        self,
+        device: &'b DeviceContext,
         build_info: B,
-        use_push_descriptor: bool,
-    ) -> Result<Self, crate::Error> {
+    ) -> Result<GraphicsPipeline, crate::Error> {
         let df = device.functions();
         let mut vertex_shader =
-            Shader::from_source(df, vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
-        let mut fragment_shader =
-            Shader::from_source(df, fragment_shader, spirv_compiler::ShaderKind::Fragment)?;
+            Shader::from_source(df, self.vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
+        let mut fragment_shader = Shader::from_source(
+            df,
+            self.fragment_shader,
+            spirv_compiler::ShaderKind::Fragment,
+        )?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -263,7 +280,7 @@ impl GraphicsPipeline {
             .merge(fragment_info.descriptor_bindings);
 
         let (descriptor_set_layouts, ds_pools) = descriptor_bindings
-            .create_descriptor_set_layout(&device.functions, use_push_descriptor);
+            .create_descriptor_set_layout(&device.functions, self.use_push_descriptor);
 
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&descriptor_set_layouts)
@@ -298,7 +315,7 @@ impl GraphicsPipeline {
         unsafe { vertex_shader.deinitialize(device) };
         unsafe { fragment_shader.deinitialize(device) };
 
-        Ok(Self {
+        Ok(GraphicsPipeline {
             pipeline,
             pipeline_layout,
             ds_pools,
