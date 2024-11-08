@@ -104,12 +104,40 @@ impl<'a> ShaderInfo<'a> {
         self.defines = self.defines.push_const_block_dyn(push_consts_def);
         self
     }
-}
 
-impl<'a> ShaderSource for ShaderInfo<'a> {
-    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
-        let program = self.program_parts.join("");
-        (program.as_str(), self.defines, self.config).build(kind)
+    pub fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
+        let raw_source = self.program_parts.join("");
+        let source = format!("{}{}", self.config, raw_source);
+
+        use spirv_compiler::*;
+
+        let mut compiler = CompilerBuilder::new()
+            .with_source_language(SourceLanguage::GLSL)
+            .generate_debug_info()
+            .with_opt_level(OptimizationLevel::Performance)
+            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3)
+            .with_target_spirv(SpirvVersion::V1_6)
+            .with_include_dir(env!("GLSL_INCLUDE_DIR"));
+
+        for (k, v) in self.defines.defines.into_iter() {
+            compiler = compiler.with_macro(&k, Some(&v));
+        }
+        let mut compiler = compiler.build().unwrap();
+        compiler
+            .compile_from_string(&source, kind)
+            .map_err(|e| match e {
+                CompilerError::Log(e) => format!(
+                    "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
+                    e.file, e.description, source,
+                )
+                .into(),
+                CompilerError::LoadError(e) => {
+                    format!("Load error while compiling shader: {}", e).into()
+                }
+                CompilerError::WriteError(e) => {
+                    format!("Write error while compiling shader: {}", e).into()
+                }
+            })
     }
 }
 
@@ -146,54 +174,6 @@ impl std::fmt::Display for Config {
             writeln!(f, "#extension {} : require", ext)?;
         }
         Ok(())
-    }
-}
-
-pub trait ShaderSource {
-    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error>;
-}
-
-impl ShaderSource for (&str, ShaderDefines) {
-    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
-        //TODO: unify all shaders with using config
-        let source = self.0;
-        let defines = self.1;
-
-        use spirv_compiler::*;
-
-        let mut compiler = CompilerBuilder::new()
-            .with_source_language(SourceLanguage::GLSL)
-            .generate_debug_info()
-            .with_opt_level(OptimizationLevel::Performance)
-            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3)
-            .with_target_spirv(SpirvVersion::V1_6)
-            .with_include_dir(env!("GLSL_INCLUDE_DIR"));
-
-        for (k, v) in defines.defines.into_iter() {
-            compiler = compiler.with_macro(&k, Some(&v));
-        }
-        let mut compiler = compiler.build().unwrap();
-        compiler
-            .compile_from_string(&source, kind)
-            .map_err(|e| match e {
-                CompilerError::Log(e) => format!(
-                    "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
-                    e.file, e.description, self.0
-                )
-                .into(),
-                CompilerError::LoadError(e) => {
-                    format!("Load error while compiling shader: {}", e).into()
-                }
-                CompilerError::WriteError(e) => {
-                    format!("Write error while compiling shader: {}", e).into()
-                }
-            })
-    }
-}
-impl ShaderSource for (&str, ShaderDefines, Config) {
-    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
-        let source = format!("{}{}", self.2, self.0);
-        (source.as_str(), self.1).build(kind)
     }
 }
 
@@ -284,12 +264,6 @@ pub struct ShaderBindingInfo {
     pub descriptor_bindings: DescriptorBindings,
 }
 
-impl ShaderSource for &str {
-    fn build(self, kind: ShaderKind) -> Result<Vec<u32>, crate::Error> {
-        (self, ShaderDefines::new()).build(kind)
-    }
-}
-
 impl Shader {
     pub fn from_compiled(f: &DeviceFunctions, code: &[u32]) -> Self {
         let info = vk::ShaderModuleCreateInfo::default().code(&code);
@@ -309,7 +283,7 @@ impl Shader {
     }
     pub fn from_source(
         f: &DeviceFunctions,
-        source: impl ShaderSource,
+        source: ShaderInfo,
         kind: ShaderKind,
     ) -> Result<Self, crate::Error> {
         Ok(Self::from_compiled(f, &source.build(kind)?))
