@@ -43,7 +43,7 @@ layout(std430, binding = 8) buffer RTH_P1 {
 
 //declare_push_consts(consts);
 
-shared uint shared_sum;
+shared float shared_sum[gl_WorkGroupSize.x];
 
 void main() {
     uint row = global_position_linear;

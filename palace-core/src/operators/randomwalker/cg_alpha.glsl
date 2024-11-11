@@ -27,7 +27,7 @@ layout(std430, binding = 4) buffer DTZ {
 
 //declare_push_consts(consts);
 
-shared uint shared_sum;
+shared float shared_sum[gl_WorkGroupSize.x];
 
 void main() {
     uint row = global_position_linear;

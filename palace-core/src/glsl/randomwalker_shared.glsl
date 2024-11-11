@@ -17,11 +17,6 @@ bool is_seed_value(float val) {
 }
 
 #define DOT_PRODUCT(x, y, row, num_rows, local_result, global_result) { \
-    if(local_index_subgroup_order == 0) {\
-        local_result = floatBitsToUint(0.0);\
-    }\
-    barrier();\
-\
     float val;\
     if(row < num_rows) {\
         val = x[row] * y[row];\
@@ -32,12 +27,24 @@ bool is_seed_value(float val) {
     float sg_agg = subgroupAdd(val);\
 \
     if(gl_SubgroupInvocationID == 0) {\
-        atomic_add_float(local_result, sg_agg);\
+        local_result[gl_SubgroupID] = sg_agg;\
+    }\
+\
+    uint s = 1;\
+\
+    while(s < gl_NumSubgroups) {\
+        barrier();\
+        if(gl_SubgroupInvocationID == 0) {\
+            if(((gl_SubgroupID & ((2*s)-1)) == 0) && (gl_SubgroupID + s < gl_NumSubgroups)) {\
+                local_result[gl_SubgroupID] += local_result[gl_SubgroupID+s];\
+            }\
+        }\
+        s *= 2;\
     }\
 \
     barrier();\
 \
     if(local_index_subgroup_order == 0) {\
-        atomic_add_float(global_result, uintBitsToFloat(shared_sum));\
+        atomic_add_float(global_result, local_result[0]);\
     }\
 }

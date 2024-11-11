@@ -41,7 +41,7 @@ layout(std430, binding = 8) buffer RTH {
     uint value;
 } rth;
 
-shared uint shared_sum;
+shared float shared_sum[gl_WorkGroupSize.x];
 
 //declare_push_consts(consts);
 
