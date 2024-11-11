@@ -3,6 +3,7 @@
 
 #include <atomic.glsl>
 #include <size_util.glsl>
+#include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) readonly buffer X {
     float values[NUM_ROWS];
@@ -18,32 +19,9 @@ layout(std430, binding = 2) buffer Result {
 
 //declare_push_consts(consts);
 
-shared uint shared_sum;
+shared float shared_sum[gl_WorkGroupSize.x];
 
 void main() {
     uint row = global_position_linear;
-
-    if(gl_LocalInvocationIndex == 0) {
-        shared_sum = floatBitsToUint(0.0);
-    }
-    barrier();
-
-    float val;
-    if(row < NUM_ROWS) {
-        val = x.values[row] * y.values[row];
-    } else {
-        val = 0.0;
-    }
-
-    float sg_agg = subgroupAdd(val);
-
-    if(gl_SubgroupInvocationID == 0) {
-        atomic_add_float(shared_sum, sg_agg);
-    }
-
-    barrier();
-
-    if(gl_LocalInvocationIndex == 0) {
-        atomic_add_float(result.value, uintBitsToFloat(shared_sum));
-    }
+    DOT_PRODUCT(x.values, y.values, row, NUM_ROWS, shared_sum, result.value);
 }
