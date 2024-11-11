@@ -1,7 +1,6 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
-#include <atomic.glsl>
 #include <size_util.glsl>
 #include <randomwalker_shared.glsl>
 
@@ -22,7 +21,7 @@ layout(std430, binding = 3) buffer Z {
 } z;
 
 layout(std430, binding = 4) buffer DTZ {
-    uint value;
+    float value[];
 } dtz;
 
 //declare_push_consts(consts);
@@ -39,6 +38,5 @@ void main() {
         z.values[row] = matprod;
     }
 
-    // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
-    DOT_PRODUCT(d.values, z.values, row, NUM_ROWS, shared_sum, dtz.value);
+    DOT_PRODUCT_INIT(d.values, z.values, row, NUM_ROWS, shared_sum, dtz.value);
 }

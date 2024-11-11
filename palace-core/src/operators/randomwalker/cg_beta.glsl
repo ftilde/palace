@@ -1,7 +1,6 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
-#include <atomic.glsl>
 #include <size_util.glsl>
 #include <randomwalker_shared.glsl>
 
@@ -38,7 +37,7 @@ layout(std430, binding = 7) buffer H {
 } h;
 
 layout(std430, binding = 8) buffer RTH_P1 {
-    uint value;
+    float value[];
 } rth_p1;
 
 //declare_push_consts(consts);
@@ -56,6 +55,5 @@ void main() {
         h.values[row] = c.values[row] * r.values[row];
     }
 
-    // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
-    DOT_PRODUCT(r.values, h.values, row, NUM_ROWS, shared_sum, rth_p1.value);
+    DOT_PRODUCT_INIT(r.values, h.values, row, NUM_ROWS, shared_sum, rth_p1.value);
 }

@@ -1,7 +1,6 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
-#include <atomic.glsl>
 #include <size_util.glsl>
 #include <randomwalker_shared.glsl>
 
@@ -14,7 +13,7 @@ layout(std430, binding = 1) readonly buffer Y {
 } y;
 
 layout(std430, binding = 2) buffer Result {
-    uint value;
+    float value[];
 } result;
 
 //declare_push_consts(consts);
@@ -23,5 +22,5 @@ shared float shared_sum[gl_WorkGroupSize.x];
 
 void main() {
     uint row = global_position_linear;
-    DOT_PRODUCT(x.values, y.values, row, NUM_ROWS, shared_sum, result.value);
+    DOT_PRODUCT_INIT(x.values, y.values, row, NUM_ROWS, shared_sum, result.value);
 }

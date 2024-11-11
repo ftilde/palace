@@ -16,7 +16,7 @@ bool is_seed_value(float val) {
     } \
 }
 
-#define DOT_PRODUCT(x, y, row, num_rows, local_result, global_result) { \
+#define DOT_PRODUCT_INIT(x, y, row, num_rows, local_result, global_result) { \
     float val;\
     if(row < num_rows) {\
         val = x[row] * y[row];\
@@ -45,6 +45,6 @@ bool is_seed_value(float val) {
     barrier();\
 \
     if(local_index_subgroup_order == 0) {\
-        atomic_add_float(global_result, local_result[0]);\
+        global_result[workgroup_id_linear] = local_result[0];\
     }\
 }

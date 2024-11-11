@@ -2,7 +2,6 @@
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 #include <size_util.glsl>
-#include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) readonly buffer MatValues {
@@ -38,7 +37,7 @@ layout(std430, binding = 7) buffer D {
 } d;
 
 layout(std430, binding = 8) buffer RTH {
-    uint value;
+    float value[];
 } rth;
 
 shared float shared_sum[gl_WorkGroupSize.x];
@@ -67,6 +66,5 @@ void main() {
         d.values[row] = h.values[row];
     }
 
-    // Note: DOT_PRODUCT includes a barrier() so z.values is visibile to the workgroup when read.
-    DOT_PRODUCT(r.values, h.values, row, NUM_ROWS, shared_sum, rth.value);
+    DOT_PRODUCT_INIT(r.values, h.values, row, NUM_ROWS, shared_sum, rth.value);
 }

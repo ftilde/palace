@@ -778,22 +778,9 @@ async fn conjugate_gradient<'req, 'inv>(
         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
     };
-    let srw_io_src = SrcBarrierInfo {
-        stage: vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::TRANSFER,
-        access: vk::AccessFlags2::SHADER_READ
-            | vk::AccessFlags2::SHADER_WRITE
-            | vk::AccessFlags2::TRANSFER_WRITE,
-    };
     let srw_dst = DstBarrierInfo {
         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-    };
-
-    let srw_io_dst = DstBarrierInfo {
-        stage: vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::TRANSFER,
-        access: vk::AccessFlags2::SHADER_READ
-            | vk::AccessFlags2::SHADER_WRITE
-            | vk::AccessFlags2::TRANSFER_WRITE,
     };
 
     //TODO
@@ -810,10 +797,17 @@ async fn conjugate_gradient<'req, 'inv>(
             GpuOnly,
         ))
     }
+
+    let sum_buffer_size = num_rows.div_ceil(
+        device
+            .physical_device_properties()
+            .limits
+            .max_compute_work_group_size[0] as usize,
+    );
     for _ in 0..4 {
         alloc_requests.push(device.storage.request_allocate_raw(
             device,
-            Layout::new::<f32>(),
+            Layout::array::<f32>(sum_buffer_size).unwrap(),
             flags,
             GpuOnly,
         ))
@@ -840,20 +834,18 @@ async fn conjugate_gradient<'req, 'inv>(
     //dbg!(download::<f32>(ctx, device, x).await);
     //dbg!(download::<f32>(ctx, device, b).await);
 
-    fill(device, &rth, 0.0);
-    fill(device, &dtz, 0.0);
-    ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
+    ctx.submit(device.barrier(srw_src, srw_dst)).await;
     cg_init(device, mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
+    dot_product_finish(ctx, device, &rth).await?;
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
-        ctx.submit(device.barrier(srw_io_src, srw_io_dst)).await;
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
         cg_alpha(device, mat, &d, &z, &dtz)?;
-        fill(device, &r_norm_sq_buf, 0.0);
-        fill(device, &rth_p1, 0.0);
+        dot_product_finish(ctx, device, &dtz).await?;
 
-        ctx.submit(device.barrier(srw_io_src, srw_dst)).await;
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
         cg_beta(
             device,
@@ -868,12 +860,14 @@ async fn conjugate_gradient<'req, 'inv>(
             &h,
             &rth_p1,
         )?;
+        dot_product_finish(ctx, device, &rth_p1).await?;
 
-        ctx.submit(device.barrier(srw_src, srw_io_dst)).await;
+        ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
         // read ||r_n||_2^2
         if iteration % cfg.residuum_check_period == 0 {
-            dot_product_add(device, &r, &r, &r_norm_sq_buf)?;
+            dot_product_init(device, &r, &r, &r_norm_sq_buf)?;
+            dot_product_finish(ctx, device, &r_norm_sq_buf).await?;
 
             // Make u (i.e., o_n) visible
             ctx.submit(device.barrier(
@@ -892,8 +886,6 @@ async fn conjugate_gradient<'req, 'inv>(
                 break;
             }
         }
-
-        fill(device, &dtz, 0.0);
 
         scale_and_sum_quotient(device, &rth_p1, &rth, &d, &h, &d)?;
 
@@ -945,18 +937,6 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
 //    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
 //    out
 //}
-
-fn fill(device: &DeviceContext, buf: &Allocation, value: f32) {
-    device.with_cmd_buffer(|cmd| unsafe {
-        cmd.functions().cmd_fill_buffer(
-            cmd.raw(),
-            buf.buffer,
-            0,
-            vk::WHOLE_SIZE,
-            f32::to_bits(value),
-        );
-    });
-}
 
 fn cg_init(
     device: &DeviceContext,
@@ -1067,7 +1047,66 @@ fn cg_beta(
     Ok(())
 }
 
-fn dot_product_add(
+async fn dot_product_finish<'req, 'inv>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    device: &DeviceContext,
+    x: &Allocation,
+) -> Result<(), crate::Error> {
+    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    struct PushConstantsStep {
+        stride: u32,
+    }
+
+    let x_info = x.gen_buffer_info();
+
+    let size = x_info.range;
+
+    let num_values = (size as usize / std::mem::size_of::<f32>()) as u32;
+
+    let pipeline = device.request_state(
+        RessourceId::new("dot_product_step").dependent_on(&num_values),
+        || {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("dot_product_step.glsl"))
+                    .define("NUM_VALUES", num_values)
+                    .push_const_block::<PushConstantsStep>(),
+            )
+            .local_size(LocalSizeConfig::Large)
+            .build(device)
+        },
+    )?;
+
+    let mut stride = 1u32;
+
+    while stride < num_values {
+        ctx.submit(device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+        ))
+        .await;
+
+        let descriptor_config = DescriptorConfig::new([&*x]);
+        device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = pipeline.bind(cmd);
+
+            pipeline.push_constant(PushConstantsStep { stride });
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(device, (num_values / stride) as _);
+        });
+
+        stride *= pipeline.local_size().x();
+    }
+
+    Ok(())
+}
+
+fn dot_product_init(
     device: &DeviceContext,
     x: &Allocation,
     y: &Allocation,
