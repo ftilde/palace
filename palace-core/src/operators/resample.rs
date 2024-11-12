@@ -179,8 +179,7 @@ declare_push_consts(consts);
 void main() {
     uint gID = global_position_linear;
 
-    uint[N] out_brick_pos = from_linear(gID, consts.mem_dim);
-#endif
+    uint[N] out_brick_pos = from_linear(gID, consts.chunk_dim_in);
 
     if(all(less_than(out_brick_pos, consts.mem_size_out))) {
         uint[N] global_pos = add(out_brick_pos, consts.out_begin);
