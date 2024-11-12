@@ -1,5 +1,6 @@
 import numpy as np
 import palace as pc
+import palace_util
 import argparse
 
 ram_size = 8 << 30
@@ -54,66 +55,10 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 
 gui_state = pc.GuiState(rt)
 
-# General pattern for renderable components:
-# component: size, events -> frame operator
-#
-# This is also the signature required for the first argument of window.run!
-def split(dim, fraction, render_first, render_last):
-    def inner(size, events):
-        splitter = pc.Splitter(size, 0.5, dim)
-
-        events_l, events_r = splitter.split_events(events)
-
-        frame_l = render_first(splitter.metadata_l().dimensions, events_l)
-        frame_r = render_last(splitter.metadata_r().dimensions, events_r)
-
-        return splitter.render(frame_l, frame_r)
-
-    return inner
-
-# Raycasting render component
-def render_raycast(vol, camera_state):
-    def inner(size, events):
-        events.act([
-            pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))),
-            pc.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
-        ]);
-
-        md = pc.TensorMetaData(size, size)
-        proj = camera_state.load().projection_mat(size)
-
-        eep = pc.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
-        conf = pc.RaycasterConfig()
-        frame = pc.raycast(vol, eep, raycaster_config.load(), tf)
-        frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
-
-        return frame
-    return inner
-
-# Slice render component
-def render_slice(vol, dim, slice_state):
-    def inner(size, events):
-        events.act([
-            pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
-            pc.OnMouseDrag(pc.MouseButton.Right, lambda pos, delta: slice_state.mutate(lambda s: s.scroll(delta[0]))),
-            pc.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
-        ]);
-
-        md = pc.TensorMetaData(size, size)
-
-        proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
-
-        frame = pc.render_slice(vol, md, proj)
-        frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
-
-        return frame
-    return inner
-
 # Top-level render component
 def render(size, events):
 
     # Volume Processing
-
     v = vol.create_lod(2.0)
     match processing.load():
         case "passthrough":
@@ -137,21 +82,14 @@ def render(size, events):
 
 
     # GUI stuff
-
-    def named_slider(name, state, min, max, logarithmic=False):
-        return pc.Horizontal([
-            pc.Slider(state, min, max, logarithmic),
-            pc.Label(name),
-        ])
-
     widgets = []
 
     widgets.append(pc.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]))
     match view.load():
         case "quad" | "raycast":
-            widgets.append(named_slider("FOV", camera_state.fov(), 10, 50))
-            widgets.append(named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 1.0, 10, logarithmic=True))
-            widgets.append(named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.01, 10, logarithmic=True))
+            widgets.append(palace_util.named_slider("FOV", camera_state.fov(), 10, 50))
+            widgets.append(palace_util.named_slider("LOD coarseness", raycaster_config.lod_coarseness(), 1.0, 10, logarithmic=True))
+            widgets.append(palace_util.named_slider("Oversampling", raycaster_config.oversampling_factor(), 0.01, 10, logarithmic=True))
             widgets.append(pc.ComboBox("Compositing", raycaster_config.compositing_mode(), ["MOP", "DVR"]))
             widgets.append(pc.ComboBox("Shading", raycaster_config.shading(), ["None", "Phong"]))
         case "x" | "y" | "z":
@@ -162,32 +100,30 @@ def render(size, events):
         case "passthrough":
             pass
         case "smooth":
-            widgets.append(named_slider("Smoothing std", smoothing_std, min_scale, max_scale, logarithmic=True))
+            widgets.append(palace_util.named_slider("Smoothing std", smoothing_std, min_scale, max_scale, logarithmic=True))
         case "vesselness":
-            widgets.append(named_slider("Min vessel rad", vesselness_rad_min, min_scale, max_scale, logarithmic=True))
-            widgets.append(named_slider("Max vessel rad", vesselness_rad_max, min_scale, max_scale, logarithmic=True))
-            widgets.append(named_slider("Vesselness steps", vesselness_steps, 1, 10))
+            widgets.append(palace_util.named_slider("Min vessel rad", vesselness_rad_min, min_scale, max_scale, logarithmic=True))
+            widgets.append(palace_util.named_slider("Max vessel rad", vesselness_rad_max, min_scale, max_scale, logarithmic=True))
+            widgets.append(palace_util.named_slider("Vesselness steps", vesselness_steps, 1, 10))
 
     widgets.append(pc.ComboBox("Apply Threshold", do_threshold, ["yes", "no"]))
     match do_threshold.load():
         case "yes":
-            widgets.append(named_slider("Threshold Value", threshold_val, 0.01, 10.0, logarithmic=True))
+            widgets.append(palace_util.named_slider("Threshold Value", threshold_val, 0.01, 10.0, logarithmic=True))
         case "no":
             pass
 
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     # Actual composition of the rendering
-    slice0 = render_slice(v, 0, slice_state0)
-    slice1 = render_slice(v, 1, slice_state1)
-    slice2 = render_slice(v, 2, slice_state2)
-    ray = render_raycast(v, camera_state)
+    slice0 = palace_util.render_slice(v, 0, slice_state0)
+    slice1 = palace_util.render_slice(v, 1, slice_state1)
+    slice2 = palace_util.render_slice(v, 2, slice_state2)
+    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
 
     match view.load():
         case "quad":
-            lower = split(pc.SplitDirection.Horizontal, 0.5, slice0, slice1)
-            upper = split(pc.SplitDirection.Horizontal, 0.5, ray, slice2)
-            frame = split(pc.SplitDirection.Vertical, 0.5, upper, lower)
+            frame = palace_util.quad(ray, slice0, slice1, slice2)
         case "raycast":
             frame = ray
         case "x":

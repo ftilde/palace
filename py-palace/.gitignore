@@ -1,3 +1,4 @@
 /target
 /venv
 /maturin_target
+__pycache__
