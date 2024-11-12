@@ -42,6 +42,8 @@ fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(abs, m)?)?;
     m.add_function(wrap_pyfunction!(neg, m)?)?;
     m.add_function(wrap_pyfunction!(cast, m)?)?;
+    m.add_function(wrap_pyfunction!(randomwalker, m)?)?;
+    m.add_function(wrap_pyfunction!(rasterize_seed_points, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<palace_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<palace_core::operators::splitter::SplitDirection>()?;

@@ -314,27 +314,21 @@ pub struct EmbeddedTensorOperator {
     pub embedding_data: PyTensorEmbeddingData,
 }
 
-impl TryFrom<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
-    type Error = PyErr;
-
-    fn try_from(t: CEmbeddedTensorOperator<DDyn, DType>) -> Result<Self, Self::Error> {
-        Ok(Self {
-            inner: t.inner.try_into()?,
+impl From<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
+    fn from(t: CEmbeddedTensorOperator<DDyn, DType>) -> Self {
+        Self {
+            inner: t.inner.into(),
             embedding_data: t.embedding_data.into(),
-        })
+        }
     }
 }
-impl<T: 'static> TryFrom<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>>
+impl<T: 'static> From<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>>
     for EmbeddedTensorOperator
 where
     DType: From<StaticElementType<T>>,
 {
-    type Error = PyErr;
-
-    fn try_from(
-        t: CEmbeddedTensorOperator<DDyn, StaticElementType<T>>,
-    ) -> Result<Self, Self::Error> {
-        CEmbeddedTensorOperator::<DDyn, DType>::from(t).try_into()
+    fn from(t: CEmbeddedTensorOperator<DDyn, StaticElementType<T>>) -> Self {
+        CEmbeddedTensorOperator::<DDyn, DType>::from(t).into()
     }
 }
 
