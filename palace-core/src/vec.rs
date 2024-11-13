@@ -550,7 +550,7 @@ mod py {
 
     impl<D: DynDimension, T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Vector<D, T> {
         fn into_py(self, py: Python<'_>) -> PyObject {
-            PyList::new(py, self.into_iter().map(|v| v.into_py(py))).into()
+            PyList::new_bound(py, self.into_iter().map(|v| v.into_py(py))).into()
         }
     }
 
@@ -570,7 +570,7 @@ mod py {
             store: Py<state_link::py::Store>,
         ) -> PyObject {
             let init = state_link::py::NodeHandleArray::new::<T>(inner, D::N, store);
-            PyCell::new(py, init).unwrap().to_object(py)
+            Py::new(py, init).unwrap().to_object(py)
         }
     }
 }

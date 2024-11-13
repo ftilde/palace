@@ -16,7 +16,7 @@ fn map_err(e: palace_core::Error) -> PyErr {
 }
 
 #[pymodule]
-fn palace(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     use crate::functions::*;
     use crate::types::*;
 

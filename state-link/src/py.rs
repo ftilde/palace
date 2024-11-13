@@ -79,7 +79,7 @@ impl NodeHandleF32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
 
-    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py(py);
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<f32>()?;
@@ -113,7 +113,7 @@ impl NodeHandleU32 {
     pub fn load(&self, py: Python) -> u32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
-    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py(py);
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<u32>()?;
@@ -147,7 +147,7 @@ impl NodeHandleString {
     pub fn load(&self, py: Python) -> String {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
-    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py(py);
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<String>()?;
@@ -189,7 +189,7 @@ impl PyState for f32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        PyCell::new(py, init).unwrap().to_object(py)
+        Py::new(py, init).unwrap().to_object(py)
     }
 }
 
@@ -199,7 +199,7 @@ impl PyState for u32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        PyCell::new(py, init).unwrap().to_object(py)
+        Py::new(py, init).unwrap().to_object(py)
     }
 }
 
@@ -209,14 +209,14 @@ impl PyState for String {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        PyCell::new(py, init).unwrap().to_object(py)
+        Py::new(py, init).unwrap().to_object(py)
     }
 }
 
 impl<const I: usize, T: PyState> PyState for [T; I] {
     fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
         let init = NodeHandleArray::new::<T>(inner, I, store);
-        PyCell::new(py, init).unwrap().to_object(py)
+        Py::new(py, init).unwrap().to_object(py)
     }
 }
 
@@ -338,14 +338,14 @@ impl NodeHandleArray {
         ))
     }
 
-    fn mutate(&self, py: Python, f: &pyo3::types::PyFunction) -> PyResult<()> {
+    fn mutate(&self, py: Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> PyResult<()> {
         let initial = self.load(py);
         let new_py = f.call1((initial,))?;
         let new = new_py.extract::<Vec<PyObject>>()?;
         self.write(py, new)
     }
 
-    fn map(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
         let val_py = self.load(py);
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<Vec<PyObject>>()?;

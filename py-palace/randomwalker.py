@@ -34,7 +34,7 @@ md = vol.inner.metadata
 ed = vol.embedding_data
 
 vol = pc.cast(vol, pc.ScalarType.F32)
-#vol = pc.mul(vol, 1.0/(1 << 16))
+vol = pc.mul(vol, 1.0/(1 << 16))
 seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
 
 if args.transfunc:

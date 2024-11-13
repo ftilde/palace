@@ -1,5 +1,5 @@
 use super::{core::RunTime, Events, TensorOperator};
-use numpy::PyArray0;
+use numpy::{PyArray0, PyArrayMethods};
 use palace_core::operators::gui as c;
 use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 
@@ -147,14 +147,14 @@ impl SliderVal {
 
     fn get(&self, py: Python) -> f64 {
         match self {
-            SliderVal::Array0(h) => unsafe { *h.as_ref(py).get(()).unwrap() },
+            SliderVal::Array0(h) => unsafe { *h.bind(py).get(()).unwrap() },
             SliderVal::StoreRefF32(h) => h.load(py) as f64,
             SliderVal::StoreRefU32(h) => h.load(py) as f64,
         }
     }
     fn set(&self, py: Python, v: f64) {
         match self {
-            SliderVal::Array0(h) => *unsafe { h.as_ref(py).get_mut(()).unwrap() } = v,
+            SliderVal::Array0(h) => *unsafe { h.bind(py).get_mut(()).unwrap() } = v,
             SliderVal::StoreRefF32(h) => h.write(py, v as f32).unwrap(),
             SliderVal::StoreRefU32(h) => h.write(py, v as u32).unwrap(),
         };

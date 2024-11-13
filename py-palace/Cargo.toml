@@ -8,12 +8,12 @@ name = "palace"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.19.1", features = ["extension-module"] }
+pyo3 = { version = "0.21", features = ["extension-module"] }
+numpy = "0.21"
+derive_more = "0.99"
 palace-core = { path = "../palace-core" }
 palace-vvd = { path = "../palace-vvd" }
 palace-volume = { path = "../palace-volume" }
 palace-winit = { path = "../palace-winit" }
-derive_more = "0.99"
-numpy = "0.19.0"
 state-link = { path = "../state-link" }
 id = { path = "../id" }

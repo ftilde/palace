@@ -199,12 +199,12 @@ mod py {
         }
 
         #[getter]
-        fn dimensions<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
-            PyArray1::from_vec(py, self.dimensions.clone())
+        fn dimensions<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
+            PyArray1::from_vec_bound(py, self.dimensions.clone())
         }
         #[getter]
-        fn chunk_size<'a>(&self, py: Python<'a>) -> &'a PyArray1<u32> {
-            PyArray1::from_vec(py, self.chunk_size.clone())
+        fn chunk_size<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
+            PyArray1::from_vec_bound(py, self.chunk_size.clone())
         }
     }
 
@@ -262,21 +262,21 @@ mod py {
         }
 
         #[getter]
-        fn get_spacing<'a>(&self, py: Python<'a>) -> &'a PyArray1<f32> {
-            PyArray1::from_vec(py, self.spacing.clone())
+        fn get_spacing<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<f32>> {
+            PyArray1::from_vec_bound(py, self.spacing.clone())
         }
 
         #[setter]
-        fn set_spacing(&mut self, value: &PyArray1<f32>) -> PyResult<()> {
-            if self.spacing.len() != value.len() {
+        fn set_spacing(&mut self, value: numpy::PyReadonlyArray1<f32>) -> PyResult<()> {
+            if self.spacing.len() != value.len()? {
                 return Err(PyErr::new::<PyException, _>(format!(
                     "Expected spacing vec of len {}, but got one of len {}",
                     self.spacing.len(),
-                    value.len(),
+                    value.len()?,
                 )));
             }
 
-            self.spacing = value.to_vec()?;
+            self.spacing = value.as_slice()?.to_vec();
             Ok(())
         }
     }

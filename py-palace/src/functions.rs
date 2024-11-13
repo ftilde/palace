@@ -171,7 +171,7 @@ pub fn separable_convolution<'py>(
     })
 }
 #[pyfunction]
-pub fn from_numpy(a: &PyUntypedArray) -> PyResult<TensorOperator> {
+pub fn from_numpy(a: &Bound<PyUntypedArray>) -> PyResult<TensorOperator> {
     Ok(tensor_from_numpy(a)?.into())
 }
 

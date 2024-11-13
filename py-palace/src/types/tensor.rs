@@ -1,4 +1,5 @@
 use id::Identify;
+use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, StaticElementType};
 use palace_core::jit::{self, JitTensorOperator};
@@ -241,9 +242,9 @@ impl TensorOperator {
 }
 
 fn try_tensor_from_numpy<T: Element + numpy::Element + id::Identify>(
-    c: &numpy::PyUntypedArray,
+    c: &Bound<numpy::PyUntypedArray>,
 ) -> PyResult<CTensorOperator<DDyn, DType>> {
-    let arr: &numpy::PyArrayDyn<T> = c.downcast()?;
+    let arr: &Bound<numpy::PyArrayDyn<T>> = c.downcast()?;
     let dim = Vector::<DDyn, usize>::try_from_slice(arr.shape()).unwrap();
 
     let values = if arr.is_contiguous() {
@@ -259,7 +260,9 @@ fn try_tensor_from_numpy<T: Element + numpy::Element + id::Identify>(
     let op = CTensorOperator::from_vec(dim, values).unwrap();
     Ok(op.into())
 }
-pub fn tensor_from_numpy(c: &numpy::PyUntypedArray) -> PyResult<CTensorOperator<DDyn, DType>> {
+pub fn tensor_from_numpy(
+    c: &Bound<numpy::PyUntypedArray>,
+) -> PyResult<CTensorOperator<DDyn, DType>> {
     let fns = [
         try_tensor_from_numpy::<i8>,
         try_tensor_from_numpy::<u8>,
@@ -284,7 +287,7 @@ pub fn tensor_from_numpy(c: &numpy::PyUntypedArray) -> PyResult<CTensorOperator<
 
 #[derive(FromPyObject)]
 pub enum MaybeConstTensorOperator<'a> {
-    Numpy(&'a numpy::PyUntypedArray),
+    Numpy(Bound<'a, numpy::PyUntypedArray>),
     Operator(TensorOperator),
 }
 
@@ -293,7 +296,7 @@ impl<'a> TryInto<CTensorOperator<DDyn, DType>> for MaybeConstTensorOperator<'a> 
 
     fn try_into(self) -> Result<CTensorOperator<DDyn, DType>, Self::Error> {
         match self {
-            MaybeConstTensorOperator::Numpy(c) => tensor_from_numpy(c),
+            MaybeConstTensorOperator::Numpy(c) => tensor_from_numpy(&c),
             MaybeConstTensorOperator::Operator(o) => Ok(o.into_core()),
         }
     }

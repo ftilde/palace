@@ -253,7 +253,8 @@ mod py {
     impl<'source, D: Dimension, T: Copy + numpy::Element> FromPyObject<'source> for Matrix<D, T> {
         fn extract(ob: &'source PyAny) -> PyResult<Self> {
             let np = ob.extract::<numpy::borrow::PyReadonlyArray2<T>>()?;
-            let shape = np.shape();
+            let arr = np.as_array();
+            let shape = arr.shape();
             let n = D::N;
             if shape != [n, n] {
                 let s0 = shape[0];
@@ -268,7 +269,7 @@ mod py {
 
     impl<D: Dimension, T: Copy + numpy::Element> IntoPy<PyObject> for Matrix<D, T> {
         fn into_py(self, py: Python<'_>) -> PyObject {
-            numpy::PyArray2::from_owned_array(
+            numpy::PyArray2::from_owned_array_bound(
                 py,
                 numpy::ndarray::Array::from_shape_fn((4, 4), |(i, j)| self.at(i, j).clone()),
             )

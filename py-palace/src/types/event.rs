@@ -21,16 +21,16 @@ impl Events {
                     Behaviour::OnMouseDrag(b) => e.chain(c::OnMouseDrag(b.0.into(), |p, d| {
                         let p = [p.y(), p.x()];
                         let d = [d.y(), d.x()];
-                        err = b.1.call(py, (p, d), None).err();
+                        err = b.1.call_bound(py, (p, d), None).err();
                     })),
                     Behaviour::OnMouseClick(b) => e.chain(c::OnMouseClick(b.0.into(), |p| {
                         let p = [p.y(), p.x()];
-                        err = b.1.call(py, (p,), None).err();
+                        err = b.1.call_bound(py, (p,), None).err();
                     })),
                     Behaviour::OnWheelMove(b) => e.chain(c::OnWheelMove(|d, s| {
                         if let Some(m_state) = &s.mouse_state {
                             let pos = m_state.pos.map(|v| v as f32);
-                            err = b.0.call(py, (d, [pos.y(), pos.x()]), None).err();
+                            err = b.0.call_bound(py, (d, [pos.y(), pos.x()]), None).err();
                         }
                     })),
                     Behaviour::OnKeyPress(b) => e.chain(c::OnKeyPress(b.0, || {

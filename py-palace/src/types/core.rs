@@ -32,7 +32,7 @@ impl RunTime {
             }
             .into()
         }))
-        .map(|v| numpy::PyArray::from_owned_array(py, v).into_py(py))
+        .map(|v| numpy::PyArray::from_owned_array_bound(py, v).into_py(py))
     }
 }
 
@@ -117,7 +117,7 @@ impl RunTime {
 
     fn run_with_window(
         &mut self,
-        gen_frame: &pyo3::types::PyFunction,
+        gen_frame: &Bound<pyo3::types::PyFunction>,
         timeout_ms: u64,
     ) -> PyResult<()> {
         crate::map_result(palace_winit::run_with_window(
