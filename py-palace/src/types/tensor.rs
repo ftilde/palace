@@ -399,22 +399,60 @@ impl EmbeddedTensorOperator {
 
 #[gen_stub_pyclass_enum]
 #[derive(FromPyObject, Clone)]
-pub enum MaybeEmbeddedTensorOperator {
+pub enum MaybeEmbeddedTensorOperatorArg {
     Not(TensorOperator),
     Embedded(EmbeddedTensorOperator),
+    Maybe(MaybeEmbeddedTensorOperator),
+}
+
+impl MaybeEmbeddedTensorOperatorArg {
+    pub fn unpack(self) -> MaybeEmbeddedTensorOperator {
+        match self {
+            MaybeEmbeddedTensorOperatorArg::Not(i) => MaybeEmbeddedTensorOperator::Not { i },
+            MaybeEmbeddedTensorOperatorArg::Embedded(e) => {
+                MaybeEmbeddedTensorOperator::Embedded { e }
+            }
+            MaybeEmbeddedTensorOperatorArg::Maybe(e) => e,
+        }
+    }
+}
+
+impl From<MaybeEmbeddedTensorOperatorArg> for MaybeEmbeddedTensorOperator {
+    fn from(value: MaybeEmbeddedTensorOperatorArg) -> Self {
+        value.unpack()
+    }
+}
+
+#[gen_stub_pyclass_enum]
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub enum MaybeEmbeddedTensorOperator {
+    Not { i: TensorOperator },
+    Embedded { e: EmbeddedTensorOperator },
+}
+
+//#[gen_stub_pymethods] results in internal error: entered unreachable code
+#[pymethods]
+impl MaybeEmbeddedTensorOperator {
+    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
+        match self {
+            MaybeEmbeddedTensorOperator::Not { i } => i.embedded(embedding_data),
+            MaybeEmbeddedTensorOperator::Embedded { e } => e.clone(),
+        }
+    }
 }
 
 impl MaybeEmbeddedTensorOperator {
     pub fn inner(&self) -> &TensorOperator {
         match self {
-            MaybeEmbeddedTensorOperator::Not(i) => i,
-            MaybeEmbeddedTensorOperator::Embedded(e) => &e.inner,
+            MaybeEmbeddedTensorOperator::Not { i } => i,
+            MaybeEmbeddedTensorOperator::Embedded { e } => &e.inner,
         }
     }
     pub fn into_inner(self) -> TensorOperator {
         match self {
-            MaybeEmbeddedTensorOperator::Not(i) => i,
-            MaybeEmbeddedTensorOperator::Embedded(e) => e.inner,
+            MaybeEmbeddedTensorOperator::Not { i } => i,
+            MaybeEmbeddedTensorOperator::Embedded { e } => e.inner,
         }
     }
     pub fn try_map_inner(
@@ -423,19 +461,19 @@ impl MaybeEmbeddedTensorOperator {
         f: impl FnOnce(CTensorOperator<DDyn, DType>) -> PyResult<CTensorOperator<DDyn, DType>>,
     ) -> PyResult<PyObject> {
         Ok(match self {
-            MaybeEmbeddedTensorOperator::Not(v) => {
-                let v: CTensorOperator<DDyn, DType> = v.into_core();
+            MaybeEmbeddedTensorOperator::Not { i } => {
+                let v: CTensorOperator<DDyn, DType> = i.into_core();
                 let v = f(v)?;
                 let v: TensorOperator = v.into();
                 v.into_py(py)
             }
-            MaybeEmbeddedTensorOperator::Embedded(orig) => {
-                let v: CTensorOperator<DDyn, DType> = orig.inner.into_core();
+            MaybeEmbeddedTensorOperator::Embedded { e } => {
+                let v: CTensorOperator<DDyn, DType> = e.inner.into_core();
                 let v = f(v)?;
                 let v: TensorOperator = v.into();
                 EmbeddedTensorOperator {
                     inner: v,
-                    embedding_data: orig.embedding_data,
+                    embedding_data: e.embedding_data,
                 }
                 .into_py(py)
             }
@@ -444,25 +482,25 @@ impl MaybeEmbeddedTensorOperator {
 
     pub fn try_map_inner_jit(
         self,
-        py: Python,
         f: impl FnOnce(jit::JitTensorOperator<DDyn>) -> PyResult<jit::JitTensorOperator<DDyn>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<MaybeEmbeddedTensorOperator> {
         Ok(match self {
-            MaybeEmbeddedTensorOperator::Not(v) => {
-                let v = v.into_jit();
+            MaybeEmbeddedTensorOperator::Not { i } => {
+                let v = i.into_jit();
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
-                v.into_py(py)
+                MaybeEmbeddedTensorOperator::Not { i: v }
             }
-            MaybeEmbeddedTensorOperator::Embedded(orig) => {
-                let v = orig.inner.into_jit();
+            MaybeEmbeddedTensorOperator::Embedded { e } => {
+                let v = e.inner.into_jit();
                 let v = f(v)?;
                 let v: TensorOperator = v.try_into()?;
-                EmbeddedTensorOperator {
-                    inner: v,
-                    embedding_data: orig.embedding_data,
+                MaybeEmbeddedTensorOperator::Embedded {
+                    e: EmbeddedTensorOperator {
+                        inner: v,
+                        embedding_data: e.embedding_data,
+                    },
                 }
-                .into_py(py)
             }
         })
     }

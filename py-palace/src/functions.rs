@@ -14,9 +14,10 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
 #[pyfunction]
 pub fn rechunk(
     py: Python,
-    tensor: MaybeEmbeddedTensorOperator,
+    tensor: MaybeEmbeddedTensorOperatorArg,
     size: Vec<ChunkSize>,
 ) -> PyResult<PyObject> {
+    let tensor = tensor.unpack();
     if tensor.inner().nd() != size.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
             "Chunk size must be {}-dimensional to fit tensor",
@@ -33,22 +34,28 @@ pub fn rechunk(
     )
 }
 
-fn jit_unary(py: Python, op: UnaryOp, vol: JitArgument) -> PyResult<PyObject> {
-    vol.try_map_inner_jit(py, |vol: JitTensorOperator<DDyn>| {
+fn jit_unary(op: UnaryOp, vol: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    vol.try_map_inner_jit(|vol: JitTensorOperator<DDyn>| {
         Ok(crate::map_result(JitTensorOperator::<DDyn>::unary_op(op, vol))?.into())
     })
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn abs(py: Python, vol: JitArgument) -> PyResult<PyObject> {
-    jit_unary(py, UnaryOp::Abs, vol)
+pub fn abs(vol: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_unary(UnaryOp::Abs, vol)
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn neg(py: Python, vol: JitArgument) -> PyResult<PyObject> {
-    jit_unary(py, UnaryOp::Neg, vol)
+pub fn neg(vol: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_unary(UnaryOp::Neg, vol)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn index(vol: JitArgument, i: u32) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_unary(UnaryOp::Index(i), vol)
 }
 
 #[gen_stub_pyclass_enum]
@@ -60,88 +67,93 @@ pub enum MaybeScalarDType {
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn cast(py: Python, vol: JitArgument, to: MaybeScalarDType) -> PyResult<PyObject> {
+pub fn cast(vol: JitArgument, to: MaybeScalarDType) -> PyResult<MaybeEmbeddedTensorOperator> {
     let to = match to {
         MaybeScalarDType::Scalar(s) => DType::scalar(s),
         MaybeScalarDType::DType(d) => d,
     };
-    jit_unary(py, UnaryOp::Cast(to), vol)
+    jit_unary(UnaryOp::Cast(to), vol)
 }
 
 #[gen_stub_pyclass_enum]
 #[derive(FromPyObject, Clone)]
 pub enum JitArgument {
-    Tensor(MaybeEmbeddedTensorOperator),
+    Tensor(MaybeEmbeddedTensorOperatorArg),
     Const(f32),
 }
 
 impl JitArgument {
     pub fn try_map_inner_jit(
         self,
-        py: Python,
         f: impl FnOnce(jit::JitTensorOperator<DDyn>) -> PyResult<jit::JitTensorOperator<DDyn>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<MaybeEmbeddedTensorOperator> {
         Ok(match self {
-            JitArgument::Tensor(t) => t.try_map_inner_jit(py, f)?,
+            JitArgument::Tensor(t) => t.unpack().try_map_inner_jit(f)?,
             JitArgument::Const(c) => {
                 let jit_op = c.into();
                 let v = f(jit_op)?;
                 let v: TensorOperator = v.try_into()?;
-                v.into_py(py)
+                MaybeEmbeddedTensorOperator::Not { i: v }
             }
         })
     }
     pub fn into_jit(self) -> jit::JitTensorOperator<DDyn> {
         match self {
-            JitArgument::Tensor(t) => t.into_inner().into_jit(),
+            JitArgument::Tensor(t) => t.unpack().into_inner().into_jit(),
             JitArgument::Const(c) => c.into(),
         }
     }
 }
 
-fn jit_binary(py: Python, op: BinOp, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
-    v1.try_map_inner_jit(py, |v1: JitTensorOperator<DDyn>| {
+fn jit_binary(
+    op: BinOp,
+    v1: JitArgument,
+    v2: JitArgument,
+) -> PyResult<MaybeEmbeddedTensorOperator> {
+    v1.try_map_inner_jit(|v1: JitTensorOperator<DDyn>| {
         Ok(crate::map_result(JitTensorOperator::<DDyn>::bin_op(op, v1, v2.into_jit()))?.into())
     })
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn add(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
-    jit_binary(py, BinOp::Add, v1, v2)
+pub fn add(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Add, v1, v2)
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn mul(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
-    jit_binary(py, BinOp::Mul, v1, v2)
+pub fn mul(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Mul, v1, v2)
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn max(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
-    jit_binary(py, BinOp::Max, v1, v2)
+pub fn max(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Max, v1, v2)
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn threshold(
     py: Python,
-    vol: MaybeEmbeddedTensorOperator,
+    vol: MaybeEmbeddedTensorOperatorArg,
     threshold: f32,
 ) -> PyResult<PyObject> {
-    vol.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
-        Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
-    })
+    vol.unpack()
+        .try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
+            Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
+        })
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
-    tensor: MaybeEmbeddedTensorOperator,
+    tensor: MaybeEmbeddedTensorOperatorArg,
     kernels: Vec<MaybeConstTensorOperator>,
 ) -> PyResult<PyObject> {
+    let tensor = tensor.unpack();
     if tensor.inner().nd() != kernels.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
             "Expected {} kernels for tensor, but got {}",
@@ -274,8 +286,8 @@ pub fn render_slice(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
-    let vol = vol.into_inner().into_core();
+pub fn mean(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+    let vol = vol.unpack().into_inner().into_core();
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
@@ -336,11 +348,11 @@ pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
 #[pyfunction]
 pub fn apply_tf(
     py: Python,
-    input: MaybeEmbeddedTensorOperator,
+    input: MaybeEmbeddedTensorOperatorArg,
     tf: TransFuncOperator,
 ) -> PyResult<PyObject> {
     let tf = tf.try_into()?;
-    input.try_map_inner(py, |input| {
+    input.unpack().try_map_inner(py, |input| {
         Ok(palace_core::operators::volume_gpu::apply_tf::<DDyn>(input.try_into()?, tf).into())
     })
 }
@@ -354,11 +366,12 @@ pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn randomwalker_weights(
-    input: MaybeEmbeddedTensorOperator,
+    input: MaybeEmbeddedTensorOperatorArg,
     min_edge_weight: f32,
     beta: f32,
 ) -> PyResult<TensorOperator> {
     let input = input
+        .unpack()
         .into_inner()
         .try_into_core_static::<D3>()?
         .try_into()?;
@@ -378,10 +391,10 @@ pub fn randomwalker_weights(
 pub fn randomwalker(
     py: Python,
     weights: TensorOperator,
-    seeds: MaybeEmbeddedTensorOperator,
+    seeds: MaybeEmbeddedTensorOperatorArg,
 ) -> PyResult<PyObject> {
     let weights = weights.try_into_core_static::<D4>()?.try_into()?;
-    seeds.try_map_inner(py, |seeds| {
+    seeds.unpack().try_map_inner(py, |seeds| {
         Ok(palace_core::operators::randomwalker::random_walker_inner(
             weights,
             try_into_static_err(seeds)?.try_into()?,
@@ -413,11 +426,3 @@ pub fn rasterize_seed_points(
         .try_into()?;
     Ok(res.into())
 }
-
-//pub fn randomwalker(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
-//pub fn random_walker(
-//    tensor: MaybeEmbeddedTensorOperator,
-//    seeds: TensorOperato,
-//    weight_function: WeightFunction,
-//    cfg: SolverConfig,
-//) -> TensorOperator<D3, StaticElementType<f32>> {

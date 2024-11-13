@@ -10,7 +10,7 @@ use palace_core::{
 use pyo3::{exceptions::PyException, prelude::*};
 use pyo3_stub_gen::derive::gen_stub_pyclass;
 
-use super::{Events, MaybeEmbeddedTensorOperator, ScalarOperator, TensorOperator};
+use super::{Events, MaybeEmbeddedTensorOperatorArg, ScalarOperator, TensorOperator};
 
 #[gen_stub_pyclass]
 #[pyclass(unsendable)]
@@ -63,10 +63,10 @@ impl RunTime {
     fn resolve(
         &mut self,
         py: Python,
-        v: MaybeEmbeddedTensorOperator,
+        v: MaybeEmbeddedTensorOperatorArg,
         pos: Vec<u32>,
     ) -> PyResult<PyObject> {
-        let v = v.into_inner();
+        let v = v.unpack().into_inner();
         let op: palace_core::operators::tensor::TensorOperator<DDyn, DType> = v.try_into()?;
         if op.dim().n() != pos.len() {
             return Err(PyErr::new::<PyException, _>(format!(

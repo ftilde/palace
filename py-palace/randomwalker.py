@@ -57,6 +57,7 @@ gui_state = pc.GuiState(rt)
 
 def render(size, events):
     weights = pc.randomwalker_weights(vol, min_edge_weight.load(), beta.load())
+    #v = pc.index(weights.unfold_into_vec_dtype(), 0).embedded(ed)
     v = pc.randomwalker(weights, seeds)
     v = v.create_lod(2.0)
 

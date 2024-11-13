@@ -170,7 +170,7 @@ pub use py::TensorMetaData as PyTensorMetaData;
 
 #[cfg(feature = "python")]
 mod py {
-    use numpy::PyArray1;
+    use numpy::{PyArray1, PyArrayMethods};
     use pyo3::{exceptions::PyException, prelude::*};
 
     use super::*;
@@ -183,6 +183,7 @@ mod py {
         pub chunk_size: Vec<u32>,
     }
 
+    #[pyo3_stub_gen::derive::gen_stub_pymethods]
     #[pymethods]
     impl TensorMetaData {
         #[new]
@@ -256,6 +257,7 @@ mod py {
         spacing: Vec<f32>,
     }
 
+    #[pyo3_stub_gen::derive::gen_stub_pymethods]
     #[pymethods]
     impl TensorEmbeddingData {
         #[new]
@@ -269,7 +271,7 @@ mod py {
         }
 
         #[setter]
-        fn set_spacing(&mut self, value: numpy::PyReadonlyArray1<f32>) -> PyResult<()> {
+        fn set_spacing(&mut self, value: Bound<numpy::PyArray1<f32>>) -> PyResult<()> {
             if self.spacing.len() != value.len()? {
                 return Err(PyErr::new::<PyException, _>(format!(
                     "Expected spacing vec of len {}, but got one of len {}",
@@ -278,7 +280,7 @@ mod py {
                 )));
             }
 
-            self.spacing = value.as_slice()?.to_vec();
+            self.spacing = value.to_vec()?;
             Ok(())
         }
     }
