@@ -131,6 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ball.into(),
                         seeds.inner,
                         operators::randomwalker::WeightFunction::Grady { beta: 1000.0 },
+                        1e-6,
                         Default::default(),
                     )
                     .embedded(Default::default())

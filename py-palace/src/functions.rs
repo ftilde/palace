@@ -357,6 +357,7 @@ pub fn randomwalker(
     py: Python,
     input: MaybeEmbeddedTensorOperator,
     seeds: TensorOperator,
+    min_edge_weight: f32,
     beta: f32,
 ) -> PyResult<PyObject> {
     let seeds = seeds.try_into_core_static::<D3>()?.try_into()?;
@@ -365,6 +366,7 @@ pub fn randomwalker(
             try_into_static_err(input)?.try_into()?,
             seeds,
             palace_core::operators::randomwalker::WeightFunction::Grady { beta },
+            min_edge_weight,
             Default::default(),
         )
         .into_dyn()

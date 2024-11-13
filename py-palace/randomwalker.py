@@ -51,17 +51,19 @@ camera_state = pc.CameraState.for_volume(md, ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
 
 beta = store.store_primitive(100.0)
+min_edge_weight = store.store_primitive(1e-6)
 
 gui_state = pc.GuiState(rt)
 
 def render(size, events):
-    v = pc.randomwalker(vol, seeds.inner, beta.load())
+    v = pc.randomwalker(vol, seeds.inner, min_edge_weight.load(), beta.load())
     v = v.create_lod(2.0)
 
     # GUI stuff
     widgets = []
 
     widgets.append(palace_util.named_slider("beta", beta, 0.01, 1000, logarithmic=True))
+    widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
     gui = gui_state.setup(events, pc.Vertical(widgets))
 

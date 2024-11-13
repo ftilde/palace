@@ -200,6 +200,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
 pub fn random_walker_weights(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     weight_function: WeightFunction,
+    min_edge_weight: f32,
 ) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
     assert_eq!(
         tensor.metadata.dimensions.raw(),
@@ -217,6 +218,7 @@ pub fn random_walker_weights(
     TensorOperator::unbatched(
         OperatorDescriptor::new("random_walker_weights")
             .dependent_on(&tensor)
+            .dependent_on_data(&min_edge_weight)
             .dependent_on_data(&weight_function),
         Default::default(),
         out_md,
@@ -229,6 +231,7 @@ pub fn random_walker_weights(
 
                 let push_constants = DynPushConstants::new()
                     .vec::<u32>(nd, "tensor_dim_in")
+                    .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("grady_beta");
 
                 let pipeline = device.request_state(
@@ -270,6 +273,7 @@ pub fn random_walker_weights(
 
                     pipeline.push_constant_dyn(&push_constants, |consts| {
                         consts.vec(&in_size.raw())?;
+                        consts.scalar(min_edge_weight)?;
                         consts.scalar(match weight_function {
                             WeightFunction::Grady { beta } => beta,
                         })?;
@@ -408,9 +412,10 @@ pub fn random_walker(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     seeds: TensorOperator<D3, StaticElementType<f32>>,
     weight_function: WeightFunction,
+    min_edge_weight: f32,
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
-    let weights = random_walker_weights(tensor, weight_function);
+    let weights = random_walker_weights(tensor, weight_function, min_edge_weight);
     random_walker_inner(weights, seeds, cfg)
 }
 

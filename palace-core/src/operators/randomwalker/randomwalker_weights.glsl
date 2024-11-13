@@ -39,9 +39,7 @@ void main() {
 
             float weight = edge_weight(current_linear, neighbor_linear);
 
-            //TODO: make configurable
-            float min_edge_weight = 0.00001;
-            weight = max(weight, min_edge_weight);
+            weight = max(weight, consts.min_edge_weight);
 
             weights.values[current_linear][dim] = weight;
         } else {
