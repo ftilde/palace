@@ -8,9 +8,11 @@ use palace_core::{
     vec::Vector,
 };
 use pyo3::{exceptions::PyException, prelude::*};
+use pyo3_stub_gen::derive::gen_stub_pyclass;
 
 use super::{Events, MaybeEmbeddedTensorOperator, ScalarOperator, TensorOperator};
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct RunTime {
     pub inner: palace_core::runtime::RunTime,

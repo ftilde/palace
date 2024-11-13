@@ -175,6 +175,7 @@ mod py {
 
     use super::*;
 
+    #[pyo3_stub_gen::derive::gen_stub_pyclass]
     #[pyclass(unsendable)]
     #[derive(Clone, Debug)]
     pub struct TensorMetaData {
@@ -248,6 +249,7 @@ mod py {
         }
     }
 
+    #[pyo3_stub_gen::derive::gen_stub_pyclass]
     #[pyclass(unsendable)]
     #[derive(Clone, Debug)]
     pub struct TensorEmbeddingData {

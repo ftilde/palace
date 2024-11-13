@@ -12,7 +12,9 @@ use palace_core::operators::scalar::ScalarOperator as CScalarOperator;
 use palace_core::operators::tensor::EmbeddedTensorOperator as CEmbeddedTensorOperator;
 use palace_core::operators::tensor::LODTensorOperator as CLODTensorOperator;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum};
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct ScalarOperator {
     pub inner: Box<dyn std::any::Any>,
@@ -100,6 +102,7 @@ enum MaybeJitTensorOperator {
     Tensor(CTensorOperator<DDyn, DType>),
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct TensorOperator {
@@ -291,6 +294,15 @@ pub enum MaybeConstTensorOperator<'a> {
     Operator(TensorOperator),
 }
 
+impl<'a> pyo3_stub_gen::PyStubType for MaybeConstTensorOperator<'a> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        pyo3_stub_gen::TypeInfo {
+            name: format!("MaybeConstTensorOperator"),
+            import: Default::default(),
+        }
+    }
+}
+
 impl<'a> TryInto<CTensorOperator<DDyn, DType>> for MaybeConstTensorOperator<'a> {
     type Error = PyErr;
 
@@ -308,6 +320,7 @@ impl MaybeConstTensorOperator<'_> {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct EmbeddedTensorOperator {
@@ -382,6 +395,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(FromPyObject, Clone)]
 pub enum MaybeEmbeddedTensorOperator {
     Not(TensorOperator),
@@ -452,6 +466,7 @@ impl MaybeEmbeddedTensorOperator {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct LODTensorOperator {

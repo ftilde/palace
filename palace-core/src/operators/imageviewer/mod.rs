@@ -28,8 +28,11 @@ use crate::{
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3_stub_gen::derive::*;
 
 #[derive(Clone, state_link::State, Identify)]
+#[cfg_attr(feature = "python", gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct ImageViewerState {
     #[pyo3(get, set)]

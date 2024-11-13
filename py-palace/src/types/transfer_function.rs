@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 
 pub use palace_core::operators::raycaster::TransFuncOperator as CTransFuncOperator;
 
+#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct TransFuncOperator {

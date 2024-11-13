@@ -8,7 +8,9 @@ use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use palace_core::{dim::*, jit};
 use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn rechunk(
     py: Python,
@@ -37,22 +39,26 @@ fn jit_unary(py: Python, op: UnaryOp, vol: JitArgument) -> PyResult<PyObject> {
     })
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn abs(py: Python, vol: JitArgument) -> PyResult<PyObject> {
     jit_unary(py, UnaryOp::Abs, vol)
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn neg(py: Python, vol: JitArgument) -> PyResult<PyObject> {
     jit_unary(py, UnaryOp::Neg, vol)
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(FromPyObject)]
 pub enum MaybeScalarDType {
     Scalar(ScalarType),
     DType(DType),
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn cast(py: Python, vol: JitArgument, to: MaybeScalarDType) -> PyResult<PyObject> {
     let to = match to {
@@ -62,6 +68,7 @@ pub fn cast(py: Python, vol: JitArgument, to: MaybeScalarDType) -> PyResult<PyOb
     jit_unary(py, UnaryOp::Cast(to), vol)
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(FromPyObject, Clone)]
 pub enum JitArgument {
     Tensor(MaybeEmbeddedTensorOperator),
@@ -98,21 +105,25 @@ fn jit_binary(py: Python, op: BinOp, v1: JitArgument, v2: JitArgument) -> PyResu
     })
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn add(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
     jit_binary(py, BinOp::Add, v1, v2)
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn mul(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
     jit_binary(py, BinOp::Mul, v1, v2)
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn max(py: Python, v1: JitArgument, v2: JitArgument) -> PyResult<PyObject> {
     jit_binary(py, BinOp::Max, v1, v2)
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn threshold(
     py: Python,
@@ -124,6 +135,7 @@ pub fn threshold(
     })
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
@@ -170,12 +182,16 @@ pub fn separable_convolution<'py>(
         )
     })
 }
+
+//#[gen_stub_pyfunction] TODO: Not working because PyUntypedArray does not impl the required type
 #[pyfunction]
 pub fn from_numpy(a: &Bound<PyUntypedArray>) -> PyResult<TensorOperator> {
     Ok(tensor_from_numpy(a)?.into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
+#[gen_stub_pyfunction]
 pub fn vesselness(
     vol: EmbeddedTensorOperator,
     min_scale: f32,
@@ -192,6 +208,7 @@ pub fn vesselness(
     .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn entry_exit_points(
     input_md: PyTensorMetaData,
@@ -209,6 +226,7 @@ pub fn entry_exit_points(
     .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn raycast(
     vol: LODTensorOperator,
@@ -232,6 +250,7 @@ pub fn raycast(
     .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn render_slice(
     input: LODTensorOperator,
@@ -253,6 +272,7 @@ pub fn render_slice(
     .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
     let vol = vol.into_inner().into_core();
@@ -261,6 +281,7 @@ pub fn mean(vol: MaybeEmbeddedTensorOperator) -> PyResult<ScalarOperator> {
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn gauss_kernel(stddev: f32) -> TensorOperator {
     palace_core::operators::kernels::gauss(stddev)
@@ -268,6 +289,7 @@ pub fn gauss_kernel(stddev: f32) -> TensorOperator {
         .into()
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn open_volume(
     path: std::path::PathBuf,
@@ -286,6 +308,7 @@ pub fn open_volume(
     Ok(vol.into_dyn().into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn view_image(
     image: LODTensorOperator,
@@ -301,6 +324,7 @@ pub fn view_image(
     .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
     Ok(crate::map_result(palace_core::operators::png::read(path))?
@@ -308,6 +332,7 @@ pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
         .into())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn apply_tf(
     py: Python,
@@ -320,11 +345,13 @@ pub fn apply_tf(
     })
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
     palace_core::operators::procedural::mandelbrot(md.try_into_dim()?).try_into()
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn randomwalker(
     py: Python,
@@ -345,6 +372,7 @@ pub fn randomwalker(
     })
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn rasterize_seed_points(
     points_fg: TensorOperator,

@@ -74,3 +74,5 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<state_link::py::Store>()?;
     Ok(())
 }
+
+pyo3_stub_gen::define_stub_info_gatherer!(stub_info);

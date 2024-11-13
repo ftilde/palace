@@ -1557,6 +1557,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "maplit"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2161,6 +2167,7 @@ dependencies = [
  "palace-vvd",
  "palace-winit",
  "pyo3",
+ "pyo3-stub-gen",
  "state-link",
 ]
 
@@ -2196,6 +2203,7 @@ dependencies = [
  "png",
  "priority-queue",
  "pyo3",
+ "pyo3-stub-gen",
  "rand",
  "spirq",
  "spirv",
@@ -2586,6 +2594,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyo3-stub-gen"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "299c05ff343116c4145aa05428756eb6c5a2226b697347c27312e46261b638aa"
+dependencies = [
+ "anyhow",
+ "inventory",
+ "itertools 0.13.0",
+ "log",
+ "maplit",
+ "num-complex",
+ "numpy",
+ "pyo3",
+ "pyo3-stub-gen-derive",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "pyo3-stub-gen-derive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "295a22fe8963404c42f3d62c78099dde32ec508a3e756b0dc86a1e7fa604eb34"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.77",
+]
+
+[[package]]
 name = "quanta"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2888,6 +2926,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.77",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87607cb1398ed59d48732e575a4c28a7a8ebf2454b964fe3f224f2afc07909e1"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3259,10 +3306,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1ed1f98e3fdc28d6d910e6737ae6ab1a93bf1985935a1193e68f93eeb68d24e"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0dd7358ecb8fc2f8d014bf86f6f638ce72ba252a2c3a2572f2a795f1d23efb41"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "toml_edit"
@@ -3271,6 +3333,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "583c44c02ad26b0c3f3066fe629275e50627026c51ac2e595cca4c230ce1ce1d"
 dependencies = [
  "indexmap 2.5.0",
+ "serde",
+ "serde_spanned",
  "toml_datetime",
  "winnow",
 ]

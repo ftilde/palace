@@ -5,10 +5,11 @@ edition = "2021"
 
 [lib]
 name = "palace"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3-stub-gen = { version = "0.6.0", features = ["numpy"] }
 numpy = "0.21"
 derive_more = "0.99"
 palace-core = { path = "../palace-core" }

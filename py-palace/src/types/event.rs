@@ -1,7 +1,9 @@
 use derive_more::{From, Into};
 use palace_core::event as c;
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
+use pyo3_stub_gen::derive::gen_stub_pyclass;
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(From, Into)]
 pub struct Events(pub palace_core::event::EventStream);
@@ -74,6 +76,7 @@ enum Behaviour {
     OnKeyPress(OnKeyPress),
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone, Debug)]
 pub struct OnMouseDrag(MouseButton, Py<PyFunction>);
@@ -86,6 +89,7 @@ impl OnMouseDrag {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone, Debug)]
 pub struct OnMouseClick(MouseButton, Py<PyFunction>);
@@ -98,6 +102,7 @@ impl OnMouseClick {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone, Debug)]
 pub struct OnWheelMove(Py<PyFunction>);
@@ -110,6 +115,7 @@ impl OnWheelMove {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone, Debug)]
 pub struct OnKeyPress(c::Key, Py<PyFunction>);

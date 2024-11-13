@@ -276,6 +276,15 @@ mod py {
             .into_py(py)
         }
     }
+
+    impl<D: DynDimension, T: Copy> pyo3_stub_gen::PyStubType for Matrix<D, T> {
+        fn type_output() -> pyo3_stub_gen::TypeInfo {
+            pyo3_stub_gen::TypeInfo {
+                name: format!("Matrix"),
+                import: Default::default(),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

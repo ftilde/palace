@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 
 use super::{Events, TensorOperator};
 
+#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct Splitter(c::Splitter);
 

@@ -14,11 +14,14 @@ pub use self::transfer_function::*;
 
 use palace_core::operators::volume::ChunkSize as CChunkSize;
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::gen_stub_pyclass;
 
+#[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
 pub struct ChunkSizeFull;
 
+#[gen_stub_pyclass]
 #[derive(Copy, Clone, Debug)]
 pub struct ChunkSize(pub CChunkSize);
 

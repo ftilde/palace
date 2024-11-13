@@ -28,6 +28,8 @@ use id::Identify;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3_stub_gen::derive::*;
 
 use super::{
     array::ArrayOperator,
@@ -504,6 +506,7 @@ pub fn entry_exit_points(
     )
 }
 
+#[cfg_attr(feature = "python", gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum CompositingMode {
@@ -520,6 +523,7 @@ impl CompositingMode {
     }
 }
 
+#[cfg_attr(feature = "python", gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum Shading {
@@ -536,6 +540,7 @@ impl Shading {
     }
 }
 
+#[cfg_attr(feature = "python", gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone, Copy, Debug, Identify)]
 pub struct RaycasterConfig {

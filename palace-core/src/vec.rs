@@ -573,6 +573,15 @@ mod py {
             Py::new(py, init).unwrap().to_object(py)
         }
     }
+
+    impl<D: DynDimension, T: Copy> pyo3_stub_gen::PyStubType for Vector<D, T> {
+        fn type_output() -> pyo3_stub_gen::TypeInfo {
+            pyo3_stub_gen::TypeInfo {
+                name: format!("Vector"),
+                import: Default::default(),
+            }
+        }
+    }
 }
 
 pub mod state_link_impl {

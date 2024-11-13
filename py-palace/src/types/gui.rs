@@ -1,10 +1,12 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::{PyArray0, PyArrayMethods};
 use palace_core::operators::gui as c;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum};
 use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct GuiState {
     inner: c::GuiState,
@@ -62,6 +64,7 @@ impl Drop for GuiState {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct GuiRenderState(Option<c::GuiRenderState>);
 
@@ -79,6 +82,7 @@ impl GuiRenderState {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Button {
@@ -93,6 +97,7 @@ impl Button {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct ComboBox {
@@ -112,6 +117,7 @@ impl ComboBox {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Label {
@@ -125,6 +131,7 @@ impl Label {
     }
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(Clone, FromPyObject)]
 enum SliderVal {
     Array0(Py<PyArray0<f64>>),
@@ -161,6 +168,7 @@ impl SliderVal {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Slider {
@@ -183,6 +191,7 @@ impl Slider {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Horizontal {
@@ -196,6 +205,7 @@ impl Horizontal {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Vertical {
@@ -209,6 +219,7 @@ impl Vertical {
     }
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(FromPyObject, Clone)]
 enum GuiNode {
     Button(Button),
