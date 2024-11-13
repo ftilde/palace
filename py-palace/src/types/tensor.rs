@@ -12,7 +12,7 @@ use palace_core::operators::scalar::ScalarOperator as CScalarOperator;
 use palace_core::operators::tensor::EmbeddedTensorOperator as CEmbeddedTensorOperator;
 use palace_core::operators::tensor::LODTensorOperator as CLODTensorOperator;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
 #[gen_stub_pyclass]
 #[pyclass(unsendable)]
@@ -117,6 +117,7 @@ impl TensorOperator {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl TensorOperator {
     #[getter]
@@ -368,6 +369,7 @@ where
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl EmbeddedTensorOperator {
     fn single_level_lod(&self) -> PyResult<LODTensorOperator> {

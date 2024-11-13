@@ -25,6 +25,7 @@ pub enum UnaryOp {
     Abs,
     Neg,
     Cast(DType),
+    Index(u32),
 }
 
 impl UnaryOp {
@@ -44,6 +45,17 @@ impl UnaryOp {
                 }
                 ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::F32 => input,
             },
+            UnaryOp::Index(i) => {
+                if *i < input.size {
+                    input.scalar.into()
+                } else {
+                    return Err(format!(
+                        "Index {} out of range for vector value of size {}",
+                        i, input.size
+                    )
+                    .into());
+                }
+            }
         })
     }
 }
@@ -55,6 +67,7 @@ impl Display for WriteUnary {
             UnaryOp::Abs => write!(f, "abs({})", v),
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
+            UnaryOp::Index(i) => write!(f, "{}[{}]", v, i),
         }
     }
 }

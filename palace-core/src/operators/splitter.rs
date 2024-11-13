@@ -21,6 +21,7 @@ use super::tensor::FrameOperator;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(Clone)]
 pub enum SplitDirection {

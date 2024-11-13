@@ -7,6 +7,7 @@ use super::{Events, TensorOperator};
 #[pyclass(unsendable)]
 pub struct Splitter(c::Splitter);
 
+//#[pyo3_stub_gen::derive::gen_stub_pymethods] doesn't work because of mutable reference to events
 #[pymethods]
 impl Splitter {
     #[new]

@@ -180,6 +180,7 @@ mod py {
 /// Dynamic --------------------------------------------------------------------
 
 #[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct DType {
     pub scalar: ScalarType,
@@ -258,6 +259,7 @@ impl ElementType for DType {
 
 /// Some specialized types -----------------------------------------------------
 #[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyclass)]
 pub enum ScalarType {
     U8,
