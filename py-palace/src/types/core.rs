@@ -99,7 +99,7 @@ impl RunTime {
 
         match dtype.scalar {
             ScalarType::U8 => self.resolve_static::<u8>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::I8 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::I8 => self.resolve_static::<i8>(py, &op.try_into().unwrap(), chunk_id),
             ScalarType::U16 => self.resolve_static::<u16>(py, &op.try_into().unwrap(), chunk_id),
             ScalarType::I16 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_id),
             ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_id),
