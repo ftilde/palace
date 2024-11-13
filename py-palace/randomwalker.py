@@ -56,7 +56,8 @@ min_edge_weight = store.store_primitive(1e-6)
 gui_state = pc.GuiState(rt)
 
 def render(size, events):
-    v = pc.randomwalker(vol, seeds.inner, min_edge_weight.load(), beta.load())
+    weights = pc.randomwalker_weights(vol, min_edge_weight.load(), beta.load())
+    v = pc.randomwalker(weights, seeds)
     v = v.create_lod(2.0)
 
     # GUI stuff

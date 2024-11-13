@@ -353,20 +353,38 @@ pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn randomwalker(
-    py: Python,
+pub fn randomwalker_weights(
     input: MaybeEmbeddedTensorOperator,
-    seeds: TensorOperator,
     min_edge_weight: f32,
     beta: f32,
-) -> PyResult<PyObject> {
-    let seeds = seeds.try_into_core_static::<D3>()?.try_into()?;
-    input.try_map_inner(py, |input| {
-        Ok(palace_core::operators::randomwalker::random_walker(
-            try_into_static_err(input)?.try_into()?,
-            seeds,
+) -> PyResult<TensorOperator> {
+    let input = input
+        .into_inner()
+        .try_into_core_static::<D3>()?
+        .try_into()?;
+    let res: CTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::random_walker_weights(
+            input,
             palace_core::operators::randomwalker::WeightFunction::Grady { beta },
             min_edge_weight,
+        )
+        .into_dyn()
+        .into();
+    Ok(res.into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn randomwalker(
+    py: Python,
+    weights: TensorOperator,
+    seeds: MaybeEmbeddedTensorOperator,
+) -> PyResult<PyObject> {
+    let weights = weights.try_into_core_static::<D4>()?.try_into()?;
+    seeds.try_map_inner(py, |seeds| {
+        Ok(palace_core::operators::randomwalker::random_walker_inner(
+            weights,
+            try_into_static_err(seeds)?.try_into()?,
             Default::default(),
         )
         .into_dyn()
