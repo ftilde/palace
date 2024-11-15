@@ -10,17 +10,17 @@ use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 #[pyclass(unsendable)]
 pub struct GuiState {
     inner: c::GuiState,
-    runtime: Py<RunTime>,
+    runtime: RunTime,
 }
 
 #[pymethods]
 impl GuiState {
     #[new]
-    fn new(python: Python, runtime: Py<RunTime>) -> Self {
+    fn new(runtime: RunTime) -> Self {
         Self {
             inner: {
-                let rt = runtime.borrow(python);
-                c::GuiState::on_device(rt.inner.preferred_device)
+                let rt = runtime.inner.borrow();
+                c::GuiState::on_device(rt.preferred_device)
             },
             runtime,
         }
@@ -56,11 +56,9 @@ impl GuiState {
 
 impl Drop for GuiState {
     fn drop(&mut self) {
-        Python::with_gil(|py| {
-            let rt = self.runtime.borrow(py);
+        let rt = self.runtime.inner.borrow();
 
-            unsafe { self.inner.deinit(&rt.inner) };
-        });
+        unsafe { self.inner.deinit(&rt) };
     }
 }
 

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use crate::map_result;
 use palace_core::{
@@ -14,18 +14,20 @@ use super::{Events, MaybeEmbeddedTensorOperatorArg, ScalarOperator, TensorOperat
 
 #[gen_stub_pyclass]
 #[pyclass(unsendable)]
+#[derive(Clone)]
 pub struct RunTime {
-    pub inner: palace_core::runtime::RunTime,
+    pub inner: Rc<RefCell<palace_core::runtime::RunTime>>,
 }
 
 impl RunTime {
     fn resolve_static<T: palace_core::storage::Element + numpy::Element>(
-        &mut self,
+        &self,
         py: Python,
         op_ref: &palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<T>>,
         chunk_i: ChunkIndex,
     ) -> PyResult<PyObject> {
-        map_result(self.inner.resolve(None, false, |ctx, _| {
+        let mut rt = self.inner.borrow_mut();
+        map_result(rt.resolve(None, false, |ctx, _| {
             async move {
                 let chunk = ctx.submit(op_ref.chunks.request(chunk_i)).await;
                 let chunk_info = op_ref.metadata.chunk_info(chunk_i);
@@ -49,19 +51,22 @@ impl RunTime {
         device: Option<usize>,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: map_result(palace_core::runtime::RunTime::new(
-                storage_size,
-                gpu_storage_size,
-                num_compute_threads,
-                disk_cache_size,
-                None,
-                device,
-            ))?,
+            inner: Rc::new(
+                map_result(palace_core::runtime::RunTime::new(
+                    storage_size,
+                    gpu_storage_size,
+                    num_compute_threads,
+                    disk_cache_size,
+                    None,
+                    device,
+                ))?
+                .into(),
+            ),
         })
     }
 
     fn resolve(
-        &mut self,
+        &self,
         py: Python,
         v: MaybeEmbeddedTensorOperatorArg,
         pos: Vec<u32>,
@@ -108,22 +113,24 @@ impl RunTime {
         }
     }
 
-    fn resolve_scalar(&mut self, v: ScalarOperator) -> PyResult<f32> {
+    fn resolve_scalar(&self, v: ScalarOperator) -> PyResult<f32> {
         let op: palace_core::operators::scalar::ScalarOperator<StaticElementType<f32>> =
             v.try_into()?;
         let op_ref = &op;
-        map_result(self.inner.resolve(None, false, |ctx, _| {
+        let mut rt = self.inner.borrow_mut();
+        map_result(rt.resolve(None, false, |ctx, _| {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
     }
 
     fn run_with_window(
-        &mut self,
+        &self,
         gen_frame: &Bound<pyo3::types::PyFunction>,
         timeout_ms: u64,
     ) -> PyResult<()> {
-        crate::map_result(palace_winit::run_with_window(
-            &mut self.inner,
+        let mut rt = self.inner.clone();
+        crate::map_result(palace_winit::run_with_window_wrapper(
+            &mut rt,
             Duration::from_millis(timeout_ms),
             |_event_loop, window, rt, events, timeout| {
                 let size = window.size();
@@ -134,6 +141,7 @@ impl RunTime {
                 let frame = frame.try_into()?;
 
                 let frame_ref = &frame;
+                let mut rt = rt.borrow_mut();
                 let version = rt.resolve(Some(timeout), false, |ctx, _| {
                     async move { window.render(ctx, frame_ref).await }.into()
                 })?;

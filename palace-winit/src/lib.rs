@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use ash::vk;
@@ -149,30 +151,51 @@ pub fn create_window(
     ))
 }
 
-struct AppState<'a, F> {
+struct AppState<'a, R, F> {
     //state: State,
     last_frame: Instant,
     timeout_per_frame: Duration,
-    runtime: &'a mut RunTime,
+    runtime: &'a mut R,
     window: Option<(WWindow, PWindow)>,
     events: EventSource,
     draw: F,
     run_result: Result<(), palace_core::Error>,
 }
 
+pub trait MutWrapper<Inner> {
+    fn with_mut<R, F: FnOnce(&mut Inner) -> R>(&mut self, f: F) -> R;
+}
+
+impl<Inner> MutWrapper<Inner> for &mut Inner {
+    fn with_mut<R, F: FnOnce(&mut Inner) -> R>(&mut self, f: F) -> R {
+        f(self)
+    }
+}
+
+impl<Inner> MutWrapper<Inner> for Rc<RefCell<Inner>> {
+    fn with_mut<R, F: FnOnce(&mut Inner) -> R>(&mut self, f: F) -> R {
+        let mut b = self.borrow_mut();
+        f(&mut *b)
+    }
+}
+
 impl<
+        R: MutWrapper<RunTime>,
         F: FnMut(
             &ActiveEventLoop,
             &mut PWindow,
-            &mut RunTime,
+            &mut R,
             EventStream,
             Deadline,
         ) -> Result<DataVersionType, palace_core::Error>,
-    > winit::application::ApplicationHandler for AppState<'_, F>
+    > winit::application::ApplicationHandler for AppState<'_, R, F>
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         //event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        self.window = Some(create_window(&self.runtime.vulkan, &event_loop).unwrap());
+        self.window = Some(
+            self.runtime
+                .with_mut(|rt| create_window(&rt.vulkan, &event_loop).unwrap()),
+        );
     }
 
     fn window_event(
@@ -184,7 +207,8 @@ impl<
         match event {
             WindowEvent::Resized(new_size) => {
                 let window = self.window.as_mut().unwrap();
-                window.1.resize(new_size, &self.runtime.vulkan);
+                self.runtime
+                    .with_mut(|rt| window.1.resize(new_size, &rt.vulkan));
             }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -225,16 +249,17 @@ impl<
     }
 }
 
-pub fn run_with_window<
+pub fn run_with_window_wrapper<
+    R: MutWrapper<RunTime>,
     F: FnMut(
         &ActiveEventLoop,
         &mut PWindow,
-        &mut RunTime,
+        &mut R,
         EventStream,
         Deadline,
     ) -> Result<DataVersionType, palace_core::Error>,
 >(
-    runtime: &mut RunTime,
+    runtime: &mut R,
     timeout_per_frame: Duration,
     draw: F,
 ) -> Result<(), palace_core::Error> {
@@ -252,8 +277,26 @@ pub fn run_with_window<
     event_loop.run_app(&mut state).unwrap();
 
     if let Some((_, mut window)) = state.window {
-        unsafe { window.deinitialize(&state.runtime.vulkan) }
+        state
+            .runtime
+            .with_mut(|rt| unsafe { window.deinitialize(&rt.vulkan) });
     }
 
     state.run_result
+}
+
+pub fn run_with_window<
+    F: FnMut(
+        &ActiveEventLoop,
+        &mut PWindow,
+        &mut &mut RunTime,
+        EventStream,
+        Deadline,
+    ) -> Result<DataVersionType, palace_core::Error>,
+>(
+    mut runtime: &mut RunTime,
+    timeout_per_frame: Duration,
+    draw: F,
+) -> Result<(), palace_core::Error> {
+    run_with_window_wrapper(&mut runtime, timeout_per_frame, draw)
 }
