@@ -2,6 +2,7 @@ use crate::types::*;
 use pyo3::prelude::*;
 
 pub use palace_core::operators::raycaster::TransFuncOperator as CTransFuncOperator;
+use pyo3_stub_gen::derive::gen_stub_pyfunction;
 
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(unsendable)]
@@ -15,15 +16,13 @@ pub struct TransFuncOperator {
     pub table: TensorOperator,
 }
 
-impl TryFrom<CTransFuncOperator> for TransFuncOperator {
-    type Error = PyErr;
-
-    fn try_from(t: CTransFuncOperator) -> Result<Self, Self::Error> {
-        Ok(TransFuncOperator {
+impl From<CTransFuncOperator> for TransFuncOperator {
+    fn from(t: CTransFuncOperator) -> Self {
+        TransFuncOperator {
             min: t.min,
             max: t.max,
-            table: t.table.into_dyn().try_into()?,
-        })
+            table: t.table.into_dyn().into(),
+        }
     }
 }
 
@@ -39,8 +38,15 @@ impl TryInto<CTransFuncOperator> for TransFuncOperator {
     }
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn load_tf(path: std::path::PathBuf) -> PyResult<TransFuncOperator> {
     let raw_tf = crate::map_result(palace_vvd::load_tfi(&path))?;
-    raw_tf.try_into()
+    Ok(raw_tf.into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn grey_ramp_tf(min: f32, max: f32) -> TransFuncOperator {
+    CTransFuncOperator::grey_ramp(min, max).into()
 }

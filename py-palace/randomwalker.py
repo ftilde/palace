@@ -40,7 +40,7 @@ seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
 else:
-    tf = None
+    tf = pc.grey_ramp_tf(0.0, 1.0)
 
 store = pc.Store()
 
@@ -57,9 +57,17 @@ gui_state = pc.GuiState(rt)
 
 def render(size, events):
     weights = pc.randomwalker_weights(vol, min_edge_weight.load(), beta.load())
-    #v = pc.index(weights.unfold_into_vec_dtype(), 0).embedded(ed)
-    v = pc.randomwalker(weights, seeds)
+    v = pc.index(weights.unfold_into_vec_dtype(), 2).embedded(ed)
+    #v = pc.randomwalker(weights, seeds)
+
+    tf.min = rt.resolve_scalar(pc.min_value(v))
+    tf.max = rt.resolve_scalar(pc.max_value(v))
+
+    print(tf.max)
+    print(tf.min)
+
     v = v.create_lod(2.0)
+
 
     # GUI stuff
     widgets = []

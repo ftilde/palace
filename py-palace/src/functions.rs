@@ -6,6 +6,7 @@ use palace_core::dtypes::{DType, ScalarType};
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
+use palace_core::operators::volume_gpu::SampleMethod;
 use palace_core::{dim::*, jit};
 use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
@@ -286,11 +287,29 @@ pub fn render_slice(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn mean(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+pub fn mean_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn min_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+    let vol = vol.unpack().into_inner().into_core();
+    let vol = try_into_static_err(vol)?;
+    let vol = vol.try_into()?;
+    Ok(palace_core::operators::volume_gpu::min(vol, SampleMethod::All).into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn max_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+    let vol = vol.unpack().into_inner().into_core();
+    let vol = try_into_static_err(vol)?;
+    let vol = vol.try_into()?;
+    Ok(palace_core::operators::volume_gpu::max(vol, SampleMethod::All).into())
 }
 
 #[gen_stub_pyfunction]
