@@ -110,10 +110,10 @@ pub struct TensorOperator {
 }
 
 impl TensorOperator {
-    pub fn nd(&self) -> usize {
-        let nd = self.metadata().dimensions.len();
-        assert_eq!(nd, self.metadata().chunk_size.len());
-        nd
+    pub fn nd(&self) -> PyResult<usize> {
+        let nd = self.metadata()?.dimensions.len();
+        assert_eq!(nd, self.metadata()?.chunk_size.len());
+        Ok(nd)
     }
 }
 
@@ -128,11 +128,16 @@ impl TensorOperator {
         }
     }
     #[getter]
-    pub fn metadata(&self) -> PyTensorMetaData {
-        match &self.inner {
-            MaybeJitTensorOperator::Jit(i) => i.metadata().unwrap().into(),
+    pub fn metadata(&self) -> PyResult<PyTensorMetaData> {
+        Ok(match &self.inner {
+            MaybeJitTensorOperator::Jit(i) => i
+                .metadata()
+                .ok_or_else(|| {
+                    crate::map_err(format!("Jit operator does not have metadata").into())
+                })?
+                .into(),
             MaybeJitTensorOperator::Tensor(i) => i.metadata.clone().into(),
-        }
+        })
     }
     fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
         EmbeddedTensorOperator {
@@ -167,17 +172,11 @@ impl From<CTensorOperator<DDyn, DType>> for TensorOperator {
     }
 }
 
-impl TryFrom<jit::JitTensorOperator<DDyn>> for TensorOperator {
-    type Error = PyErr;
-
-    fn try_from(t: jit::JitTensorOperator<DDyn>) -> Result<Self, Self::Error> {
-        let Some(_) = t.metadata() else {
-            return crate::map_result(Err("Jit operator does not contain metadata".into()));
-        };
-
-        Ok(Self {
+impl From<jit::JitTensorOperator<DDyn>> for TensorOperator {
+    fn from(t: jit::JitTensorOperator<DDyn>) -> Self {
+        Self {
             inner: MaybeJitTensorOperator::Jit(t),
-        })
+        }
     }
 }
 
@@ -440,10 +439,13 @@ impl MaybeEmbeddedTensorOperator {
             MaybeEmbeddedTensorOperator::Embedded { e } => e.clone(),
         }
     }
+    pub fn inner(&self) -> TensorOperator {
+        self.inner_ref().clone()
+    }
 }
 
 impl MaybeEmbeddedTensorOperator {
-    pub fn inner(&self) -> &TensorOperator {
+    pub fn inner_ref(&self) -> &TensorOperator {
         match self {
             MaybeEmbeddedTensorOperator::Not { i } => i,
             MaybeEmbeddedTensorOperator::Embedded { e } => &e.inner,
@@ -590,8 +592,8 @@ impl LODTensorOperator {
 
 #[pymethods]
 impl LODTensorOperator {
-    pub fn fine_metadata(&self) -> PyTensorMetaData {
-        self.levels[0].inner.metadata().clone()
+    pub fn fine_metadata(&self) -> PyResult<PyTensorMetaData> {
+        Ok(self.levels[0].inner.metadata()?.clone())
     }
     pub fn fine_embedding_data(&self) -> PyTensorEmbeddingData {
         self.levels[0].embedding_data.clone()

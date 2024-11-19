@@ -23,6 +23,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open_volume, m)?)?;
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(grey_ramp_tf, m)?)?;
+    m.add_function(wrap_pyfunction!(tf_from_numpy, m)?)?;
     m.add_function(wrap_pyfunction!(read_png, m)?)?;
     m.add_function(wrap_pyfunction!(mean_value, m)?)?;
     m.add_function(wrap_pyfunction!(min_value, m)?)?;
@@ -40,12 +41,16 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mandelbrot, m)?)?;
     m.add_function(wrap_pyfunction!(from_numpy, m)?)?;
     m.add_function(wrap_pyfunction!(add, m)?)?;
+    m.add_function(wrap_pyfunction!(sub, m)?)?;
     m.add_function(wrap_pyfunction!(mul, m)?)?;
+    m.add_function(wrap_pyfunction!(div, m)?)?;
+    m.add_function(wrap_pyfunction!(min, m)?)?;
     m.add_function(wrap_pyfunction!(max, m)?)?;
     m.add_function(wrap_pyfunction!(abs, m)?)?;
     m.add_function(wrap_pyfunction!(neg, m)?)?;
     m.add_function(wrap_pyfunction!(cast, m)?)?;
     m.add_function(wrap_pyfunction!(index, m)?)?;
+    m.add_function(wrap_pyfunction!(splat, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker, m)?)?;
     m.add_function(wrap_pyfunction!(rasterize_seed_points, m)?)?;
@@ -56,6 +61,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<palace_core::operators::raycaster::RaycasterConfig>()?;
     m.add_class::<palace_core::operators::raycaster::TrackballState>()?;
     m.add_class::<palace_core::operators::imageviewer::ImageViewerState>()?;
+    m.add_class::<TransFuncOperator>()?;
     m.add_class::<PyTensorMetaData>()?;
     m.add_class::<PyTensorEmbeddingData>()?;
     m.add_class::<RunTime>()?;

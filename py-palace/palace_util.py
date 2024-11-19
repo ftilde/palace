@@ -1,4 +1,5 @@
 import palace as pc
+import numpy as np
 
 # General pattern for renderable components:
 # component: size, events -> frame operator
@@ -41,7 +42,7 @@ def render_raycast(vol, camera_state, config, tf):
     return inner
 
 # Slice render component
-def render_slice(vol, dim, slice_state):
+def render_slice(vol, dim, slice_state, tf=None):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -53,12 +54,24 @@ def render_slice(vol, dim, slice_state):
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
-        frame = pc.render_slice(vol, md, proj)
+        frame = pc.render_slice(vol, md, proj, tf)
         frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
 
         return frame
     return inner
 
+
+def alpha_blending(render_over, render_under):
+    def inner(size, events):
+        max_val = pc.splat(255, 4)
+        over = pc.div(pc.cast(render_over(size, events), pc.ScalarType.F32.vec(4)), max_val)
+        under = pc.div(pc.cast(render_under(size, events), pc.ScalarType.F32.vec(4)), max_val)
+
+        alpha = pc.splat(pc.index(over, 3), 4);
+        one_minus_alpha = pc.sub(pc.splat(1.0, 4), alpha)
+        return pc.cast(pc.mul(pc.add(pc.mul(over, one_minus_alpha), pc.mul(under, alpha)), max_val), pc.ScalarType.U8.vec(4)).inner()
+
+    return inner
 
 
 # Gui stuff

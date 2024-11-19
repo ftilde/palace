@@ -19,10 +19,10 @@ pub fn rechunk(
     size: Vec<ChunkSize>,
 ) -> PyResult<PyObject> {
     let tensor = tensor.unpack();
-    if tensor.inner().nd() != size.len() {
+    if tensor.inner_ref().nd()? != size.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
             "Chunk size must be {}-dimensional to fit tensor",
-            tensor.inner().nd()
+            tensor.inner_ref().nd()?
         )));
     }
 
@@ -57,6 +57,12 @@ pub fn neg(vol: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
 #[pyfunction]
 pub fn index(vol: JitArgument, i: u32) -> PyResult<MaybeEmbeddedTensorOperator> {
     jit_unary(UnaryOp::Index(i), vol)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn splat(vol: JitArgument, size: u32) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_unary(UnaryOp::Splat(size), vol)
 }
 
 #[gen_stub_pyclass_enum]
@@ -124,14 +130,32 @@ pub fn add(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOper
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn sub(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Sub, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn mul(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
     jit_binary(BinOp::Mul, v1, v2)
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn div(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Div, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn max(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
     jit_binary(BinOp::Max, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn min(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Min, v1, v2)
 }
 
 #[gen_stub_pyfunction]
@@ -155,10 +179,10 @@ pub fn separable_convolution<'py>(
     kernels: Vec<MaybeConstTensorOperator>,
 ) -> PyResult<PyObject> {
     let tensor = tensor.unpack();
-    if tensor.inner().nd() != kernels.len() {
+    if tensor.inner_ref().nd()? != kernels.len() {
         return Err(PyErr::new::<PyValueError, _>(format!(
             "Expected {} kernels for tensor, but got {}",
-            tensor.inner().nd(),
+            tensor.inner_ref().nd()?,
             kernels.len()
         )));
     }
@@ -172,10 +196,10 @@ pub fn separable_convolution<'py>(
         .collect::<Result<Vec<_>, PyErr>>()?;
 
     for kernel in &kernels {
-        if tensor.inner().dtype() != kernel.dtype() {
+        if tensor.inner_ref().dtype() != kernel.dtype() {
             return Err(PyErr::new::<PyValueError, _>(format!(
                 "Kernel must have the same type as tensor ({:?}), but has {:?}",
-                tensor.inner().dtype(),
+                tensor.inner_ref().dtype(),
                 kernel.dtype(),
             )));
         }

@@ -227,6 +227,7 @@ impl DType {
     }
 }
 
+#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pymethods)]
 #[cfg_attr(feature = "python", pymethods)]
 impl DType {
     #[new]
@@ -293,6 +294,17 @@ impl ScalarType {
             ScalarType::U32 => "u32",
             ScalarType::I32 => "i32",
             ScalarType::F32 => "f32",
+        }
+    }
+}
+
+//#[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pymethods)] //Broken somehow
+#[cfg_attr(feature = "python", pymethods)]
+impl ScalarType {
+    pub fn vec(&self, size: u32) -> DType {
+        DType {
+            scalar: *self,
+            size,
         }
     }
 }

@@ -26,6 +26,7 @@ pub enum UnaryOp {
     Neg,
     Cast(DType),
     Index(u32),
+    Splat(u32),
 }
 
 impl UnaryOp {
@@ -56,6 +57,18 @@ impl UnaryOp {
                     .into());
                 }
             }
+            UnaryOp::Splat(size) => {
+                if input.size == 1 {
+                    DType {
+                        scalar: input.scalar,
+                        size: *size,
+                    }
+                } else {
+                    return Err(
+                        format!("Cannot splat non-scalar value (dim {})", input.size).into(),
+                    );
+                }
+            }
         })
     }
 }
@@ -68,6 +81,7 @@ impl Display for WriteUnary {
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
             UnaryOp::Index(i) => write!(f, "{}[{}]", v, i),
+            UnaryOp::Splat(_i) => write!(f, "{}", WriteValue(self.1, 1)),
         }
     }
 }

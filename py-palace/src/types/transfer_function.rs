@@ -16,6 +16,14 @@ pub struct TransFuncOperator {
     pub table: TensorOperator,
 }
 
+#[pymethods]
+impl TransFuncOperator {
+    #[new]
+    fn new(min: f32, max: f32, table: TensorOperator) -> Self {
+        Self { min, max, table }
+    }
+}
+
 impl From<CTransFuncOperator> for TransFuncOperator {
     fn from(t: CTransFuncOperator) -> Self {
         TransFuncOperator {
@@ -49,4 +57,20 @@ pub fn load_tf(path: std::path::PathBuf) -> PyResult<TransFuncOperator> {
 #[pyfunction]
 pub fn grey_ramp_tf(min: f32, max: f32) -> TransFuncOperator {
     CTransFuncOperator::grey_ramp(min, max).into()
+}
+
+//#[gen_stub_pyfunction] TODO: Not working because PyUntypedArray does not impl the required type
+#[pyfunction]
+pub fn tf_from_numpy(
+    min: f32,
+    max: f32,
+    values: &Bound<numpy::PyUntypedArray>,
+) -> PyResult<TransFuncOperator> {
+    let values = tensor_from_numpy(values)?;
+    Ok(CTransFuncOperator {
+        table: try_into_static_err(values)?.try_into()?,
+        min,
+        max,
+    }
+    .into())
 }
