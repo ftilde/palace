@@ -435,13 +435,22 @@ pub fn randomwalker(
     py: Python,
     weights: TensorOperator,
     seeds: MaybeEmbeddedTensorOperatorArg,
+    max_iter: Option<usize>,
+    max_residuum_norm: Option<f32>,
 ) -> PyResult<PyObject> {
     let weights = weights.try_into_core_static::<D4>()?.try_into()?;
+    let mut config = palace_core::operators::randomwalker::SolverConfig::default();
+    if let Some(max_iter) = max_iter {
+        config.max_iterations = max_iter;
+    }
+    if let Some(max_residuum_norm) = max_residuum_norm {
+        config.max_residuum_norm = max_residuum_norm;
+    }
     seeds.unpack().try_map_inner(py, |seeds| {
         Ok(palace_core::operators::randomwalker::random_walker_inner(
             weights,
             try_into_static_err(seeds)?.try_into()?,
-            Default::default(),
+            config,
         )
         .into_dyn()
         .into())

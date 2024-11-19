@@ -42,8 +42,14 @@ if args.transfunc:
 else:
     tf = pc.grey_ramp_tf(0.0, 1.0)
 
-tf_table = pc.from_numpy(np.array([[i, 0, 0, i] for i in range(256)], np.uint8)).fold_into_dtype()
-tf_prob = pc.TransFuncOperator(0.0, 1.0, tf_table)
+num_tf_values = 128
+def prob_tf_from_values(values):
+    #tf_table = [[0, 0, 255, 255] for i in range(num_tf_values)] + [[255, 0, 0, 255] for i in range(num_tf_values)]
+    tf_table = pc.from_numpy(np.array(values, np.uint8)).fold_into_dtype()
+    return pc.TransFuncOperator(0.0, 1.0, tf_table)
+
+tf_prob = prob_tf_from_values([[0, 0, num_tf_values-i-1, num_tf_values-i-1] for i in range(num_tf_values)] + [[i, 0, 0, i] for i in range(num_tf_values)])
+tf_prob3d = prob_tf_from_values([[0, 0, 0, 0] for i in range(num_tf_values)] + [[i, i, 0, i] for i in range(num_tf_values)])
 
 store = pc.Store()
 
@@ -52,25 +58,40 @@ slice_state1 = pc.SliceviewState.for_volume(md, ed, 1).store(store)
 slice_state2 = pc.SliceviewState.for_volume(md, ed, 2).store(store)
 camera_state = pc.CameraState.for_volume(md, ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
+raycaster_config_rw = pc.RaycasterConfig().store(store)
+
+#raycaster_config_rw.compositing_mode().write("DVR")
 
 beta = store.store_primitive(1000.0)
 min_edge_weight = store.store_primitive(1e-6)
 
 gui_state = pc.GuiState(rt)
 
+vol_min = rt.resolve_scalar(pc.min_value(vol))
+vol_max = rt.resolve_scalar(pc.max_value(vol))
+
+rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
+
+#print(tf.max)
+#print(tf.min)
+
+
 def render(size, events):
-    weights = pc.randomwalker_weights(vol, min_edge_weight.load(), beta.load())
-    #v = pc.index(weights.unfold_into_vec_dtype(), 2).embedded(ed)
-    rw_result = pc.randomwalker(weights, seeds)
+    weights = pc.randomwalker_weights(rw_input, min_edge_weight.load(), beta.load())
+    edge_w = pc.min(pc.min(
+        pc.index(weights.fold_into_dtype(), 0).embedded(ed),
+        pc.index(weights.fold_into_dtype(), 1).embedded(ed)),
+        pc.index(weights.fold_into_dtype(), 2).embedded(ed)).embedded(ed)
 
-    #tf.min = rt.resolve_scalar(pc.min_value(v))
-    #tf.max = rt.resolve_scalar(pc.max_value(v))
+    #print(rt.resolve_scalar(pc.min_value(edge_w)))
+    #print(rt.resolve_scalar(pc.max_value(edge_w)))
 
-    #print(tf.max)
-    #print(tf.min)
+    rw_result = pc.randomwalker(weights, seeds, max_iter=10000, max_residuum_norm=0.001)
+
 
     v = vol.embedded(ed).create_lod(2.0)
     rw_result = rw_result.create_lod(2.0)
+    edge_w = edge_w.create_lod(2.0)
 
 
     # GUI stuff
@@ -81,19 +102,36 @@ def render(size, events):
 
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
-    # Actual composition of the rendering
-    slice0 = palace_util.render_slice(v, 0, slice_state0, tf)
-    slice0_rw = palace_util.render_slice(rw_result, 0, slice_state0, tf_prob)
+    def overlay_slice(dim, state):
+        slice = palace_util.render_slice(v, dim, state, tf)
+        slice_rw = palace_util.render_slice(rw_result, dim, state, tf_prob)
 
-    frame = palace_util.alpha_blending(slice0_rw, slice0)
+        #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
+
+        return palace_util.alpha_blending(slice_rw, slice)
+        #return slice_rw
+
+    def overlay_ray(state):
+        ray = palace_util.render_raycast(v, state, raycaster_config, tf)
+        ray_rw = palace_util.render_raycast(rw_result, state, raycaster_config_rw, tf_prob3d)
+
+        return palace_util.alpha_blending(ray_rw, ray)
+
+
+    # Actual composition of the rendering
+    #slice0 = palace_util.render_slice(v, 0, slice_state0, tf)
+    #slice0_rw = palace_util.render_slice(rw_result, 0, slice_state0, tf_prob)
+
+    #frame = palace_util.alpha_blending(slice0_rw, slice0)
     #frame = slice0_rw
     #frame = slice0
 
-    #slice1 = palace_util.render_slice(v, 1, slice_state1)
-    #slice2 = palace_util.render_slice(v, 2, slice_state2)
-    #ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
+    slice0 = overlay_slice(0, slice_state0)
+    slice1 = overlay_slice(1, slice_state1)
+    slice2 = overlay_slice(2, slice_state2)
+    ray = overlay_ray(camera_state)
 
-    #frame = palace_util.quad(ray, slice0, slice1, slice2)
+    frame = palace_util.quad(ray, slice0, slice1, slice2)
 
     frame = gui.render(frame(size, events))
 
