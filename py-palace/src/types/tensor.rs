@@ -146,19 +146,19 @@ impl TensorOperator {
         }
     }
 
-    fn unfold_into_vec_dtype(&self) -> PyResult<Self> {
+    fn fold_into_dtype(&self) -> PyResult<Self> {
         Ok(self
             .clone()
             .into_core()
-            .unfold_into_vec_dtype()
+            .fold_into_dtype()
             .map_err(crate::map_err)?
             .into())
     }
-    fn fold_vec_dtype(&self) -> PyResult<Self> {
+    fn unfold_dtype(&self) -> PyResult<Self> {
         Ok(self
             .clone()
             .into_core()
-            .fold_vec_dtype()
+            .unfold_dtype()
             .map_err(crate::map_err)?
             .into())
     }

@@ -24,7 +24,7 @@ if args.img_file == "mandelbrot":
     tf.max = 1.0;
 
     #img = img.map(lambda img: pc.separable_convolution(img, [pc.gauss_kernel(25.0)]*2))
-    #img = img.map(lambda img: pc.cast(pc.separable_convolution(pc.cast(img.fold_vec_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).unfold_into_vec_dtype(), pc.DType(pc.ScalarType.U8, 4)))
+    #img = img.map(lambda img: pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4)))
     #print(rt.resolve(pc.cast(img.levels[0], pc.ScalarType.U32), [0,0]).dtype)
     img = img.map(lambda img: pc.apply_tf(img, tf))
 elif args.img_file == "circle":
@@ -44,7 +44,7 @@ elif args.img_file == "circle":
     #img = pc.separable_convolution(img, [np.array([1,2,1], np.float32)/4]*2)
     #img = pc.separable_convolution(img, [pc.gauss_kernel(25.0)]*2)
     img = pc.apply_tf(img, tf)
-    #img = pc.cast(pc.separable_convolution(pc.cast(img.fold_vec_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).unfold_into_vec_dtype(), pc.DType(pc.ScalarType.U8, 4))
+    #img = pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4))
     img = img.embedded(pc.TensorEmbeddingData([1.0, 1.0])).single_level_lod()
 else:
     img = pc.read_png(args.img_file)

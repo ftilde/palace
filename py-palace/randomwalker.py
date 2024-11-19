@@ -9,7 +9,7 @@ def read_vge(path):
     points = []
     for elem in root.findall('.//item/item'):
         points.append([float(elem.attrib['z']), float(elem.attrib['y']), float(elem.attrib['x'])])
-    return pc.from_numpy(np.array(points, dtype=np.float32)).unfold_into_vec_dtype()
+    return pc.from_numpy(np.array(points, dtype=np.float32)).fold_into_dtype()
 
 ram_size = 8 << 30
 vram_size = 10 << 30
@@ -42,7 +42,7 @@ if args.transfunc:
 else:
     tf = pc.grey_ramp_tf(0.0, 1.0)
 
-tf_table = pc.from_numpy(np.array([[i, 0, 0, i] for i in range(256)], np.uint8)).unfold_into_vec_dtype()
+tf_table = pc.from_numpy(np.array([[i, 0, 0, i] for i in range(256)], np.uint8)).fold_into_dtype()
 tf_prob = pc.TransFuncOperator(0.0, 1.0, tf_table)
 
 store = pc.Store()

@@ -269,7 +269,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
 }
 
 impl<D: LargerDim> TensorOperator<D, DType> {
-    pub fn fold_vec_dtype(self) -> Result<TensorOperator<D::Larger, DType>, crate::Error> {
+    pub fn unfold_dtype(self) -> Result<TensorOperator<D::Larger, DType>, crate::Error> {
         let dtype = self.dtype();
         if dtype.is_scalar() {
             Err(format!("Tensor already has scalar type {}", dtype).into())
@@ -289,7 +289,7 @@ impl<D: LargerDim> TensorOperator<D, DType> {
 }
 
 impl<D: SmallerDim> TensorOperator<D, DType> {
-    pub fn unfold_into_vec_dtype(self) -> Result<TensorOperator<D::Smaller, DType>, crate::Error> {
+    pub fn fold_into_dtype(self) -> Result<TensorOperator<D::Smaller, DType>, crate::Error> {
         let dtype = self.dtype();
 
         let chunk_dim = self.metadata.dimension_in_chunks().raw();
