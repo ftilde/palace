@@ -69,7 +69,7 @@ def alpha_blending(render_over, render_under):
 
         alpha = pc.splat(pc.index(over, 3), 4);
         one_minus_alpha = pc.sub(pc.splat(1.0, 4), alpha)
-        return pc.cast(pc.mul(pc.add(pc.mul(over, one_minus_alpha), pc.mul(under, alpha)), max_val), pc.ScalarType.U8.vec(4)).inner()
+        return pc.cast(pc.mul(pc.add(pc.mul(over, alpha), pc.mul(under, one_minus_alpha)), max_val), pc.ScalarType.U8.vec(4)).inner()
 
     return inner
 
