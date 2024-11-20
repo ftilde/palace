@@ -1232,7 +1232,7 @@ mod test {
 
         let cfg = Default::default();
 
-        let v = random_walker(vol, seeds, WeightFunction::Grady { beta: 100.0 }, cfg);
+        let v = random_walker(vol, seeds, WeightFunction::Grady { beta: 100.0 }, 1e-5, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }
