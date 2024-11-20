@@ -205,7 +205,7 @@ pub fn slice_projection_mat(
         * &to_pixel_center;
 
     let mut translation = Vector::<D3, f32>::fill(-0.5); //For "centered" voxel positions
-    translation[dim] += selected_slice.raw as f32;
+    translation[dim] = selected_slice.raw as f32;
     let scale = Matrix::from_scale(&Vector::<D3, _>::fill(scaling_factor)).to_homogeneous();
     let slice_select = Matrix::from_translation(translation);
     let rw_to_voxel = Matrix::from_scale(&embedding_data.spacing.map(|v| 1.0 / v)).to_homogeneous();
