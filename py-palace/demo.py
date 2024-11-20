@@ -15,17 +15,17 @@ args = parser.parse_args()
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
-v = pc.open_or_create_lod(args.volume_file)
-v = v.map(lambda v: pc.cast(v, pc.ScalarType.F32).embedded(v.embedding_data))
+vol = pc.open_or_create_lod(args.volume_file)
+vol = vol.map(lambda v: pc.cast(v, pc.ScalarType.F32).embedded(v.embedding_data))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
 else:
-    tf = None
+    tf = pc.grey_ramp_tf(0.0, 1.0)
 
 store = pc.Store()
 
-l0 = v.levels[0]
+l0 = vol.levels[0]
 l0md = l0.inner.metadata
 l0ed = l0.embedding_data
 
@@ -57,9 +57,14 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 
 gui_state = pc.GuiState(rt)
 
+def fit_tf_to_values(vol):
+    vol = vol.levels[0]
+    tf.min = rt.resolve_scalar(pc.min_value(vol, 10))
+    tf.max = rt.resolve_scalar(pc.max_value(vol, 10))
+
 # Top-level render component
 def render(size, events):
-    global v
+    v = vol
 
     # Volume Processing
     match processing.load():
@@ -114,6 +119,8 @@ def render(size, events):
             widgets.append(palace_util.named_slider("Threshold Value", threshold_val, 0.01, 10.0, logarithmic=True))
         case "no":
             pass
+
+    widgets.append(pc.Button("Fit Transfer Function", lambda: fit_tf_to_values(v)))
 
     gui = gui_state.setup(events, pc.Vertical(widgets))
 

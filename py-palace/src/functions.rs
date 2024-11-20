@@ -320,20 +320,34 @@ pub fn mean_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperato
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn min_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+pub fn min_value(
+    vol: MaybeEmbeddedTensorOperatorArg,
+    num_samples: Option<usize>,
+) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
-    Ok(palace_core::operators::volume_gpu::min(vol, SampleMethod::All).into())
+    let sample_method = match num_samples {
+        Some(n) => SampleMethod::Subset(n),
+        None => SampleMethod::All,
+    };
+    Ok(palace_core::operators::volume_gpu::min(vol, sample_method).into())
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn max_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
+pub fn max_value(
+    vol: MaybeEmbeddedTensorOperatorArg,
+    num_samples: Option<usize>,
+) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
-    Ok(palace_core::operators::volume_gpu::max(vol, SampleMethod::All).into())
+    let sample_method = match num_samples {
+        Some(n) => SampleMethod::Subset(n),
+        None => SampleMethod::All,
+    };
+    Ok(palace_core::operators::volume_gpu::max(vol, sample_method).into())
 }
 
 #[gen_stub_pyfunction]
