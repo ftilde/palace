@@ -94,6 +94,14 @@ float[_N] max(float[_N] l, float[_N] r) {
     return res;
 }
 
+float[_N] clamp(float[_N] val, float[_N] low, float[_N] high) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = clamp(val[i], low[i], high[i]);
+    }
+    return res;
+}
+
 float[_N] abs(float[_N] l) {
     float[_N] res;
     for(int i=0; i<_N; i+=1) {

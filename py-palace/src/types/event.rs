@@ -1,13 +1,14 @@
 use derive_more::{From, Into};
 use palace_core::event as c;
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
-use pyo3_stub_gen::derive::gen_stub_pyclass;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
 #[gen_stub_pyclass]
 #[pyclass(unsendable)]
 #[derive(From, Into)]
 pub struct Events(pub palace_core::event::EventStream);
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl Events {
     #[staticmethod]
@@ -48,6 +49,26 @@ impl Events {
             Ok(())
         }
     }
+
+    fn latest_state(&self) -> EventState {
+        EventState(self.0.latest_state().clone())
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(unsendable)]
+#[derive(From, Into)]
+pub struct EventState(pub palace_core::event::EventState);
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl EventState {
+    fn mouse_pos(&self) -> Option<Vec<i32>> {
+        self.0
+            .mouse_state
+            .as_ref()
+            .map(|m| m.pos.into_iter().collect())
+    }
 }
 
 #[pyclass(unsendable)]
@@ -68,6 +89,7 @@ impl Into<palace_core::event::MouseButton> for MouseButton {
     }
 }
 
+#[gen_stub_pyclass_enum]
 #[derive(FromPyObject)]
 enum Behaviour {
     OnMouseDrag(OnMouseDrag),

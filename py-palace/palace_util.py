@@ -42,7 +42,7 @@ def render_raycast(vol, camera_state, config, tf):
     return inner
 
 # Slice render component
-def render_slice(vol, dim, slice_state, tf=None):
+def render_slice(vol, slice_state, tf=None):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -60,6 +60,31 @@ def render_slice(vol, dim, slice_state, tf=None):
         return frame
     return inner
 
+# Helper to go from slice to volume coordinates (assuming a sliceviewer)
+def mouse_to_volume_pos(slice_state, embedded_tensor, pos, frame_size):
+    md = embedded_tensor.inner.metadata
+    ed = embedded_tensor.embedding_data
+    pos = np.array([1.0, 0.0] + pos)
+    mat = slice_state.projection_mat(md, ed, frame_size)
+    vol_pos = np.dot(mat, pos)[1:]
+    vol_pos = np.round(vol_pos)
+    vol_pos = np.astype(vol_pos, np.int32)
+    if (vol_pos >= 0).all() and (vol_pos < md.dimensions).all():
+        return vol_pos
+
+# Helper to extract an element from a tensor
+def extract_tensor_value(rt, embedded_tensor, pos):
+    md = embedded_tensor.inner.metadata
+    chunk_pos = md.chunk_pos(pos)
+    chunk = rt.resolve(embedded_tensor, chunk_pos)
+    pos_in_chunk = md.pos_in_chunk(chunk_pos, pos)
+    return chunk[tuple(pos_in_chunk)]
+
+def inspect_component(component, action):
+    def inner(size, events):
+        action(size, events)
+        return component(size, events)
+    return inner
 
 def alpha_blending(render_over, render_under):
     def inner(size, events):

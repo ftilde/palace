@@ -116,9 +116,9 @@ def render(size, events):
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     # Actual composition of the rendering
-    slice0 = palace_util.render_slice(v, 0, slice_state0)
-    slice1 = palace_util.render_slice(v, 1, slice_state1)
-    slice2 = palace_util.render_slice(v, 2, slice_state2)
+    slice0 = palace_util.render_slice(v, slice_state0)
+    slice1 = palace_util.render_slice(v, slice_state1)
+    slice2 = palace_util.render_slice(v, slice_state2)
     ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
 
     match view.load():

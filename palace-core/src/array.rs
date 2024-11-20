@@ -208,6 +208,32 @@ mod py {
         fn chunk_size<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
             PyArray1::from_vec_bound(py, self.chunk_size.clone())
         }
+
+        fn chunk_pos<'a>(&self, pos: Vec<u32>, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
+            PyArray1::from_vec_bound(
+                py,
+                super::TensorMetaData::<DDyn>::from(self.clone())
+                    .chunk_pos(&Vector::<DDyn, u32>::new(pos).global())
+                    .raw()
+                    .inner(),
+            )
+        }
+
+        fn pos_in_chunk<'a>(
+            &self,
+            chunk_pos: Vec<u32>,
+            global_pos: Vec<u32>,
+            py: Python<'a>,
+        ) -> Bound<'a, PyArray1<u32>> {
+            PyArray1::from_vec_bound(
+                py,
+                super::TensorMetaData::<DDyn>::from(self.clone())
+                    .chunk_info_vec(&Vector::<DDyn, u32>::new(chunk_pos).chunk())
+                    .in_chunk(&Vector::<DDyn, u32>::new(global_pos).global())
+                    .raw()
+                    .inner(),
+            )
+        }
     }
 
     impl From<super::TensorMetaData<DDyn>> for TensorMetaData {

@@ -73,7 +73,7 @@ void main() {
     }
     uint cur_row = tensor_to_rows.values[current_linear];
 
-    for(int dim=0; dim<ND; ++dim) {
+    for(int dim=ND-1; dim>=0; --dim) {
         for(int offset = -1; offset<2; offset += 2) {
         //int offset = -1;{
             int[ND] neighbor = to_int(current);

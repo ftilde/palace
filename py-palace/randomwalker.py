@@ -9,6 +9,7 @@ def read_vge(path):
     points = []
     for elem in root.findall('.//item/item'):
         points.append([float(elem.attrib['z']), float(elem.attrib['y']), float(elem.attrib['x'])])
+    #print(points)
     return pc.from_numpy(np.array(points, dtype=np.float32)).fold_into_dtype()
 
 ram_size = 8 << 30
@@ -30,7 +31,7 @@ rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 vol = pc.open_volume(args.volume_file)
 vol = pc.rechunk(vol, [pc.chunk_size_full]*3)
-md = vol.inner.metadata
+md: pc.TensorMetaData = vol.inner.metadata
 ed = vol.embedding_data
 
 vol = pc.cast(vol, pc.ScalarType.F32)
@@ -62,8 +63,8 @@ raycaster_config_rw = pc.RaycasterConfig().store(store)
 
 #raycaster_config_rw.compositing_mode().write("DVR")
 
-beta = store.store_primitive(1000.0)
-min_edge_weight = store.store_primitive(1e-6)
+beta = store.store_primitive(128.0)
+min_edge_weight = store.store_primitive(1e-5)
 
 gui_state = pc.GuiState(rt)
 
@@ -75,8 +76,7 @@ rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 #print(tf.max)
 #print(tf.min)
 
-
-def render(size, events):
+def render(size, events: pc.Events):
     weights = pc.randomwalker_weights(rw_input, min_edge_weight.load(), beta.load())
     edge_w = pc.min(pc.min(
         pc.index(weights.fold_into_dtype(), 0).embedded(ed),
@@ -86,7 +86,7 @@ def render(size, events):
     #print(rt.resolve_scalar(pc.min_value(edge_w)))
     #print(rt.resolve_scalar(pc.max_value(edge_w)))
 
-    rw_result = pc.randomwalker(weights, seeds, max_iter=10000, max_residuum_norm=0.001)
+    rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
 
 
     v = vol.embedded(ed).create_lod(2.0)
@@ -100,16 +100,16 @@ def render(size, events):
     widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
-    gui = gui_state.setup(events, pc.Vertical(widgets))
-
-    def overlay_slice(dim, state):
-        slice = palace_util.render_slice(v, dim, state, tf)
-        slice_rw = palace_util.render_slice(rw_result, dim, state, tf_prob)
+    def overlay_slice(state):
+        slice = palace_util.render_slice(v, state, tf)
+        slice_rw = palace_util.render_slice(rw_result, state, tf)
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
-        return palace_util.alpha_blending(slice_rw, slice)
-        #return slice_rw
+        out = palace_util.alpha_blending(slice_rw, slice)
+        #out = slice_rw
+
+        return palace_util.inspect_component(out, lambda size, events: extract_value(size, events, state, rw_result.levels[0]))
 
     def overlay_ray(state):
         ray = palace_util.render_raycast(v, state, raycaster_config, tf)
@@ -117,23 +117,27 @@ def render(size, events):
 
         return palace_util.alpha_blending(ray_rw, ray)
 
+    def extract_value(size, events: pc.Events, slice_state, volume):
+        mouse_pos = events.latest_state().mouse_pos()
+        vol_pos = mouse_pos and palace_util.mouse_to_volume_pos(slice_state.load(), volume, mouse_pos, size)
+        if vol_pos is not None:
+            value = palace_util.extract_tensor_value(rt, volume, vol_pos)
+            widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
+
+
 
     # Actual composition of the rendering
-    #slice0 = palace_util.render_slice(v, 0, slice_state0, tf)
-    #slice0_rw = palace_util.render_slice(rw_result, 0, slice_state0, tf_prob)
-
-    #frame = palace_util.alpha_blending(slice0_rw, slice0)
-    #frame = slice0_rw
-    #frame = slice0
-
-    slice0 = overlay_slice(0, slice_state0)
-    slice1 = overlay_slice(1, slice_state1)
-    slice2 = overlay_slice(2, slice_state2)
+    slice0 = overlay_slice(slice_state0)
+    slice1 = overlay_slice(slice_state1)
+    slice2 = overlay_slice(slice_state2)
     ray = overlay_ray(camera_state)
 
     frame = palace_util.quad(ray, slice0, slice1, slice2)
+    frame = frame(size, events)
 
-    frame = gui.render(frame(size, events))
+    gui = gui_state.setup(events, pc.Vertical(widgets))
+
+    frame = gui.render(frame)
 
     return frame
 
