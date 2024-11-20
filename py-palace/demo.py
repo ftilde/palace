@@ -15,7 +15,8 @@ args = parser.parse_args()
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
-vol = pc.open_volume(args.volume_file)
+v = pc.open_or_create_lod(args.volume_file)
+v = v.map(lambda v: pc.cast(v, pc.ScalarType.F32).embedded(v.embedding_data))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -24,8 +25,9 @@ else:
 
 store = pc.Store()
 
-l0md = vol.inner.metadata
-l0ed = vol.embedding_data
+l0 = v.levels[0]
+l0md = l0.inner.metadata
+l0ed = l0.embedding_data
 
 min_scale = l0ed.spacing.min() / 10.0
 max_scale = (l0ed.spacing * l0md.dimensions).mean() / 5.0
@@ -57,9 +59,9 @@ gui_state = pc.GuiState(rt)
 
 # Top-level render component
 def render(size, events):
+    global v
 
     # Volume Processing
-    v = vol.create_lod(2.0)
     match processing.load():
         case "passthrough":
             #v = v.map(lambda v: pc.add(v, v))

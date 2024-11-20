@@ -21,6 +21,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     use crate::types::*;
 
     m.add_function(wrap_pyfunction!(open_volume, m)?)?;
+    m.add_function(wrap_pyfunction!(open_or_create_lod, m)?)?;
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(grey_ramp_tf, m)?)?;
     m.add_function(wrap_pyfunction!(tf_from_numpy, m)?)?;

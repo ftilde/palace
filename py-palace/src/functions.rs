@@ -365,6 +365,25 @@ pub fn open_volume(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn open_or_create_lod(
+    path: std::path::PathBuf,
+    brick_size_hint: Option<u32>,
+    volume_path_hint: Option<String>,
+) -> PyResult<LODTensorOperator> {
+    let brick_size_hint = brick_size_hint.map(|h| LocalVoxelPosition::fill(h.into()));
+
+    let hints = palace_volume::Hints {
+        brick_size: brick_size_hint,
+        location: volume_path_hint,
+        ..Default::default()
+    };
+    let (vol, _) = crate::map_result(palace_volume::open_or_create_lod(path, hints))?;
+
+    vol.into_dyn().try_into()
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn view_image(
     image: LODTensorOperator,
     result_metadata: PyTensorMetaData,
