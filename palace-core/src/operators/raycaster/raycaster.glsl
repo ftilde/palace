@@ -185,7 +185,7 @@ void main()
                 // choose a larger pixel distance than 1. This can be a problem
                 // if the volume is large and the camera is in the volume.
                 uvec2 eep_x_offset = uvec2(1,0);
-                uvec2 eep_y_offset = uvec2(10,0);
+                uvec2 eep_y_offset = uvec2(0,10);
 
                 EEPoint eep_x;
                 if(!sample_ee(out_pos + eep_x_offset, eep_x, root_level)) {
