@@ -345,6 +345,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn add(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Add, self, other)
     }
+    pub fn sub(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Sub, self, other)
+    }
     pub fn mul(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Mul, self, other)
     }

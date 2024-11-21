@@ -15,6 +15,14 @@ layout(std430, binding = 1) buffer Seeds {
 
 declare_push_consts(consts);
 
+#ifdef WEIGHT_FUNCTION_BIAN_MEAN
+float edge_weight(uint p1, uint p2) {
+    float diff = input_buf.values[p1] - input_buf.values[p2];
+    float beta = consts.diff_variance_inv * 2.0;
+    return exp(-beta * diff * diff);
+}
+#endif
+
 #ifdef WEIGHT_FUNCTION_GRADY
 float edge_weight(uint p1, uint p2) {
     float diff = input_buf.values[p1] - input_buf.values[p2];

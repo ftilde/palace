@@ -16,3 +16,7 @@ pub fn from_static<E: Element + Identify>(
 pub fn from_rc<E: Element + Identify>(values: Rc<[E]>) -> ArrayOperator<StaticElementType<E>> {
     ArrayOperator::from_rc([values.len() as u32].into(), values).unwrap()
 }
+
+pub fn from_vec<E: Element + Identify>(values: Vec<E>) -> ArrayOperator<StaticElementType<E>> {
+    from_rc(Rc::from(values))
+}

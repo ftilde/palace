@@ -63,8 +63,11 @@ raycaster_config_rw = pc.RaycasterConfig().store(store)
 
 #raycaster_config_rw.compositing_mode().write("DVR")
 
-beta = store.store_primitive(128.0)
+weight_function = store.store_primitive("bian_mean")
 min_edge_weight = store.store_primitive(1e-5)
+
+beta = store.store_primitive(128.0)
+extent = store.store_primitive(1)
 
 gui_state = pc.GuiState(rt)
 
@@ -77,7 +80,13 @@ rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 #print(tf.min)
 
 def render(size, events: pc.Events):
-    weights = pc.randomwalker_weights(rw_input, min_edge_weight.load(), beta.load())
+
+    match weight_function.load():
+        case "grady":
+            weights = pc.randomwalker_weights(rw_input, min_edge_weight.load(), beta.load())
+        case "bian_mean":
+            weights = pc.randomwalker_weights_bian(rw_input, min_edge_weight.load(), extent.load())
+
     edge_w = pc.min(pc.min(
         pc.index(weights.fold_into_dtype(), 0).embedded(ed),
         pc.index(weights.fold_into_dtype(), 1).embedded(ed)),
@@ -97,12 +106,18 @@ def render(size, events: pc.Events):
     # GUI stuff
     widgets = []
 
-    widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
+    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean"]))
+    match weight_function.load():
+        case "grady":
+            widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
+        case "bian_mean":
+            widgets.append(palace_util.named_slider("extent", extent, 1, 5))
+
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
     def overlay_slice(state):
         slice = palace_util.render_slice(v, state, tf)
-        slice_rw = palace_util.render_slice(rw_result, state, tf)
+        slice_rw = palace_util.render_slice(rw_result, state, tf_prob)
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
@@ -116,6 +131,7 @@ def render(size, events: pc.Events):
         ray_rw = palace_util.render_raycast(rw_result, state, raycaster_config_rw, tf_prob3d)
 
         return palace_util.alpha_blending(ray_rw, ray)
+        #return ray_rw
 
     def extract_value(size, events: pc.Events, slice_state, volume):
         mouse_pos = events.latest_state().mouse_pos()
@@ -133,6 +149,7 @@ def render(size, events: pc.Events):
     ray = overlay_ray(camera_state)
 
     frame = palace_util.quad(ray, slice0, slice1, slice2)
+    #frame = ray
     frame = frame(size, events)
 
     gui = gui_state.setup(events, pc.Vertical(widgets))

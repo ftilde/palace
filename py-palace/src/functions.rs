@@ -464,6 +464,29 @@ pub fn randomwalker_weights(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn randomwalker_weights_bian(
+    input: MaybeEmbeddedTensorOperatorArg,
+    min_edge_weight: f32,
+    extent: usize,
+) -> PyResult<TensorOperator> {
+    let input = input
+        .unpack()
+        .into_inner()
+        .try_into_core_static::<D3>()?
+        .try_into()?;
+    let res: CTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::random_walker_weights_bian(
+            input,
+            extent,
+            min_edge_weight,
+        )
+        .into_dyn()
+        .into();
+    Ok(res.into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn randomwalker(
     py: Python,
     weights: TensorOperator,
