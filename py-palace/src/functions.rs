@@ -452,9 +452,9 @@ pub fn randomwalker_weights(
         .try_into_core_static::<D3>()?
         .try_into()?;
     let res: CTensorOperator<DDyn, DType> =
-        palace_core::operators::randomwalker::random_walker_weights(
+        palace_core::operators::randomwalker::random_walker_weights_grady(
             input,
-            palace_core::operators::randomwalker::WeightFunction::Grady { beta },
+            beta,
             min_edge_weight,
         )
         .into_dyn()
