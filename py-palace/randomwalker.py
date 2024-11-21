@@ -79,7 +79,10 @@ rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 #print(tf.max)
 #print(tf.min)
 
+mouse_pos_and_value = None
+
 def render(size, events: pc.Events):
+    global mouse_pos_and_value
 
     match weight_function.load():
         case "grady":
@@ -115,6 +118,11 @@ def render(size, events: pc.Events):
 
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
+    if mouse_pos_and_value is not None:
+        vol_pos, value = mouse_pos_and_value
+        widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
+        mouse_pos_and_value = None
+
     def overlay_slice(state):
         slice = palace_util.render_slice(v, state, tf)
         slice_rw = palace_util.render_slice(rw_result, state, tf_prob)
@@ -124,7 +132,7 @@ def render(size, events: pc.Events):
         out = palace_util.alpha_blending(slice_rw, slice)
         #out = slice_rw
 
-        return palace_util.inspect_component(out, lambda size, events: extract_value(size, events, state, rw_result.levels[0]))
+        return palace_util.inspect_component(out, lambda size, events: extract_slice_value(size, events, state, rw_result.levels[0]))
 
     def overlay_ray(state):
         ray = palace_util.render_raycast(v, state, raycaster_config, tf)
@@ -133,14 +141,13 @@ def render(size, events: pc.Events):
         return palace_util.alpha_blending(ray_rw, ray)
         #return ray_rw
 
-    def extract_value(size, events: pc.Events, slice_state, volume):
+    def extract_slice_value(size, events: pc.Events, slice_state, volume):
+        global mouse_pos_and_value
         mouse_pos = events.latest_state().mouse_pos()
         vol_pos = mouse_pos and palace_util.mouse_to_volume_pos(slice_state.load(), volume, mouse_pos, size)
         if vol_pos is not None:
             value = palace_util.extract_tensor_value(rt, volume, vol_pos)
-            widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
-
-
+            mouse_pos_and_value = (vol_pos, value)
 
     # Actual composition of the rendering
     slice0 = overlay_slice(slice_state0)
@@ -150,11 +157,9 @@ def render(size, events: pc.Events):
 
     frame = palace_util.quad(ray, slice0, slice1, slice2)
     #frame = ray
-    frame = frame(size, events)
-
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
-    frame = gui.render(frame)
+    frame = gui.render(frame(size, events))
 
     return frame
 
