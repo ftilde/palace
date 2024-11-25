@@ -40,8 +40,8 @@ pub enum WeightFunction {
 
 pub fn random_walker_weights_grady(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
-    min_edge_weight: f32,
     beta: f32,
+    min_edge_weight: f32,
 ) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
     assert_eq!(
         tensor.metadata.dimensions.raw(),
