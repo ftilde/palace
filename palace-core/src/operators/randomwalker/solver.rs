@@ -13,7 +13,7 @@ use crate::{
     coordinate::GlobalCoordinate,
     dim::{DynDimension, LargerDim, D3},
     dtypes::StaticElementType,
-    operator::OperatorDescriptor,
+    operator::{op_descriptor, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::gpu::Allocation,
     task::OpaqueTaskContext,
@@ -49,7 +49,7 @@ pub fn random_walker_inner(
     );
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("random_walker")
+        op_descriptor!()
             .dependent_on(&weights)
             .dependent_on(&seeds)
             .dependent_on_data(&cfg),

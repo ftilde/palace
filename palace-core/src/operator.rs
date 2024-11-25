@@ -42,7 +42,43 @@ pub struct OperatorDescriptor {
     pub cache_results: bool,
 }
 
+#[macro_export]
+macro_rules! op_descriptor {
+    () => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f)
+            .rsplit("::")
+            .find(|&part| part != "f" && part != "{{closure}}")
+            .unwrap();
+        OperatorDescriptor::with_name(name)
+    }};
+}
+pub use op_descriptor;
+
 impl OperatorDescriptor {
+    #[track_caller]
+    pub fn with_name(name: &'static str) -> Self {
+        let caller = std::panic::Location::caller();
+
+        let id = Id::combine(&[
+            Id::from_data(name.as_bytes()),
+            Id::from_data(caller.file().as_bytes()),
+            Id::hash(&caller.line()),
+            Id::hash(&caller.column()),
+        ]);
+        let id = OperatorId(id, name);
+
+        Self {
+            id,
+            data_longevity: DataLongevity::Stable,
+            cache_results: false,
+        }
+    }
+
+    //TODO remove
     pub fn new(name: &'static str) -> Self {
         let id = OperatorId::new(name);
         Self {

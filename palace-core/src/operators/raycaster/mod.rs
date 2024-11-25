@@ -11,6 +11,7 @@ use crate::{
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
+    op_descriptor,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -701,7 +702,7 @@ pub fn raycast(
     }
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("raycast")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on(&entry_exit_points)
             .dependent_on_data(&tf)
