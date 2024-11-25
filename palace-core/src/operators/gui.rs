@@ -27,7 +27,7 @@ use crate::{
         memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipelineBuilder},
         shader::Shader,
-        state::{RessourceId, VulkanState},
+        state::{ResourceId, VulkanState},
         DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -567,7 +567,7 @@ void main() {
                     let format = vk::Format::R8G8B8A8_UNORM;
 
                     let render_pass = device.request_state(
-                        RessourceId::new("renderpass").of(ctx.current_op()),
+                        ResourceId::new("renderpass").of(ctx.current_op()),
                         || {
                             let color_attachment = vk::AttachmentDescription::default()
                                 .format(format)
@@ -614,7 +614,7 @@ void main() {
                         },
                     )?;
                     let pipeline = device.request_state(
-                        RessourceId::new("pipeline").of(ctx.current_op()),
+                        ResourceId::new("pipeline").of(ctx.current_op()),
                         || {
                             GraphicsPipelineBuilder::new(
                                 Shader::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
@@ -734,7 +734,7 @@ void main() {
                         },
                     )?;
                     let sampler = device.request_state(
-                        RessourceId::new("sampler").of(ctx.current_op()),
+                        ResourceId::new("sampler").of(ctx.current_op()),
                         || {
                             let create_info = vk::SamplerCreateInfo::default()
                                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)

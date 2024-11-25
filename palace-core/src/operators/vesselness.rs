@@ -9,7 +9,7 @@ use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipelineBuilder, DescriptorConfig};
 use crate::vulkan::shader::Shader;
-use crate::vulkan::state::RessourceId;
+use crate::vulkan::state::ResourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 
 use super::tensor::TensorOperator;
@@ -176,7 +176,7 @@ void main() {
                 });
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
+                    ResourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size),
                     || {

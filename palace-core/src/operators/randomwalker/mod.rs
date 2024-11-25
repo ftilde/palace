@@ -10,7 +10,7 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -57,7 +57,7 @@ pub fn rasterize_seed_points(
                 let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
 
                 let pipeline = device.request_state(
-                    RessourceId::new("rasterize_seed_points").dependent_on(&in_size),
+                    ResourceId::new("rasterize_seed_points").dependent_on(&in_size),
                     || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("rasterize_points.glsl"))

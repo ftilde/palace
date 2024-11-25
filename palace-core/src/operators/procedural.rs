@@ -11,7 +11,7 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig},
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         SrcBarrierInfo,
     },
 };
@@ -211,7 +211,7 @@ void main()
                 let m = metadata;
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
+                    ResourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&shader_id)
                         .dependent_on(&m.chunk_size)

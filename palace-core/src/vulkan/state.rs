@@ -10,17 +10,17 @@ use id::{Id, Identify};
 use super::DeviceContext;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct RessourceId(Id);
-impl RessourceId {
+pub struct ResourceId(Id);
+impl ResourceId {
     pub fn new(name: &'static str) -> Self {
         let id = Id::from_data(name.as_bytes());
-        RessourceId(id)
+        ResourceId(id)
     }
     pub fn of(self, op: OperatorId) -> Self {
-        RessourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
+        ResourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
     }
     pub fn dependent_on(self, id: &(impl Identify + ?Sized)) -> Self {
-        RessourceId(Id::combine(&[self.0, id.id()]))
+        ResourceId(Id::combine(&[self.0, id.id()]))
     }
     pub fn inner(&self) -> Id {
         self.0
@@ -29,13 +29,13 @@ impl RessourceId {
 
 #[derive(Default)]
 pub struct Cache {
-    values: RefCell<Map<RessourceId, UnsafeCell<Box<dyn VulkanState>>>>,
+    values: RefCell<Map<ResourceId, UnsafeCell<Box<dyn VulkanState>>>>,
 }
 
 impl Cache {
     pub fn get<'a, V: VulkanState, F: FnOnce() -> Result<V, crate::Error>>(
         &'a self,
-        id: RessourceId,
+        id: ResourceId,
         generate: F,
     ) -> Result<&'a V, crate::Error> {
         let mut m = self.values.borrow_mut();

@@ -15,7 +15,7 @@ use crate::{
     vulkan::{
         pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig},
         shader::{Config, Shader},
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -543,7 +543,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     let num_chunk_elements = m.num_chunk_elements();
 
                     let pipeline = device.request_state(
-                        RessourceId::new("pipeline")
+                        ResourceId::new("pipeline")
                             .of(ctx.current_op())
                             .dependent_on(jit_operator),
                         || {

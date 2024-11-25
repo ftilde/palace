@@ -23,7 +23,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use self::state::RessourceId;
+use self::state::ResourceId;
 use self::state::VulkanState;
 
 pub mod memory;
@@ -538,7 +538,7 @@ impl DeviceContext {
 
     pub fn request_state<'a, T: VulkanState + 'static>(
         &'a self,
-        identifier: RessourceId,
+        identifier: ResourceId,
         init: impl FnOnce() -> Result<T, crate::Error> + 'a,
     ) -> Result<&'a T, crate::Error> {
         self.vulkan_states.get(identifier, || init())

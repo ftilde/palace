@@ -13,7 +13,7 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -235,7 +235,7 @@ void main() {
                 let num_chunks = m_in.dimension_in_chunks().hmul();
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
+                    ResourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&num_chunks)
                         .dependent_on(&m_in.chunk_size)

@@ -25,7 +25,7 @@ use crate::{
             LocalSizeConfig,
         },
         shader::Shader,
-        state::{RessourceId, VulkanState},
+        state::{ResourceId, VulkanState},
         DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -224,7 +224,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     }
 
     let pipeline_init = device.request_state(
-        RessourceId::new("tensor_vec_table_init").dependent_on(&tensor_size),
+        ResourceId::new("tensor_vec_table_init").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_init.glsl"))
@@ -236,7 +236,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     )?;
 
     let pipeline_step = device.request_state(
-        RessourceId::new("tensor_vec_table_step").dependent_on(&tensor_size),
+        ResourceId::new("tensor_vec_table_step").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_step.glsl"))
@@ -248,7 +248,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
     )?;
 
     let pipeline_finish = device.request_state(
-        RessourceId::new("tensor_vec_table_finish").dependent_on(&tensor_size),
+        ResourceId::new("tensor_vec_table_finish").dependent_on(&tensor_size),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_finish.glsl"))
@@ -379,7 +379,7 @@ async fn results_to_tensor<'req, 'inv>(
 
     let pipeline = device
         .request_state(
-            RessourceId::new("results_to_tensor")
+            ResourceId::new("results_to_tensor")
                 .dependent_on(&tensor_size)
                 .dependent_on(&num_rows),
             || {
@@ -426,7 +426,7 @@ async fn mat_setup<'req, 'inv>(
     let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
-        RessourceId::new("randomwalker_mat_setup")
+        ResourceId::new("randomwalker_mat_setup")
             .dependent_on(&tensor_size)
             .dependent_on(&num_rows),
         || {
@@ -724,7 +724,7 @@ fn cg_init(
     let num_rows = a.num_rows;
 
     let pipeline =
-        device.request_state(RessourceId::new("cg_init").dependent_on(&num_rows), || {
+        device.request_state(ResourceId::new("cg_init").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("cg_init.glsl"))
                     .define("NUM_ROWS", num_rows)
@@ -758,7 +758,7 @@ fn cg_alpha(
     let num_rows = a.num_rows;
 
     let pipeline =
-        device.request_state(RessourceId::new("cg_alpha").dependent_on(&num_rows), || {
+        device.request_state(ResourceId::new("cg_alpha").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("cg_alpha.glsl"))
                     .define("NUM_ROWS", num_rows)
@@ -797,7 +797,7 @@ fn cg_beta(
     rth_p1: &Allocation,
 ) -> Result<(), crate::Error> {
     let pipeline =
-        device.request_state(RessourceId::new("cg_beta").dependent_on(&num_rows), || {
+        device.request_state(ResourceId::new("cg_beta").dependent_on(&num_rows), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("cg_beta.glsl")).define("NUM_ROWS", num_rows),
             )
@@ -834,7 +834,7 @@ async fn dot_product_finish<'req, 'inv>(
     let num_values = (size as usize / std::mem::size_of::<f32>()) as u32;
 
     let pipeline = device.request_state(
-        RessourceId::new("dot_product_step").dependent_on(&num_values),
+        ResourceId::new("dot_product_step").dependent_on(&num_values),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("dot_product_step.glsl"))
@@ -891,7 +891,7 @@ fn dot_product_init(
     let num_rows = size as usize / std::mem::size_of::<f32>();
 
     let pipeline = device.request_state(
-        RessourceId::new("dot_product").dependent_on(&num_rows),
+        ResourceId::new("dot_product").dependent_on(&num_rows),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("dot_product.glsl")).define("NUM_ROWS", num_rows),
@@ -933,7 +933,7 @@ fn scale_and_sum_quotient(
     let num_rows = size as usize / std::mem::size_of::<f32>();
 
     let pipeline = device.request_state(
-        RessourceId::new("scale_and_sum_quotient").dependent_on(&num_rows),
+        ResourceId::new("scale_and_sum_quotient").dependent_on(&num_rows),
         || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("scale_and_sum_quotient.glsl"))

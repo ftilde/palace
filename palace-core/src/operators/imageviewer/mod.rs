@@ -21,7 +21,7 @@ use crate::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -182,7 +182,7 @@ pub fn view_image(
                 let request_table_size = 256;
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    ResourceId::new("pipeline").of(ctx.current_op()),
                     || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("imageviewer.glsl"))

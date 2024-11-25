@@ -12,7 +12,7 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -76,7 +76,7 @@ pub fn random_walker_weights_grady(
                     .scalar::<f32>("grady_beta");
 
                 let pipeline = device.request_state(
-                    RessourceId::new("randomwalker_weights_grady").dependent_on(&in_size),
+                    ResourceId::new("randomwalker_weights_grady").dependent_on(&in_size),
                     || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
@@ -213,7 +213,7 @@ pub fn random_walker_weights_bian(
                     .scalar::<f32>("diff_variance_inv");
 
                 let pipeline = device.request_state(
-                    RessourceId::new("randomwalker_weights_bian").dependent_on(&in_size),
+                    ResourceId::new("randomwalker_weights_bian").dependent_on(&in_size),
                     || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))

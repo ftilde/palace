@@ -20,7 +20,7 @@ use crate::{
             ComputePipelineBuilder, DescriptorConfig, GraphicsPipelineBuilder, LocalSizeConfig,
         },
         shader::Shader,
-        state::RessourceId,
+        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -216,7 +216,7 @@ pub fn entry_exit_points(
                 let projection_to_norm = norm_to_projection.invert().unwrap();
 
                 let render_pass = device.request_state(
-                    RessourceId::new("renderpass").of(ctx.current_op()),
+                    ResourceId::new("renderpass").of(ctx.current_op()),
                     || {
                         let subpass = vk::SubpassDescription::default()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
@@ -246,7 +246,7 @@ pub fn entry_exit_points(
                     },
                 )?;
                 let pipeline_eep = device.request_state(
-                    RessourceId::new("pipeline").of(ctx.current_op()),
+                    ResourceId::new("pipeline").of(ctx.current_op()),
                     || {
                         GraphicsPipelineBuilder::new(
                             Shader::new(include_str!("entryexitpoints.vert"))
@@ -333,7 +333,7 @@ pub fn entry_exit_points(
                     },
                 )?;
                 let pipeline_in_volume_fix = device.request_state(
-                    RessourceId::new("fix_eep_pipeline").of(ctx.current_op()),
+                    ResourceId::new("fix_eep_pipeline").of(ctx.current_op()),
                     || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("entrypoints_inside.glsl"))
@@ -802,7 +802,7 @@ pub fn raycast(
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
-                    RessourceId::new("pipeline")
+                    ResourceId::new("pipeline")
                         .of(ctx.current_op())
                         .dependent_on(&input.levels.len())
                         .dependent_on(&config.compositing_mode)
