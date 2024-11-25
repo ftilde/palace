@@ -7,6 +7,7 @@ use crate::{
     data::{LocalVoxelPosition, Vector, VoxelPosition},
     dim::{self, *},
     dtypes::StaticElementType,
+    op_descriptor,
     operator::OperatorDescriptor,
     storage::DataLocation,
     task::{RequestStream, TaskContext},
@@ -95,7 +96,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F> {
     fn operate(&self) -> VolumeOperator<StaticElementType<f32>> {
         TensorOperator::with_state(
-            OperatorDescriptor::new("ImplicitFunctionRasterizer::operate")
+            op_descriptor!()
                 //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
                 //creates a `|_| var` closure based on a parameter `var`. All of those would have the
                 //same type!

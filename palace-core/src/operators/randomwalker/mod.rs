@@ -6,6 +6,7 @@ use crate::{
     dim::{DynDimension, D1, D3},
     dtypes::{DType, ScalarType, StaticElementType},
     mat::Matrix,
+    op_descriptor,
     operator::OperatorDescriptor,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
@@ -36,7 +37,7 @@ pub fn rasterize_seed_points(
     let nd = md.dim().n();
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("rasterize_seed_points")
+        op_descriptor!()
             .dependent_on(&points_fg)
             .dependent_on(&points_bg)
             .dependent_on_data(&md)

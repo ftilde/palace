@@ -12,6 +12,7 @@ use crate::{
     data::{ChunkCoordinate, LocalCoordinate, Vector},
     dim::*,
     dtypes::{DType, ElementType, StaticElementType},
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::{gpu, DataVersionType},
@@ -83,9 +84,7 @@ void main()
 "#;
 
     TensorOperator::with_state(
-        OperatorDescriptor::new("volume_scale_gpu")
-            .dependent_on(&input)
-            .dependent_on_data(&tf),
+        op_descriptor!().dependent_on(&input).dependent_on_data(&tf),
         Default::default(),
         input.metadata.clone(),
         (input, tf),
@@ -207,7 +206,7 @@ void main()
 "#;
 
     TensorOperator::with_state(
-        OperatorDescriptor::new("threshold_gpu")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&threshold),
         Default::default(),
@@ -363,7 +362,7 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        OperatorDescriptor::new("volume_rechunk_gpu")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&chunk_size)
             .dependent_on_data(&dtype)
@@ -703,7 +702,7 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        OperatorDescriptor::new("convolution_1d_gpu")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on(&kernel)
             .dependent_on_data(&dim),
@@ -1046,7 +1045,7 @@ void main()
 "#;
 
     crate::operators::scalar::scalar(
-        OperatorDescriptor::new("volume_mean_gpu")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&method)
             .dependent_on_data(&sample_method),

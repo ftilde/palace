@@ -2,6 +2,7 @@ use crate::{
     array::{ArrayMetaData, ChunkIndex},
     data::Vector,
     dtypes::StaticElementType,
+    op_descriptor,
     operator::OperatorDescriptor,
     storage::Element,
 };
@@ -113,7 +114,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
 
 pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        OperatorDescriptor::new("gauss").dependent_on_data(&stddev),
+        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_gauss,
@@ -121,7 +122,7 @@ pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        OperatorDescriptor::new("dgauss_dx").dependent_on_data(&stddev),
+        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_dgauss_dx,
@@ -129,7 +130,7 @@ pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        OperatorDescriptor::new("ddgauss_dxdx").dependent_on_data(&stddev),
+        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_ddgauss_dxdx,

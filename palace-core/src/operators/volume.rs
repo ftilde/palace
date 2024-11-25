@@ -8,6 +8,7 @@ use crate::{
     },
     dim::*,
     dtypes::StaticElementType,
+    op_descriptor,
     operator::OperatorDescriptor,
     storage::Element,
     task::RequestStream,
@@ -28,7 +29,7 @@ pub fn mean(
     input: VolumeOperator<StaticElementType<f32>>,
 ) -> ScalarOperator<StaticElementType<f32>> {
     crate::operators::scalar::scalar(
-        OperatorDescriptor::new("volume_mean").dependent_on(&input),
+        op_descriptor!().dependent_on(&input),
         input,
         move |ctx, input| {
             async move {
@@ -97,7 +98,7 @@ pub fn rechunk<E: Element>(
     brick_size: Vector<D3, ChunkSize>,
 ) -> VolumeOperator<StaticElementType<E>> {
     TensorOperator::with_state(
-        OperatorDescriptor::new("volume_rechunk")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&brick_size),
         Default::default(),
@@ -223,9 +224,7 @@ pub fn convolution_1d<const DIM: usize>(
     kernel: ArrayOperator<StaticElementType<f32>>,
 ) -> VolumeOperator<StaticElementType<f32>> {
     TensorOperator::with_state(
-        OperatorDescriptor::new("convolution_1d")
-            .dependent_on(&input)
-            .dependent_on(&kernel),
+        op_descriptor!().dependent_on(&input).dependent_on(&kernel),
         Default::default(),
         input.metadata,
         (input, kernel),

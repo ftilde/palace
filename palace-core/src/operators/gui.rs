@@ -17,6 +17,7 @@ use crate::{
     data::Vector,
     dim::*,
     event::{EventChain, EventStream},
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     runtime::RunTime,
@@ -546,7 +547,7 @@ void main() {
 
         let version = self.inner.0.borrow().version;
         TensorOperator::unbatched(
-            OperatorDescriptor::new("gui")
+            op_descriptor!()
                 .dependent_on(&input)
                 .dependent_on_data(&version)
                 .ephemeral(),

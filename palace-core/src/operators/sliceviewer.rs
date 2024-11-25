@@ -17,6 +17,7 @@ use crate::{
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
+    op_descriptor,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -394,7 +395,7 @@ void main()
 "#;
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("sliceviewer")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&tf)

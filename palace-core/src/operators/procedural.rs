@@ -5,6 +5,7 @@ use crate::{
     array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
     dim::Dimension,
     dtypes::StaticElementType,
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     vec::Vector,
@@ -198,7 +199,7 @@ void main()
     let shader_id = shader_parts.id();
 
     TensorOperator::with_state(
-        OperatorDescriptor::new("rasterize_gpu")
+        op_descriptor!()
             .dependent_on_data(gen_fn)
             .dependent_on_data(&metadata),
         Default::default(),

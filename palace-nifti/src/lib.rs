@@ -7,6 +7,7 @@ use palace_core::{
     data::{self, LocalCoordinate, Vector, VoxelPosition},
     dim::*,
     dtypes::{DType, StaticElementType},
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
     Error,
@@ -113,13 +114,12 @@ impl NiftiVolumeSourceState {
     fn operate(&self) -> EmbeddedVolumeOperator<StaticElementType<f32>> {
         TensorOperator::with_state(
             match &self.0.type_ {
-                Type::Single(path) => OperatorDescriptor::new("NiftiVolumeSourceState::operate")
-                    .dependent_on_data(path.to_string_lossy().as_bytes()),
-                Type::Separate { header, data } => {
-                    OperatorDescriptor::new("NiftiVolumeSourceState::operate")
-                        .dependent_on_data(header.to_string_lossy().as_bytes())
-                        .dependent_on_data(data.to_string_lossy().as_bytes())
+                Type::Single(path) => {
+                    op_descriptor!().dependent_on_data(path.to_string_lossy().as_bytes())
                 }
+                Type::Separate { header, data } => op_descriptor!()
+                    .dependent_on_data(header.to_string_lossy().as_bytes())
+                    .dependent_on_data(data.to_string_lossy().as_bytes()),
             },
             Default::default(),
             self.0.metadata,

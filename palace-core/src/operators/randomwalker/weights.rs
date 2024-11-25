@@ -6,6 +6,7 @@ use crate::{
     dim::{DynDimension, LargerDim, D3},
     dtypes::{ScalarType, StaticElementType},
     jit::{self},
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::{scalar::ScalarOperator, tensor::TensorOperator},
     vec::Vector,
@@ -57,7 +58,7 @@ pub fn random_walker_weights_grady(
     let out_md = TensorMetaData::single_chunk(out_size);
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("random_walker_weights_grady")
+        op_descriptor!()
             .dependent_on(&tensor)
             .dependent_on_data(&min_edge_weight)
             .dependent_on_data(&beta),
@@ -194,7 +195,7 @@ pub fn random_walker_weights_bian(
     let out_md = TensorMetaData::single_chunk(out_size);
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("random_walker_weights_bian")
+        op_descriptor!()
             .dependent_on(&t)
             .dependent_on_data(&min_edge_weight)
             .dependent_on_data(&extent),

@@ -190,7 +190,7 @@ pub fn entry_exit_points(
     }
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("entry_exit_points")
+        op_descriptor!()
             .dependent_on_data(&input_metadata)
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&projection_mat)

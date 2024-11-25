@@ -8,6 +8,7 @@ use crate::{
     data::{Matrix, Vector, AABB},
     dim::*,
     dtypes::{DType, ElementType},
+    op_descriptor,
     operator::{OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
@@ -213,7 +214,7 @@ void main() {
 "#;
 
     TensorOperator::with_state(
-        OperatorDescriptor::new("resample")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&output_size)
             .dependent_on_data(&element_out_to_in),

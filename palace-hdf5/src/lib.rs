@@ -2,6 +2,7 @@ use palace_core::array::{ChunkInfo, VolumeEmbeddingData};
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
 use palace_core::dtypes::{DType, ElementType, ScalarType};
+use palace_core::op_descriptor;
 use palace_core::operator::DataDescriptor;
 use palace_core::storage::DataLocation;
 use palace_core::util::Map;
@@ -191,7 +192,7 @@ impl Hdf5VolumeSourceState {
 
     fn operate(&self) -> EmbeddedVolumeOperator<DType> {
         TensorOperator::with_state(
-            OperatorDescriptor::new("Hdf5VolumeSourceState::operate")
+            op_descriptor!()
                 .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
                 .dependent_on_data(self.inner.volume_location.as_bytes()),
             self.inner.dtype,

@@ -14,6 +14,7 @@ use crate::{
     dim::*,
     dtypes::StaticElementType,
     mat::Matrix,
+    op_descriptor,
     operator::{OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
@@ -123,7 +124,7 @@ pub fn view_image(
     }
 
     TensorOperator::unbatched(
-        OperatorDescriptor::new("sliceviewer")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&result_metadata)
             .dependent_on_data(&view_state)

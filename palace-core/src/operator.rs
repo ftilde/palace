@@ -77,16 +77,6 @@ impl OperatorDescriptor {
             cache_results: false,
         }
     }
-
-    //TODO remove
-    pub fn new(name: &'static str) -> Self {
-        let id = OperatorId::new(name);
-        Self {
-            id,
-            data_longevity: DataLongevity::Stable,
-            cache_results: false,
-        }
-    }
     pub fn dependent_on(self, v: &dyn OperatorNetworkNode) -> Self {
         let d = v.descriptor();
         Self {

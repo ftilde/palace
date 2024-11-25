@@ -1,7 +1,6 @@
 use ash::vk;
 use futures::StreamExt;
 
-use crate::dim::*;
 use crate::dtypes::StaticElementType;
 use crate::jit::jit;
 use crate::operator::OperatorDescriptor;
@@ -11,6 +10,7 @@ use crate::vulkan::pipeline::{ComputePipelineBuilder, DescriptorConfig};
 use crate::vulkan::shader::Shader;
 use crate::vulkan::state::ResourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
+use crate::{dim::*, op_descriptor};
 
 use super::tensor::TensorOperator;
 use super::volume::EmbeddedVolumeOperator;
@@ -148,7 +148,7 @@ void main() {
 
     let embedding_data = input.embedding_data;
     TensorOperator::with_state(
-        OperatorDescriptor::new("vesselness")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&scale),
         Default::default(),

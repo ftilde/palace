@@ -8,6 +8,7 @@ use crate::{
     data::{GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
+    op_descriptor,
     operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
@@ -186,7 +187,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             .into());
         }
         Ok(TensorOperator::with_state(
-            OperatorDescriptor::new("tensor_from_static")
+            op_descriptor!()
                 .dependent_on_data(&size)
                 .dependent_on_data(values), //TODO: this is a performance problem for
             Default::default(),
@@ -239,7 +240,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             .into());
         }
         Ok(TensorOperator::with_state(
-            OperatorDescriptor::new("tensor_from_static")
+            op_descriptor!()
                 .dependent_on_data(&size)
                 .dependent_on_data(&values[..]), //TODO: this is a performance problem for large arrays
             Default::default(),
@@ -555,7 +556,7 @@ pub fn map<D: DynDimension, E: Element>(
     f: fn(E) -> E,
 ) -> TensorOperator<D, StaticElementType<E>> {
     TensorOperator::with_state(
-        OperatorDescriptor::new("tensor_map")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&(f as usize)),
         Default::default(),
@@ -579,7 +580,7 @@ pub fn linear_rescale<D: DynDimension>(
     offset: f32,
 ) -> TensorOperator<D, StaticElementType<f32>> {
     TensorOperator::with_state(
-        OperatorDescriptor::new("tensor_linear_scale")
+        op_descriptor!()
             .dependent_on(&input)
             .dependent_on_data(&factor)
             .dependent_on_data(&offset),

@@ -8,6 +8,7 @@ use crate::{
     array::TensorMetaData,
     dim::DynDimension,
     dtypes::{DType, ElementType, ScalarType},
+    op_descriptor,
     operator::OperatorDescriptor,
     operators::tensor::TensorOperator,
     storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
@@ -526,7 +527,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
             .position(|o| o.dtype().element_layout() == dtype.element_layout());
 
         Ok(TensorOperator::with_state(
-            OperatorDescriptor::new("jit").dependent_on_data(&self),
+            op_descriptor!().dependent_on_data(&self),
             dtype,
             metadata.clone(),
             (self, metadata),

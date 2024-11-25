@@ -1,5 +1,6 @@
 use crate::{
     dtypes::StaticElementType,
+    op_descriptor,
     operator::{Operator, OperatorDescriptor},
     storage::Element,
     task::{Task, TaskContext},
@@ -31,7 +32,7 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
         f: fn(T, &D) -> O,
     ) -> ScalarOperator<StaticElementType<O>> {
         scalar(
-            OperatorDescriptor::new("ScalarOperator::map")
+            op_descriptor!()
                 .dependent_on(&self)
                 .dependent_on_data(&data)
                 .dependent_on_data(&(f as usize)),
@@ -79,7 +80,7 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
 }
 
 pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementType<T>> {
-    let op_id = OperatorDescriptor::new(std::any::type_name::<T>()).dependent_on_data(&val);
+    let op_id = op_descriptor!().dependent_on_data(&val);
     scalar(op_id, (), move |ctx, _| {
         async move {
             ctx.submit(ctx.write_scalar(val)).await;

@@ -217,7 +217,7 @@ impl ZarrSourceState {
 
     fn operate(&self) -> EmbeddedTensorOperator<DDyn, DType> {
         TensorOperator::with_state(
-            OperatorDescriptor::new("ZarrSourceState::operate")
+            OperatorDescriptor::with_name("ZarrSourceState::operate")
                 .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
                 .dependent_on_data(self.inner.array.path().as_str().as_bytes()),
             self.inner.dtype,

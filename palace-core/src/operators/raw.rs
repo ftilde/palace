@@ -9,6 +9,7 @@ use crate::{
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
     dim::D3,
     dtypes::{DType, ElementType},
+    op_descriptor,
     operator::{DataDescriptor, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataLocation,
@@ -101,8 +102,7 @@ pub fn open(
     }));
 
     let vol = TensorOperator::with_state(
-        OperatorDescriptor::new("raw_volume::open")
-            .dependent_on_data(state.path.to_string_lossy().as_bytes()),
+        op_descriptor!().dependent_on_data(state.path.to_string_lossy().as_bytes()),
         dtype,
         metadata,
         (state, metadata),
