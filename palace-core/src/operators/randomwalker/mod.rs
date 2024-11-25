@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+mod hierarchical;
 mod solver;
 mod weights;
 

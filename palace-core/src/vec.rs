@@ -8,6 +8,7 @@ use crate::{
     dim::*,
 };
 use id::{Id, Identify};
+use num::traits::SaturatingSub;
 
 #[repr(transparent)]
 #[derive(Clone, Default)]
@@ -30,21 +31,21 @@ impl<D: DynDimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
 }
 impl<D: DynDimension, T: Copy + Eq> Eq for Vector<D, T> {}
 
-impl<D: DynDimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Vector::zip(self, other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
-            (Some(l), Some(r)) => Some(l.then(r)),
-            (Some(l), None) => Some(l),
-            (None, o) => o,
-        })
-    }
-}
-impl<D: DynDimension, T: Copy + Ord> Ord for Vector<D, T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        Vector::zip(self, other, |l, r| l.cmp(&r)).fold(Ordering::Equal, Ordering::then)
-    }
-}
+//impl<D: DynDimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
+//    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//        Vector::zip(self, other, |l, r| l.partial_cmp(&r)).fold(None, |l, r| match (l, r) {
+//            (Some(l), Some(r)) => Some(l.then(r)),
+//            (Some(l), None) => Some(l),
+//            (None, o) => o,
+//        })
+//    }
+//}
+//impl<D: DynDimension, T: Copy + Ord> Ord for Vector<D, T> {
+//    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//        use std::cmp::Ordering;
+//        Vector::zip(self, other, |l, r| l.cmp(&r)).fold(Ordering::Equal, Ordering::then)
+//    }
+//}
 impl<D: DynDimension, T: Copy + std::fmt::Debug> std::fmt::Debug for Vector<D, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut f = f.debug_list();
@@ -401,6 +402,12 @@ impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Sub<U, Output = O>> Sub<&Vecto
         self.zip(rhs, Sub::sub)
     }
 }
+impl<D: DynDimension, T: Copy + SaturatingSub> Vector<D, T> {
+    pub fn saturating_sub(&self, rhs: &Vector<D, T>) -> Vector<D, T> {
+        self.zip(rhs, |l, r| l.saturating_sub(&r))
+    }
+}
+
 impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Mul<U, Output = O>> Mul<&Vector<D, U>>
     for &Vector<D, T>
 {
@@ -449,6 +456,15 @@ impl<D: DynDimension, O: Copy, U: Copy, T: Copy + Div<U, Output = O>> Div<Vector
     type Output = Vector<D, O>;
     fn div(self, rhs: Vector<D, U>) -> Self::Output {
         self.zip(&rhs, Div::div)
+    }
+}
+
+impl<D: DynDimension, T: Copy + Ord> Vector<D, T> {
+    pub fn max(&self, rhs: &Vector<D, T>) -> Vector<D, T> {
+        self.zip(rhs, |l, r| l.max(r))
+    }
+    pub fn min(&self, rhs: &Vector<D, T>) -> Vector<D, T> {
+        self.zip(rhs, |l, r| l.min(r))
     }
 }
 

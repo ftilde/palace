@@ -1,3 +1,4 @@
+use num::traits::SaturatingSub;
 use std::ops::{Add, Div, Mul, Sub};
 
 use id::{Id, Identify};
@@ -166,6 +167,12 @@ macro_rules! impl_coordinate_ops {
             }
         }
     };
+}
+
+impl<T: CoordinateType> SaturatingSub for Coordinate<T> {
+    fn saturating_sub(&self, rhs: &Self) -> Self::Output {
+        self.raw.saturating_sub(rhs.raw).into()
+    }
 }
 
 impl_coordinate_ops!(usize, |rhs| rhs as u32);
