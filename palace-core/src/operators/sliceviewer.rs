@@ -453,7 +453,7 @@ void main()
                 let request_table_size = 256;
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m_in.chunk_size)
                         .dependent_on(&num_bricks)

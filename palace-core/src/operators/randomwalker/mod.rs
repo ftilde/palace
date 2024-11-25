@@ -57,9 +57,8 @@ pub fn rasterize_seed_points(
 
                 let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
 
-                let pipeline = device.request_state(
-                    ResourceId::new("rasterize_seed_points").dependent_on(&in_size),
-                    || {
+                let pipeline =
+                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("rasterize_points.glsl"))
                                 .push_const_block_dyn(&push_constants)
@@ -69,8 +68,7 @@ pub fn rasterize_seed_points(
                                 .define("ND", nd),
                         )
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

@@ -76,9 +76,8 @@ pub fn random_walker_weights_grady(
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("grady_beta");
 
-                let pipeline = device.request_state(
-                    ResourceId::new("randomwalker_weights_grady").dependent_on(&in_size),
-                    || {
+                let pipeline =
+                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
                                 .push_const_block_dyn(&push_constants)
@@ -87,8 +86,7 @@ pub fn random_walker_weights_grady(
                                 .define("WEIGHT_FUNCTION_GRADY", 1),
                         )
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -213,9 +211,8 @@ pub fn random_walker_weights_bian(
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("diff_variance_inv");
 
-                let pipeline = device.request_state(
-                    ResourceId::new("randomwalker_weights_bian").dependent_on(&in_size),
-                    || {
+                let pipeline =
+                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
                                 .push_const_block_dyn(&push_constants)
@@ -224,8 +221,7 @@ pub fn random_walker_weights_bian(
                                 .define("WEIGHT_FUNCTION_BIAN_MEAN", 1),
                         )
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

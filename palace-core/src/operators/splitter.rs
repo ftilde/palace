@@ -196,7 +196,7 @@ void main()
                     let m = this.metadata_out();
 
                     let pipeline = device
-                        .request_state(ResourceId::new("pipeline").of(ctx.current_op()), || {
+                        .request_state(ResourceId::new().of(ctx.current_op()), || {
                             ComputePipelineBuilder::new(
                                 Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()

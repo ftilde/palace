@@ -108,7 +108,7 @@ void main()
                     .await;
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m.num_chunk_elements()),
                     || {
@@ -224,7 +224,7 @@ void main()
                 let num_chunk_elements = m.num_chunk_elements();
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m.num_chunk_elements()),
                     || {
@@ -390,7 +390,7 @@ void main() {
                 positions.sort_by_key(|(v, _)| v.0);
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m_in.num_chunk_elements())
                         .dependent_on(&dtype)
@@ -782,7 +782,7 @@ void main() {
                     2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&max_bricks)
                         .dependent_on(&dim)
@@ -1072,7 +1072,7 @@ void main()
                 let batch_size = 1024;
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size)
                         .dependent_on(&method)

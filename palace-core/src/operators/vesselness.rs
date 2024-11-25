@@ -176,7 +176,7 @@ void main() {
                 });
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&m.chunk_size),
                     || {

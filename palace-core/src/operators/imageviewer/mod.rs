@@ -182,9 +182,8 @@ pub fn view_image(
 
                 let request_table_size = 256;
 
-                let pipeline = device.request_state(
-                    ResourceId::new("pipeline").of(ctx.current_op()),
-                    || {
+                let pipeline =
+                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("imageviewer.glsl"))
                                 .push_const_block::<PushConstants>()
@@ -194,8 +193,7 @@ pub fn view_image(
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let request_batch_size = ctx
                     .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))

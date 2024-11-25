@@ -544,7 +544,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     let num_chunk_elements = m.num_chunk_elements();
 
                     let pipeline = device.request_state(
-                        ResourceId::new("pipeline")
+                        ResourceId::new()
                             .of(ctx.current_op())
                             .dependent_on(jit_operator),
                         || {

@@ -216,9 +216,8 @@ pub fn entry_exit_points(
                 let norm_to_projection = *transform * &norm_to_world;
                 let projection_to_norm = norm_to_projection.invert().unwrap();
 
-                let render_pass = device.request_state(
-                    ResourceId::new("renderpass").of(ctx.current_op()),
-                    || {
+                let render_pass =
+                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
                         let subpass = vk::SubpassDescription::default()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                             .color_attachments(&[]);
@@ -244,11 +243,9 @@ pub fn entry_exit_points(
                                 .create_render_pass(&render_pass_info, None)
                         }
                         .unwrap())
-                    },
-                )?;
-                let pipeline_eep = device.request_state(
-                    ResourceId::new("pipeline").of(ctx.current_op()),
-                    || {
+                    })?;
+                let pipeline_eep =
+                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
                         GraphicsPipelineBuilder::new(
                             Shader::new(include_str!("entryexitpoints.vert"))
                                 .push_const_block::<PushConstantsFirstEEP>(),
@@ -331,11 +328,9 @@ pub fn entry_exit_points(
                                 build_pipeline(&info)
                             },
                         )
-                    },
-                )?;
-                let pipeline_in_volume_fix = device.request_state(
-                    ResourceId::new("fix_eep_pipeline").of(ctx.current_op()),
-                    || {
+                    })?;
+                let pipeline_in_volume_fix =
+                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("entrypoints_inside.glsl"))
                                 .push_const_block::<PushConstantsInVolumeFix>()
@@ -343,8 +338,7 @@ pub fn entry_exit_points(
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let out_dim = out_info.logical_dimensions;
                 let width = out_dim.x().into();
@@ -803,7 +797,7 @@ pub fn raycast(
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&input.levels.len())
                         .dependent_on(&config.compositing_mode)

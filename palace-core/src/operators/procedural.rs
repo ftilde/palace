@@ -212,7 +212,7 @@ void main()
                 let m = metadata;
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&shader_id)
                         .dependent_on(&m.chunk_size)

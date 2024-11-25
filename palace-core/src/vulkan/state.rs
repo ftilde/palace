@@ -12,7 +12,20 @@ use super::DeviceContext;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct ResourceId(Id);
 impl ResourceId {
-    pub fn new(name: &'static str) -> Self {
+    #[track_caller]
+    pub fn new() -> Self {
+        let caller = std::panic::Location::caller();
+
+        let id = Id::combine(&[
+            Id::from_data(caller.file().as_bytes()),
+            Id::hash(&caller.line()),
+            Id::hash(&caller.column()),
+        ]);
+
+        ResourceId(id)
+    }
+
+    pub fn with_name(name: &'static str) -> Self {
         let id = Id::from_data(name.as_bytes());
         ResourceId(id)
     }

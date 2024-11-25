@@ -236,7 +236,7 @@ void main() {
                 let num_chunks = m_in.dimension_in_chunks().hmul();
 
                 let pipeline = device.request_state(
-                    ResourceId::new("pipeline")
+                    ResourceId::new()
                         .of(ctx.current_op())
                         .dependent_on(&num_chunks)
                         .dependent_on(&m_in.chunk_size)

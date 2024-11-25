@@ -223,40 +223,34 @@ async fn tensor_to_rows_table<'a, 'req, 'inv>(
         s: u32,
     }
 
-    let pipeline_init = device.request_state(
-        ResourceId::new("tensor_vec_table_init").dependent_on(&tensor_size),
-        || {
+    let pipeline_init =
+        device.request_state(ResourceId::new().dependent_on(&tensor_size), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_init.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size),
             )
             .local_size(LocalSizeConfig::Large)
             .build(device)
-        },
-    )?;
+        })?;
 
-    let pipeline_step = device.request_state(
-        ResourceId::new("tensor_vec_table_step").dependent_on(&tensor_size),
-        || {
+    let pipeline_step =
+        device.request_state(ResourceId::new().dependent_on(&tensor_size), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_step.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size)
                     .push_const_block::<PushConstantsStep>(),
             )
             .build(device)
-        },
-    )?;
+        })?;
 
-    let pipeline_finish = device.request_state(
-        ResourceId::new("tensor_vec_table_finish").dependent_on(&tensor_size),
-        || {
+    let pipeline_finish =
+        device.request_state(ResourceId::new().dependent_on(&tensor_size), || {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_finish.glsl"))
                     .define("BRICK_MEM_SIZE", tensor_size),
             )
             .build(device)
-        },
-    )?;
+        })?;
 
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
@@ -379,7 +373,7 @@ async fn results_to_tensor<'req, 'inv>(
 
     let pipeline = device
         .request_state(
-            ResourceId::new("results_to_tensor")
+            ResourceId::new()
                 .dependent_on(&tensor_size)
                 .dependent_on(&num_rows),
             || {
@@ -426,7 +420,7 @@ async fn mat_setup<'req, 'inv>(
     let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
-        ResourceId::new("randomwalker_mat_setup")
+        ResourceId::new()
             .dependent_on(&tensor_size)
             .dependent_on(&num_rows),
         || {
@@ -723,16 +717,15 @@ fn cg_init(
 ) -> Result<(), crate::Error> {
     let num_rows = a.num_rows;
 
-    let pipeline =
-        device.request_state(ResourceId::new("cg_init").dependent_on(&num_rows), || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("cg_init.glsl"))
-                    .define("NUM_ROWS", num_rows)
-                    .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .build(device)
-        })?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_rows), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("cg_init.glsl"))
+                .define("NUM_ROWS", num_rows)
+                .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
+        )
+        .local_size(LocalSizeConfig::Large)
+        .build(device)
+    })?;
 
     let descriptor_config = DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d, rth]);
 
@@ -757,16 +750,15 @@ fn cg_alpha(
 ) -> Result<(), crate::Error> {
     let num_rows = a.num_rows;
 
-    let pipeline =
-        device.request_state(ResourceId::new("cg_alpha").dependent_on(&num_rows), || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("cg_alpha.glsl"))
-                    .define("NUM_ROWS", num_rows)
-                    .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .build(device)
-        })?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_rows), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("cg_alpha.glsl"))
+                .define("NUM_ROWS", num_rows)
+                .define("MAX_ENTRIES_PER_ROW", a.max_entries_per_row),
+        )
+        .local_size(LocalSizeConfig::Large)
+        .build(device)
+    })?;
 
     let descriptor_config = DescriptorConfig::new([&a.values, &a.index, d, z, dtz]);
 
@@ -796,14 +788,13 @@ fn cg_beta(
     h: &Allocation,
     rth_p1: &Allocation,
 ) -> Result<(), crate::Error> {
-    let pipeline =
-        device.request_state(ResourceId::new("cg_beta").dependent_on(&num_rows), || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("cg_beta.glsl")).define("NUM_ROWS", num_rows),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .build(device)
-        })?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_rows), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("cg_beta.glsl")).define("NUM_ROWS", num_rows),
+        )
+        .local_size(LocalSizeConfig::Large)
+        .build(device)
+    })?;
 
     let descriptor_config = DescriptorConfig::new([z, d, c, rth, dtz, x, r, h, rth_p1]);
 
@@ -833,18 +824,15 @@ async fn dot_product_finish<'req, 'inv>(
 
     let num_values = (size as usize / std::mem::size_of::<f32>()) as u32;
 
-    let pipeline = device.request_state(
-        ResourceId::new("dot_product_step").dependent_on(&num_values),
-        || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("dot_product_step.glsl"))
-                    .define("NUM_VALUES", num_values)
-                    .push_const_block::<PushConstantsStep>(),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .build(device)
-        },
-    )?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_values), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("dot_product_step.glsl"))
+                .define("NUM_VALUES", num_values)
+                .push_const_block::<PushConstantsStep>(),
+        )
+        .local_size(LocalSizeConfig::Large)
+        .build(device)
+    })?;
 
     let mut stride = 1u32;
 
@@ -890,16 +878,13 @@ fn dot_product_init(
 
     let num_rows = size as usize / std::mem::size_of::<f32>();
 
-    let pipeline = device.request_state(
-        ResourceId::new("dot_product").dependent_on(&num_rows),
-        || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("dot_product.glsl")).define("NUM_ROWS", num_rows),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .build(device)
-        },
-    )?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_rows), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("dot_product.glsl")).define("NUM_ROWS", num_rows),
+        )
+        .local_size(LocalSizeConfig::Large)
+        .build(device)
+    })?;
 
     let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
 
@@ -932,16 +917,12 @@ fn scale_and_sum_quotient(
 
     let num_rows = size as usize / std::mem::size_of::<f32>();
 
-    let pipeline = device.request_state(
-        ResourceId::new("scale_and_sum_quotient").dependent_on(&num_rows),
-        || {
-            ComputePipelineBuilder::new(
-                Shader::new(include_str!("scale_and_sum_quotient.glsl"))
-                    .define("NUM_ROWS", num_rows),
-            )
-            .build(device)
-        },
-    )?;
+    let pipeline = device.request_state(ResourceId::new().dependent_on(&num_rows), || {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("scale_and_sum_quotient.glsl")).define("NUM_ROWS", num_rows),
+        )
+        .build(device)
+    })?;
 
     let descriptor_config = DescriptorConfig::new([&*o, &*u, &*x, &*y, &*result]);
 

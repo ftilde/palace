@@ -567,9 +567,8 @@ void main() {
 
                     let format = vk::Format::R8G8B8A8_UNORM;
 
-                    let render_pass = device.request_state(
-                        ResourceId::new("renderpass").of(ctx.current_op()),
-                        || {
+                    let render_pass =
+                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
                             let color_attachment = vk::AttachmentDescription::default()
                                 .format(format)
                                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -612,11 +611,9 @@ void main() {
                                     .create_render_pass(&render_pass_info, None)
                             }
                             .unwrap())
-                        },
-                    )?;
-                    let pipeline = device.request_state(
-                        ResourceId::new("pipeline").of(ctx.current_op()),
-                        || {
+                        })?;
+                    let pipeline =
+                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
                             GraphicsPipelineBuilder::new(
                                 Shader::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
                                 Shader::new(FRAG_SHADER)
@@ -732,11 +729,9 @@ void main() {
                                     build_pipeline(&info)
                                 },
                             )
-                        },
-                    )?;
-                    let sampler = device.request_state(
-                        ResourceId::new("sampler").of(ctx.current_op()),
-                        || {
+                        })?;
+                    let sampler =
+                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
                             let create_info = vk::SamplerCreateInfo::default()
                                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                                 .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -753,8 +748,7 @@ void main() {
                                     .create_sampler(&create_info, None)
                                     .unwrap()
                             })
-                        },
-                    )?;
+                        })?;
 
                     let out_dim = out_info.logical_dimensions;
                     let width = out_dim.x().into();
