@@ -57,96 +57,23 @@ impl<I: Identify> Identify for &I {
     }
 }
 
-impl<I1: Identify, I2: Identify> Identify for (I1, I2) {
-    fn id(&self) -> Id {
-        Id::combine(&[self.0.id(), self.1.id()])
-    }
-}
-impl<I1: Identify, I2: Identify, I3: Identify> Identify for (I1, I2, I3) {
-    fn id(&self) -> Id {
-        Id::combine(&[self.0.id(), self.1.id(), self.2.id()])
-    }
-}
-impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify> Identify for (I1, I2, I3, I4) {
-    fn id(&self) -> Id {
-        Id::combine(&[self.0.id(), self.1.id(), self.2.id(), self.3.id()])
-    }
-}
-impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify, I5: Identify> Identify
-    for (I1, I2, I3, I4, I5)
-{
-    fn id(&self) -> Id {
-        Id::combine(&[
-            self.0.id(),
-            self.1.id(),
-            self.2.id(),
-            self.3.id(),
-            self.4.id(),
-        ])
-    }
-}
-impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify, I5: Identify, I6: Identify> Identify
-    for (I1, I2, I3, I4, I5, I6)
-{
-    fn id(&self) -> Id {
-        Id::combine(&[
-            self.0.id(),
-            self.1.id(),
-            self.2.id(),
-            self.3.id(),
-            self.4.id(),
-            self.5.id(),
-        ])
-    }
+macro_rules! impl_for_tuples {
+    ( ) => {};
+    ( $first:ident, $( $rest:ident, )* ) => {
+        // Recursion
+        impl_for_tuples!($( $rest, )*);
+
+        #[allow(non_snake_case)]
+        impl<$first: Identify, $( $rest: Identify ),*> Identify for ($first, $( $rest, )*) {
+            fn id(&self) -> Id {
+                let ($first, $( $rest, )*) = self;
+                Id::combine(&[$first.id(), $( $rest.id(), )*])
+            }
+        }
+    };
 }
 
-impl<
-        I1: Identify,
-        I2: Identify,
-        I3: Identify,
-        I4: Identify,
-        I5: Identify,
-        I6: Identify,
-        I7: Identify,
-    > Identify for (I1, I2, I3, I4, I5, I6, I7)
-{
-    fn id(&self) -> Id {
-        Id::combine(&[
-            self.0.id(),
-            self.1.id(),
-            self.2.id(),
-            self.3.id(),
-            self.4.id(),
-            self.5.id(),
-            self.6.id(),
-        ])
-    }
-}
-
-impl<
-        I1: Identify,
-        I2: Identify,
-        I3: Identify,
-        I4: Identify,
-        I5: Identify,
-        I6: Identify,
-        I7: Identify,
-        I8: Identify,
-    > Identify for (I1, I2, I3, I4, I5, I6, I7, I8)
-{
-    fn id(&self) -> Id {
-        Id::combine(&[
-            self.0.id(),
-            self.1.id(),
-            self.2.id(),
-            self.3.id(),
-            self.4.id(),
-            self.5.id(),
-            self.6.id(),
-            self.7.id(),
-        ])
-    }
-}
+impl_for_tuples!(I1, I2, I3, I4, I5, I6, I7, I8, I9, I10,);
 
 pub struct IdentifyHash<T>(pub T);
 
