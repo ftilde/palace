@@ -51,6 +51,119 @@ pub trait Identify {
     fn id(&self) -> Id;
 }
 
+impl<I: Identify> Identify for &I {
+    fn id(&self) -> Id {
+        I::id(self)
+    }
+}
+
+impl<I1: Identify, I2: Identify> Identify for (I1, I2) {
+    fn id(&self) -> Id {
+        Id::combine(&[self.0.id(), self.1.id()])
+    }
+}
+impl<I1: Identify, I2: Identify, I3: Identify> Identify for (I1, I2, I3) {
+    fn id(&self) -> Id {
+        Id::combine(&[self.0.id(), self.1.id(), self.2.id()])
+    }
+}
+impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify> Identify for (I1, I2, I3, I4) {
+    fn id(&self) -> Id {
+        Id::combine(&[self.0.id(), self.1.id(), self.2.id(), self.3.id()])
+    }
+}
+impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify, I5: Identify> Identify
+    for (I1, I2, I3, I4, I5)
+{
+    fn id(&self) -> Id {
+        Id::combine(&[
+            self.0.id(),
+            self.1.id(),
+            self.2.id(),
+            self.3.id(),
+            self.4.id(),
+        ])
+    }
+}
+impl<I1: Identify, I2: Identify, I3: Identify, I4: Identify, I5: Identify, I6: Identify> Identify
+    for (I1, I2, I3, I4, I5, I6)
+{
+    fn id(&self) -> Id {
+        Id::combine(&[
+            self.0.id(),
+            self.1.id(),
+            self.2.id(),
+            self.3.id(),
+            self.4.id(),
+            self.5.id(),
+        ])
+    }
+}
+
+impl<
+        I1: Identify,
+        I2: Identify,
+        I3: Identify,
+        I4: Identify,
+        I5: Identify,
+        I6: Identify,
+        I7: Identify,
+    > Identify for (I1, I2, I3, I4, I5, I6, I7)
+{
+    fn id(&self) -> Id {
+        Id::combine(&[
+            self.0.id(),
+            self.1.id(),
+            self.2.id(),
+            self.3.id(),
+            self.4.id(),
+            self.5.id(),
+            self.6.id(),
+        ])
+    }
+}
+
+impl<
+        I1: Identify,
+        I2: Identify,
+        I3: Identify,
+        I4: Identify,
+        I5: Identify,
+        I6: Identify,
+        I7: Identify,
+        I8: Identify,
+    > Identify for (I1, I2, I3, I4, I5, I6, I7, I8)
+{
+    fn id(&self) -> Id {
+        Id::combine(&[
+            self.0.id(),
+            self.1.id(),
+            self.2.id(),
+            self.3.id(),
+            self.4.id(),
+            self.5.id(),
+            self.6.id(),
+            self.7.id(),
+        ])
+    }
+}
+
+pub struct IdentifyHash<T>(pub T);
+
+impl<T: Hash> Identify for IdentifyHash<T> {
+    fn id(&self) -> Id {
+        Id::hash(&self.0)
+    }
+}
+
+impl<T> std::ops::Deref for IdentifyHash<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Identify for Id {
     fn id(&self) -> Id {
         *self

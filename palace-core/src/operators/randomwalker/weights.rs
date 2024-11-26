@@ -13,7 +13,6 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -76,17 +75,19 @@ pub fn random_walker_weights_grady(
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("grady_beta");
 
-                let pipeline =
-                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
+                let pipeline = device.request_state(
+                    (in_size.hmul(), nd, &push_constants),
+                    |device, (mem_size, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
-                                .push_const_block_dyn(&push_constants)
-                                .define("BRICK_MEM_SIZE", in_size.hmul())
+                                .push_const_block_dyn(push_constants)
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("ND", nd)
                                 .define("WEIGHT_FUNCTION_GRADY", 1),
                         )
                         .build(device)
-                    })?;
+                    },
+                )?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -211,17 +212,19 @@ pub fn random_walker_weights_bian(
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("diff_variance_inv");
 
-                let pipeline =
-                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
+                let pipeline = device.request_state(
+                    (in_size.hmul(), nd, &push_constants),
+                    |device, (mem_size, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
-                                .push_const_block_dyn(&push_constants)
-                                .define("BRICK_MEM_SIZE", in_size.hmul())
+                                .push_const_block_dyn(push_constants)
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("ND", nd)
                                 .define("WEIGHT_FUNCTION_BIAN_MEAN", 1),
                         )
                         .build(device)
-                    })?;
+                    },
+                )?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

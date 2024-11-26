@@ -4,6 +4,7 @@ use std::{cell::RefCell, collections::VecDeque};
 
 use ash::vk;
 use crevice::std140::{AsStd140, Std140};
+use id::Identify;
 
 use crate::dtypes::{AsDynType, DType, ElementType};
 use crate::mat::Matrix;
@@ -671,7 +672,7 @@ impl DescriptorConfig {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Identify)]
 enum MemberSize {
     Vec(usize),
     Matrix(usize),
@@ -688,6 +689,7 @@ impl std::fmt::Display for MemberSize {
     }
 }
 
+#[derive(Identify)]
 struct Member {
     size: MemberSize,
     type_: DType,
@@ -705,6 +707,7 @@ impl Member {
     }
 }
 
+#[derive(Identify)]
 pub struct DynPushConstants {
     members: Vec<Member>,
 }

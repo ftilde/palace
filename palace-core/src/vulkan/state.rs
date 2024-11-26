@@ -46,16 +46,19 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn get<'a, V: VulkanState, F: FnOnce() -> Result<V, crate::Error>>(
+    pub fn get<'a, V: VulkanState, D: Identify>(
         &'a self,
         id: ResourceId,
-        generate: F,
+        device: &DeviceContext,
+        data: D,
+        generate: fn(&DeviceContext, D) -> Result<V, crate::Error>,
     ) -> Result<&'a V, crate::Error> {
+        let id = id.dependent_on(&data);
         let mut m = self.values.borrow_mut();
         let raw = match m.entry(id) {
             std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
             std::collections::hash_map::Entry::Vacant(o) => {
-                let v = generate()?;
+                let v = generate(device, data)?;
                 o.insert(UnsafeCell::new(Box::new(v)))
             }
         };
@@ -115,5 +118,12 @@ impl VulkanState for vk::RenderPass {
 impl VulkanState for vk::Sampler {
     unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
         unsafe { context.functions().destroy_sampler(*self, None) };
+    }
+}
+
+impl<V1: VulkanState, V2: VulkanState> VulkanState for (V1, V2) {
+    unsafe fn deinitialize(&mut self, context: &crate::vulkan::DeviceContext) {
+        unsafe { self.0.deinitialize(context) };
+        unsafe { self.1.deinitialize(context) };
     }
 }

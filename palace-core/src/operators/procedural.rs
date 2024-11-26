@@ -1,5 +1,4 @@
 use ash::vk;
-use id::Identify;
 
 use crate::{
     array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
@@ -12,7 +11,6 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig},
         shader::Shader,
-        state::ResourceId,
         SrcBarrierInfo,
     },
 };
@@ -196,8 +194,6 @@ void main()
 "#,
     ];
 
-    let shader_id = shader_parts.id();
-
     TensorOperator::with_state(
         op_descriptor!()
             .dependent_on_data(gen_fn)
@@ -212,15 +208,11 @@ void main()
                 let m = metadata;
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&shader_id)
-                        .dependent_on(&m.chunk_size)
-                        .dependent_on(&D::N),
-                    || {
+                    (&shader_parts, m.chunk_size.hmul()),
+                    |device, (shader_parts, chunk_size)| {
                         ComputePipelineBuilder::new(
-                            Shader::from_parts(shader_parts.clone())
-                                .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                            Shader::from_parts(shader_parts.to_vec())
+                                .define("BRICK_MEM_SIZE", chunk_size)
                                 .define("N", D::N),
                         )
                         .use_push_descriptor(true)

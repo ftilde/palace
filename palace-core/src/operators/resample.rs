@@ -14,7 +14,6 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -236,17 +235,18 @@ void main() {
                 let num_chunks = m_in.dimension_in_chunks().hmul();
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&num_chunks)
-                        .dependent_on(&m_in.chunk_size)
-                        .dependent_on(&nd)
-                        .dependent_on(&dtype_dyn),
-                    || {
+                    (
+                        &push_constants,
+                        num_chunks,
+                        m_in.chunk_size.hmul(),
+                        nd,
+                        dtype_dyn,
+                    ),
+                    |device, (push_constants, num_chunks, mem_size, nd, dtype_dyn)| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .define("NUM_CHUNKS", num_chunks)
-                                .define("BRICK_MEM_SIZE_IN", m_in.chunk_size.hmul())
+                                .define("BRICK_MEM_SIZE_IN", mem_size)
                                 .define("N", nd)
                                 .define("T", dtype_dyn.glsl_type())
                                 .push_const_block_dyn(&push_constants)

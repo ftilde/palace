@@ -8,7 +8,6 @@ use crate::operators::array::ArrayOperator;
 use crate::vec::Vector;
 use crate::vulkan::pipeline::{ComputePipelineBuilder, DescriptorConfig};
 use crate::vulkan::shader::Shader;
-use crate::vulkan::state::ResourceId;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 use crate::{dim::*, op_descriptor};
 
@@ -175,18 +174,13 @@ void main() {
                     (hessian_bricks, pos)
                 });
 
-                let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m.chunk_size),
-                    || {
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER).define("BRICK_MEM_SIZE", m.chunk_size.hmul()),
-                        )
-                        .use_push_descriptor(true)
-                        .build(device)
-                    },
-                )?;
+                let pipeline = device.request_state(m.chunk_size.hmul(), |device, mem_size| {
+                    ComputePipelineBuilder::new(
+                        Shader::new(SHADER).define("BRICK_MEM_SIZE", mem_size),
+                    )
+                    .use_push_descriptor(true)
+                    .build(device)
+                })?;
 
                 let mut stream = ctx.submit_unordered_with_data(requests);
                 while let Some((hessian_bricks, pos)) = stream.next().await {

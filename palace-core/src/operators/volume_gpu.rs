@@ -23,7 +23,6 @@ use crate::{
             LocalSizeConfig,
         },
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -107,20 +106,16 @@ void main()
                     )
                     .await;
 
-                let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m.num_chunk_elements()),
-                    || {
+                let pipeline =
+                    device.request_state(m.num_chunk_elements(), |device, chunk_elements| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
-                                .define("BRICK_MEM_SIZE", m.num_chunk_elements())
+                                .define("BRICK_MEM_SIZE", chunk_elements)
                                 .push_const_block::<PushConstants>(),
                         )
                         .use_push_descriptor(true)
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let mut brick_stream = ctx
                     .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
@@ -223,20 +218,16 @@ void main()
                 let m = input.metadata.clone().into_dyn();
                 let num_chunk_elements = m.num_chunk_elements();
 
-                let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m.num_chunk_elements()),
-                    || {
+                let pipeline =
+                    device.request_state(m.num_chunk_elements(), |device, chunk_elements| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
-                                .define("BRICK_MEM_SIZE", m.num_chunk_elements())
+                                .define("BRICK_MEM_SIZE", chunk_elements)
                                 .push_const_block::<PushConstants>(),
                         )
                         .use_push_descriptor(true)
                         .build(device)
-                    },
-                )?;
+                    })?;
 
                 let mut brick_stream = ctx
                     .submit_unordered(positions.iter().map(|(pos, _)| {
@@ -390,18 +381,14 @@ void main() {
                 positions.sort_by_key(|(v, _)| v.0);
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m_in.num_chunk_elements())
-                        .dependent_on(&dtype)
-                        .dependent_on(&nd),
-                    || {
+                    (&push_constants, &m_in.num_chunk_elements(), &dtype, &nd),
+                    |device, (push_constants, num_elements, dtype, nd)| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
-                                .define("BRICK_MEM_SIZE_IN", m_in.num_chunk_elements())
+                                .define("BRICK_MEM_SIZE_IN", num_elements)
                                 .define("N", nd)
                                 .define("T", dtype.glsl_type())
-                                .push_const_block_dyn(&push_constants)
+                                .push_const_block_dyn(push_constants)
                                 .ext(dtype.glsl_ext())
                                 .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
                         )
@@ -782,16 +769,27 @@ void main() {
                     2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&max_bricks)
-                        .dependent_on(&dim)
-                        .dependent_on(&nd)
-                        .dependent_on(&dtype)
-                        .dependent_on(&kernel_dtype)
-                        .dependent_on(&m_in.chunk_size)
-                        .dependent_on(&kernel_size),
-                    || {
+                    (
+                        push_constants,
+                        max_bricks,
+                        dim,
+                        nd,
+                        dtype,
+                        kernel_dtype,
+                        m_in.chunk_size.hmul(),
+                        kernel_size,
+                    ),
+                    |device,
+                     (
+                        push_constants,
+                        max_bricks,
+                        dim,
+                        nd,
+                        dtype,
+                        kernel_dtype,
+                        mem_size,
+                        kernel_size,
+                    )| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .define("MAX_BRICKS", max_bricks)
@@ -799,7 +797,7 @@ void main() {
                                 .define("N", nd)
                                 .define("T", dtype.glsl_type())
                                 .define("K", kernel_dtype.glsl_type())
-                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("KERNEL_SIZE", kernel_size)
                                 .push_const_block_dyn(&push_constants)
                                 .ext(dtype.glsl_ext())
@@ -1072,18 +1070,14 @@ void main()
                 let batch_size = 1024;
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m.chunk_size)
-                        .dependent_on(&method)
-                        .dependent_on(&sample_method),
-                    || {
+                    (m.chunk_size.hmul(), method),
+                    |device, (mem_size, method)| {
                         let neutral_val_str =
                             format!("uintBitsToFloat({})", method.neutral_val().to_bits());
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()
-                                .define("BRICK_MEM_SIZE", m.chunk_size.hmul())
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("AGG_FUNCTION", method.aggregration_function_glsl())
                                 .define(
                                     "AGG_FUNCTION_SUBGROUP",

@@ -12,7 +12,6 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -196,7 +195,7 @@ void main()
                     let m = this.metadata_out();
 
                     let pipeline = device
-                        .request_state(ResourceId::new().of(ctx.current_op()), || {
+                        .request_state((), |device, ()| {
                             ComputePipelineBuilder::new(
                                 Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()

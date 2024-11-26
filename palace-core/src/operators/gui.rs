@@ -28,7 +28,7 @@ use crate::{
         memory::TempRessource,
         pipeline::{DescriptorConfig, GraphicsPipelineBuilder},
         shader::Shader,
-        state::{ResourceId, VulkanState},
+        state::VulkanState,
         DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -567,10 +567,11 @@ void main() {
 
                     let format = vk::Format::R8G8B8A8_UNORM;
 
-                    let render_pass =
-                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
+                    let (render_pass, pipeline) = device.request_state(
+                        (id::IdentifyHash(format), out_info.mem_elements()),
+                        |device, (format, mem_size)| {
                             let color_attachment = vk::AttachmentDescription::default()
-                                .format(format)
+                                .format(*format)
                                 .samples(vk::SampleCountFlags::TYPE_1)
                                 .load_op(vk::AttachmentLoadOp::LOAD)
                                 .store_op(vk::AttachmentStoreOp::STORE)
@@ -605,19 +606,16 @@ void main() {
                                 .subpasses(subpasses)
                                 .dependencies(dependency_infos);
 
-                            Ok(unsafe {
+                            let render_pass = unsafe {
                                 device
                                     .functions()
                                     .create_render_pass(&render_pass_info, None)
                             }
-                            .unwrap())
-                        })?;
-                    let pipeline =
-                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
-                            GraphicsPipelineBuilder::new(
+                            .unwrap();
+
+                            let pipeline = GraphicsPipelineBuilder::new(
                                 Shader::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
-                                Shader::new(FRAG_SHADER)
-                                    .define("BRICK_MEM_SIZE", out_info.mem_elements()),
+                                Shader::new(FRAG_SHADER).define("BRICK_MEM_SIZE", mem_size),
                             )
                             .use_push_descriptor(true)
                             .build(
@@ -724,31 +722,33 @@ void main() {
                                         .color_blend_state(&color_blending)
                                         .dynamic_state(&dynamic_info)
                                         .layout(pipeline_layout)
-                                        .render_pass(*render_pass)
+                                        .render_pass(render_pass)
                                         .subpass(0);
                                     build_pipeline(&info)
                                 },
-                            )
-                        })?;
-                    let sampler =
-                        device.request_state(ResourceId::new().of(ctx.current_op()), || {
-                            let create_info = vk::SamplerCreateInfo::default()
-                                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                                .anisotropy_enable(false)
-                                .min_filter(vk::Filter::LINEAR)
-                                .mag_filter(vk::Filter::LINEAR)
-                                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                                .min_lod(0.0)
-                                .max_lod(vk::LOD_CLAMP_NONE);
-                            Ok(unsafe {
-                                device
-                                    .functions()
-                                    .create_sampler(&create_info, None)
-                                    .unwrap()
-                            })
-                        })?;
+                            )?;
+
+                            Ok((render_pass, pipeline))
+                        },
+                    )?;
+                    let sampler = device.request_state((), |device, ()| {
+                        let create_info = vk::SamplerCreateInfo::default()
+                            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                            .anisotropy_enable(false)
+                            .min_filter(vk::Filter::LINEAR)
+                            .mag_filter(vk::Filter::LINEAR)
+                            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                            .min_lod(0.0)
+                            .max_lod(vk::LOD_CLAMP_NONE);
+                        Ok(unsafe {
+                            device
+                                .functions()
+                                .create_sampler(&create_info, None)
+                                .unwrap()
+                        })
+                    })?;
 
                     let out_dim = out_info.logical_dimensions;
                     let width = out_dim.x().into();

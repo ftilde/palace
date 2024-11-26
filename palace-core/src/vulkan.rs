@@ -14,6 +14,7 @@ use ash::khr::{wayland_surface, xcb_surface, xlib_surface};
 use ash::khr::win32_surface;
 
 pub use ash::vk;
+use id::Identify;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -536,12 +537,14 @@ impl DeviceContext {
         &self.functions
     }
 
-    pub fn request_state<'a, T: VulkanState + 'static>(
+    #[track_caller]
+    pub fn request_state<'a, T: VulkanState + 'static, D: Identify>(
         &'a self,
-        identifier: ResourceId,
-        init: impl FnOnce() -> Result<T, crate::Error> + 'a,
+        data: D,
+        init: fn(&DeviceContext, D) -> Result<T, crate::Error>,
     ) -> Result<&'a T, crate::Error> {
-        self.vulkan_states.get(identifier, || init())
+        let id = ResourceId::new();
+        self.vulkan_states.get(id, self, data, init)
     }
 
     pub fn physical_device_properties(&self) -> &vk::PhysicalDeviceProperties {

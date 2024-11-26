@@ -22,7 +22,6 @@ use crate::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -182,18 +181,20 @@ pub fn view_image(
 
                 let request_table_size = 256;
 
-                let pipeline =
-                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
+                let pipeline = device.request_state(
+                    (m_in.chunk_size.hmul(), num_bricks, request_table_size),
+                    |device, (mem_size, num_bricks, request_table_size)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("imageviewer.glsl"))
                                 .push_const_block::<PushConstants>()
-                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("NUM_BRICKS", num_bricks)
                                 .define("REQUEST_TABLE_SIZE", request_table_size),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
-                    })?;
+                    },
+                )?;
 
                 let request_batch_size = ctx
                     .submit(ctx.access_state_cache(pos, "request_batch_size", input.levels.len()))

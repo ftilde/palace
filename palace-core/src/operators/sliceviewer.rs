@@ -25,7 +25,6 @@ use crate::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -453,16 +452,12 @@ void main()
                 let request_table_size = 256;
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&m_in.chunk_size)
-                        .dependent_on(&num_bricks)
-                        .dependent_on(&request_table_size),
-                    || {
+                    (m_in.chunk_size.hmul(), num_bricks, request_table_size),
+                    |device, (mem_size, num_bricks, request_table_size)| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .push_const_block::<PushConstants>()
-                                .define("BRICK_MEM_SIZE", m_in.chunk_size.hmul())
+                                .define("BRICK_MEM_SIZE", mem_size)
                                 .define("NUM_BRICKS", num_bricks)
                                 .define("REQUEST_TABLE_SIZE", request_table_size),
                         )

@@ -11,7 +11,6 @@ use crate::{
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -57,18 +56,26 @@ pub fn rasterize_seed_points(
 
                 let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
 
-                let pipeline =
-                    device.request_state(ResourceId::new().dependent_on(&in_size), || {
+                let pipeline = device.request_state(
+                    (
+                        &push_constants,
+                        in_size.hmul(),
+                        points_fg.metadata.dimensions[0].raw,
+                        points_bg.metadata.dimensions[0].raw,
+                        nd,
+                    ),
+                    |device, (push_constants, mem_size, n_points_fg, n_points_bg, nd)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("rasterize_points.glsl"))
-                                .push_const_block_dyn(&push_constants)
-                                .define("BRICK_MEM_SIZE", in_size.hmul())
-                                .define("NUM_POINTS_FG", points_fg.metadata.dimensions[0].raw)
-                                .define("NUM_POINTS_BG", points_bg.metadata.dimensions[0].raw)
+                                .push_const_block_dyn(push_constants)
+                                .define("BRICK_MEM_SIZE", mem_size)
+                                .define("NUM_POINTS_FG", n_points_fg)
+                                .define("NUM_POINTS_BG", n_points_bg)
                                 .define("ND", nd),
                         )
                         .build(device)
-                    })?;
+                    },
+                )?;
 
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

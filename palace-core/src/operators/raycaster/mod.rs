@@ -21,7 +21,6 @@ use crate::{
             ComputePipelineBuilder, DescriptorConfig, GraphicsPipelineBuilder, LocalSizeConfig,
         },
         shader::Shader,
-        state::ResourceId,
         DstBarrierInfo, SrcBarrierInfo,
     },
 };
@@ -216,8 +215,8 @@ pub fn entry_exit_points(
                 let norm_to_projection = *transform * &norm_to_world;
                 let projection_to_norm = norm_to_projection.invert().unwrap();
 
-                let render_pass =
-                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
+                let (render_pass, pipeline_eep) =
+                    device.request_state(out_info.mem_elements(), |device, mem_size| {
                         let subpass = vk::SubpassDescription::default()
                             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                             .color_attachments(&[]);
@@ -237,21 +236,18 @@ pub fn entry_exit_points(
                             .subpasses(subpasses)
                             .dependencies(dependency_infos);
 
-                        Ok(unsafe {
+                        let render_pass = unsafe {
                             device
                                 .functions()
                                 .create_render_pass(&render_pass_info, None)
-                        }
-                        .unwrap())
-                    })?;
-                let pipeline_eep =
-                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
-                        GraphicsPipelineBuilder::new(
+                        }?;
+
+                        let pipeline = GraphicsPipelineBuilder::new(
                             Shader::new(include_str!("entryexitpoints.vert"))
                                 .push_const_block::<PushConstantsFirstEEP>(),
                             Shader::new(include_str!("entryexitpoints.frag"))
                                 .push_const_block::<PushConstantsFirstEEP>()
-                                .define("BRICK_MEM_SIZE", out_info.mem_elements()),
+                                .define("BRICK_MEM_SIZE", mem_size),
                         )
                         .use_push_descriptor(true)
                         .build(
@@ -323,18 +319,21 @@ pub fn entry_exit_points(
                                     .color_blend_state(&color_blending)
                                     .dynamic_state(&dynamic_info)
                                     .layout(pipeline_layout)
-                                    .render_pass(*render_pass)
+                                    .render_pass(render_pass)
                                     .subpass(0);
                                 build_pipeline(&info)
                             },
-                        )
+                        )?;
+
+                        Ok((render_pass, pipeline))
                     })?;
+
                 let pipeline_in_volume_fix =
-                    device.request_state(ResourceId::new().of(ctx.current_op()), || {
+                    device.request_state(out_info.mem_elements(), |device, mem_elements| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("entrypoints_inside.glsl"))
                                 .push_const_block::<PushConstantsInVolumeFix>()
-                                .define("BRICK_MEM_SIZE", out_info.mem_elements()),
+                                .define("BRICK_MEM_SIZE", mem_elements),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
@@ -797,16 +796,12 @@ pub fn raycast(
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
-                    ResourceId::new()
-                        .of(ctx.current_op())
-                        .dependent_on(&input.levels.len())
-                        .dependent_on(&config.compositing_mode)
-                        .dependent_on(&config.shading),
-                    || {
+                    (input.levels.len(), request_table_size, config),
+                    |device, (num_levels, request_table_size, config)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("raycaster.glsl"))
                                 .push_const_block::<PushConstants>()
-                                .define("NUM_LEVELS", input.levels.len())
+                                .define("NUM_LEVELS", num_levels)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
                                 .define(config.compositing_mode.define_name(), 1)
                                 .define(config.shading.define_name(), 1),
