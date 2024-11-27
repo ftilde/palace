@@ -26,7 +26,7 @@ use crate::util::{Map, Set};
 use crate::vulkan::{BarrierInfo, DeviceContext, DeviceId};
 use crate::Error;
 use futures::stream::StreamExt;
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use id::{Id, Identify};
 use pin_project::pin_project;
 
@@ -622,6 +622,121 @@ impl<'req, 'inv, V2, D2, I: Stream<Item = (Request<'req, 'inv, V2>, D2)> + std::
             // unprocessed items in the `inner` stream, we are not done, yet!
             Poll::Ready(None) if !input_empty => Poll::Pending,
             o => o,
+        }
+    }
+}
+
+pub struct ChildTask<'a, R>(Pin<Box<dyn Future<Output = R> + 'a>>);
+
+impl<'a, F, R> From<F> for ChildTask<'a, R>
+where
+    F: Future<Output = R> + 'a,
+{
+    fn from(inner: F) -> Self {
+        Self(Box::pin(inner))
+    }
+}
+
+#[pin_project]
+pub struct TasksUnordered<'req, 'inv, R> {
+    children: Vec<ChildTask<'req, R>>,
+    children_waiting_on_requests: Map<usize, Set<RequestId>>,
+    requests_waited_on_by: Map<RequestId, Set<usize>>,
+    //task_map: Map<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
+    pending_results: Vec<R>,
+    task_context: OpaqueTaskContext<'req, 'inv>,
+    ready: Vec<usize>,
+}
+
+impl<'req, 'inv, R> TasksUnordered<'req, 'inv, R> {
+    pub fn new(
+        task_context: OpaqueTaskContext<'req, 'inv>,
+        requests: impl Iterator<Item = ChildTask<'req, R>> + 'req,
+    ) -> Self {
+        let requests: Vec<_> = requests.collect();
+        Self {
+            ready: (0..requests.len()).collect(),
+            children: requests,
+            children_waiting_on_requests: Default::default(),
+            requests_waited_on_by: Default::default(),
+            pending_results: Default::default(),
+            task_context,
+        }
+    }
+
+    pub async fn run(self) -> Vec<R> {
+        self.collect().await
+    }
+}
+
+impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
+    type Item = R;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let s = self.get_mut();
+        {
+            let mut completed_hints = Vec::new();
+            for c in s.task_context.hints.completed.borrow().iter() {
+                if let Some(waiting) = s.requests_waited_on_by.remove(c) {
+                    completed_hints.push(*c);
+                    for child in waiting.iter() {
+                        let waited_on = s.children_waiting_on_requests.get_mut(child).unwrap();
+                        waited_on.remove(c);
+
+                        //TODO: In theory we should also track progress indicators for children
+                        //in case we nest TasksUnordered (for example). Seems like a lot of
+                        //work, though...
+                        if waited_on.is_empty() {
+                            s.children_waiting_on_requests.remove(child);
+                            s.ready.push(*child);
+                        }
+                    }
+                }
+            }
+            for c in completed_hints {
+                s.task_context.hints.noticed_completion(c);
+            }
+
+            let mut all_requested = s.task_context.requests.drain();
+            for child_id in s.ready.drain(..) {
+                let child = &mut s.children[child_id];
+                match child.0.poll_unpin(cx) {
+                    Poll::Ready(r) => {
+                        s.pending_results.push(r);
+                    }
+                    Poll::Pending => {
+                        let mut newly_requested = s.task_context.requests.drain();
+                        assert!(!newly_requested.is_empty());
+                        for r in &mut newly_requested {
+                            let r_id = r.id();
+                            s.children_waiting_on_requests
+                                .entry(child_id)
+                                .or_default()
+                                .insert(r_id);
+                            s.requests_waited_on_by
+                                .entry(r_id)
+                                .or_default()
+                                .insert(child_id);
+                            r.progress_indicator = ProgressIndicator::PartialPossible;
+                        }
+                        all_requested.append(&mut newly_requested);
+                    }
+                }
+            }
+            let tmp = s.task_context.requests.replace(all_requested);
+            assert!(tmp.is_empty());
+        }
+        if let Some(r) = s.pending_results.pop() {
+            return Poll::Ready(Some(r));
+        }
+        if s.children_waiting_on_requests.is_empty() {
+            assert!(s.requests_waited_on_by.is_empty());
+            Poll::Ready(None)
+        } else {
+            Poll::Pending
         }
     }
 }

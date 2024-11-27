@@ -1,7 +1,6 @@
 use ahash::{HashMapExt, HashSetExt};
 use std::{
     cell::RefCell,
-    collections::VecDeque,
     num::NonZeroU64,
     path::Path,
     sync::mpsc,
@@ -1330,25 +1329,25 @@ impl TaskHints {
 }
 
 pub struct RequestQueue<'inv> {
-    buffer: RefCell<VecDeque<RequestInfo<'inv>>>,
+    buffer: RefCell<Vec<RequestInfo<'inv>>>,
 }
 
 impl<'inv> RequestQueue<'inv> {
     pub fn new() -> Self {
         Self {
-            buffer: RefCell::new(VecDeque::new()),
+            buffer: RefCell::new(Vec::new()),
         }
     }
     pub fn push(&self, req: RequestInfo<'inv>) {
-        self.buffer.borrow_mut().push_back(req)
+        self.buffer.borrow_mut().push(req)
     }
-    pub fn drain<'b>(&'b self) -> impl Iterator<Item = RequestInfo<'inv>> + 'b {
-        self.buffer
-            .borrow_mut()
-            .drain(..)
-            .collect::<Vec<_>>()
-            .into_iter()
+    pub fn replace(&self, v: Vec<RequestInfo<'inv>>) -> Vec<RequestInfo<'inv>> {
+        std::mem::replace(&mut *self.buffer.borrow_mut(), v)
     }
+    pub fn drain(&self) -> Vec<RequestInfo<'inv>> {
+        std::mem::take(&mut *self.buffer.borrow_mut())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.buffer.borrow().is_empty()
     }

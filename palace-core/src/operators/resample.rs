@@ -1,5 +1,4 @@
 use ash::vk;
-use futures::StreamExt;
 use itertools::Itertools;
 
 use crate::{
@@ -10,7 +9,7 @@ use crate::{
     dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
-    task::RequestStream,
+    task::TasksUnordered,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
@@ -264,134 +263,142 @@ void main() {
                 )?;
                 positions.sort_by_key(|(v, _)| v.0);
 
-                let requests = positions.into_iter().map(|(pos, _)| {
-                    let out_info = m_out.chunk_info(pos);
-                    let pos_vec = m_out.chunk_pos_from_index(pos);
-                    assert!(pos_vec
-                        .zip(&m_out.dimension_in_chunks(), |l, r| l < r)
-                        .all());
-                    let out_begin = out_info.begin();
-                    let out_end = out_info.end();
-
-                    let aabb = AABB::new(
-                        &out_begin.map(|v| v.raw as f32),
-                        &out_end.map(|v| (v.raw - 1) as f32),
-                    );
-                    let aabb = aabb.transform(&element_out_to_in);
-
-                    let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
-                    let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
-
-                    let in_begin_brick = m_in.chunk_pos(&out_begin);
-                    let in_end_brick = m_in
-                        .chunk_pos(&out_end)
-                        .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
-
-                    let in_brick_positions = (0..nd)
-                        .into_iter()
-                        .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
-                        .multi_cartesian_product()
-                        .map(|coordinates| {
-                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
-                        })
-                        .collect::<Vec<_>>();
-
-                    let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
-                        input.chunks.request_gpu(
-                            device.id,
-                            m_in.chunk_index(pos),
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_READ,
-                            },
-                        )
-                    }));
-
-                    (intersecting_bricks, (pos, in_brick_positions))
-                });
-                let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
+                TasksUnordered::new(
                     *ctx,
-                    |(intersecting_bricks, (pos, in_brick_positions))| {
-                        let gpu_brick_out =
-                            ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements());
-
-                        (
-                            gpu_brick_out,
-                            (intersecting_bricks, pos, in_brick_positions),
-                        )
-                    },
-                );
-
-                while let Some((gpu_brick_out, (intersecting_bricks, pos, in_brick_positions))) =
-                    stream.next().await
-                {
-                    // TODO: It would be nice to share the chunk_index between requests, but then
-                    // we never free any chunks and run out of memory. Maybe when/if we have a
-                    // better approach for indices this can be revisited.
-                    let chunk_index = device
-                        .storage
-                        .get_index(
-                            *ctx,
-                            device,
-                            input.chunks.operator_descriptor(),
-                            num_chunks,
-                            dst_info,
-                        )
-                        .await;
-
-                    let out_info = m_out.chunk_info(pos);
-
-                    for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                    positions
+                        .clone()
                         .into_iter()
-                        .zip(in_brick_positions.into_iter())
-                    {
-                        let brick_pos_linear =
-                            crate::data::to_linear(&in_brick_pos, &m_in.dimension_in_chunks());
-                        chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
-                    }
+                        .zip(std::iter::repeat(ctx.clone()))
+                        .map(move |((pos, _), ctx)| {
+                            async move {
+                                let out_info = m_out.chunk_info(pos);
+                                let pos_vec = m_out.chunk_pos_from_index(pos);
+                                assert!(pos_vec
+                                    .zip(&m_out.dimension_in_chunks(), |l, r| l < r)
+                                    .all());
+                                let out_begin = out_info.begin();
+                                let out_end = out_info.end();
 
-                    // Make writes to the index visible
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ,
-                        },
-                    ))
-                    .await;
+                                let aabb = AABB::new(
+                                    &out_begin.map(|v| v.raw as f32),
+                                    &out_end.map(|v| (v.raw - 1) as f32),
+                                );
+                                let aabb = aabb.transform(&element_out_to_in);
 
-                    let descriptor_config = DescriptorConfig::new([&chunk_index, &gpu_brick_out]);
+                                let out_begin =
+                                    aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
+                                let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
 
-                    let size = m_out.chunk_size.raw();
+                                let in_begin_brick = m_in.chunk_pos(&out_begin);
+                                let in_end_brick = m_in
+                                    .chunk_pos(&out_end)
+                                    .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
 
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        let mut pipeline = pipeline.bind(cmd);
+                                let in_brick_positions = (0..nd)
+                                    .into_iter()
+                                    .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                                    .multi_cartesian_product()
+                                    .map(|coordinates| {
+                                        Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                                    })
+                                    .collect::<Vec<_>>();
 
-                        pipeline.push_constant_dyn(&push_constants, |consts| {
-                            consts.mat(element_out_to_in)?;
-                            consts.vec(&m_in.chunk_size.raw())?;
-                            consts.vec(&m_in.dimensions.raw())?;
-                            consts.vec(&m_out.chunk_size.raw())?;
-                            consts.vec(&out_info.begin().raw())?;
-                            Ok(())
-                        });
+                                let intersecting_bricks = ctx
+                                    .submit(ctx.group(in_brick_positions.iter().map(|pos| {
+                                        input.chunks.request_gpu(
+                                            device.id,
+                                            m_in.chunk_index(pos),
+                                            DstBarrierInfo {
+                                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                                access: vk::AccessFlags2::SHADER_READ,
+                                            },
+                                        )
+                                    })))
+                                    .await;
 
-                        pipeline.push_descriptor_set(0, descriptor_config);
-                        pipeline.dispatch_dyn(device, size);
-                    });
-                    unsafe {
-                        gpu_brick_out.initialized(
-                            *ctx,
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
-                            },
-                        )
-                    };
-                }
+                                let gpu_brick_out = ctx
+                                    .submit(ctx.alloc_slot_gpu(
+                                        device,
+                                        pos,
+                                        m_out.num_chunk_elements(),
+                                    ))
+                                    .await;
+
+                                // TODO: It would be nice to share the chunk_index between requests, but then
+                                // we never free any chunks and run out of memory. Maybe when/if we have a
+                                // better approach for indices this can be revisited.
+                                let chunk_index = device
+                                    .storage
+                                    .get_index(
+                                        *ctx,
+                                        device,
+                                        input.chunks.operator_descriptor(),
+                                        num_chunks,
+                                        dst_info,
+                                    )
+                                    .await;
+
+                                let out_info = m_out.chunk_info(pos);
+
+                                for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                                    .into_iter()
+                                    .zip(in_brick_positions.into_iter())
+                                {
+                                    let brick_pos_linear = crate::data::to_linear(
+                                        &in_brick_pos,
+                                        &m_in.dimension_in_chunks(),
+                                    );
+                                    chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
+                                }
+
+                                // Make writes to the index visible
+                                ctx.submit(device.barrier(
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::TRANSFER,
+                                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                                    },
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                ))
+                                .await;
+
+                                let descriptor_config =
+                                    DescriptorConfig::new([&chunk_index, &gpu_brick_out]);
+
+                                let size = m_out.chunk_size.raw();
+
+                                device.with_cmd_buffer(|cmd| unsafe {
+                                    let mut pipeline = pipeline.bind(cmd);
+
+                                    pipeline.push_constant_dyn(&push_constants, |consts| {
+                                        consts.mat(element_out_to_in)?;
+                                        consts.vec(&m_in.chunk_size.raw())?;
+                                        consts.vec(&m_in.dimensions.raw())?;
+                                        consts.vec(&m_out.chunk_size.raw())?;
+                                        consts.vec(&out_info.begin().raw())?;
+                                        Ok(())
+                                    });
+
+                                    pipeline.push_descriptor_set(0, descriptor_config);
+                                    pipeline.dispatch_dyn(device, size);
+                                });
+                                unsafe {
+                                    gpu_brick_out.initialized(
+                                        *ctx,
+                                        SrcBarrierInfo {
+                                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                            access: vk::AccessFlags2::SHADER_WRITE,
+                                        },
+                                    )
+                                };
+                            }
+                            .into()
+                        }),
+                )
+                .run()
+                .await;
 
                 Ok(())
             }
