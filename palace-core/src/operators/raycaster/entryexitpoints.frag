@@ -4,7 +4,7 @@
 #include <util.glsl>
 
 layout(scalar, binding = 0) buffer OutputBuffer{
-    vec4[2] values[BRICK_MEM_SIZE];
+    vec4[2] values[];
 } outputData;
 
 layout(location = 0) in vec3 norm_pos;

@@ -3,7 +3,7 @@
 #include <util.glsl>
 
 layout(scalar, binding = 0) buffer OutputBuffer{
-    vec4[2] values[BRICK_MEM_SIZE];
+    vec4[2] values[];
 } eep;
 
 declare_push_consts(consts);

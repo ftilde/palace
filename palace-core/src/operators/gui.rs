@@ -570,9 +570,8 @@ void main() {
 
                     let format = vk::Format::R8G8B8A8_UNORM;
 
-                    let (render_pass, pipeline) = device.request_state(
-                        (id::IdentifyHash(format), out_info.mem_elements()),
-                        |device, (format, mem_size)| {
+                    let (render_pass, pipeline) =
+                        device.request_state(id::IdentifyHash(format), |device, format| {
                             let color_attachment = vk::AttachmentDescription::default()
                                 .format(*format)
                                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -618,7 +617,7 @@ void main() {
 
                             let pipeline = GraphicsPipelineBuilder::new(
                                 Shader::new(VERTEX_SHADER).push_const_block::<PushConstants>(),
-                                Shader::new(FRAG_SHADER).define("BRICK_MEM_SIZE", mem_size),
+                                Shader::new(FRAG_SHADER),
                             )
                             .use_push_descriptor(true)
                             .build(
@@ -732,8 +731,7 @@ void main() {
                             )?;
 
                             Ok((render_pass, pipeline))
-                        },
-                    )?;
+                        })?;
                     let sampler = device.request_state((), |device, ()| {
                         let create_info = vk::SamplerCreateInfo::default()
                             .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)

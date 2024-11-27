@@ -211,129 +211,124 @@ pub fn entry_exit_points(
                 let norm_to_projection = **transform * &norm_to_world;
                 let projection_to_norm = norm_to_projection.invert().unwrap();
 
-                let (render_pass, pipeline_eep) =
-                    device.request_state(out_info.mem_elements(), |device, mem_size| {
-                        let subpass = vk::SubpassDescription::default()
-                            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                            .color_attachments(&[]);
+                let (render_pass, pipeline_eep) = device.request_state((), |device, ()| {
+                    let subpass = vk::SubpassDescription::default()
+                        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                        .color_attachments(&[]);
 
-                        let dependency_info = vk::SubpassDependency::default()
-                            .src_subpass(vk::SUBPASS_EXTERNAL)
-                            .dst_subpass(0)
-                            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                            .src_access_mask(vk::AccessFlags::empty())
-                            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+                    let dependency_info = vk::SubpassDependency::default()
+                        .src_subpass(vk::SUBPASS_EXTERNAL)
+                        .dst_subpass(0)
+                        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                        .src_access_mask(vk::AccessFlags::empty())
+                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-                        let subpasses = &[subpass];
-                        let dependency_infos = &[dependency_info];
-                        let render_pass_info = vk::RenderPassCreateInfo::default()
-                            .attachments(&[])
-                            .subpasses(subpasses)
-                            .dependencies(dependency_infos);
+                    let subpasses = &[subpass];
+                    let dependency_infos = &[dependency_info];
+                    let render_pass_info = vk::RenderPassCreateInfo::default()
+                        .attachments(&[])
+                        .subpasses(subpasses)
+                        .dependencies(dependency_infos);
 
-                        let render_pass = unsafe {
-                            device
-                                .functions()
-                                .create_render_pass(&render_pass_info, None)
-                        }?;
+                    let render_pass = unsafe {
+                        device
+                            .functions()
+                            .create_render_pass(&render_pass_info, None)
+                    }?;
 
-                        let pipeline = GraphicsPipelineBuilder::new(
-                            Shader::new(include_str!("entryexitpoints.vert"))
-                                .push_const_block::<PushConstantsFirstEEP>(),
-                            Shader::new(include_str!("entryexitpoints.frag"))
-                                .push_const_block::<PushConstantsFirstEEP>()
-                                .define("BRICK_MEM_SIZE", mem_size),
-                        )
-                        .use_push_descriptor(true)
-                        .build(
-                            device,
-                            |shader_stages, pipeline_layout, build_pipeline| {
-                                let dynamic_states =
-                                    [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                                let dynamic_info = vk::PipelineDynamicStateCreateInfo::default()
-                                    .dynamic_states(&dynamic_states);
+                    let pipeline = GraphicsPipelineBuilder::new(
+                        Shader::new(include_str!("entryexitpoints.vert"))
+                            .push_const_block::<PushConstantsFirstEEP>(),
+                        Shader::new(include_str!("entryexitpoints.frag"))
+                            .push_const_block::<PushConstantsFirstEEP>(),
+                    )
+                    .use_push_descriptor(true)
+                    .build(
+                        device,
+                        |shader_stages, pipeline_layout, build_pipeline| {
+                            let dynamic_states =
+                                [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                            let dynamic_info = vk::PipelineDynamicStateCreateInfo::default()
+                                .dynamic_states(&dynamic_states);
 
-                                let vertex_input_info =
-                                    vk::PipelineVertexInputStateCreateInfo::default();
+                            let vertex_input_info =
+                                vk::PipelineVertexInputStateCreateInfo::default();
 
-                                let input_assembly_info =
-                                    vk::PipelineInputAssemblyStateCreateInfo::default()
-                                        .primitive_restart_enable(false)
-                                        .topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
+                            let input_assembly_info =
+                                vk::PipelineInputAssemblyStateCreateInfo::default()
+                                    .primitive_restart_enable(false)
+                                    .topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
 
-                                let viewport_state_info =
-                                    vk::PipelineViewportStateCreateInfo::default()
-                                        .viewport_count(1)
-                                        .scissor_count(1);
+                            let viewport_state_info =
+                                vk::PipelineViewportStateCreateInfo::default()
+                                    .viewport_count(1)
+                                    .scissor_count(1);
 
-                                let rasterizer_info =
-                                    vk::PipelineRasterizationStateCreateInfo::default()
-                                        .depth_clamp_enable(false)
-                                        .rasterizer_discard_enable(false)
-                                        .polygon_mode(vk::PolygonMode::FILL)
-                                        .line_width(1.0)
-                                        .cull_mode(vk::CullModeFlags::NONE)
-                                        .front_face(vk::FrontFace::CLOCKWISE)
-                                        .depth_bias_enable(false);
+                            let rasterizer_info =
+                                vk::PipelineRasterizationStateCreateInfo::default()
+                                    .depth_clamp_enable(false)
+                                    .rasterizer_discard_enable(false)
+                                    .polygon_mode(vk::PolygonMode::FILL)
+                                    .line_width(1.0)
+                                    .cull_mode(vk::CullModeFlags::NONE)
+                                    .front_face(vk::FrontFace::CLOCKWISE)
+                                    .depth_bias_enable(false);
 
-                                let multi_sampling_info =
-                                    vk::PipelineMultisampleStateCreateInfo::default()
-                                        .sample_shading_enable(false)
-                                        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+                            let multi_sampling_info =
+                                vk::PipelineMultisampleStateCreateInfo::default()
+                                    .sample_shading_enable(false)
+                                    .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-                                let color_blend_attachment =
-                                    vk::PipelineColorBlendAttachmentState::default()
-                                        .color_write_mask(
-                                            vk::ColorComponentFlags::R
-                                                | vk::ColorComponentFlags::G
-                                                | vk::ColorComponentFlags::B
-                                                | vk::ColorComponentFlags::A,
-                                        )
-                                        .src_color_blend_factor(vk::BlendFactor::ONE)
-                                        .dst_color_blend_factor(vk::BlendFactor::ONE)
-                                        .color_blend_op(vk::BlendOp::ADD)
-                                        .src_alpha_blend_factor(vk::BlendFactor::ONE)
-                                        .dst_alpha_blend_factor(vk::BlendFactor::ONE)
-                                        .alpha_blend_op(vk::BlendOp::ADD)
-                                        .blend_enable(true);
+                            let color_blend_attachment =
+                                vk::PipelineColorBlendAttachmentState::default()
+                                    .color_write_mask(
+                                        vk::ColorComponentFlags::R
+                                            | vk::ColorComponentFlags::G
+                                            | vk::ColorComponentFlags::B
+                                            | vk::ColorComponentFlags::A,
+                                    )
+                                    .src_color_blend_factor(vk::BlendFactor::ONE)
+                                    .dst_color_blend_factor(vk::BlendFactor::ONE)
+                                    .color_blend_op(vk::BlendOp::ADD)
+                                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                                    .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+                                    .alpha_blend_op(vk::BlendOp::ADD)
+                                    .blend_enable(true);
 
-                                let color_blend_attachments =
-                                    [color_blend_attachment, color_blend_attachment];
-                                let color_blending =
-                                    vk::PipelineColorBlendStateCreateInfo::default()
-                                        .logic_op_enable(false)
-                                        .attachments(&color_blend_attachments);
+                            let color_blend_attachments =
+                                [color_blend_attachment, color_blend_attachment];
+                            let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
+                                .logic_op_enable(false)
+                                .attachments(&color_blend_attachments);
 
-                                let info = vk::GraphicsPipelineCreateInfo::default()
-                                    .stages(shader_stages)
-                                    .vertex_input_state(&vertex_input_info)
-                                    .input_assembly_state(&input_assembly_info)
-                                    .viewport_state(&viewport_state_info)
-                                    .rasterization_state(&rasterizer_info)
-                                    .multisample_state(&multi_sampling_info)
-                                    .color_blend_state(&color_blending)
-                                    .dynamic_state(&dynamic_info)
-                                    .layout(pipeline_layout)
-                                    .render_pass(render_pass)
-                                    .subpass(0);
-                                build_pipeline(&info)
-                            },
-                        )?;
+                            let info = vk::GraphicsPipelineCreateInfo::default()
+                                .stages(shader_stages)
+                                .vertex_input_state(&vertex_input_info)
+                                .input_assembly_state(&input_assembly_info)
+                                .viewport_state(&viewport_state_info)
+                                .rasterization_state(&rasterizer_info)
+                                .multisample_state(&multi_sampling_info)
+                                .color_blend_state(&color_blending)
+                                .dynamic_state(&dynamic_info)
+                                .layout(pipeline_layout)
+                                .render_pass(render_pass)
+                                .subpass(0);
+                            build_pipeline(&info)
+                        },
+                    )?;
 
-                        Ok((render_pass, pipeline))
-                    })?;
+                    Ok((render_pass, pipeline))
+                })?;
 
-                let pipeline_in_volume_fix =
-                    device.request_state(out_info.mem_elements(), |device, mem_elements| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(include_str!("entrypoints_inside.glsl"))
-                                .push_const_block::<PushConstantsInVolumeFix>()
-                                .define("BRICK_MEM_SIZE", mem_elements),
-                        )
-                        .local_size(LocalSizeConfig::Auto2D)
-                        .build(device)
-                    })?;
+                let pipeline_in_volume_fix = device.request_state((), |device, ()| {
+                    ComputePipelineBuilder::new(
+                        Shader::new(include_str!("entrypoints_inside.glsl"))
+                            .push_const_block::<PushConstantsInVolumeFix>(),
+                    )
+                    .local_size(LocalSizeConfig::Auto2D)
+                    .build(device)
+                })?;
 
                 let out_dim = out_info.logical_dimensions;
                 let width = out_dim.x().into();
