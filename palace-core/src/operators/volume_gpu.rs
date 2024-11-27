@@ -13,7 +13,7 @@ use crate::{
     dim::*,
     dtypes::{DType, ElementType, StaticElementType},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::{gpu, DataVersionType},
     task::RequestStream,
@@ -83,7 +83,7 @@ void main()
 "#;
 
     TensorOperator::with_state(
-        op_descriptor!().dependent_on(&input).dependent_on_data(&tf),
+        op_descriptor!(),
         Default::default(),
         input.metadata.clone(),
         (input, tf),
@@ -201,12 +201,10 @@ void main()
 "#;
 
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&threshold),
+        op_descriptor!(),
         Default::default(),
         input.metadata.clone(),
-        (input, threshold),
+        (input, DataParam(threshold)),
         move |ctx, positions, (input, threshold)| {
             async move {
                 let device = ctx.preferred_device();
@@ -259,7 +257,7 @@ void main()
                             let mut pipeline = pipeline.bind(cmd);
 
                             let consts = PushConstants {
-                                threshold: *threshold,
+                                threshold: **threshold,
                             };
                             pipeline.push_constant(consts);
 
@@ -309,8 +307,6 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
         return input;
     }
 
-    let dtype: DType = input.chunks.dtype().into();
-
     let nd = input.dim().n();
 
     let push_constants = DynPushConstants::new()
@@ -353,21 +349,19 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&chunk_size)
-            .dependent_on_data(&dtype)
-            .dependent_on_data(&nd),
+        op_descriptor!(),
         input.chunks.dtype(),
         {
             let mut m = input.metadata.clone();
             m.chunk_size = chunk_size.zip(&m.dimensions, |v, d| v.apply(d));
             m
         },
-        (input, chunk_size, push_constants),
-        move |ctx, mut positions, (input, chunk_size, push_constants)| {
+        (input, DataParam(chunk_size), DataParam(push_constants)),
+        |ctx, mut positions, (input, chunk_size, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
+
+                let dtype: DType = input.chunks.dtype().into();
 
                 let nd = input.metadata.dimensions.len();
 
@@ -569,9 +563,6 @@ pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
 
     assert!(dim < nd);
 
-    let dtype: DType = input.dtype().into();
-    let kernel_dtype: DType = kernel.dtype().into();
-
     let push_constants = DynPushConstants::new()
         .vec::<u32>(nd, "mem_dim")
         .vec::<u32>(nd, "logical_dim_out")
@@ -689,16 +680,18 @@ void main() {
 }
 "#;
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on(&kernel)
-            .dependent_on_data(&dim),
+        op_descriptor!(),
         input.chunks.dtype(),
         input.metadata.clone(),
-        (input, kernel, push_constants),
-        move |ctx, mut positions, (input, kernel, push_constants)| {
+        (input, kernel, DataParam(push_constants), DataParam(dim)),
+        |ctx, mut positions, (input, kernel, push_constants, dim)| {
             async move {
                 let device = ctx.preferred_device();
+
+                let dtype: DType = input.dtype().into();
+                let kernel_dtype: DType = kernel.dtype().into();
+                let nd = input.dim().n();
+                let dim = **dim;
 
                 let m_in = &input.metadata;
                 let kernel_m = kernel.metadata;
@@ -1043,19 +1036,16 @@ void main()
 "#;
 
     crate::operators::scalar::scalar(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&method)
-            .dependent_on_data(&sample_method),
-        input,
-        move |ctx, input| {
+        op_descriptor!(),
+        (input, DataParam(method), DataParam(sample_method)),
+        move |ctx, (input, method, sample_method)| {
             async move {
                 let device = ctx.preferred_device();
 
                 let m = input.metadata;
 
                 let mut all_chunks = m.chunk_indices().into_iter().collect::<Vec<_>>();
-                let to_request = match sample_method {
+                let to_request = match **sample_method {
                     SampleMethod::All => all_chunks.as_slice(),
                     SampleMethod::Subset(n) => {
                         let mut h = DefaultHasher::new();

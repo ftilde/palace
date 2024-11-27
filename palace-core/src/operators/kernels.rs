@@ -1,9 +1,11 @@
+use id::{Identify, IdentifyHash};
+
 use crate::{
     array::{ArrayMetaData, ChunkIndex},
     data::Vector,
     dtypes::StaticElementType,
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     storage::Element,
 };
 
@@ -114,7 +116,6 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
 
 pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_gauss,
@@ -122,7 +123,6 @@ pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_dgauss_dx,
@@ -130,21 +130,19 @@ pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
-        op_descriptor!().dependent_on_data(&stddev),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_ddgauss_dxdx,
     )
 }
 
-fn gen_kernel_operator<Params: Element>(
-    descriptor: OperatorDescriptor,
+fn gen_kernel_operator<Params: Element + Identify>(
     params: Params,
-    get_size: impl Fn(&Params) -> usize + Clone + 'static,
-    gen_kernel: impl Fn(Params) -> Vec<f32> + Send + Sync + 'static,
+    get_size: fn(&Params) -> usize,
+    gen_kernel: fn(Params) -> Vec<f32>,
 ) -> ArrayOperator<StaticElementType<f32>> {
     TensorOperator::unbatched(
-        descriptor,
+        op_descriptor!(),
         Default::default(),
         {
             let size = get_size(&params) as u32;
@@ -153,7 +151,11 @@ fn gen_kernel_operator<Params: Element>(
                 chunk_size: Vector::fill(size.into()),
             }
         },
-        (params, get_size.clone(), gen_kernel),
+        (
+            DataParam(params),
+            DataParam(IdentifyHash(get_size)),
+            DataParam(IdentifyHash(gen_kernel)),
+        ),
         move |ctx, pos, _, (params, get_size, gen_kernel)| {
             assert_eq!(pos, ChunkIndex(0));
             async move {
@@ -162,7 +164,7 @@ fn gen_kernel_operator<Params: Element>(
                 let mut out = ctx.submit(ctx.alloc_slot(pos, size)).await;
                 let mut out_data = &mut *out;
                 ctx.submit(ctx.spawn_compute(move || {
-                    let kernel = gen_kernel(*params);
+                    let kernel = gen_kernel(**params);
                     assert_eq!(kernel.len(), size);
                     crate::data::write_slice_uninit(&mut out_data, &kernel);
                 }))

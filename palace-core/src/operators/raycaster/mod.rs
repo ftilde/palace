@@ -12,7 +12,7 @@ use crate::{
     dim::*,
     dtypes::StaticElementType,
     op_descriptor,
-    operator::{OpaqueOperator, OperatorDescriptor},
+    operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -189,18 +189,14 @@ pub fn entry_exit_points(
     }
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on_data(&input_metadata)
-            .dependent_on_data(&result_metadata)
-            .dependent_on_data(&projection_mat)
-            .unstable(),
+        op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
         (
-            input_metadata,
-            embedding_data,
-            result_metadata,
-            projection_mat,
+            DataParam(input_metadata),
+            DataParam(embedding_data),
+            DataParam(result_metadata),
+            DataParam(projection_mat),
         ),
         move |ctx, pos, _, (m_in, embedding_data, m_out, transform)| {
             async move {
@@ -212,7 +208,7 @@ pub fn entry_exit_points(
                     &(&m_in.dimensions.map(|v| v.raw as f32) * &embedding_data.spacing),
                 )
                 .to_homogeneous();
-                let norm_to_projection = *transform * &norm_to_world;
+                let norm_to_projection = **transform * &norm_to_world;
                 let projection_to_norm = norm_to_projection.invert().unwrap();
 
                 let (render_pass, pipeline_eep) =
@@ -583,6 +579,12 @@ pub struct TransFuncOperator {
     pub max: f32,
 }
 
+impl OperatorNetworkNode for TransFuncOperator {
+    fn descriptor(&self) -> OperatorDescriptor {
+        self.table.descriptor()
+    }
+}
+
 impl TransFuncOperator {
     pub fn data(&self) -> TransFuncData {
         TransFuncData {
@@ -695,15 +697,16 @@ pub fn raycast(
     }
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on(&entry_exit_points)
-            .dependent_on_data(&tf)
-            .dependent_on_data(&config),
+        op_descriptor!(),
         Default::default(),
         entry_exit_points.metadata,
-        (input, entry_exit_points.clone(), tf),
-        move |ctx, pos, _, (input, entry_exit_points, tf)| {
+        (
+            input,
+            entry_exit_points.clone(),
+            DataParam(tf),
+            DataParam(config),
+        ),
+        |ctx, pos, _, (input, entry_exit_points, tf, config)| {
             async move {
                 let device = ctx.preferred_device();
 

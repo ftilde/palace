@@ -1,28 +1,31 @@
 use crate::{
     dtypes::StaticElementType,
     op_descriptor,
-    operator::{Operator, OperatorDescriptor},
+    operator::{DataParam, Operator, OperatorDescriptor},
     storage::Element,
     task::{Task, TaskContext},
 };
-use id::Identify;
+use id::{Identify, IdentifyHash};
 
 pub type ScalarOperator<T> = Operator<T>;
 
-pub fn scalar<
-    T: Element,
-    S: 'static,
-    F: for<'cref, 'inv> Fn(TaskContext<'cref, 'inv, StaticElementType<T>>, &'inv S) -> Task<'cref>
-        + 'static,
->(
+pub fn scalar<T: Element, S: Identify + 'static>(
     descriptor: OperatorDescriptor,
     state: S,
-    compute: F,
+    compute: for<'cref, 'inv> fn(
+        TaskContext<'cref, 'inv, StaticElementType<T>>,
+        &'inv S,
+    ) -> Task<'cref>,
 ) -> ScalarOperator<StaticElementType<T>> {
-    Operator::with_state(descriptor, Default::default(), state, move |ctx, d, s| {
-        assert!(d.len() == 1);
-        compute(ctx, s)
-    })
+    Operator::with_state(
+        descriptor,
+        Default::default(),
+        (DataParam(state), DataParam(IdentifyHash(compute))),
+        |ctx, d, (s, compute)| {
+            assert!(d.len() == 1);
+            compute(ctx, s)
+        },
+    )
 }
 
 impl<T: Element> ScalarOperator<StaticElementType<T>> {
@@ -32,12 +35,9 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
         f: fn(T, &D) -> O,
     ) -> ScalarOperator<StaticElementType<O>> {
         scalar(
-            op_descriptor!()
-                .dependent_on(&self)
-                .dependent_on_data(&data)
-                .dependent_on_data(&(f as usize)),
-            (self, data, f),
-            move |ctx, (s, data, f)| {
+            op_descriptor!(),
+            (self, DataParam(data), DataParam(IdentifyHash(f))),
+            |ctx, (s, data, f)| {
                 async move {
                     let v = ctx.submit(s.request_scalar()).await;
                     ctx.submit(ctx.write_scalar(f(v, data))).await;
@@ -80,10 +80,10 @@ impl<T: Element> ScalarOperator<StaticElementType<T>> {
 }
 
 pub fn constant<T: Element + Identify>(val: T) -> ScalarOperator<StaticElementType<T>> {
-    let op_id = op_descriptor!().dependent_on_data(&val);
-    scalar(op_id, (), move |ctx, _| {
+    let op_id = op_descriptor!();
+    scalar(op_id, DataParam(val), move |ctx, val| {
         async move {
-            ctx.submit(ctx.write_scalar(val)).await;
+            ctx.submit(ctx.write_scalar(**val)).await;
             Ok(())
         }
         .into()

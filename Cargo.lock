@@ -2220,6 +2220,7 @@ name = "palace-hdf5"
 version = "0.1.0"
 dependencies = [
  "hdf5",
+ "id",
  "ndarray 0.15.6",
  "palace-core",
 ]
@@ -2228,6 +2229,7 @@ dependencies = [
 name = "palace-nifti"
 version = "0.1.0"
 dependencies = [
+ "id",
  "ndarray 0.15.6",
  "nifti",
  "palace-core",
@@ -2268,6 +2270,7 @@ name = "palace-zarr"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "id",
  "itertools 0.13.0",
  "palace-core",
  "serde_json",

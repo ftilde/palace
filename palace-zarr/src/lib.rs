@@ -1,6 +1,7 @@
 mod zip_reader;
 
 use futures::StreamExt;
+use id::{Id, Identify};
 use itertools::Itertools;
 use std::{
     mem::MaybeUninit,
@@ -14,7 +15,7 @@ use palace_core::{
     data::{Coordinate, CoordinateType},
     dim::{DDyn, DynDimension},
     dtypes::{DType, ElementType, ScalarType},
-    operator::{DataDescriptor, OperatorDescriptor},
+    operator::{DataDescriptor, DataParam, OperatorDescriptor},
     operators::{
         resample::smooth_downsample,
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
@@ -75,6 +76,12 @@ fn from_zarr_pos(v: &[u64]) -> Vector<DDyn, u32> {
 #[derive(Clone)]
 pub struct ZarrSourceState {
     inner: Rc<ZarrSourceStateInner>,
+}
+
+impl Identify for ZarrSourceState {
+    fn id(&self) -> id::Id {
+        Id::combine(&[self.inner.path.id(), self.inner.array.path().as_str().id()])
+    }
 }
 
 trait ZarrReadStorage: ReadableStorageTraits + ListableStorageTraits {}
@@ -217,13 +224,11 @@ impl ZarrSourceState {
 
     fn operate(&self) -> EmbeddedTensorOperator<DDyn, DType> {
         TensorOperator::with_state(
-            OperatorDescriptor::with_name("ZarrSourceState::operate")
-                .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
-                .dependent_on_data(self.inner.array.path().as_str().as_bytes()),
+            OperatorDescriptor::with_name("ZarrSourceState::operate"),
             self.inner.dtype,
             self.inner.metadata.clone(),
-            self.clone(),
-            move |ctx, positions, this| {
+            DataParam(self.clone()),
+            |ctx, positions, this| {
                 async move {
                     let metadata = &this.inner.metadata;
                     let layout = this.inner.dtype.array_layout(metadata.num_chunk_elements());

@@ -147,9 +147,7 @@ void main() {
 
     let embedding_data = input.embedding_data;
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&scale),
+        op_descriptor!(),
         Default::default(),
         input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),

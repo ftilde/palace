@@ -10,6 +10,7 @@ use derive_more::Deref;
 use egui::{Rect, TextureId, TexturesDelta};
 
 pub use egui;
+use id::{Id, Identify};
 use winit::keyboard::PhysicalKey;
 
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
     dim::*,
     event::{EventChain, EventStream},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     runtime::RunTime,
     storage::gpu::ImageAllocation,
@@ -247,6 +248,12 @@ impl VulkanState for GuiState {
 pub struct GuiRenderState {
     inner: GuiState,
     clipped_primitives: Vec<egui::ClippedPrimitive>,
+}
+impl Identify for GuiRenderState {
+    fn id(&self) -> Id {
+        //TODO: I think we also need to include the _content_ of the gui somehow...
+        self.inner.0.borrow().version.id()
+    }
 }
 
 // Taken from egui (License MIT/Apatche)
@@ -545,19 +552,15 @@ void main() {
 }
 ";
 
-        let version = self.inner.0.borrow().version;
         TensorOperator::unbatched(
-            op_descriptor!()
-                .dependent_on(&input)
-                .dependent_on_data(&version)
-                .ephemeral(),
+            op_descriptor!().ephemeral(),
             Default::default(),
             {
                 let m = input.metadata;
                 assert_eq!(m.dimension_in_chunks(), Vector::fill(1.into()));
                 m
             },
-            (input.clone(), self),
+            (input.clone(), DataParam(self)),
             move |ctx, pos, _, (input, state)| {
                 async move {
                     let device = ctx.preferred_device();

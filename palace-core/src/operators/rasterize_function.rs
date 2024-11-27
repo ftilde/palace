@@ -1,6 +1,7 @@
 use std::mem::MaybeUninit;
 
 use futures::StreamExt;
+use id::{Id, Identify};
 
 use crate::{
     array::{ChunkIndex, VolumeMetaData},
@@ -8,7 +9,7 @@ use crate::{
     dim::{self, *},
     dtypes::StaticElementType,
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     storage::DataLocation,
     task::{RequestStream, TaskContext},
     Error,
@@ -20,6 +21,15 @@ use super::{tensor::TensorOperator, volume::VolumeOperator};
 pub struct VoxelPosRasterizer<F> {
     function: F,
     metadata: VolumeMetaData,
+}
+
+impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> Identify for VoxelPosRasterizer<F> {
+    fn id(&self) -> id::Id {
+        //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
+        //creates a `|_| var` closure based on a parameter `var`. All of those would have the
+        //same type!
+        Id::combine(&[id::func_id::<F>(), self.metadata.id()])
+    }
 }
 
 pub fn voxel<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone>(
@@ -96,15 +106,10 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
 impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F> {
     fn operate(&self) -> VolumeOperator<StaticElementType<f32>> {
         TensorOperator::with_state(
-            op_descriptor!()
-                //TODO: Not sure if using func id is entirely correct: One may create a wrapper that
-                //creates a `|_| var` closure based on a parameter `var`. All of those would have the
-                //same type!
-                .dependent_on_data(&id::func_id::<F>())
-                .dependent_on_data(&self.metadata),
+            op_descriptor!(),
             Default::default(),
             self.metadata,
-            self.clone(),
+            DataParam(self.clone()),
             move |ctx, positions, this| {
                 async move { rasterize(&this.metadata, &this.function, ctx, positions).await }
                     .into()

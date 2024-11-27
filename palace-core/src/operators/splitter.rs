@@ -1,5 +1,6 @@
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
+use id::Identify;
 
 use crate::{
     array::{ChunkIndex, ImageMetaData, TensorMetaData},
@@ -7,7 +8,7 @@ use crate::{
     dim::*,
     event::{EventChain, EventStream},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
@@ -23,7 +24,7 @@ use pyo3::prelude::*;
 
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
 #[cfg_attr(feature = "python", pyclass)]
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub enum SplitDirection {
     Horizontal,
     Vertical,
@@ -38,7 +39,7 @@ impl SplitDirection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub struct Splitter {
     size: PixelPosition,
     split_pos: f32,
@@ -162,18 +163,17 @@ void main()
     }
 }
 "#;
-        // Shaders assume x = dim 0 and y = dim 1
-        let split_dim = 1 - self.split_dim as u32;
 
         TensorOperator::with_state(
-            op_descriptor!()
-                .dependent_on(&input_l)
-                .dependent_on(&input_r),
+            op_descriptor!(),
             Default::default(),
             self.metadata_out(),
-            (input_l, input_r, self),
+            (input_l, input_r, DataParam(self)),
             move |ctx, positions, (input_l, input_r, this)| {
                 async move {
+                    // Shaders assume x = dim 0 and y = dim 1
+                    let split_dim = 1 - this.split_dim as u32;
+
                     let device = ctx.preferred_device();
 
                     let access_info = DstBarrierInfo {

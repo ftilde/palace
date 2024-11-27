@@ -51,7 +51,7 @@ pub trait Identify {
     fn id(&self) -> Id;
 }
 
-impl<I: Identify> Identify for &I {
+impl<I: Identify + ?Sized> Identify for &I {
     fn id(&self) -> Id {
         I::id(self)
     }
@@ -103,13 +103,25 @@ impl<E: Identify> Identify for [E] {
     }
 }
 
+impl<const N: usize, E: Identify> Identify for [E; N] {
+    fn id(&self) -> Id {
+        Id::combine_it(self.iter().map(|v| v.id()))
+    }
+}
+
 impl<E: Identify> Identify for Vec<E> {
     fn id(&self) -> Id {
         self.as_slice().id()
     }
 }
 
-impl<E: Identify> Identify for Box<E> {
+impl<E: Identify + ?Sized> Identify for Box<E> {
+    fn id(&self) -> Id {
+        self.as_ref().id()
+    }
+}
+
+impl<E: Identify + ?Sized> Identify for std::rc::Rc<E> {
     fn id(&self) -> Id {
         self.as_ref().id()
     }
@@ -130,9 +142,15 @@ impl Identify for str {
     }
 }
 
-impl Identify for &str {
+impl Identify for std::path::Path {
     fn id(&self) -> Id {
-        Id::from_data(self.as_bytes())
+        self.to_string_lossy().id()
+    }
+}
+
+impl Identify for std::path::PathBuf {
+    fn id(&self) -> Id {
+        self.to_string_lossy().id()
     }
 }
 

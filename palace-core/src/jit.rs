@@ -9,7 +9,7 @@ use crate::{
     dim::DynDimension,
     dtypes::{DType, ElementType, ScalarType},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor, OperatorParameter},
     operators::tensor::TensorOperator,
     storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
     task::{Request, RequestStream},
@@ -221,6 +221,17 @@ impl<D: DynDimension> id::Identify for JitTensorOperator<D> {
         // Note: All information (including operators via there ids) is present in the operation
         // tree `node`
         self.root.0
+    }
+}
+
+impl<D: DynDimension> OperatorParameter for JitTensorOperator<D> {
+    fn data_longevity(&self) -> crate::storage::DataLongevity {
+        self.operators
+            .0
+            .iter()
+            .map(|o| o.data_longevity())
+            .min()
+            .unwrap_or(crate::storage::DataLongevity::Stable)
     }
 }
 
@@ -509,7 +520,6 @@ impl<D: DynDimension> JitTensorOperator<D> {
             NotInplace(WriteHandle<'a>),
         }
 
-        let dtype = self.dtype;
         let Some(metadata) = self.metadata.clone() else {
             return Err("No metadata information in JitOperator".into());
         };
@@ -519,31 +529,29 @@ impl<D: DynDimension> JitTensorOperator<D> {
             return Ok(self.operators.0.pop().unwrap());
         }
 
-        let inplace_operator_index = self
-            .operators
-            .0
-            .iter()
-            .position(|o| o.dtype().element_layout() == dtype.element_layout());
-
         Ok(TensorOperator::with_state(
-            op_descriptor!().dependent_on_data(&self),
-            dtype,
+            op_descriptor!(),
+            self.dtype,
             metadata.clone(),
-            (self, metadata),
-            move |ctx, positions, (jit_operator, metadata)| {
+            (self, DataParam(metadata)),
+            |ctx, positions, (jit_operator, metadata)| {
                 async move {
+                    let inplace_operator_index = jit_operator.operators.0.iter().position(|o| {
+                        o.dtype().element_layout() == jit_operator.dtype.element_layout()
+                    });
+
                     let device = ctx.preferred_device();
 
                     let access_info = DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                         access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
                     };
-                    let m = metadata.clone().into_dyn();
+                    let m = (*metadata).clone().into_dyn();
 
                     let num_chunk_elements = m.num_chunk_elements();
 
                     let pipeline = device.request_state(
-                        (&jit_operator, dtype, num_chunk_elements),
+                        (&jit_operator, jit_operator.dtype, num_chunk_elements),
                         |device, (&jit_operator, dtype, num_chunk_elements)| {
                             let (shader, config) = compile(
                                 &jit_operator.nodes.0,
@@ -587,7 +595,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                         device.id,
                                         pos,
                                         ctx.current_op_desc().unwrap(),
-                                        dtype,
+                                        jit_operator.dtype,
                                         num_chunk_elements,
                                         access_info,
                                     )

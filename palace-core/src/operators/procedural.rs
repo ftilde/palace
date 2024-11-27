@@ -5,7 +5,7 @@ use crate::{
     dim::Dimension,
     dtypes::StaticElementType,
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     vec::Vector,
     vulkan::{
@@ -195,13 +195,11 @@ void main()
     ];
 
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on_data(gen_fn)
-            .dependent_on_data(&metadata),
+        op_descriptor!(),
         Default::default(),
         metadata,
-        (metadata, shader_parts),
-        move |ctx, positions, (metadata, shader_parts)| {
+        (DataParam(metadata), DataParam(shader_parts)),
+        |ctx, positions, (metadata, shader_parts)| {
             async move {
                 let device = ctx.preferred_device();
 

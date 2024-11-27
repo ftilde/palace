@@ -1,5 +1,6 @@
 use std::{path::PathBuf, rc::Rc};
 
+use id::{Id, Identify};
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
 
 use palace_core::{
@@ -8,7 +9,7 @@ use palace_core::{
     dim::*,
     dtypes::{DType, StaticElementType},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
     Error,
 };
@@ -26,6 +27,18 @@ pub struct NiftiVolumeSourceStateInner {
     embedding_data: TensorEmbeddingData<D3>,
     type_: Type,
     header: NiftiHeader,
+}
+
+impl Identify for NiftiVolumeSourceState {
+    fn id(&self) -> id::Id {
+        match &self.0.type_ {
+            Type::Single(path) => Id::from_data(path.to_string_lossy().as_bytes()),
+            Type::Separate { header, data } => Id::combine(&[
+                Id::from_data(header.to_string_lossy().as_bytes()),
+                Id::from_data(data.to_string_lossy().as_bytes()),
+            ]),
+        }
+    }
 }
 
 fn check_type(header: &NiftiHeader) -> Result<(), Error> {
@@ -123,16 +136,17 @@ impl NiftiVolumeSourceState {
             },
             Default::default(),
             self.0.metadata,
-            self.clone(),
+            DataParam(self.clone()),
             move |ctx, positions, this| {
-                let md = this.0.metadata;
+                let this = &this.0 .0;
+                let md = this.metadata;
                 let mut positions = positions
                     .into_iter()
                     .map(|(p, h)| (md.chunk_pos_from_index(p), h))
                     .collect::<Vec<_>>();
                 positions.sort_by_key(|(p, _)| p.z());
                 async move {
-                    let obj = match &this.0.type_ {
+                    let obj = match &this.type_ {
                         Type::Single(path) => {
                             nifti::ReaderStreamedOptions::new().read_file(path)?
                         }
@@ -140,13 +154,13 @@ impl NiftiVolumeSourceState {
                             nifti::ReaderStreamedOptions::new().read_file_pair(header, data)?
                         }
                     };
-                    if this.0.header != *obj.header() {
+                    if this.header != *obj.header() {
                         return Err(format!("File has changed").into());
                     }
                     let mut vol = obj.into_volume();
                     for (pos, _) in positions {
                         let z = pos.z().raw as usize;
-                        let chunk = this.0.metadata.chunk_info_vec(&pos);
+                        let chunk = this.metadata.chunk_info_vec(&pos);
                         let mut brick_handle = ctx
                             .submit(ctx.alloc_slot(md.chunk_index(&pos), chunk.mem_elements()))
                             .await;

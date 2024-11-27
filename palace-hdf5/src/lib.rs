@@ -1,9 +1,10 @@
+use id::{Id, Identify};
 use palace_core::array::{ChunkInfo, VolumeEmbeddingData};
 use palace_core::data::{Coordinate, CoordinateType};
 use palace_core::dim::D3;
 use palace_core::dtypes::{DType, ElementType, ScalarType};
 use palace_core::op_descriptor;
-use palace_core::operator::DataDescriptor;
+use palace_core::operator::{DataDescriptor, DataParam};
 use palace_core::storage::DataLocation;
 use palace_core::util::Map;
 use palace_core::vulkan::{vk, DeviceId};
@@ -33,6 +34,12 @@ pub struct Hdf5VolumeSourceStateInner {
     path: PathBuf,
     volume_location: String,
     dtype: DType,
+}
+
+impl Identify for Hdf5VolumeSourceState {
+    fn id(&self) -> id::Id {
+        Id::combine(&[self.inner.path.id(), self.inner.volume_location.id()])
+    }
 }
 
 fn to_size_vector<C: CoordinateType>(
@@ -192,12 +199,10 @@ impl Hdf5VolumeSourceState {
 
     fn operate(&self) -> EmbeddedVolumeOperator<DType> {
         TensorOperator::with_state(
-            op_descriptor!()
-                .dependent_on_data(self.inner.path.to_string_lossy().as_bytes())
-                .dependent_on_data(self.inner.volume_location.as_bytes()),
+            op_descriptor!(),
             self.inner.dtype,
             self.inner.metadata,
-            self.clone(),
+            DataParam(self.clone()),
             move |ctx, positions, this| {
                 async move {
                     let mut positions_gpus: Map<DeviceId, Vec<_>> = Map::default();

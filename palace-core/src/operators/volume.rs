@@ -9,7 +9,7 @@ use crate::{
     dim::*,
     dtypes::StaticElementType,
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     storage::Element,
     task::RequestStream,
 };
@@ -98,17 +98,15 @@ pub fn rechunk<E: Element>(
     brick_size: Vector<D3, ChunkSize>,
 ) -> VolumeOperator<StaticElementType<E>> {
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&brick_size),
+        op_descriptor!(),
         Default::default(),
         {
             let mut m = input.metadata;
             m.chunk_size = brick_size.zip(&m.dimensions, |v, d| v.apply(d));
             m
         },
-        input,
-        move |ctx, positions, input| {
+        (input, DataParam(brick_size)),
+        move |ctx, positions, (input, brick_size)| {
             // TODO: optimize case where input.brick_size == output.brick_size
             async move {
                 let m_in = input.metadata;

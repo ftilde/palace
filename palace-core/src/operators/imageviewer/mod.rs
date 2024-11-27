@@ -15,7 +15,7 @@ use crate::{
     dtypes::StaticElementType,
     mat::Matrix,
     op_descriptor,
-    operator::{OpaqueOperator, OperatorDescriptor},
+    operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -123,14 +123,10 @@ pub fn view_image(
     }
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&result_metadata)
-            .dependent_on_data(&view_state)
-            .unstable(),
+        op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
-        (input, result_metadata, view_state),
+        (input, DataParam(result_metadata), DataParam(view_state)),
         move |ctx, pos, _, (input, result_metadata, view_state)| {
             async move {
                 let device = ctx.preferred_device();
@@ -173,7 +169,7 @@ pub fn view_image(
                     .get_index(
                         *ctx,
                         device,
-                        level.chunks.descriptor(),
+                        level.chunks.operator_descriptor(),
                         num_bricks,
                         dst_info,
                     )

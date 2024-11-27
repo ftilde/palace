@@ -870,7 +870,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     let op_id = data_request.source.op_id();
                     self.operator_info
                         .entry(op_id)
-                        .or_insert(data_request.source.descriptor());
+                        .or_insert(data_request.source.operator_descriptor());
 
                     let data_id = data_request.id;
                     let data_req_loc = data_request.location;

@@ -35,6 +35,68 @@ impl Into<Id> for OperatorId {
     }
 }
 
+pub trait OperatorParameter: Identify + 'static {
+    fn data_longevity(&self) -> DataLongevity;
+}
+
+impl<N: OperatorNetworkNode + Identify + 'static> OperatorParameter for N {
+    fn data_longevity(&self) -> DataLongevity {
+        self.descriptor().data_longevity
+    }
+}
+
+#[derive(Identify)]
+pub struct DataParam<I: Identify>(pub I);
+
+impl<I: Identify + 'static> OperatorParameter for DataParam<I> {
+    fn data_longevity(&self) -> DataLongevity {
+        DataLongevity::Stable
+    }
+}
+
+impl<I: Identify> std::ops::Deref for DataParam<I> {
+    type Target = I;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl OperatorParameter for () {
+    fn data_longevity(&self) -> DataLongevity {
+        DataLongevity::Stable
+    }
+}
+
+impl<const N: usize, E: OperatorParameter> OperatorParameter for [E; N] {
+    fn data_longevity(&self) -> DataLongevity {
+        self.iter()
+            .map(|v| v.data_longevity())
+            .min()
+            .unwrap_or(DataLongevity::Stable)
+    }
+}
+
+macro_rules! impl_for_tuples {
+    ( ) => {};
+    ( $first:ident, $( $rest:ident, )* ) => {
+        // Recursion
+        impl_for_tuples!($( $rest, )*);
+
+        #[allow(non_snake_case, unused_mut)]
+        impl<$first: OperatorParameter, $( $rest: OperatorParameter ),*> OperatorParameter for ($first, $( $rest, )*) {
+            fn data_longevity(&self) -> DataLongevity {
+                let ($first, $( $rest, )*) = self;
+                let mut longevity = $first.data_longevity();
+                $( longevity = longevity.min($rest.data_longevity()); )*
+                longevity
+            }
+        }
+    };
+}
+
+impl_for_tuples!(I1, I2, I3, I4, I5, I6, I7, I8, I9, I10,);
+
 #[derive(Clone, Copy)]
 pub struct OperatorDescriptor {
     pub id: OperatorId,
@@ -180,7 +242,7 @@ pub trait OpaqueOperator {
     fn op_id(&self) -> OperatorId;
     fn longevity(&self) -> DataLongevity;
     fn cache_results(&self) -> bool;
-    fn descriptor(&self) -> OperatorDescriptor {
+    fn operator_descriptor(&self) -> OperatorDescriptor {
         OperatorDescriptor {
             id: self.op_id(),
             data_longevity: self.longevity(),
@@ -356,35 +418,30 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
 }
 
 impl<OutputType: ElementType> Operator<OutputType> {
-    pub fn new<
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, OutputType>,
-                Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
-                &'inv (),
-            ) -> Task<'cref>
-            + 'static,
-    >(
+    pub fn new(
         descriptor: OperatorDescriptor,
         dtype: OutputType,
-        compute: F,
+        compute: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, OutputType>,
+            Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
+            &'inv (),
+        ) -> Task<'cref>,
     ) -> Self {
         Self::with_state(descriptor, dtype, (), compute)
     }
 
-    pub fn with_state<
-        S: 'static,
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, OutputType>,
-                Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
-                &'inv S,
-            ) -> Task<'cref>
-            + 'static,
-    >(
-        descriptor: OperatorDescriptor,
+    pub fn with_state<S: OperatorParameter>(
+        mut descriptor: OperatorDescriptor,
         dtype: OutputType,
         state: S,
-        compute: F,
+        compute: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, OutputType>,
+            Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
+            &'inv S,
+        ) -> Task<'cref>,
     ) -> Self {
+        descriptor.data_longevity = descriptor.data_longevity.min(state.data_longevity());
+        descriptor.id = descriptor.id.dependent_on(state.id());
         Self {
             descriptor,
             dtype,
@@ -399,20 +456,16 @@ impl<OutputType: ElementType> Operator<OutputType> {
         }
     }
 
-    pub fn unbatched<
-        S: 'static,
-        F: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, OutputType>,
-                ChunkIndex,
-                DataLocation, //DataLocation is only a hint
-                &'inv S,
-            ) -> Task<'cref>
-            + 'static,
-    >(
+    pub fn unbatched<S: OperatorParameter>(
         descriptor: OperatorDescriptor,
         dtype: OutputType,
         state: S,
-        compute: F,
+        compute: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, OutputType>,
+            ChunkIndex,
+            DataLocation, //DataLocation is only a hint
+            &'inv S,
+        ) -> Task<'cref>,
     ) -> Self {
         Self {
             descriptor,

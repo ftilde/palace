@@ -18,7 +18,7 @@ use crate::{
     dim::*,
     dtypes::StaticElementType,
     op_descriptor,
-    operator::{OpaqueOperator, OperatorDescriptor},
+    operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
@@ -394,15 +394,15 @@ void main()
 "#;
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&result_metadata)
-            .dependent_on_data(&tf)
-            .dependent_on_data(&projection_mat)
-            .unstable(),
+        op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
-        (input, result_metadata, projection_mat, tf),
+        (
+            input,
+            DataParam(result_metadata),
+            DataParam(projection_mat),
+            DataParam(tf),
+        ),
         move |ctx, pos, _, (input, result_metadata, projection_mat, tf)| {
             async move {
                 let device = ctx.preferred_device();
@@ -414,7 +414,7 @@ void main()
 
                 let m_out = result_metadata;
                 let emd_0 = input.levels[0].embedding_data;
-                let pixel_to_voxel = projection_mat;
+                let pixel_to_voxel = &**projection_mat;
 
                 let transform_rw = emd_0.voxel_to_physical() * pixel_to_voxel;
                 let (level_num, level) = select_level(
@@ -443,7 +443,7 @@ void main()
                     .get_index(
                         *ctx,
                         device,
-                        level.chunks.descriptor(),
+                        level.chunks.operator_descriptor(),
                         num_bricks,
                         dst_info,
                     )

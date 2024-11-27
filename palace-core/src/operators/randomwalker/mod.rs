@@ -7,7 +7,7 @@ use crate::{
     dtypes::{DType, ScalarType, StaticElementType},
     mat::Matrix,
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
@@ -33,20 +33,16 @@ pub fn rasterize_seed_points(
     assert_eq!(in_dtype.scalar, ScalarType::F32);
     assert!(md.is_single_chunk());
 
-    let nd = md.dim().n();
-
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&points_fg)
-            .dependent_on(&points_bg)
-            .dependent_on_data(&md)
-            .dependent_on_data(&ed),
+        op_descriptor!(),
         Default::default(),
         md,
-        (points_fg, points_bg),
-        move |ctx, _pos, _, (points_fg, points_bg)| {
+        (points_fg, points_bg, DataParam(md), DataParam(ed)),
+        |ctx, _pos, _, (points_fg, points_bg, md, ed)| {
             async move {
                 let device = ctx.preferred_device();
+
+                let nd = md.dim().n();
 
                 let in_size = md.dimensions;
 

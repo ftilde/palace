@@ -9,14 +9,14 @@ use crate::{
     dim::*,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
     op_descriptor,
-    operator::{Operator, OperatorDescriptor, OperatorNetworkNode},
+    operator::{DataParam, Operator, OperatorDescriptor, OperatorNetworkNode, OperatorParameter},
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
         DataLocation, Element,
     },
     task::{RequestStream, Task, TaskContext},
 };
-use id::Identify;
+use id::{Identify, IdentifyHash};
 
 #[derive(Clone, Identify)]
 pub struct TensorOperator<D: DynDimension, E> {
@@ -43,36 +43,29 @@ impl<D: DynDimension, E> OperatorNetworkNode for TensorOperator<D, E> {
 }
 
 impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
-    pub fn new<
-        B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, E>,
-                Vec<(ChunkIndex, DataLocation)>,
-                &'inv (),
-            ) -> Task<'cref>
-            + 'static,
-    >(
+    pub fn new(
         descriptor: OperatorDescriptor,
         dtype: E,
         metadata: TensorMetaData<D>,
-        chunks: B,
+        chunks: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, E>,
+            Vec<(ChunkIndex, DataLocation)>,
+            &'inv (),
+        ) -> Task<'cref>,
     ) -> Self {
         Self::with_state(descriptor, dtype, metadata, (), chunks)
     }
 
-    pub fn with_state<
-        SB: 'static,
-        B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, E>,
-                Vec<(ChunkIndex, DataLocation)>,
-                &'inv SB,
-            ) -> Task<'cref>
-            + 'static,
-    >(
+    pub fn with_state<SB: OperatorParameter>(
         descriptor: OperatorDescriptor,
         dtype: E,
         metadata: TensorMetaData<D>,
         state_chunks: SB,
-        chunks: B,
+        chunks: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, E>,
+            Vec<(ChunkIndex, DataLocation)>,
+            &'inv SB,
+        ) -> Task<'cref>,
     ) -> Self {
         Self {
             metadata,
@@ -80,21 +73,17 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
         }
     }
 
-    pub fn unbatched<
-        SB: 'static,
-        B: for<'cref, 'inv> Fn(
-                TaskContext<'cref, 'inv, E>,
-                ChunkIndex,
-                DataLocation,
-                &'inv SB,
-            ) -> Task<'cref>
-            + 'static,
-    >(
+    pub fn unbatched<SB: OperatorParameter>(
         descriptor: OperatorDescriptor,
         dtype: E,
         metadata: TensorMetaData<D>,
         state_chunks: SB,
-        chunks: B,
+        chunks: for<'cref, 'inv> fn(
+            TaskContext<'cref, 'inv, E>,
+            ChunkIndex,
+            DataLocation,
+            &'inv SB,
+        ) -> Task<'cref>,
     ) -> Self {
         Self {
             metadata,
@@ -187,12 +176,10 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             .into());
         }
         Ok(TensorOperator::with_state(
-            op_descriptor!()
-                .dependent_on_data(&size)
-                .dependent_on_data(values), //TODO: this is a performance problem for
+            op_descriptor!(),
             Default::default(),
             m,
-            values,
+            DataParam(values),
             move |ctx, _, values| {
                 async move {
                     let mut out = ctx
@@ -240,12 +227,10 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             .into());
         }
         Ok(TensorOperator::with_state(
-            op_descriptor!()
-                .dependent_on_data(&size)
-                .dependent_on_data(&values[..]), //TODO: this is a performance problem for large arrays
+            op_descriptor!(),
             Default::default(),
             m,
-            values,
+            DataParam(values),
             move |ctx, _, values| {
                 async move {
                     let mut out = ctx
@@ -312,7 +297,7 @@ impl<D: SmallerDim> TensorOperator<D, DType> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub struct EmbeddedTensorOperator<D: DynDimension, E> {
     pub inner: TensorOperator<D, E>,
     pub embedding_data: TensorEmbeddingData<D>,
@@ -416,7 +401,7 @@ impl<D: Dimension, E: ElementType> EmbeddedTensorOperator<D, E> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Identify)]
 pub struct LODTensorOperator<D: DynDimension, E> {
     pub levels: Vec<EmbeddedTensorOperator<D, E>>,
 }
@@ -556,15 +541,13 @@ pub fn map<D: DynDimension, E: Element>(
     f: fn(E) -> E,
 ) -> TensorOperator<D, StaticElementType<E>> {
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&(f as usize)),
+        op_descriptor!(),
         Default::default(),
         input.metadata.clone(),
-        input,
-        move |ctx, positions, input| {
+        (input, DataParam(IdentifyHash(f))),
+        move |ctx, positions, (input, f)| {
             async move {
-                map_values_inplace(ctx, &input.chunks, positions, f).await;
+                map_values_inplace(ctx, &input.chunks, positions, ***f).await;
 
                 Ok(())
             }
@@ -580,16 +563,13 @@ pub fn linear_rescale<D: DynDimension>(
     offset: f32,
 ) -> TensorOperator<D, StaticElementType<f32>> {
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&factor)
-            .dependent_on_data(&offset),
+        op_descriptor!(),
         Default::default(),
         input.metadata.clone(),
-        (input, factor, offset),
+        (input, DataParam(factor), DataParam(offset)),
         move |ctx, positions, (input, factor, offset)| {
-            let factor = *factor;
-            let offset = *offset;
+            let factor = **factor;
+            let offset = **offset;
             async move {
                 map_values_inplace(ctx, &input.chunks, positions, move |i| i * factor + offset)
                     .await;

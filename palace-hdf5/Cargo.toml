@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 palace-core = { path = "../palace-core" }
+id = { path = "../id" }
 hdf5 = { git = "https://github.com/aldanor/hdf5-rust.git" }
 ndarray = "0.15.6"

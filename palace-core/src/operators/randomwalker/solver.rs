@@ -13,7 +13,7 @@ use crate::{
     coordinate::GlobalCoordinate,
     dim::{DynDimension, LargerDim, D3},
     dtypes::StaticElementType,
-    operator::{op_descriptor, OperatorDescriptor},
+    operator::{op_descriptor, DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::gpu::Allocation,
     task::OpaqueTaskContext,
@@ -49,13 +49,10 @@ pub fn random_walker_inner(
     );
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&weights)
-            .dependent_on(&seeds)
-            .dependent_on_data(&cfg),
+        op_descriptor!(),
         Default::default(),
         seeds.metadata.clone(),
-        (weights, seeds, cfg),
+        (weights, seeds, DataParam(cfg)),
         move |ctx, _pos, _, (weights, seeds, cfg)| {
             async move {
                 let device = ctx.preferred_device();

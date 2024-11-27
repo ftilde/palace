@@ -3,6 +3,7 @@ use std::{fs::File, mem::MaybeUninit, ops::DerefMut, path::PathBuf, rc::Rc};
 use ash::vk;
 use derive_more::Deref;
 use futures::StreamExt;
+use id::{Id, Identify};
 
 use crate::{
     array::{ChunkIndex, VolumeMetaData},
@@ -10,7 +11,7 @@ use crate::{
     dim::D3,
     dtypes::{DType, ElementType},
     op_descriptor,
-    operator::{DataDescriptor, OperatorDescriptor},
+    operator::{DataDescriptor, DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataLocation,
     task::{RequestStream, TaskContext},
@@ -29,6 +30,15 @@ pub struct RawVolumeSourceStateInner {
     _file: File,
     mmap: memmap::Mmap,
     pub size: VoxelPosition,
+}
+
+impl Identify for RawVolumeSourceState {
+    fn id(&self) -> Id {
+        Id::combine(&[
+            Id::from_data(self.path.to_string_lossy().as_bytes()),
+            self.size.id(),
+        ])
+    }
 }
 
 fn copy_chunk_line<S: DerefMut<Target = [MaybeUninit<u8>]>>(
@@ -102,14 +112,14 @@ pub fn open(
     }));
 
     let vol = TensorOperator::with_state(
-        op_descriptor!().dependent_on_data(state.path.to_string_lossy().as_bytes()),
+        op_descriptor!(),
         dtype,
         metadata,
-        (state, metadata),
-        move |ctx, positions, (state, metadata)| {
+        (DataParam(state), DataParam(metadata), DataParam(dtype)),
+        move |ctx, positions, (state, metadata, dtype)| {
             async move {
                 state
-                    .load_raw_bricks(dtype, metadata.chunk_size, ctx, positions)
+                    .load_raw_bricks(**dtype, metadata.chunk_size, ctx, positions)
                     .await
             }
             .into()

@@ -7,7 +7,7 @@ use crate::{
     dtypes::{ScalarType, StaticElementType},
     jit::{self},
     op_descriptor,
-    operator::OperatorDescriptor,
+    operator::{DataParam, OperatorDescriptor},
     operators::{scalar::ScalarOperator, tensor::TensorOperator},
     vec::Vector,
     vulkan::{
@@ -57,16 +57,19 @@ pub fn random_walker_weights_grady(
     let out_md = TensorMetaData::single_chunk(out_size);
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&tensor)
-            .dependent_on_data(&min_edge_weight)
-            .dependent_on_data(&beta),
+        op_descriptor!(),
         Default::default(),
         out_md,
-        tensor,
-        move |ctx, _pos, _, tensor| {
+        (
+            tensor,
+            DataParam(beta),
+            DataParam(min_edge_weight),
+            DataParam(out_md),
+        ),
+        |ctx, _pos, _, (tensor, beta, min_edge_weight, out_md)| {
             async move {
                 let device = ctx.preferred_device();
+                let nd = tensor.metadata.dim().n();
 
                 let in_size = tensor.metadata.dimensions;
 
@@ -114,8 +117,8 @@ pub fn random_walker_weights_grady(
 
                     pipeline.push_constant_dyn(&push_constants, |consts| {
                         consts.vec(&in_size.raw())?;
-                        consts.scalar(min_edge_weight)?;
-                        consts.scalar(beta)?;
+                        consts.scalar(**min_edge_weight)?;
+                        consts.scalar(**beta)?;
                         Ok(())
                     });
                     pipeline.write_descriptor_set(0, descriptor_config);
@@ -194,16 +197,22 @@ pub fn random_walker_weights_bian(
     let out_md = TensorMetaData::single_chunk(out_size);
 
     TensorOperator::unbatched(
-        op_descriptor!()
-            .dependent_on(&t)
-            .dependent_on_data(&min_edge_weight)
-            .dependent_on_data(&extent),
+        op_descriptor!(),
         Default::default(),
         out_md,
-        (t, t_mean, variance),
-        move |ctx, _pos, _, (t, t_mean, variance)| {
+        (
+            t,
+            t_mean,
+            variance,
+            DataParam(out_md),
+            DataParam(extent),
+            DataParam(min_edge_weight),
+        ),
+        |ctx, _pos, _, (t, t_mean, variance, out_md, extent, min_edge_weight)| {
             async move {
                 let device = ctx.preferred_device();
+
+                let nd = t.metadata.dim().n();
 
                 let in_size = t.metadata.dimensions;
 
@@ -240,7 +249,7 @@ pub fn random_walker_weights_bian(
 
                 let variance = ctx.submit(variance.request_scalar()).await;
 
-                let kernel_size = 2 * extent + 1;
+                let kernel_size = 2 * **extent + 1;
                 let variance_correction_factor = 2.0 / (kernel_size.pow(nd as u32 + 1) as f32);
                 let diff_variance =
                     (variance * variance_correction_factor).max(std::f32::MIN_POSITIVE);
@@ -259,7 +268,7 @@ pub fn random_walker_weights_bian(
 
                     pipeline.push_constant_dyn(&push_constants, |consts| {
                         consts.vec(&in_size.raw())?;
-                        consts.scalar(min_edge_weight)?;
+                        consts.scalar(**min_edge_weight)?;
                         consts.scalar(diff_variance_inv)?;
                         Ok(())
                     });

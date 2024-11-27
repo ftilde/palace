@@ -9,7 +9,7 @@ use crate::{
     dim::*,
     dtypes::{DType, ElementType},
     op_descriptor,
-    operator::{OpaqueOperator, OperatorDescriptor},
+    operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     task::RequestStream,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
@@ -151,8 +151,6 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
         .vec::<u32>(nd, "mem_size_out")
         .vec::<u32>(nd, "out_begin");
 
-    let dtype_dyn: DType = input.dtype().into();
-
     const SHADER: &'static str = r#"
 #include <util.glsl>
 #include <mat.glsl>
@@ -213,13 +211,15 @@ void main() {
 "#;
 
     TensorOperator::with_state(
-        op_descriptor!()
-            .dependent_on(&input)
-            .dependent_on_data(&output_size)
-            .dependent_on_data(&element_out_to_in),
+        op_descriptor!(),
         input.dtype(),
         output_size.clone(),
-        (input, output_size, element_out_to_in, push_constants),
+        (
+            input,
+            DataParam(output_size),
+            DataParam(element_out_to_in),
+            DataParam(push_constants),
+        ),
         move |ctx, mut positions, (input, output_size, element_out_to_in, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
@@ -228,6 +228,9 @@ void main() {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
+
+                let nd = input.dim().n();
+                let dtype_dyn: DType = input.dtype().into();
 
                 let m_in = &input.metadata;
                 let m_out = output_size;
@@ -330,7 +333,7 @@ void main() {
                         .get_index(
                             *ctx,
                             device,
-                            input.chunks.descriptor(),
+                            input.chunks.operator_descriptor(),
                             num_chunks,
                             dst_info,
                         )
