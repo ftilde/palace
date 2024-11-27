@@ -4,7 +4,7 @@ use std::{
     cell::{RefCell, UnsafeCell},
 };
 
-use crate::{operator::OperatorId, util::Map};
+use crate::util::Map;
 use id::{Id, Identify};
 
 use super::DeviceContext;
@@ -29,15 +29,6 @@ impl ResourceId {
         let id = Id::from_data(name.as_bytes());
         ResourceId(id)
     }
-    pub fn of(self, op: OperatorId) -> Self {
-        ResourceId(Id::combine(&[self.0, Id::from_data(op.1.as_bytes())]))
-    }
-    pub fn dependent_on(self, id: &(impl Identify + ?Sized)) -> Self {
-        ResourceId(Id::combine(&[self.0, id.id()]))
-    }
-    pub fn inner(&self) -> Id {
-        self.0
-    }
 }
 
 #[derive(Default)]
@@ -53,7 +44,7 @@ impl Cache {
         data: D,
         generate: fn(&DeviceContext, D) -> Result<V, crate::Error>,
     ) -> Result<&'a V, crate::Error> {
-        let id = id.dependent_on(&data);
+        let id = ResourceId(Id::combine(&[id.0, data.id()]));
         let mut m = self.values.borrow_mut();
         let raw = match m.entry(id) {
             std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),

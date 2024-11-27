@@ -28,51 +28,47 @@ pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
 pub fn mean(
     input: VolumeOperator<StaticElementType<f32>>,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    crate::operators::scalar::scalar(
-        op_descriptor!().dependent_on(&input),
-        input,
-        move |ctx, input| {
-            async move {
-                let md = input.metadata;
+    crate::operators::scalar::scalar(op_descriptor!(), input, move |ctx, input| {
+        async move {
+            let md = input.metadata;
 
-                let to_request = md.brick_positions().collect::<Vec<_>>();
-                let batch_size = 1024;
+            let to_request = md.brick_positions().collect::<Vec<_>>();
+            let batch_size = 1024;
 
-                let mut sum = 0.0;
-                for chunk in to_request.chunks(batch_size) {
-                    let mut stream = ctx
-                        .submit_unordered_with_data(chunk.iter().map(|pos| {
-                            let pos = md.chunk_index(pos);
-                            (input.chunks.request(pos), pos)
-                        }))
-                        .then_req(ctx.into(), |(brick_handle, brick_pos)| {
-                            let chunk_info = md.chunk_info(brick_pos);
-                            let brick_handle = brick_handle.into_thread_handle();
-                            ctx.spawn_compute(move || {
-                                let sum = if chunk_info.is_full() {
-                                    brick_handle.iter().sum::<f32>()
-                                } else {
-                                    let brick = crate::data::chunk(&brick_handle, &chunk_info);
-                                    brick.iter().sum::<f32>()
-                                };
-                                (brick_handle, sum)
-                            })
-                        });
+            let mut sum = 0.0;
+            for chunk in to_request.chunks(batch_size) {
+                let mut stream = ctx
+                    .submit_unordered_with_data(chunk.iter().map(|pos| {
+                        let pos = md.chunk_index(pos);
+                        (input.chunks.request(pos), pos)
+                    }))
+                    .then_req(ctx.into(), |(brick_handle, brick_pos)| {
+                        let chunk_info = md.chunk_info(brick_pos);
+                        let brick_handle = brick_handle.into_thread_handle();
+                        ctx.spawn_compute(move || {
+                            let sum = if chunk_info.is_full() {
+                                brick_handle.iter().sum::<f32>()
+                            } else {
+                                let brick = crate::data::chunk(&brick_handle, &chunk_info);
+                                brick.iter().sum::<f32>()
+                            };
+                            (brick_handle, sum)
+                        })
+                    });
 
-                    while let Some((brick_handle, part_sum)) = stream.next().await {
-                        sum += part_sum;
-                        brick_handle.into_main_handle(ctx.storage());
-                    }
+                while let Some((brick_handle, part_sum)) = stream.next().await {
+                    sum += part_sum;
+                    brick_handle.into_main_handle(ctx.storage());
                 }
-
-                let v = sum / md.num_tensor_elements() as f32;
-
-                ctx.write_scalar(v);
-                Ok(())
             }
-            .into()
-        },
-    )
+
+            let v = sum / md.num_tensor_elements() as f32;
+
+            ctx.write_scalar(v);
+            Ok(())
+        }
+        .into()
+    })
 }
 
 #[derive(Copy, Clone, From, Hash, Debug, id::Identify, PartialEq, Eq)]
@@ -222,7 +218,7 @@ pub fn convolution_1d<const DIM: usize>(
     kernel: ArrayOperator<StaticElementType<f32>>,
 ) -> VolumeOperator<StaticElementType<f32>> {
     TensorOperator::with_state(
-        op_descriptor!().dependent_on(&input).dependent_on(&kernel),
+        op_descriptor!(),
         Default::default(),
         input.metadata,
         (input, kernel),
