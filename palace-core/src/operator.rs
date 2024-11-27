@@ -457,7 +457,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
     }
 
     pub fn unbatched<S: OperatorParameter>(
-        descriptor: OperatorDescriptor,
+        mut descriptor: OperatorDescriptor,
         dtype: OutputType,
         state: S,
         compute: for<'cref, 'inv> fn(
@@ -467,6 +467,8 @@ impl<OutputType: ElementType> Operator<OutputType> {
             &'inv S,
         ) -> Task<'cref>,
     ) -> Self {
+        descriptor.data_longevity = descriptor.data_longevity.min(state.data_longevity());
+        descriptor.id = descriptor.id.dependent_on(state.id());
         Self {
             descriptor,
             dtype,
