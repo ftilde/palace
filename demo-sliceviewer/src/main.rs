@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::dim::*;
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::jit::jit;
 use palace_core::operators::array::from_rc;
@@ -96,9 +96,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = match args.input {
         Input::File(path) => {
-            let base =
-                palace_volume::open(path.vol, palace_volume::Hints::new().brick_size(brick_size))?;
-            palace_core::operators::resample::create_lod(base.try_into()?, 2.0)
+            let vol = palace_volume::open_or_create_lod(
+                path.vol,
+                palace_volume::Hints::new().brick_size(brick_size),
+            )?
+            .0;
+            vol.map(|v| {
+                v.map_inner(|v| {
+                    palace_core::jit::jit(v)
+                        .cast(ScalarType::F32.into())
+                        .unwrap()
+                        .compile()
+                        .unwrap()
+                })
+            })
+            .try_into()
+            .unwrap()
         }
         Input::Synthetic(args) => {
             let md = array::VolumeMetaData {
