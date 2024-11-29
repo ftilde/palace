@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{dim::Dimension, storage::Element, vec::Vector};
 
-pub trait ElementType: Clone + 'static + Into<DType> + PartialEq + Debug {
+pub trait ElementType: Copy + Clone + 'static + Into<DType> + PartialEq + Debug {
     fn array_layout(&self, size: usize) -> Layout;
     fn element_layout(&self) -> Layout {
         self.array_layout(1)

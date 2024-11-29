@@ -377,6 +377,13 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         RequestStreamSource::unordered(*self, requests)
     }
 
+    pub async fn run_unordered<V: 'cref>(
+        self,
+        requests: impl Iterator<Item = ChildTask<'cref, V>> + 'cref,
+    ) -> Vec<V> {
+        TasksUnordered::new(self, requests).run().await
+    }
+
     pub fn alloc_raw<'req>(
         &'req self,
         data_descriptor: DataDescriptor,
