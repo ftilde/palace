@@ -12,7 +12,10 @@ use crate::{
     dtypes::{DType, StaticElementType},
     op_descriptor,
     operator::{DataParam, Operator, OperatorDescriptor, OperatorNetworkNode},
-    operators::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
+    operators::{
+        randomwalker::random_walker_on_chunk,
+        tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
+    },
     vec::Vector,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
@@ -310,7 +313,46 @@ fn run_rw(
     seeds: ExpandedChunkOperator<D3, StaticElementType<f32>>,
     cfg: SolverConfig,
 ) -> ExpandedChunkOperator<D3, StaticElementType<f32>> {
-    todo!()
+    let metadata = seeds.metadata.clone();
+    let inner = Operator::with_state(
+        op_descriptor!(),
+        Default::default(),
+        (weights, seeds, DataParam(cfg)),
+        |ctx, positions, (weights, seeds, cfg)| {
+            async move {
+                ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
+                    async move {
+                        let chunk_info = seeds.metadata.chunk(pos);
+                        let chunk_info_weights = weights.metadata.chunk(pos);
+                        assert_eq!(
+                            chunk_info.logical_size(),
+                            chunk_info_weights.logical_size().pop_dim_small()
+                        );
+                        assert_eq!(
+                            chunk_info.mem_size,
+                            chunk_info_weights.mem_size.pop_dim_small(),
+                        );
+                        random_walker_on_chunk::<D3>(
+                            ctx,
+                            &weights.inner,
+                            &seeds.inner,
+                            pos,
+                            **cfg,
+                            chunk_info.mem_size,
+                            chunk_info.logical_size(),
+                        )
+                        .await
+                    }
+                    .into()
+                }))
+                .await;
+
+                Ok(())
+            }
+            .into()
+        },
+    );
+    ExpandedChunkOperator { inner, metadata }
 }
 
 fn shrink(
