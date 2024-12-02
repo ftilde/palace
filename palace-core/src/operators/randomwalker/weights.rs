@@ -2,7 +2,8 @@ use ash::vk;
 use id::Identify;
 
 use crate::{
-    array::{ChunkIndex, TensorMetaData},
+    array::TensorMetaData,
+    data::ChunkCoordinate,
     dim::{DynDimension, LargerDim, D3},
     dtypes::{ScalarType, StaticElementType},
     jit::{self},
@@ -38,23 +39,22 @@ pub enum WeightFunction {
     BianMean { extent: usize },
 }
 
+#[derive(Copy, Clone, Identify)]
+pub enum WeightParameters {
+    Grady { beta: f32 },
+    BianMean { extent: usize },
+}
+
 pub fn random_walker_weights_grady(
     tensor: TensorOperator<D3, StaticElementType<f32>>,
     beta: f32,
     min_edge_weight: f32,
 ) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
-    assert_eq!(
-        tensor.metadata.dimensions.raw(),
-        tensor.metadata.chunk_size.raw()
-    );
-
     let nd = tensor.metadata.dim().n();
-    let out_size = tensor
-        .metadata
-        .dimensions
-        .push_dim_small((nd as u32).into());
 
-    let out_md = TensorMetaData::single_chunk(out_size);
+    let out_md = tensor
+        .metadata
+        .push_dim_small((nd as u32).into(), (nd as u32).into());
 
     TensorOperator::unbatched(
         op_descriptor!(),
@@ -66,20 +66,23 @@ pub fn random_walker_weights_grady(
             DataParam(min_edge_weight),
             DataParam(out_md),
         ),
-        |ctx, _pos, _, (tensor, beta, min_edge_weight, out_md)| {
+        |ctx, pos, _, (tensor, beta, min_edge_weight, out_md)| {
             async move {
                 let device = ctx.preferred_device();
                 let nd = tensor.metadata.dim().n();
 
-                let in_size = tensor.metadata.dimensions;
+                let md = &tensor.metadata;
 
                 let push_constants = DynPushConstants::new()
                     .vec::<u32>(nd, "tensor_dim_in")
+                    .vec::<u32>(nd, "chunk_dim_in")
+                    .vec::<u32>(nd, "chunk_begin")
+                    .scalar::<u32>("dim")
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("grady_beta");
 
                 let pipeline = device.request_state(
-                    (in_size.hmul(), nd, &push_constants),
+                    (md.chunk_size.hmul(), nd, &push_constants),
                     |device, (mem_size, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
@@ -96,34 +99,62 @@ pub fn random_walker_weights_grady(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
-                let input = ctx
-                    .submit(
-                        tensor
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
-                    )
-                    .await;
+
+                let pos_nd = tensor.metadata.chunk_pos_from_index(pos);
 
                 let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), out_md.dimensions.hmul()))
+                    .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
                     .await;
 
-                let global_size = in_size.raw();
+                let input = ctx
+                    .submit(tensor.chunks.request_gpu(device.id, pos, read_info))
+                    .await;
 
-                let descriptor_config = DescriptorConfig::new([&input, &out_chunk]);
+                let chunk_info = md.chunk_info(pos);
+                {
+                    let out_chunk = &out_chunk;
+                    let input = &input;
+                    let push_constants = &push_constants;
+                    let chunk_info = &chunk_info;
 
-                device.with_cmd_buffer(|cmd| unsafe {
-                    let mut pipeline = pipeline.bind(cmd);
+                    ctx.run_unordered((0..nd).into_iter().map(|dim| {
+                        async move {
+                            let neighbor_nd = pos_nd.map_element(dim, |e: ChunkCoordinate| {
+                                (e + 1u32).min(tensor.metadata.dimension_in_chunks()[dim] - 1u32)
+                            });
+                            let neighbor = ctx
+                                .submit(tensor.chunks.request_gpu(
+                                    device.id,
+                                    tensor.metadata.chunk_index(&neighbor_nd),
+                                    read_info,
+                                ))
+                                .await;
 
-                    pipeline.push_constant_dyn(&push_constants, |consts| {
-                        consts.vec(&in_size.raw())?;
-                        consts.scalar(**min_edge_weight)?;
-                        consts.scalar(**beta)?;
-                        Ok(())
-                    });
-                    pipeline.write_descriptor_set(0, descriptor_config);
-                    pipeline.dispatch3d(global_size);
-                });
+                            let global_size = md.chunk_size.raw();
+
+                            let descriptor_config =
+                                DescriptorConfig::new([input, &neighbor, out_chunk]);
+
+                            device.with_cmd_buffer(|cmd| unsafe {
+                                let mut pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant_dyn(&push_constants, |consts| {
+                                    consts.vec(&md.dimensions.raw())?;
+                                    consts.vec(&md.chunk_size.raw())?;
+                                    consts.vec(&chunk_info.begin().raw())?;
+                                    consts.scalar(dim as u32)?;
+                                    consts.scalar(**min_edge_weight)?;
+                                    consts.scalar(**beta)?;
+                                    Ok(())
+                                });
+                                pipeline.write_descriptor_set(0, descriptor_config);
+                                pipeline.dispatch3d(global_size);
+                            });
+                        }
+                        .into()
+                    }))
+                    .await;
+                }
 
                 unsafe {
                     out_chunk.initialized(
@@ -184,15 +215,18 @@ fn variance(
 }
 
 pub fn random_walker_weights_bian(
-    t: TensorOperator<D3, StaticElementType<f32>>,
+    tensor: TensorOperator<D3, StaticElementType<f32>>,
     extent: usize,
     min_edge_weight: f32,
 ) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
-    let t_mean = mean_filter(t.clone(), extent);
-    let variance = variance(t.clone(), extent);
+    let t_mean = mean_filter(tensor.clone(), extent);
+    let variance = variance(tensor.clone(), extent);
 
-    let nd = t.metadata.dim().n();
-    let out_size = t.metadata.dimensions.push_dim_small((nd as u32).into());
+    let nd = tensor.metadata.dim().n();
+    let out_size = tensor
+        .metadata
+        .dimensions
+        .push_dim_small((nd as u32).into());
 
     let out_md = TensorMetaData::single_chunk(out_size);
 
@@ -201,23 +235,26 @@ pub fn random_walker_weights_bian(
         Default::default(),
         out_md,
         (
-            t,
             t_mean,
             variance,
             DataParam(out_md),
             DataParam(extent),
             DataParam(min_edge_weight),
         ),
-        |ctx, _pos, _, (t, t_mean, variance, out_md, extent, min_edge_weight)| {
+        |ctx, pos, _, (t_mean, variance, out_md, extent, min_edge_weight)| {
             async move {
                 let device = ctx.preferred_device();
 
-                let nd = t.metadata.dim().n();
+                let md = &t_mean.metadata;
+                let nd = md.dim().n();
 
-                let in_size = t.metadata.dimensions;
+                let in_size = t_mean.metadata.dimensions;
 
                 let push_constants = DynPushConstants::new()
                     .vec::<u32>(nd, "tensor_dim_in")
+                    .vec::<u32>(nd, "chunk_dim_in")
+                    .vec::<u32>(nd, "chunk_begin")
+                    .scalar::<u32>("dim")
                     .scalar::<f32>("min_edge_weight")
                     .scalar::<f32>("diff_variance_inv");
 
@@ -239,12 +276,15 @@ pub fn random_walker_weights_bian(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
+
+                let pos_nd = t_mean.metadata.chunk_pos_from_index(pos);
+
+                let out_chunk = ctx
+                    .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
+                    .await;
+
                 let input = ctx
-                    .submit(
-                        t_mean
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
-                    )
+                    .submit(t_mean.chunks.request_gpu(device.id, pos, read_info))
                     .await;
 
                 let variance = ctx.submit(variance.request_scalar()).await;
@@ -255,26 +295,51 @@ pub fn random_walker_weights_bian(
                     (variance * variance_correction_factor).max(std::f32::MIN_POSITIVE);
                 let diff_variance_inv = 1.0 / diff_variance;
 
-                let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), out_md.dimensions.hmul()))
+                let chunk_info = md.chunk_info(pos);
+                {
+                    let out_chunk = &out_chunk;
+                    let input = &input;
+                    let push_constants = &push_constants;
+                    let chunk_info = &chunk_info;
+
+                    ctx.run_unordered((0..nd).into_iter().map(|dim| {
+                        async move {
+                            let neighbor_nd = pos_nd.map_element(dim, |e: ChunkCoordinate| {
+                                (e + 1u32).min(t_mean.metadata.dimension_in_chunks()[dim] - 1u32)
+                            });
+                            let neighbor = ctx
+                                .submit(t_mean.chunks.request_gpu(
+                                    device.id,
+                                    t_mean.metadata.chunk_index(&neighbor_nd),
+                                    read_info,
+                                ))
+                                .await;
+
+                            let global_size = md.chunk_size.raw();
+
+                            let descriptor_config =
+                                DescriptorConfig::new([input, &neighbor, out_chunk]);
+
+                            device.with_cmd_buffer(|cmd| unsafe {
+                                let mut pipeline = pipeline.bind(cmd);
+
+                                pipeline.push_constant_dyn(&push_constants, |consts| {
+                                    consts.vec(&md.dimensions.raw())?;
+                                    consts.vec(&md.chunk_size.raw())?;
+                                    consts.vec(&chunk_info.begin().raw())?;
+                                    consts.scalar(dim as u32)?;
+                                    consts.scalar(**min_edge_weight)?;
+                                    consts.scalar(diff_variance_inv)?;
+                                    Ok(())
+                                });
+                                pipeline.write_descriptor_set(0, descriptor_config);
+                                pipeline.dispatch3d(global_size);
+                            });
+                        }
+                        .into()
+                    }))
                     .await;
-
-                let global_size = in_size.raw();
-
-                let descriptor_config = DescriptorConfig::new([&input, &out_chunk]);
-
-                device.with_cmd_buffer(|cmd| unsafe {
-                    let mut pipeline = pipeline.bind(cmd);
-
-                    pipeline.push_constant_dyn(&push_constants, |consts| {
-                        consts.vec(&in_size.raw())?;
-                        consts.scalar(**min_edge_weight)?;
-                        consts.scalar(diff_variance_inv)?;
-                        Ok(())
-                    });
-                    pipeline.write_descriptor_set(0, descriptor_config);
-                    pipeline.dispatch3d(global_size);
-                });
+                }
 
                 unsafe {
                     out_chunk.initialized(

@@ -149,7 +149,7 @@ mod test {
     use super::*;
     use crate::{
         test_util::compare_tensor_approx,
-        vec::{LocalVoxelPosition, VoxelPosition},
+        vec::{LocalVoxelPosition, Vector, VoxelPosition},
     };
 
     #[test]
@@ -187,6 +187,51 @@ mod test {
         let cfg = Default::default();
 
         let v = random_walker(vol, seeds, WeightFunction::Grady { beta: 100.0 }, 1e-5, cfg);
+
+        compare_tensor_approx(v, expected, cfg.max_residuum_norm);
+    }
+
+    #[test]
+    fn chunked_weights() {
+        let size = VoxelPosition::fill(8.into());
+        let brick_size_full = size.local();
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v.x().raw < size.x().raw / 2 {
+                0.1
+            } else {
+                0.9
+            }
+        });
+
+        let seeds = crate::operators::rasterize_function::voxel(size, brick_size_full, move |v| {
+            if v == VoxelPosition::fill(0.into()) {
+                0.0
+            } else if v == size - VoxelPosition::fill(1.into()) {
+                1.0
+            } else {
+                -2.0
+            }
+        });
+
+        let expected =
+            crate::operators::rasterize_function::voxel(size, brick_size_full, move |v| {
+                if v.x().raw < size.x().raw / 2 {
+                    0.0
+                } else {
+                    1.0
+                }
+            });
+
+        let cfg = Default::default();
+
+        let weights = random_walker_weights(vol, WeightFunction::Grady { beta: 100.0 }, 1e-5);
+        let weights = crate::operators::volume_gpu::rechunk(
+            weights,
+            Vector::fill(crate::operators::volume::ChunkSize::Full),
+        );
+        let v = random_walker_inner(weights, seeds, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }
