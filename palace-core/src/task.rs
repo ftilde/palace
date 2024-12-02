@@ -388,7 +388,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &'req self,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, RawWriteHandleUninit> {
+    ) -> Request<'req, 'inv, RawWriteHandleUninit<'req>> {
         self.storage
             .request_alloc_raw(self.current_frame, data_descriptor, layout)
     }
@@ -397,7 +397,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &'req self,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit> {
+    ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit<'req>> {
         self.disk_cache
             .unwrap()
             .request_alloc_raw(self.current_frame, data_descriptor, layout)
@@ -408,7 +408,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         device: &'req DeviceContext,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, WriteHandle> {
+    ) -> Request<'req, 'inv, WriteHandle<'req>> {
         device
             .storage
             .request_alloc_slot_raw(device, self.current_frame, data_descriptor, layout)

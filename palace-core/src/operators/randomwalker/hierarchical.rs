@@ -469,15 +469,12 @@ mod test {
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             (v.x() + v.y() + v.z()).raw as f32
-        })
-        .embedded(TensorEmbeddingData {
-            spacing: Vector::fill(1.0),
         });
 
         let expanded = expand(vol.clone(), expansion);
 
         let result = shrink(expanded);
 
-        compare_tensor(vol.inner, result.inner);
+        compare_tensor(vol, result);
     }
 }

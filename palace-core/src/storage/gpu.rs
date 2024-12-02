@@ -1147,7 +1147,7 @@ impl Storage {
         current_frame: FrameNumber,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, WriteHandle> {
+    ) -> Request<'req, 'inv, WriteHandle<'req>> {
         let mut access = Some(device.storage.register_access(
             device,
             current_frame,

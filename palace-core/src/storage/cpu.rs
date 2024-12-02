@@ -1112,7 +1112,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         current_frame: FrameNumber,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, RawWriteHandleUninit<Allocator>> {
+    ) -> Request<'req, 'inv, RawWriteHandleUninit<'req, Allocator>> {
         let mut access = Some(self.register_access(current_frame, data_descriptor.id));
 
         Request {
@@ -1155,7 +1155,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         current_frame: FrameNumber,
         id: DataId,
         size: usize,
-    ) -> Request<'req, 'inv, StateCacheResult<[MaybeUninit<T>], Allocator>> {
+    ) -> Request<'req, 'inv, StateCacheResult<'req, [MaybeUninit<T>], Allocator>> {
         let access = self.register_access(current_frame, id);
         let layout = Layout::array::<T>(size).unwrap();
 
