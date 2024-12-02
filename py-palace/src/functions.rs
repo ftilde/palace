@@ -503,13 +503,15 @@ pub fn randomwalker(
         config.max_residuum_norm = max_residuum_norm;
     }
     seeds.unpack().try_map_inner(py, |seeds| {
-        Ok(palace_core::operators::randomwalker::random_walker_inner(
-            weights,
-            try_into_static_err(seeds)?.try_into()?,
-            config,
+        Ok(
+            palace_core::operators::randomwalker::random_walker_single_chunk(
+                weights,
+                try_into_static_err(seeds)?.try_into()?,
+                config,
+            )
+            .into_dyn()
+            .into(),
         )
-        .into_dyn()
-        .into())
     })
 }
 

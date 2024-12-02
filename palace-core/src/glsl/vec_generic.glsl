@@ -193,6 +193,14 @@ bool all(bool[_N] v) {
     return res;
 }
 
+uint hmul(uint[_N] v) {
+    uint res = 1;
+    for(int i=0; i<_N; i+=1) {
+        res *= v[i];
+    }
+    return res;
+}
+
 float dot(float[_N] l, float[_N] r) {
     float res;
     for(int i=0; i<_N; i+= 1) {

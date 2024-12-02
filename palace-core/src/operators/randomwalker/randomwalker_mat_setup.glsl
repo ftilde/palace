@@ -57,21 +57,23 @@ bool is_seed_point(uint linear_p) {
 }
 
 void main() {
-    uint current_linear = global_position_linear;
+    uint current_linear_logical = global_position_linear;
 
-    if(current_linear >= BRICK_MEM_SIZE) {
+    if(current_linear_logical >= hmul(consts.tensor_size_logical)) {
         return;
     }
 
-    uint[ND] current = from_linear(current_linear, consts.tensor_dim_in);
+    uint[ND] current = from_linear(current_linear_logical, consts.tensor_size_logical);
 
     float weight_sum = 0.0;
     float vec_sum = 0.0;
 
-    if(is_seed_point(current_linear)) {
+    uint current_linear_memory = to_linear(current, consts.tensor_size_memory);
+
+    if(is_seed_point(current_linear_memory)) {
         return;
     }
-    uint cur_row = tensor_to_rows.values[current_linear];
+    uint cur_row = tensor_to_rows.values[current_linear_memory];
 
     for(int dim=ND-1; dim>=0; --dim) {
         for(int offset = -1; offset<2; offset += 2) {
@@ -82,12 +84,12 @@ void main() {
             int low = min(int(current[dim]), neighbor[dim]);
             int high = max(int(current[dim]), neighbor[dim]);
 
-            if(low >= 0 && uint(high) < consts.tensor_dim_in[dim]) {
+            if(low >= 0 && uint(high) < consts.tensor_size_logical[dim]) {
                 int[ND] weight_pos = to_int(current);
                 weight_pos[dim] = min(int(current[dim]), neighbor[dim]);
 
-                uint neighbor_linear = to_linear(to_uint(neighbor), consts.tensor_dim_in);
-                uint weight_pos_linear = to_linear(to_uint(weight_pos), consts.tensor_dim_in);
+                uint neighbor_linear = to_linear(to_uint(neighbor), consts.tensor_size_memory);
+                uint weight_pos_linear = to_linear(to_uint(weight_pos), consts.tensor_size_memory);
 
                 float weight = weights.values[weight_pos_linear][dim];
 

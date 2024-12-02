@@ -4,6 +4,7 @@
 #include <atomic.glsl>
 #include <randomwalker_shared.glsl>
 #include <size_util.glsl>
+#include <vec.glsl>
 
 layout(std430, binding = 0) readonly buffer Seeds {
     float values[BRICK_MEM_SIZE];
@@ -16,13 +17,18 @@ layout(std430, binding = 1) buffer Table {
 const uint LOCAL_SIZE = gl_WorkGroupSize.x;
 shared uint[LOCAL_SIZE] local_vals;
 
+declare_push_consts(consts);
+
 void main() {
     uint global_id = global_position_linear;
     uint local_id = local_index_subgroup_order;
 
     uint local_val;
     if(global_id < BRICK_MEM_SIZE) {
-        local_val = is_seed_value(seeds_buf.values[global_id]) ? 0 : 1;
+        uint[ND] pos = from_linear(global_id, consts.tensor_size_memory);
+
+        bool inside = all(less_than(pos, consts.tensor_size_logical));
+        local_val = (inside && is_seed_value(seeds_buf.values[global_id])) ? 0 : 1;
     } else {
         local_val = 0;
     }

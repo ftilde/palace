@@ -141,7 +141,7 @@ pub fn random_walker(
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     let weights = random_walker_weights(tensor, weight_function, min_edge_weight);
-    random_walker_inner(weights, seeds, cfg)
+    random_walker_single_chunk(weights, seeds, cfg)
 }
 
 #[cfg(test)]
@@ -231,7 +231,7 @@ mod test {
             weights,
             Vector::fill(crate::operators::volume::ChunkSize::Full),
         );
-        let v = random_walker_inner(weights, seeds, cfg);
+        let v = random_walker_single_chunk(weights, seeds, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }
