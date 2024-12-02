@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-use super::{SolverConfig, WeightFunction};
+use super::{random_walker_weights, SolverConfig, WeightFunction};
 
 type D = D3;
 
@@ -80,7 +80,6 @@ pub fn hierchical_random_walker(
 struct ExpandedChunkOperator<D: DynDimension, E> {
     inner: Operator<E>,
     metadata: ExpandedMetaData<D>,
-    embedding_data: TensorEmbeddingData<D>,
 }
 
 impl<D: DynDimension, E> OperatorNetworkNode for ExpandedChunkOperator<D, E> {
@@ -138,11 +137,10 @@ impl<D: DynDimension> ExpandedChunkInfo<D> {
     }
 }
 
-fn expand(
-    input: EmbeddedTensorOperator<D3, StaticElementType<f32>>,
-    expansion_by: Vector<D3, LocalCoordinate>,
-) -> ExpandedChunkOperator<D3, StaticElementType<f32>> {
-    let embedding_data = input.embedding_data.clone();
+fn expand<D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
+    expansion_by: Vector<D, LocalCoordinate>,
+) -> ExpandedChunkOperator<D, StaticElementType<f32>> {
     let original_metadata = input.metadata.clone();
 
     let nd = input.dim().n();
@@ -177,16 +175,12 @@ fn expand(
                 let m_in = &input.metadata;
 
                 let out_chunk_size = m_out.mem_size();
+                let out_mem_size = out_chunk_size.hmul();
 
                 positions.sort_by_key(|(v, _)| v.0);
 
                 let pipeline = device.request_state(
-                    (
-                        m_in.chunk_size.hmul(),
-                        out_chunk_size.hmul(),
-                        nd,
-                        &push_constants,
-                    ),
+                    (m_in.chunk_size.hmul(), out_mem_size, nd, &push_constants),
                     |device, (mem_size_in, mem_size_out, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("expand_sample.glsl"))
@@ -201,6 +195,7 @@ fn expand(
                 )?;
 
                 ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
+                    let out_chunk_size = &out_chunk_size;
                     async move {
                         let chunk_pos = m_in.chunk_pos_from_index(pos);
                         let dim_in_chunks = m_in.dimension_in_chunks();
@@ -231,27 +226,29 @@ fn expand(
                             .await;
 
                         let gpu_chunk_out = ctx
-                            .submit(ctx.alloc_slot_gpu(device, pos, out_chunk_size.hmul()))
+                            .submit(ctx.alloc_slot_gpu(device, pos, out_mem_size))
                             .await;
 
                         let out_chunk = m_out.chunk(pos);
-                        let region_begin = out_chunk.begin;
                         let region_end = out_chunk.end();
+                        let region_begin = out_chunk.begin;
 
                         for (chunk, chunk_pos) in
                             in_bricks.into_iter().zip(in_brick_positions.into_iter())
                         {
                             let read_chunk = m_in.chunk_info_vec(&chunk_pos);
-                            let overlap_begin = region_begin.max(read_chunk.begin());
+                            let overlap_begin = region_begin.clone().max(read_chunk.begin());
                             let overlap_end = region_end.min(&read_chunk.end());
 
                             let descriptor_config = DescriptorConfig::new([&chunk, &gpu_chunk_out]);
 
                             let tensor_dim_in = m_in.chunk_size.raw();
-                            let tensor_dim_out = out_chunk_size.raw();
-                            let to_in_offset = (overlap_begin - *read_chunk.begin()).raw();
-                            let to_out_offset = (overlap_begin - region_begin).raw();
-                            let overlap_dim = (overlap_end - overlap_begin).raw();
+                            let tensor_dim_out = out_chunk_size.clone().raw();
+                            let to_in_offset =
+                                (overlap_begin.clone() - read_chunk.begin().clone()).raw();
+                            let to_out_offset =
+                                (overlap_begin.clone() - region_begin.clone()).raw();
+                            let overlap_dim = (overlap_end - overlap_begin.clone()).raw();
                             let overlap_size = overlap_dim.hmul() as u32;
 
                             device.with_cmd_buffer(|cmd| unsafe {
@@ -295,7 +292,6 @@ fn expand(
     ExpandedChunkOperator {
         inner: op,
         metadata: m_out,
-        embedding_data,
     }
 }
 
@@ -309,14 +305,6 @@ fn expanded_seeds(
     todo!()
 }
 
-pub fn weights(
-    tensor: ExpandedChunkOperator<D3, StaticElementType<f32>>,
-    weight_function: WeightFunction,
-    min_edge_weight: f32,
-) -> ExpandedChunkOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
-    todo!()
-}
-
 fn run_rw(
     weights: ExpandedChunkOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>>,
     seeds: ExpandedChunkOperator<D3, StaticElementType<f32>>,
@@ -327,9 +315,8 @@ fn run_rw(
 
 fn shrink(
     input: ExpandedChunkOperator<D3, StaticElementType<f32>>,
-) -> EmbeddedTensorOperator<D3, StaticElementType<f32>> {
+) -> TensorOperator<D3, StaticElementType<f32>> {
     let nd = input.metadata.base.dim().n();
-    let ed = input.embedding_data.clone();
 
     let push_constants = DynPushConstants::new()
         .vec::<u32>(nd, "tensor_dim_in")
@@ -429,7 +416,6 @@ fn shrink(
             .into()
         },
     )
-    .embedded(ed)
 }
 
 fn level_step(
@@ -445,18 +431,25 @@ fn level_step(
         .metadata
         .chunk_size
         .map(|s| ((s.raw as f32 * 0.125) as u32).into());
-    let expanded_input = expand(current_level, expansion_by);
-    let weights = weights(expanded_input.clone(), weight_function, min_edge_weight);
+    let weights = random_walker_weights(
+        current_level.inner.clone(),
+        weight_function,
+        min_edge_weight,
+    );
+    let expanded_weights = expand(weights, expansion_by.push_dim_small(0.into()));
     let seeds = expanded_seeds(
         upper_result,
         points_fg,
         points_bg,
-        expanded_input.metadata,
-        expanded_input.embedding_data,
+        ExpandedMetaData {
+            base: current_level.metadata,
+            expansion_by,
+        },
+        current_level.embedding_data,
     );
 
-    let expanded_result = run_rw(weights, seeds, cfg);
-    shrink(expanded_result)
+    let expanded_result = run_rw(expanded_weights, seeds, cfg);
+    shrink(expanded_result).embedded(current_level.embedding_data)
 }
 
 #[cfg(test)]
