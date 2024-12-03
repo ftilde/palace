@@ -19,6 +19,7 @@ mod hierarchical;
 mod solver;
 mod weights;
 
+pub use hierarchical::*;
 pub use solver::*;
 pub use weights::*;
 
@@ -148,6 +149,7 @@ pub fn random_walker(
 mod test {
     use super::*;
     use crate::{
+        operators::array::from_vec,
         test_util::compare_tensor_approx,
         vec::{LocalVoxelPosition, Vector, VoxelPosition},
     };
@@ -234,5 +236,59 @@ mod test {
         let v = random_walker_single_chunk(weights, seeds, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
+    }
+
+    #[test]
+    fn hierarchical() {
+        let s = 20;
+        let size = VoxelPosition::fill(s.into());
+        let brick_size = LocalVoxelPosition::fill(8.into());
+
+        let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v.x().raw < size.x().raw / 2 {
+                0.1
+            } else {
+                0.9
+            }
+        })
+        .embedded(TensorEmbeddingData {
+            spacing: Vector::fill(1.0),
+        });
+        let vol = crate::operators::resample::create_lod(vol, 2.0);
+
+        let foreground = from_vec(vec![Vector::<D3, f32>::fill(0.0)])
+            .try_into()
+            .unwrap();
+        let background = from_vec(vec![Vector::<D3, f32>::fill((s - 1) as f32)])
+            .try_into()
+            .unwrap();
+
+        let cfg = Default::default();
+
+        let v = hierchical_random_walker(
+            vol,
+            foreground,
+            background,
+            WeightFunction::Grady { beta: 100.0 },
+            1e-5,
+            cfg,
+        );
+
+        for level in v.levels.into_iter().rev() {
+            let size = level.metadata.dimensions;
+            let expected = crate::operators::rasterize_function::voxel(
+                dbg!(size),
+                dbg!(level.metadata.chunk_size),
+                move |v| {
+                    if v.x().raw < size.x().raw / 2 {
+                        0.0
+                    } else {
+                        1.0
+                    }
+                },
+            );
+
+            compare_tensor_approx(level.inner, expected, cfg.max_residuum_norm);
+        }
     }
 }

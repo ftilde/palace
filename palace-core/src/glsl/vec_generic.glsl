@@ -168,6 +168,21 @@ bool[_N] less_than(uint[_N] l, uint[_N] r) {
     }
     return res;
 }
+bool[_N] less_than(float[_N] l, float[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] < r[i];
+    }
+    return res;
+}
+
+bool[_N] less_than_equal(uint[_N] l, uint[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] <= r[i];
+    }
+    return res;
+}
 
 bool[_N] less_than_equal(int[_N] l, int[_N] r) {
     bool[_N] res;
@@ -184,11 +199,34 @@ bool[_N] less_than_equal(float[_N] l, float[_N] r) {
     }
     return res;
 }
+bool[_N] equal(int[_N] l, int[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] == r[i];
+    }
+    return res;
+}
+
+bool[_N] equal(uint[_N] l, uint[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] == r[i];
+    }
+    return res;
+}
 
 bool all(bool[_N] v) {
     bool res = true;
     for(int i=0; i<_N; i+=1) {
         res = res && v[i];
+    }
+    return res;
+}
+
+bool any(bool[_N] v) {
+    bool res = false;
+    for(int i=0; i<_N; i+=1) {
+        res = res || v[i];
     }
     return res;
 }

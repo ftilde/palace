@@ -5,13 +5,14 @@ use id::Identify;
 use itertools::Itertools;
 
 use crate::{
+    aabb::AABB,
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
     coordinate::{ChunkCoordinate, LocalCoordinate},
     data::GlobalCoordinate,
     dim::{DynDimension, LargerDim, D1, D3},
     dtypes::{DType, StaticElementType},
     op_descriptor,
-    operator::{DataParam, Operator, OperatorDescriptor, OperatorNetworkNode},
+    operator::{DataParam, OpaqueOperator, Operator, OperatorDescriptor, OperatorNetworkNode},
     operators::{
         randomwalker::random_walker_on_chunk,
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
@@ -109,7 +110,7 @@ impl<D: DynDimension> ExpandedMetaData<D> {
     fn mem_size(&self) -> Vector<D, LocalCoordinate> {
         &self.base.chunk_size + &self.expansion_by.scale(2.into())
     }
-    fn chunk(&self, pos: ChunkIndex) -> ExpandedChunkInfo<D> {
+    fn chunk_info(&self, pos: ChunkIndex) -> ExpandedChunkInfo<D> {
         let chunk_base = self.base.chunk_info(pos);
         let begin = chunk_base
             .begin()
@@ -232,7 +233,7 @@ fn expand<D: DynDimension>(
                             .submit(ctx.alloc_slot_gpu(device, pos, out_mem_size))
                             .await;
 
-                        let out_chunk = m_out.chunk(pos);
+                        let out_chunk = m_out.chunk_info(pos);
                         let region_end = out_chunk.end();
                         let region_begin = out_chunk.begin;
 
@@ -305,7 +306,231 @@ fn expanded_seeds(
     out_md: ExpandedMetaData<D>,
     out_ed: TensorEmbeddingData<D>,
 ) -> ExpandedChunkOperator<D3, StaticElementType<f32>> {
-    todo!()
+    let metadata = out_md.clone();
+
+    let inner = Operator::with_state(
+        op_descriptor!(),
+        Default::default(),
+        (
+            upper_result,
+            points_fg,
+            points_bg,
+            DataParam(out_md),
+            DataParam(out_ed),
+        ),
+        |ctx, mut positions, (upper_result, points_fg, points_bg, m_out, out_ed)| {
+            async move {
+                let device = ctx.preferred_device();
+                let m_in = &upper_result.metadata;
+                let num_chunks = m_in.dimension_in_chunks().hmul();
+
+                let nd = upper_result.dim().n();
+                let push_constants = DynPushConstants::new()
+                    .mat::<f32>(nd + 1, "grid_to_grid")
+                    .mat::<f32>(nd + 1, "world_to_grid")
+                    .vec::<u32>(nd, "out_tensor_size")
+                    .vec::<u32>(nd, "out_chunk_size_memory")
+                    .vec::<u32>(nd, "out_chunk_size_logical")
+                    .vec::<u32>(nd, "out_begin")
+                    .vec::<u32>(nd, "in_dimensions")
+                    .vec::<u32>(nd, "in_chunk_size")
+                    .scalar::<u32>("num_points_fg")
+                    .scalar::<u32>("num_points_bg");
+
+                let pipeline = device.request_state(
+                    (&push_constants, num_chunks, m_in.chunk_size.hmul(), nd),
+                    |device, (push_constants, num_chunks, mem_size, nd)| {
+                        ComputePipelineBuilder::new(
+                            Shader::new(include_str!("seeds_hierarchical.glsl"))
+                                .define("NUM_CHUNKS", num_chunks)
+                                .define("BRICK_MEM_SIZE_IN", mem_size)
+                                .define("N", nd)
+                                .push_const_block_dyn(&push_constants)
+                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
+                                .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
+                                .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
+                        )
+                        .use_push_descriptor(true)
+                        .build(device)
+                    },
+                )?;
+
+                positions.sort_by_key(|(v, _)| v.0);
+
+                let push_constants = &push_constants;
+
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+                let points_fg_buf = ctx
+                    .submit(
+                        points_fg
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    )
+                    .await;
+                let points_bg_buf = ctx
+                    .submit(
+                        points_bg
+                            .chunks
+                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                    )
+                    .await;
+                let points_fg_buf = &points_fg_buf;
+                let points_bg_buf = &points_bg_buf;
+
+                ctx.run_unordered(positions.into_iter().map(move |(pos, _)| {
+                    async move {
+                        let m_in = &upper_result.metadata;
+                        let out_info = m_out.chunk_info(pos);
+                        let nd = m_in.dim().n();
+
+                        let out_begin = out_info.begin;
+                        let out_end = out_info.end();
+
+                        let aabb = AABB::new(
+                            &out_begin.map(|v| v.raw as f32),
+                            &out_end.map(|v| (v.raw - 1) as f32),
+                        );
+
+                        let element_out_to_in = upper_result.embedding_data.physical_to_voxel()
+                            * &out_ed.voxel_to_physical();
+                        let aabb = aabb.transform(&element_out_to_in);
+
+                        let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
+                        let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
+
+                        let in_begin_brick = m_in.chunk_pos(&out_begin);
+                        let in_end_brick = m_in
+                            .chunk_pos(&out_end)
+                            .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
+
+                        let in_brick_positions = (0..nd)
+                            .into_iter()
+                            .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                            .multi_cartesian_product()
+                            .map(|coordinates| {
+                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                            })
+                            .collect::<Vec<_>>();
+
+                        let intersecting_bricks = ctx
+                            .submit(ctx.group(in_brick_positions.iter().map(|pos| {
+                                upper_result.chunks.request_gpu(
+                                    device.id,
+                                    m_in.chunk_index(pos),
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                )
+                            })))
+                            .await;
+
+                        let num_elements_out = m_out.mem_size().hmul();
+
+                        let gpu_brick_out = ctx
+                            .submit(ctx.alloc_slot_gpu(device, pos, num_elements_out))
+                            .await;
+
+                        let chunk_index = device
+                            .storage
+                            .get_index(
+                                *ctx,
+                                device,
+                                upper_result.chunks.operator_descriptor(),
+                                num_chunks,
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ,
+                                },
+                            )
+                            .await;
+
+                        for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                            .into_iter()
+                            .zip(in_brick_positions.into_iter())
+                        {
+                            let brick_pos_linear =
+                                crate::data::to_linear(&in_brick_pos, &m_in.dimension_in_chunks());
+                            chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
+                        }
+
+                        // Make writes to the index visible
+                        ctx.submit(device.barrier(
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_WRITE,
+                            },
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        ))
+                        .await;
+
+                        let descriptor_config = DescriptorConfig::new([
+                            &chunk_index,
+                            points_fg_buf,
+                            points_bg_buf,
+                            &gpu_brick_out,
+                        ]);
+
+                        let out_info = m_out.chunk_info(pos);
+
+                        let grid_to_world = element_out_to_in.invert().unwrap();
+                        let world_to_grid = out_ed.physical_to_voxel();
+                        let out_tensor_size = m_out.base.dimensions.raw();
+                        let out_chunk_size_memory = m_out.mem_size().raw();
+                        let out_chunk_size_logical = out_info.logical_size().raw();
+                        let out_begin = out_info.begin.raw();
+                        let in_dimensions = m_in.dimensions.raw();
+                        let in_chunk_size = m_in.chunk_size.raw();
+                        let num_points_fg = *points_fg.metadata.dimensions.raw();
+                        let num_points_bg = *points_bg.metadata.dimensions.raw();
+
+                        device.with_cmd_buffer(|cmd| unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
+
+                            pipeline.push_constant_dyn(push_constants, |consts| {
+                                consts.mat(&grid_to_world)?;
+                                consts.mat(&world_to_grid)?;
+                                consts.vec(&out_tensor_size)?;
+                                consts.vec(&out_chunk_size_memory)?;
+                                consts.vec(&out_chunk_size_logical)?;
+                                consts.vec(&out_begin)?;
+                                consts.vec(&in_dimensions)?;
+                                consts.vec(&in_chunk_size)?;
+                                consts.scalar(num_points_fg)?;
+                                consts.scalar(num_points_bg)?;
+                                Ok(())
+                            });
+
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch_dyn(device, out_chunk_size_memory);
+                        });
+                        unsafe {
+                            gpu_brick_out.initialized(
+                                *ctx,
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_WRITE,
+                                },
+                            )
+                        };
+                    }
+                    .into()
+                }))
+                .await;
+
+                Ok(())
+            }
+            .into()
+        },
+    );
+
+    ExpandedChunkOperator { inner, metadata }
 }
 
 fn run_rw(
@@ -322,8 +547,8 @@ fn run_rw(
             async move {
                 ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
                     async move {
-                        let chunk_info = seeds.metadata.chunk(pos);
-                        let chunk_info_weights = weights.metadata.chunk(pos);
+                        let chunk_info = seeds.metadata.chunk_info(pos);
+                        let chunk_info_weights = weights.metadata.chunk_info(pos);
                         assert_eq!(
                             chunk_info.logical_size(),
                             chunk_info_weights.logical_size().pop_dim_small()
@@ -421,7 +646,7 @@ fn shrink(
 
                         let descriptor_config = DescriptorConfig::new([&in_chunk, &gpu_chunk_out]);
 
-                        let chunk_info = m_in.chunk(pos);
+                        let chunk_info = m_in.chunk_info(pos);
                         let out_size = m_out.chunk_size;
 
                         device.with_cmd_buffer(|cmd| unsafe {

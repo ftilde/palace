@@ -176,35 +176,34 @@ pub fn random_walker_single_chunk(
     seeds: TensorOperator<D3, StaticElementType<f32>>,
     cfg: SolverConfig,
 ) -> TensorOperator<D3, StaticElementType<f32>> {
-    assert_eq!(
-        weights.metadata.dimensions.raw(),
-        weights.metadata.chunk_size.raw()
-    );
-    assert_eq!(
-        seeds.metadata.dimensions.raw(),
-        seeds.metadata.chunk_size.raw()
-    );
-    assert_eq!(
-        weights.metadata.dimensions.pop_dim_small(),
-        seeds.metadata.dimensions
-    );
+    assert_eq!(weights.metadata.dimension_in_chunks().hmul(), 1);
+    assert_eq!(seeds.metadata.dimension_in_chunks().hmul(), 1);
+    let dim = seeds.metadata.dimensions;
+    let chunk_dim = seeds.metadata.chunk_size;
+    assert_eq!(weights.metadata.dimensions.pop_dim_small(), dim);
+    assert_eq!(weights.metadata.chunk_size.pop_dim_small(), chunk_dim);
 
     TensorOperator::unbatched(
         op_descriptor!(),
         Default::default(),
         seeds.metadata.clone(),
-        (weights, seeds, DataParam(cfg)),
-        move |ctx, _pos, _, (weights, seeds, cfg)| {
+        (
+            weights,
+            seeds,
+            DataParam(cfg),
+            DataParam(dim),
+            DataParam(chunk_dim),
+        ),
+        move |ctx, _pos, _, (weights, seeds, cfg, dim, chunk_dim)| {
             async move {
-                let dim = seeds.metadata.chunk_size;
                 random_walker_on_chunk::<D3>(
                     ctx,
                     &weights.chunks,
                     &seeds.chunks,
                     ChunkIndex(0),
                     **cfg,
-                    dim,
-                    dim,
+                    dim.local(),
+                    **chunk_dim,
                 )
                 .await
             }
@@ -710,29 +709,29 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
     out
 }
 
-async fn download<'a, 'b, T: crate::storage::Element + Default>(
-    ctx: OpaqueTaskContext<'a, 'b>,
-    device: &DeviceContext,
-    x: &impl AsBufferDescriptor,
-) -> Vec<T> {
-    let src = SrcBarrierInfo {
-        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
-    };
-    let dst = DstBarrierInfo {
-        stage: vk::PipelineStageFlags2::TRANSFER,
-        access: vk::AccessFlags2::TRANSFER_READ,
-    };
-    ctx.submit(device.barrier(src, dst)).await;
-
-    let info = x.gen_buffer_info();
-    let size = info.range as usize / std::mem::size_of::<T>();
-    let out = vec![T::default(); size];
-    let out_ptr = out.as_ptr() as _;
-    let layout = Layout::array::<T>(size).unwrap();
-    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
-    out
-}
+//async fn download<'a, 'b, T: crate::storage::Element + Default>(
+//    ctx: OpaqueTaskContext<'a, 'b>,
+//    device: &DeviceContext,
+//    x: &impl AsBufferDescriptor,
+//) -> Vec<T> {
+//    let src = SrcBarrierInfo {
+//        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+//        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+//    };
+//    let dst = DstBarrierInfo {
+//        stage: vk::PipelineStageFlags2::TRANSFER,
+//        access: vk::AccessFlags2::TRANSFER_READ,
+//    };
+//    ctx.submit(device.barrier(src, dst)).await;
+//
+//    let info = x.gen_buffer_info();
+//    let size = info.range as usize / std::mem::size_of::<T>();
+//    let out = vec![T::default(); size];
+//    let out_ptr = out.as_ptr() as _;
+//    let layout = Layout::array::<T>(size).unwrap();
+//    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
+//    out
+//}
 
 fn cg_init(
     device: &DeviceContext,
