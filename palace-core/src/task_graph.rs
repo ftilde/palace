@@ -479,12 +479,20 @@ impl EventStreamNode for DataId {
     }
 }
 
+impl Drop for TaskGraph {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            println!("Panic detected, exporting task graph state...");
+            export(&self);
+        }
+    }
+}
+
 impl TaskGraph {
     pub fn new(enable_stream_recording: bool) -> Self {
-        Self {
-            high_level: HighLevelGraph::new(enable_stream_recording),
-            ..Default::default()
-        }
+        let mut s = Self::default();
+        s.high_level = HighLevelGraph::new(enable_stream_recording);
+        s
     }
 
     pub fn add_dependency(
