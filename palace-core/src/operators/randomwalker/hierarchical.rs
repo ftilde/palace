@@ -452,6 +452,19 @@ fn expanded_seeds(
                                 )
                                 .await;
 
+                            // Make index initialization visible
+                            ctx.submit(device.barrier(
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                                },
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                                },
+                            ))
+                            .await;
+
                             for (gpu_brick_in, in_brick_pos) in intersecting_bricks
                                 .into_iter()
                                 .zip(in_brick_positions.into_iter())
