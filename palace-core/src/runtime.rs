@@ -129,7 +129,7 @@ impl<'inv> RequestBatcher<'inv> {
         batches.unfinished.insert(req_item);
 
         if new_batch {
-            batches.requestor = Some(from);
+            batches.requestor = Some(from); //TODO: why the hell would we need this?
             BatchAddResult::New(batches.unfinished_batch_id)
         } else {
             BatchAddResult::Existing(batches.unfinished_batch_id)
