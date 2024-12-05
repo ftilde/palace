@@ -1,3 +1,5 @@
+//#extension GL_EXT_debug_printf : enable
+
 #include <util.glsl>
 #include <mat.glsl>
 #include <vec.glsl>
@@ -39,7 +41,7 @@ bool at_voxel(float[N] voxel, float[N] to_check) {
     float[N] point_voxel = from_homogeneous(mul(consts.world_to_grid, point));
 
     //NO_PUSH_main: TODO: Do we actually want to clamp? Probably not...
-    point_voxel = clamp(point_voxel, fill(voxel, 0.0), sub(to_float(consts.out_tensor_size), fill(voxel, 1.0)));
+    //point_voxel = clamp(point_voxel, fill(voxel, 0.0), sub(to_float(consts.out_tensor_size), fill(voxel, 1.0)));
     float[N] diff = abs(sub(voxel, point_voxel));
 
     bool[N] close = less_than_equal(diff, fill(diff, 0.5));
@@ -57,6 +59,7 @@ void main() {
 
     uint[N] global_pos = add(out_chunk_pos, consts.out_begin);
     float[N] sample_pos = from_homogeneous(mul(consts.grid_to_grid, to_homogeneous(to_float(global_pos))));
+    //debugPrintfEXT("sample: %f %f %f\n", sample_pos[0], sample_pos[1], sample_pos[2]);
     map(N, sample_pos, sample_pos, round);
 
     float seed_value = UNSEEDED;
