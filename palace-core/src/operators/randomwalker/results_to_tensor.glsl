@@ -15,7 +15,7 @@ layout(std430, binding = 1) readonly buffer T2R {
 } tensor_to_rows;
 
 layout(std430, binding = 2) readonly buffer Vec {
-    float values[NUM_ROWS];
+    float values[];
 } results;
 
 layout(std430, binding = 3) buffer Results {
@@ -32,7 +32,9 @@ void main() {
     uint result_index = tensor_to_rows.values[current_linear];
 
     float result_val;
-    if(result_index == MAT_INDEX_EMPTY) {
+    if(result_index == TENSOR_TO_VEC_TABLE_EMPTY) {
+        result_val = NaN;
+    } else if(result_index == TENSOR_TO_VEC_TABLE_SEED) {
         result_val = seeds_buf.values[current_linear];
     } else {
         result_val = results.values[result_index];

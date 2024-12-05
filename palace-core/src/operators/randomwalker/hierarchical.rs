@@ -198,94 +198,96 @@ fn expand<D: DynDimension>(
                     },
                 )?;
 
-                ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
-                    let out_chunk_size = &out_chunk_size;
-                    async move {
-                        let chunk_pos = m_in.chunk_pos_from_index(pos);
-                        let dim_in_chunks = m_in.dimension_in_chunks();
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                        let out_chunk_size = &out_chunk_size;
+                        async move {
+                            let chunk_pos = m_in.chunk_pos_from_index(pos);
+                            let dim_in_chunks = m_in.dimension_in_chunks();
 
-                        let in_brick_positions = (0..nd)
-                            .into_iter()
-                            .map(|i| {
-                                chunk_pos[i].raw.saturating_sub(1)
-                                    ..(chunk_pos[i].raw + 1).min(dim_in_chunks[i].raw)
-                            })
-                            .multi_cartesian_product()
-                            .map(|coordinates| {
-                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
-                            })
-                            .collect::<Vec<_>>();
+                            let in_brick_positions = (0..nd)
+                                .into_iter()
+                                .map(|i| {
+                                    chunk_pos[i].raw.saturating_sub(1)
+                                        ..(chunk_pos[i].raw + 1).min(dim_in_chunks[i].raw)
+                                })
+                                .multi_cartesian_product()
+                                .map(|coordinates| {
+                                    Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                                })
+                                .collect::<Vec<_>>();
 
-                        let in_bricks = ctx
-                            .submit(ctx.group(in_brick_positions.iter().map(|pos| {
-                                input.chunks.request_gpu(
-                                    device.id,
-                                    m_in.chunk_index(pos),
-                                    DstBarrierInfo {
+                            let in_bricks = ctx
+                                .submit(ctx.group(in_brick_positions.iter().map(|pos| {
+                                    input.chunks.request_gpu(
+                                        device.id,
+                                        m_in.chunk_index(pos),
+                                        DstBarrierInfo {
+                                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                            access: vk::AccessFlags2::SHADER_READ,
+                                        },
+                                    )
+                                })))
+                                .await;
+
+                            let gpu_chunk_out = ctx
+                                .submit(ctx.alloc_slot_gpu(device, pos, out_mem_size))
+                                .await;
+
+                            let out_chunk = m_out.chunk_info(pos);
+                            let region_end = out_chunk.end();
+                            let region_begin = out_chunk.begin;
+
+                            for (chunk, chunk_pos) in
+                                in_bricks.into_iter().zip(in_brick_positions.into_iter())
+                            {
+                                let read_chunk = m_in.chunk_info_vec(&chunk_pos);
+                                let overlap_begin = region_begin.clone().max(read_chunk.begin());
+                                let overlap_end = region_end.min(&read_chunk.end());
+
+                                let descriptor_config =
+                                    DescriptorConfig::new([&chunk, &gpu_chunk_out]);
+
+                                let tensor_dim_in = m_in.chunk_size.raw();
+                                let tensor_dim_out = out_chunk_size.clone().raw();
+                                let to_in_offset =
+                                    (overlap_begin.clone() - read_chunk.begin().clone()).raw();
+                                let to_out_offset =
+                                    (overlap_begin.clone() - region_begin.clone()).raw();
+                                let overlap_dim = (overlap_end - overlap_begin.clone()).raw();
+                                let overlap_size = overlap_dim.hmul() as u32;
+
+                                device.with_cmd_buffer(|cmd| unsafe {
+                                    let mut pipeline = pipeline.bind(cmd);
+
+                                    pipeline.push_constant_dyn(&push_constants, |w| {
+                                        w.vec(&tensor_dim_in)?;
+                                        w.vec(&tensor_dim_out)?;
+                                        w.vec(&to_in_offset)?;
+                                        w.vec(&to_out_offset)?;
+                                        w.vec(&overlap_dim)?;
+                                        w.scalar(overlap_size)?;
+
+                                        Ok(())
+                                    });
+                                    pipeline.push_descriptor_set(0, descriptor_config);
+                                    pipeline.dispatch_dyn(device, overlap_dim);
+                                });
+                            }
+
+                            unsafe {
+                                gpu_chunk_out.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
                                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                        access: vk::AccessFlags2::SHADER_READ,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
                                     },
                                 )
-                            })))
-                            .await;
-
-                        let gpu_chunk_out = ctx
-                            .submit(ctx.alloc_slot_gpu(device, pos, out_mem_size))
-                            .await;
-
-                        let out_chunk = m_out.chunk_info(pos);
-                        let region_end = out_chunk.end();
-                        let region_begin = out_chunk.begin;
-
-                        for (chunk, chunk_pos) in
-                            in_bricks.into_iter().zip(in_brick_positions.into_iter())
-                        {
-                            let read_chunk = m_in.chunk_info_vec(&chunk_pos);
-                            let overlap_begin = region_begin.clone().max(read_chunk.begin());
-                            let overlap_end = region_end.min(&read_chunk.end());
-
-                            let descriptor_config = DescriptorConfig::new([&chunk, &gpu_chunk_out]);
-
-                            let tensor_dim_in = m_in.chunk_size.raw();
-                            let tensor_dim_out = out_chunk_size.clone().raw();
-                            let to_in_offset =
-                                (overlap_begin.clone() - read_chunk.begin().clone()).raw();
-                            let to_out_offset =
-                                (overlap_begin.clone() - region_begin.clone()).raw();
-                            let overlap_dim = (overlap_end - overlap_begin.clone()).raw();
-                            let overlap_size = overlap_dim.hmul() as u32;
-
-                            device.with_cmd_buffer(|cmd| unsafe {
-                                let mut pipeline = pipeline.bind(cmd);
-
-                                pipeline.push_constant_dyn(&push_constants, |w| {
-                                    w.vec(&tensor_dim_in)?;
-                                    w.vec(&tensor_dim_out)?;
-                                    w.vec(&to_in_offset)?;
-                                    w.vec(&to_out_offset)?;
-                                    w.vec(&overlap_dim)?;
-                                    w.scalar(overlap_size)?;
-
-                                    Ok(())
-                                });
-                                pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch_dyn(device, overlap_dim);
-                            });
+                            };
                         }
-
-                        unsafe {
-                            gpu_chunk_out.initialized(
-                                *ctx,
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            )
-                        };
-                    }
-                    .into()
-                }))
-                .await;
+                        .into()
+                    }))
+                    .await;
 
                 Ok(())
             }
@@ -380,149 +382,153 @@ fn expanded_seeds(
                 let points_fg_buf = &points_fg_buf;
                 let points_bg_buf = &points_bg_buf;
 
-                ctx.run_unordered(positions.into_iter().map(move |(pos, _)| {
-                    async move {
-                        let m_in = &upper_result.metadata;
-                        let out_info = m_out.chunk_info(pos);
-                        let nd = m_in.dim().n();
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(move |(pos, _)| {
+                        async move {
+                            let m_in = &upper_result.metadata;
+                            let out_info = m_out.chunk_info(pos);
+                            let nd = m_in.dim().n();
 
-                        let out_begin = out_info.begin;
-                        let out_end = out_info.end();
+                            let out_begin = out_info.begin;
+                            let out_end = out_info.end();
 
-                        let aabb = AABB::new(
-                            &out_begin.map(|v| v.raw as f32),
-                            &out_end.map(|v| (v.raw - 1) as f32),
-                        );
+                            let aabb = AABB::new(
+                                &out_begin.map(|v| v.raw as f32),
+                                &out_end.map(|v| (v.raw - 1) as f32),
+                            );
 
-                        let element_out_to_in = upper_result.embedding_data.physical_to_voxel()
-                            * &out_ed.voxel_to_physical();
-                        let aabb = aabb.transform(&element_out_to_in);
+                            let element_out_to_in = upper_result.embedding_data.physical_to_voxel()
+                                * &out_ed.voxel_to_physical();
+                            let aabb = aabb.transform(&element_out_to_in);
 
-                        let out_begin = aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
-                        let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
+                            let out_begin =
+                                aabb.lower().map(|v| v.floor().max(0.0) as u32).global();
+                            let out_end = aabb.upper().map(|v| v.ceil() as u32).global();
 
-                        let in_begin_brick = m_in.chunk_pos(&out_begin);
-                        let in_end_brick = m_in
-                            .chunk_pos(&out_end)
-                            .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
+                            let in_begin_brick = m_in.chunk_pos(&out_begin);
+                            let in_end_brick = m_in
+                                .chunk_pos(&out_end)
+                                .zip(&m_in.dimension_in_chunks(), |l, r| l.min(r - 1u32));
 
-                        let in_brick_positions = (0..nd)
-                            .into_iter()
-                            .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
-                            .multi_cartesian_product()
-                            .map(|coordinates| {
-                                Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
-                            })
-                            .collect::<Vec<_>>();
+                            let in_brick_positions = (0..nd)
+                                .into_iter()
+                                .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
+                                .multi_cartesian_product()
+                                .map(|coordinates| {
+                                    Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
+                                })
+                                .collect::<Vec<_>>();
 
-                        let intersecting_bricks = ctx
-                            .submit(ctx.group(in_brick_positions.iter().map(|pos| {
-                                upper_result.chunks.request_gpu(
-                                    device.id,
-                                    m_in.chunk_index(pos),
+                            let intersecting_bricks = ctx
+                                .submit(ctx.group(in_brick_positions.iter().map(|pos| {
+                                    upper_result.chunks.request_gpu(
+                                        device.id,
+                                        m_in.chunk_index(pos),
+                                        DstBarrierInfo {
+                                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                            access: vk::AccessFlags2::SHADER_READ,
+                                        },
+                                    )
+                                })))
+                                .await;
+
+                            let num_elements_out = m_out.mem_size().hmul();
+
+                            let gpu_brick_out = ctx
+                                .submit(ctx.alloc_slot_gpu(device, pos, num_elements_out))
+                                .await;
+
+                            let chunk_index = device
+                                .storage
+                                .get_index(
+                                    *ctx,
+                                    device,
+                                    upper_result.chunks.operator_descriptor(),
+                                    num_chunks,
                                     DstBarrierInfo {
                                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                         access: vk::AccessFlags2::SHADER_READ,
                                     },
                                 )
-                            })))
-                            .await;
+                                .await;
 
-                        let num_elements_out = m_out.mem_size().hmul();
+                            for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                                .into_iter()
+                                .zip(in_brick_positions.into_iter())
+                            {
+                                let brick_pos_linear = crate::data::to_linear(
+                                    &in_brick_pos,
+                                    &m_in.dimension_in_chunks(),
+                                );
+                                chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
+                            }
 
-                        let gpu_brick_out = ctx
-                            .submit(ctx.alloc_slot_gpu(device, pos, num_elements_out))
-                            .await;
-
-                        let chunk_index = device
-                            .storage
-                            .get_index(
-                                *ctx,
-                                device,
-                                upper_result.chunks.operator_descriptor(),
-                                num_chunks,
+                            // Make writes to the index visible
+                            ctx.submit(device.barrier(
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                                },
                                 DstBarrierInfo {
                                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                     access: vk::AccessFlags2::SHADER_READ,
                                 },
-                            )
+                            ))
                             .await;
 
-                        for (gpu_brick_in, in_brick_pos) in intersecting_bricks
-                            .into_iter()
-                            .zip(in_brick_positions.into_iter())
-                        {
-                            let brick_pos_linear =
-                                crate::data::to_linear(&in_brick_pos, &m_in.dimension_in_chunks());
-                            chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
-                        }
+                            let descriptor_config = DescriptorConfig::new([
+                                &chunk_index,
+                                points_fg_buf,
+                                points_bg_buf,
+                                &gpu_brick_out,
+                            ]);
 
-                        // Make writes to the index visible
-                        ctx.submit(device.barrier(
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_WRITE,
-                            },
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_READ,
-                            },
-                        ))
-                        .await;
+                            let out_info = m_out.chunk_info(pos);
 
-                        let descriptor_config = DescriptorConfig::new([
-                            &chunk_index,
-                            points_fg_buf,
-                            points_bg_buf,
-                            &gpu_brick_out,
-                        ]);
+                            let grid_to_world = element_out_to_in.invert().unwrap();
+                            let world_to_grid = out_ed.physical_to_voxel();
+                            let out_tensor_size = m_out.base.dimensions.raw();
+                            let out_chunk_size_memory = m_out.mem_size().raw();
+                            let out_chunk_size_logical = out_info.logical_size().raw();
+                            let out_begin = out_info.begin.raw();
+                            let in_dimensions = m_in.dimensions.raw();
+                            let in_chunk_size = m_in.chunk_size.raw();
+                            let num_points_fg = *points_fg.metadata.dimensions.raw();
+                            let num_points_bg = *points_bg.metadata.dimensions.raw();
 
-                        let out_info = m_out.chunk_info(pos);
+                            device.with_cmd_buffer(|cmd| unsafe {
+                                let mut pipeline = pipeline.bind(cmd);
 
-                        let grid_to_world = element_out_to_in.invert().unwrap();
-                        let world_to_grid = out_ed.physical_to_voxel();
-                        let out_tensor_size = m_out.base.dimensions.raw();
-                        let out_chunk_size_memory = m_out.mem_size().raw();
-                        let out_chunk_size_logical = out_info.logical_size().raw();
-                        let out_begin = out_info.begin.raw();
-                        let in_dimensions = m_in.dimensions.raw();
-                        let in_chunk_size = m_in.chunk_size.raw();
-                        let num_points_fg = *points_fg.metadata.dimensions.raw();
-                        let num_points_bg = *points_bg.metadata.dimensions.raw();
+                                pipeline.push_constant_dyn(push_constants, |consts| {
+                                    consts.mat(&grid_to_world)?;
+                                    consts.mat(&world_to_grid)?;
+                                    consts.vec(&out_tensor_size)?;
+                                    consts.vec(&out_chunk_size_memory)?;
+                                    consts.vec(&out_chunk_size_logical)?;
+                                    consts.vec(&out_begin)?;
+                                    consts.vec(&in_dimensions)?;
+                                    consts.vec(&in_chunk_size)?;
+                                    consts.scalar(num_points_fg)?;
+                                    consts.scalar(num_points_bg)?;
+                                    Ok(())
+                                });
 
-                        device.with_cmd_buffer(|cmd| unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
-
-                            pipeline.push_constant_dyn(push_constants, |consts| {
-                                consts.mat(&grid_to_world)?;
-                                consts.mat(&world_to_grid)?;
-                                consts.vec(&out_tensor_size)?;
-                                consts.vec(&out_chunk_size_memory)?;
-                                consts.vec(&out_chunk_size_logical)?;
-                                consts.vec(&out_begin)?;
-                                consts.vec(&in_dimensions)?;
-                                consts.vec(&in_chunk_size)?;
-                                consts.scalar(num_points_fg)?;
-                                consts.scalar(num_points_bg)?;
-                                Ok(())
+                                pipeline.push_descriptor_set(0, descriptor_config);
+                                pipeline.dispatch_dyn(device, out_chunk_size_memory);
                             });
-
-                            pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch_dyn(device, out_chunk_size_memory);
-                        });
-                        unsafe {
-                            gpu_brick_out.initialized(
-                                *ctx,
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            )
-                        };
-                    }
-                    .into()
-                }))
-                .await;
+                            unsafe {
+                                gpu_brick_out.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                )
+                            };
+                        }
+                        .into()
+                    }))
+                    .await;
 
                 Ok(())
             }
@@ -557,20 +563,26 @@ fn run_rw(
                             chunk_info.mem_size,
                             chunk_info_weights.mem_size.pop_dim_small(),
                         );
+
+                        let virtual_chunk_info = TensorMetaData {
+                            dimensions: chunk_info.logical_size().global(),
+                            chunk_size: chunk_info.mem_size,
+                        };
                         random_walker_on_chunk::<D3>(
                             ctx,
                             &weights.inner,
                             &seeds.inner,
                             pos,
                             **cfg,
-                            chunk_info.mem_size,
-                            chunk_info.logical_size(),
+                            virtual_chunk_info,
                         )
                         .await
                     }
                     .into()
                 }))
-                .await;
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(())
             }
@@ -627,56 +639,58 @@ fn shrink(
                     },
                 )?;
 
-                ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
-                    async move {
-                        let in_chunk = ctx
-                            .submit(input.inner.request_gpu(
-                                device.id,
-                                pos,
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            ))
-                            .await;
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                        async move {
+                            let in_chunk = ctx
+                                .submit(input.inner.request_gpu(
+                                    device.id,
+                                    pos,
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                ))
+                                .await;
 
-                        let gpu_chunk_out = ctx
-                            .submit(ctx.alloc_slot_gpu(device, pos, out_chunk_size.hmul()))
-                            .await;
+                            let gpu_chunk_out = ctx
+                                .submit(ctx.alloc_slot_gpu(device, pos, out_chunk_size.hmul()))
+                                .await;
 
-                        let descriptor_config = DescriptorConfig::new([&in_chunk, &gpu_chunk_out]);
+                            let descriptor_config =
+                                DescriptorConfig::new([&in_chunk, &gpu_chunk_out]);
 
-                        let chunk_info = m_in.chunk_info(pos);
-                        let out_size = m_out.chunk_size;
+                            let chunk_info = m_in.chunk_info(pos);
+                            let out_size = m_out.chunk_size;
 
-                        device.with_cmd_buffer(|cmd| unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
+                            device.with_cmd_buffer(|cmd| unsafe {
+                                let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant_dyn(&push_constants, |w| {
-                                w.vec(&m_in.mem_size().raw())?;
-                                w.vec(&out_size.raw())?;
-                                w.vec(&chunk_info.size_before.raw())?;
-                                w.scalar(out_size.hmul() as u32)?;
+                                pipeline.push_constant_dyn(&push_constants, |w| {
+                                    w.vec(&m_in.mem_size().raw())?;
+                                    w.vec(&out_size.raw())?;
+                                    w.vec(&chunk_info.size_before.raw())?;
+                                    w.scalar(out_size.hmul() as u32)?;
 
-                                Ok(())
+                                    Ok(())
+                                });
+                                pipeline.push_descriptor_set(0, descriptor_config);
+                                pipeline.dispatch_dyn(device, out_size.raw());
                             });
-                            pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch_dyn(device, out_size.raw());
-                        });
 
-                        unsafe {
-                            gpu_chunk_out.initialized(
-                                *ctx,
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            )
-                        };
-                    }
-                    .into()
-                }))
-                .await;
+                            unsafe {
+                                gpu_chunk_out.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                )
+                            };
+                        }
+                        .into()
+                    }))
+                    .await;
 
                 Ok(())
             }

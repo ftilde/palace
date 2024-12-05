@@ -27,8 +27,9 @@ void main() {
     if(global_id < BRICK_MEM_SIZE) {
         uint[ND] pos = from_linear(global_id, consts.tensor_size_memory);
 
-        bool inside = all(less_than(pos, consts.tensor_size_logical));
-        local_val = (inside && is_seed_value(seeds_buf.values[global_id])) ? 0 : 1;
+        bool inside = all(less_than(pos, consts.tensor_size_logical)) && (hmul(pos) < hmul(consts.tensor_size_logical));
+        local_val = (inside && !is_seed_value(seeds_buf.values[global_id])) ? 1 : 0;
+        //local_val = inside ? 1 : local_val;
     } else {
         local_val = 0;
     }

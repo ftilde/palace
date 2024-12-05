@@ -9,15 +9,13 @@ use gpu_allocator::MemoryLocation::GpuOnly;
 use id::Identify;
 
 use crate::{
-    array::ChunkIndex,
-    data::LocalCoordinate,
+    array::{ChunkIndex, TensorMetaData},
     dim::{DynDimension, LargerDim, D3},
     dtypes::StaticElementType,
     operator::{op_descriptor, DataParam, Operator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::gpu::Allocation,
     task::{OpaqueTaskContext, TaskContext},
-    vec::Vector,
     vulkan::{
         memory::TempRessource,
         pipeline::{
@@ -36,19 +34,17 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     seeds: &'inv Operator<StaticElementType<f32>>,
     pos: ChunkIndex,
     cfg: SolverConfig,
-    tensor_size_memory: Vector<D3, LocalCoordinate>,
-    tensor_size_logical: Vector<D3, LocalCoordinate>,
+    tensor_md: TensorMetaData<D3>,
 ) -> Result<(), crate::Error> {
+    assert!(tensor_md.is_single_chunk());
     let device = ctx.preferred_device();
-
-    let chunk_elements = tensor_size_memory.hmul();
 
     let start = std::time::Instant::now();
 
-    if chunk_elements > u32::MAX as usize {
+    if tensor_md.num_chunk_elements() > u32::MAX as usize {
         return Err(format!(
             "Tensor cannot have more than 2^32 elements, but it has {}",
-            chunk_elements,
+            tensor_md.num_chunk_elements()
         )
         .into());
     }
@@ -62,92 +58,89 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         ctx.submit(seeds.request_gpu(device.id, pos, read_info),),
     );
 
-    let (tensor_to_rows_table, num_rows) = tensor_to_rows_table(
-        *ctx,
-        device,
-        &seeds,
-        tensor_size_memory,
-        tensor_size_logical,
-    )
-    .await?;
+    //dbg!(&super::download::<f32>(*ctx, device, &seeds).await[..]);
 
-    if num_rows == 0 {
-        return Err(format!("Tensor has 0 unseeded elements",).into());
-    }
-
-    assert!(
-        num_rows as usize <= chunk_elements,
-        "invalid num_rows: {}, too large for tensor_elements: {}",
-        num_rows,
-        chunk_elements
-    );
-
-    let (mat, vec) = mat_setup(
-        *ctx,
-        &device,
-        &weights,
-        &seeds,
-        &tensor_to_rows_table,
-        tensor_size_memory,
-        tensor_size_logical,
-        num_rows,
-    )
-    .await?;
-
-    let mat = TempRessource::new(device, mat);
-    let vec = TempRessource::new(device, vec);
+    let (tensor_to_rows_table, num_rows) =
+        tensor_to_rows_table::<D>(*ctx, device, &seeds, tensor_md).await?;
 
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::TRANSFER_SRC;
 
-    let result = ctx
-        .submit(device.storage.request_allocate_raw(
-            device,
-            Layout::array::<f32>(num_rows as usize).unwrap(),
-            flags,
-            GpuOnly,
+    let (result_vec, num_iterations) = if num_rows > 0 {
+        assert!(
+            num_rows as usize <= tensor_md.num_tensor_elements(),
+            "invalid num_rows: {}, too large for tensor_elements: {}",
+            num_rows,
+            tensor_md.num_tensor_elements()
+        );
+
+        let (mat, vec) = mat_setup(
+            *ctx,
+            &device,
+            &weights,
+            &seeds,
+            &tensor_to_rows_table,
+            tensor_md,
+            num_rows,
+        )
+        .await?;
+
+        let result_vec = ctx
+            .submit(device.storage.request_allocate_raw(
+                device,
+                Layout::array::<f32>(num_rows as usize).unwrap(),
+                flags,
+                GpuOnly,
+            ))
+            .await;
+        let result_vec = TempRessource::new(device, result_vec);
+
+        let mat = TempRessource::new(device, mat);
+        let vec = TempRessource::new(device, vec);
+
+        device.with_cmd_buffer(|cmd| unsafe {
+            cmd.functions().cmd_fill_buffer(
+                cmd.raw(),
+                result_vec.buffer,
+                0,
+                vk::WHOLE_SIZE,
+                f32::to_bits(0.5),
+            );
+        });
+
+        //TODO: Try to reduce barriers here. We have one in init_weights already
+        //Make result and weights initialization visible
+        ctx.submit(device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::SHADER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
         ))
         .await;
-    let result = TempRessource::new(device, result);
 
-    device.with_cmd_buffer(|cmd| unsafe {
-        cmd.functions().cmd_fill_buffer(
-            cmd.raw(),
-            result.buffer,
-            0,
-            vk::WHOLE_SIZE,
-            f32::to_bits(0.5),
-        );
-    });
-
-    //TODO: Try to reduce barriers here. We have one in init_weights already
-    //Make result and weights initialization visible
-    ctx.submit(device.barrier(
-        SrcBarrierInfo {
-            stage: vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COMPUTE_SHADER,
-            access: vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::SHADER_WRITE,
-        },
-        DstBarrierInfo {
-            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-        },
-    ))
-    .await;
-
-    let num_iterations = conjugate_gradient(*ctx, device, &mat, &vec, &result, &cfg).await?;
+        let num_iterations =
+            conjugate_gradient(*ctx, device, &mat, &vec, &result_vec, &cfg).await?;
+        (Some(result_vec), num_iterations)
+    } else {
+        (None, 0)
+    };
 
     let out_chunk = ctx
-        .submit(ctx.alloc_slot_gpu(&device, pos, chunk_elements))
+        .submit(ctx.alloc_slot_gpu(&device, pos, tensor_md.num_chunk_elements()))
         .await;
 
     results_to_tensor(
         device,
         &seeds,
         &tensor_to_rows_table,
-        &result,
+        result_vec.as_deref(),
         &out_chunk,
-        tensor_size_memory,
+        tensor_md,
         num_rows,
     )
     .await?;
@@ -178,23 +171,14 @@ pub fn random_walker_single_chunk(
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     assert_eq!(weights.metadata.dimension_in_chunks().hmul(), 1);
     assert_eq!(seeds.metadata.dimension_in_chunks().hmul(), 1);
-    let dim = seeds.metadata.dimensions;
-    let chunk_dim = seeds.metadata.chunk_size;
-    assert_eq!(weights.metadata.dimensions.pop_dim_small(), dim);
-    assert_eq!(weights.metadata.chunk_size.pop_dim_small(), chunk_dim);
+    assert_eq!(weights.metadata.pop_dim_small(), seeds.metadata);
 
     TensorOperator::unbatched(
         op_descriptor!(),
         Default::default(),
         seeds.metadata.clone(),
-        (
-            weights,
-            seeds,
-            DataParam(cfg),
-            DataParam(dim),
-            DataParam(chunk_dim),
-        ),
-        move |ctx, _pos, _, (weights, seeds, cfg, dim, chunk_dim)| {
+        (weights, seeds, DataParam(cfg)),
+        move |ctx, _pos, _, (weights, seeds, cfg)| {
             async move {
                 random_walker_on_chunk::<D3>(
                     ctx,
@@ -202,8 +186,7 @@ pub fn random_walker_single_chunk(
                     &seeds.chunks,
                     ChunkIndex(0),
                     **cfg,
-                    dim.local(),
-                    **chunk_dim,
+                    seeds.metadata,
                 )
                 .await
             }
@@ -230,24 +213,26 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &'a DeviceContext,
     seeds: &impl AsBufferDescriptor,
-    tensor_size_memory: Vector<D, LocalCoordinate>,
-    tensor_size_logical: Vector<D, LocalCoordinate>,
+    tensor_md: TensorMetaData<D3>,
 ) -> Result<(TempRessource<'a, Allocation>, u32), crate::Error> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstantsStep {
         s: u32,
     }
 
-    let nd = tensor_size_memory.dim().n();
-    assert_eq!(nd, tensor_size_logical.dim().n());
+    let nd = tensor_md.dim().n();
     let push_constants_init = DynPushConstants::new()
         .vec::<u32>(nd, "tensor_size_memory")
         .vec::<u32>(nd, "tensor_size_logical");
 
-    let tensor_elements = tensor_size_memory.hmul();
+    let push_constants_finish = DynPushConstants::new()
+        .vec::<u32>(nd, "tensor_size_memory")
+        .vec::<u32>(nd, "tensor_size_logical");
+
+    let tensor_elements_mem = tensor_md.num_chunk_elements();
 
     let pipeline_init = device.request_state(
-        (&push_constants_init, tensor_elements, nd),
+        (&push_constants_init, tensor_elements_mem, nd),
         |device, (push_constants_init, tensor_elements, nd)| {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("tensor_vec_table_init.glsl"))
@@ -260,7 +245,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
         },
     )?;
 
-    let pipeline_step = device.request_state(tensor_elements, |device, tensor_elements| {
+    let pipeline_step = device.request_state(tensor_elements_mem, |device, tensor_elements| {
         ComputePipelineBuilder::new(
             Shader::new(include_str!("tensor_vec_table_step.glsl"))
                 .define("BRICK_MEM_SIZE", tensor_elements)
@@ -269,13 +254,18 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
         .build(device)
     })?;
 
-    let pipeline_finish = device.request_state(tensor_elements, |device, tensor_elements| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("tensor_vec_table_finish.glsl"))
-                .define("BRICK_MEM_SIZE", tensor_elements),
-        )
-        .build(device)
-    })?;
+    let pipeline_finish = device.request_state(
+        (&push_constants_finish, tensor_elements_mem, nd),
+        |device, (push_constants_finish, tensor_elements, nd)| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("tensor_vec_table_finish.glsl"))
+                    .push_const_block_dyn(push_constants_finish)
+                    .define("BRICK_MEM_SIZE", tensor_elements)
+                    .define("N", nd),
+            )
+            .build(device)
+        },
+    )?;
 
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
@@ -284,7 +274,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     let (table, num_rows) = futures::join!(
         ctx.submit(device.storage.request_allocate_raw(
             device,
-            Layout::array::<u32>(tensor_elements).unwrap(),
+            Layout::array::<u32>(tensor_elements_mem).unwrap(),
             flags,
             GpuOnly,
         )),
@@ -306,20 +296,20 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
         let mut pipeline = pipeline_init.bind(cmd);
 
         pipeline.push_constant_dyn(&push_constants_init, |consts| {
-            consts.vec(&tensor_size_memory.raw())?;
-            consts.vec(&tensor_size_logical.raw())?;
+            consts.vec(&tensor_md.chunk_size.raw())?;
+            consts.vec(&tensor_md.dimensions.raw())?;
             Ok(())
         });
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, tensor_elements as _);
+        pipeline.dispatch(device, tensor_elements_mem as _);
     });
 
-    //dbg!(&download::<u32>(ctx, device, &*table).await[..]);
+    //dbg!(&super::download::<u32>(ctx, device, &*table).await[..]);
 
     // Global reduce
     let mut s = pipeline_init.local_size().x();
-    while (s as usize) < tensor_elements {
+    while (s as usize) < tensor_elements_mem {
         ctx.submit(device.barrier(
             SrcBarrierInfo {
                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -339,7 +329,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
 
             pipeline.push_constant(PushConstantsStep { s });
             pipeline.write_descriptor_set(0, descriptor_config);
-            pipeline.dispatch(device, tensor_elements.div_ceil(2) as _);
+            pipeline.dispatch(device, tensor_elements_mem.div_ceil(2) as _);
         });
 
         //dbg!(&download::<u32>(ctx, device, &*table).await[..]);
@@ -365,8 +355,14 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline_finish.bind(cmd);
 
+        pipeline.push_constant_dyn(&push_constants_finish, |consts| {
+            consts.vec(&tensor_md.chunk_size.raw())?;
+            consts.vec(&tensor_md.dimensions.raw())?;
+            Ok(())
+        });
+
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, tensor_elements as _);
+        pipeline.dispatch(device, tensor_elements_mem as _);
     });
 
     //dbg!(&download::<u32>(ctx, device, &*table).await[..]);
@@ -394,32 +390,34 @@ async fn results_to_tensor<'req, 'inv>(
     device: &DeviceContext,
     seeds: &impl AsBufferDescriptor,
     tensor_to_rows_table: &Allocation,
-    result_vec: &Allocation,
+    result_vec: Option<&Allocation>,
     out_allocation: &impl AsBufferDescriptor,
-    tensor_size: Vector<D3, LocalCoordinate>,
+    tensor_md: TensorMetaData<D3>,
     num_rows: u32,
 ) -> Result<(), crate::Error> {
-    let nd = tensor_size.dim().n();
-    let tensor_elements = tensor_size.hmul();
+    let nd = tensor_md.dim().n();
+    let chunk_elements = tensor_md.num_chunk_elements();
 
     let pipeline = device
-        .request_state(
-            (tensor_elements, num_rows, nd),
-            |device, (tensor_elements, num_rows, nd)| {
-                ComputePipelineBuilder::new(
-                    Shader::new(include_str!("results_to_tensor.glsl"))
-                        .define("BRICK_MEM_SIZE", tensor_elements)
-                        .define("NUM_ROWS", num_rows)
-                        .define("ND", nd),
-                )
-                .build(device)
-            },
-        )
+        .request_state((chunk_elements, nd), |device, (chunk_elements, nd)| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("results_to_tensor.glsl"))
+                    .define("BRICK_MEM_SIZE", chunk_elements)
+                    .define("ND", nd),
+            )
+            .build(device)
+        })
         .unwrap();
-    let global_size = tensor_size.raw();
+    let global_size = tensor_md.chunk_size.raw();
+
+    // Note: We do not have a result_vec exactly iff we do not have any non-seeded values. In that
+    // case we do not read from the result_vec in the shader, so we can just set any other buffer
+    // as the argument to make vulkan happy.
+    assert_eq!(result_vec.is_none(), num_rows == 0);
+    let results_vec_arg = result_vec.unwrap_or(tensor_to_rows_table);
 
     let descriptor_config =
-        DescriptorConfig::new([seeds, tensor_to_rows_table, result_vec, out_allocation]);
+        DescriptorConfig::new([seeds, tensor_to_rows_table, results_vec_arg, out_allocation]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
@@ -437,27 +435,27 @@ async fn mat_setup<'req, 'inv>(
     weights: &impl AsBufferDescriptor,
     seeds: &impl AsBufferDescriptor,
     tensor_to_rows_table: &Allocation,
-    tensor_size_memory: Vector<D3, LocalCoordinate>,
-    tensor_size_logical: Vector<D3, LocalCoordinate>,
+    tensor_md: TensorMetaData<D3>,
     num_rows: u32,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
-    let nd = tensor_size_memory.dim().n();
+    assert!(tensor_md.is_single_chunk());
+    let nd = tensor_md.dim().n();
 
     let push_constants = DynPushConstants::new()
         .vec::<u32>(nd, "tensor_size_memory")
         .vec::<u32>(nd, "tensor_size_logical");
 
-    let tensor_elements = tensor_size_memory.hmul() as usize;
+    let chunk_elements = tensor_md.num_chunk_elements();
     let max_entries = nd * 2 + 1;
     let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
-        (&push_constants, tensor_elements, num_rows, nd),
-        |device, (push_constants, tensor_elements, num_rows, nd)| {
+        (&push_constants, chunk_elements, num_rows, nd),
+        |device, (push_constants, chunk_elements, num_rows, nd)| {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("randomwalker_mat_setup.glsl"))
                     .push_const_block_dyn(&push_constants)
-                    .define("BRICK_MEM_SIZE", tensor_elements)
+                    .define("BRICK_MEM_SIZE", chunk_elements)
                     .define("NUM_ROWS", num_rows)
                     .define("ND", nd),
             )
@@ -490,8 +488,8 @@ async fn mat_setup<'req, 'inv>(
         ))
     );
 
-    //dbg!(download::<u32>(ctx, device, &*tensor_to_rows_table).await);
-    //dbg!(download::<f32>(ctx, device, &*weights).await);
+    //dbg!(super::download::<u32>(ctx, device, &*tensor_to_rows_table).await);
+    //dbg!(super::download::<f32>(ctx, device, &*weights).await);
 
     device.with_cmd_buffer(|cmd| unsafe {
         cmd.functions()
@@ -514,7 +512,7 @@ async fn mat_setup<'req, 'inv>(
     ))
     .await;
 
-    let global_size = tensor_size_logical.raw();
+    let global_size = tensor_md.dimensions.raw();
 
     let descriptor_config =
         DescriptorConfig::new([weights, seeds, tensor_to_rows_table, &values, &index, &vec]);
@@ -523,8 +521,8 @@ async fn mat_setup<'req, 'inv>(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.push_constant_dyn(&push_constants, |consts| {
-            consts.vec(&tensor_size_memory.raw())?;
-            consts.vec(&tensor_size_logical.raw())?;
+            consts.vec(&tensor_md.chunk_size.raw())?;
+            consts.vec(&tensor_md.dimensions.raw())?;
             Ok(())
         });
         pipeline.write_descriptor_set(0, descriptor_config);
@@ -624,10 +622,10 @@ async fn conjugate_gradient<'req, 'inv>(
 
     // Initialization
 
-    //dbg!(download::<u32>(ctx, device, &mat.index).await);
-    //dbg!(download::<f32>(ctx, device, &mat.values).await);
-    //dbg!(download::<f32>(ctx, device, x).await);
-    //dbg!(download::<f32>(ctx, device, b).await);
+    //dbg!(super::download::<u32>(ctx, device, &mat.index).await);
+    //dbg!(super::download::<f32>(ctx, device, &mat.values).await);
+    //dbg!(super::download::<f32>(ctx, device, x).await);
+    //dbg!(super::download::<f32>(ctx, device, b).await);
 
     ctx.submit(device.barrier(srw_src, srw_dst)).await;
     cg_init(device, mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
@@ -708,30 +706,6 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
     };
     out
 }
-
-//async fn download<'a, 'b, T: crate::storage::Element + Default>(
-//    ctx: OpaqueTaskContext<'a, 'b>,
-//    device: &DeviceContext,
-//    x: &impl AsBufferDescriptor,
-//) -> Vec<T> {
-//    let src = SrcBarrierInfo {
-//        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-//        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
-//    };
-//    let dst = DstBarrierInfo {
-//        stage: vk::PipelineStageFlags2::TRANSFER,
-//        access: vk::AccessFlags2::TRANSFER_READ,
-//    };
-//    ctx.submit(device.barrier(src, dst)).await;
-//
-//    let info = x.gen_buffer_info();
-//    let size = info.range as usize / std::mem::size_of::<T>();
-//    let out = vec![T::default(); size];
-//    let out_ptr = out.as_ptr() as _;
-//    let layout = Layout::array::<T>(size).unwrap();
-//    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
-//    out
-//}
 
 fn cg_init(
     device: &DeviceContext,

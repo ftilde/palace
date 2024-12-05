@@ -47,7 +47,7 @@ void main() {
 
     uint[ND] neighbor = current;
     neighbor[dim] += 1;
-    if(consts.chunk_begin[dim] + neighbor[dim] < consts.tensor_dim_in[dim]) {
+    if(all(less_than(add(consts.chunk_begin, neighbor), consts.tensor_dim_in))) {
         float current_val = input_buf.values[current_linear];
 
         float neighbor_val;

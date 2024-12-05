@@ -1,3 +1,5 @@
+use std::alloc::Layout;
+
 use ash::vk;
 
 use super::tensor::{EmbeddedTensorOperator, TensorOperator};
@@ -8,10 +10,13 @@ use crate::{
     mat::Matrix,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
+    task::OpaqueTaskContext,
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
+        pipeline::{
+            AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
+        },
         shader::Shader,
-        DstBarrierInfo, SrcBarrierInfo,
+        DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -46,18 +51,17 @@ pub fn rasterize_seed_points(
 
                 let nd = md.dim().n();
 
-                let in_size = md.dimensions;
-
                 let push_constants = DynPushConstants::new()
                     .mat::<f32>(nd + 1, "to_grid")
-                    .vec::<u32>(nd, "tensor_dim");
+                    .vec::<u32>(nd, "tensor_dim_memory")
+                    .vec::<u32>(nd, "tensor_dim_logical");
 
                 let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
 
                 let pipeline = device.request_state(
                     (
                         &push_constants,
-                        in_size.hmul(),
+                        md.chunk_size.hmul(),
                         points_fg.metadata.dimensions[0].raw,
                         points_bg.metadata.dimensions[0].raw,
                         nd,
@@ -95,10 +99,10 @@ pub fn rasterize_seed_points(
                     .await;
 
                 let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), md.dimensions.hmul()))
+                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), md.chunk_size.hmul()))
                     .await;
 
-                let global_size = in_size.raw();
+                let global_size = md.chunk_size.raw();
 
                 let descriptor_config = DescriptorConfig::new([&points_fg, &points_bg, &out_chunk]);
 
@@ -107,7 +111,8 @@ pub fn rasterize_seed_points(
 
                     pipeline.push_constant_dyn(&push_constants, |consts| {
                         consts.mat(&to_grid)?;
-                        consts.vec(&in_size.raw())?;
+                        consts.vec(&md.chunk_size.raw())?;
+                        consts.vec(&md.dimensions.raw())?;
                         Ok(())
                     });
                     pipeline.write_descriptor_set(0, descriptor_config);
@@ -145,6 +150,31 @@ pub fn random_walker(
     random_walker_single_chunk(weights, seeds, cfg)
 }
 
+#[allow(unused)] // Very useful for debugging
+async fn download<'a, 'b, T: crate::storage::Element + Default>(
+    ctx: OpaqueTaskContext<'a, 'b>,
+    device: &DeviceContext,
+    x: &impl AsBufferDescriptor,
+) -> Vec<T> {
+    let src = SrcBarrierInfo {
+        stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+        access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+    };
+    let dst = DstBarrierInfo {
+        stage: vk::PipelineStageFlags2::TRANSFER,
+        access: vk::AccessFlags2::TRANSFER_READ,
+    };
+    ctx.submit(device.barrier(src, dst)).await;
+
+    let info = x.gen_buffer_info();
+    let size = info.range as usize / std::mem::size_of::<T>();
+    let out = vec![T::default(); size];
+    let out_ptr = out.as_ptr() as _;
+    let layout = Layout::array::<T>(size).unwrap();
+    unsafe { crate::vulkan::memory::copy_to_cpu(ctx, device, info.buffer, layout, out_ptr).await };
+    out
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -156,9 +186,9 @@ mod test {
 
     #[test]
     fn simple() {
-        let s = [4, 4, 4];
+        let s = [5, 5, 5];
         let size = VoxelPosition::from(s);
-        let brick_size = LocalVoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from([8, 8, 8]);
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             if v.x().raw < size.x().raw / 2 {
@@ -239,10 +269,10 @@ mod test {
     }
 
     #[test]
-    fn hierarchical() {
-        let s = 20;
+    fn hierarchical_rw() {
+        let s = 10;
         let size = VoxelPosition::fill(s.into());
-        let brick_size = LocalVoxelPosition::fill(8.into());
+        let brick_size = LocalVoxelPosition::fill(4.into());
 
         let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             if v.x().raw < size.x().raw / 2 {
@@ -256,10 +286,10 @@ mod test {
         });
         let vol = crate::operators::resample::create_lod(vol, 2.0);
 
-        let foreground = from_vec(vec![Vector::<D3, f32>::fill(0.0)])
+        let background = from_vec(vec![Vector::<D3, f32>::fill(0.0)])
             .try_into()
             .unwrap();
-        let background = from_vec(vec![Vector::<D3, f32>::fill((s - 1) as f32)])
+        let foreground = from_vec(vec![Vector::<D3, f32>::fill((s - 1) as f32)])
             .try_into()
             .unwrap();
 
@@ -269,16 +299,17 @@ mod test {
             vol,
             foreground,
             background,
-            WeightFunction::Grady { beta: 100.0 },
+            WeightFunction::Grady { beta: 1000.0 },
             1e-5,
             cfg,
         );
 
+        //let level = v.levels[0].clone();
         for level in v.levels.into_iter().rev() {
             let size = level.metadata.dimensions;
             let expected = crate::operators::rasterize_function::voxel(
-                dbg!(size),
-                dbg!(level.metadata.chunk_size),
+                size,
+                level.metadata.chunk_size,
                 move |v| {
                     if v.x().raw < size.x().raw / 2 {
                         0.0
