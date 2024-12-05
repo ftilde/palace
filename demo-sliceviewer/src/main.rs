@@ -11,6 +11,7 @@ use palace_core::jit::jit;
 use palace_core::operators::array::from_rc;
 use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::TransFuncOperator;
+use palace_core::operators::sliceviewer::RenderConfig2D;
 use palace_core::operators::tensor::FrameOperator;
 use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
 use palace_core::operators::{self, volume_gpu};
@@ -175,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scale = 1.0;
     let mut offset: f32 = 0.0;
     let mut stddev: f32 = 5.0;
+    let mut coarse_lod_factor: f32 = 1.0;
     let mut gui = GuiState::on_device(args.device);
 
     let res = palace_winit::run_with_window(
@@ -192,6 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut scale,
                 &mut offset,
                 &mut stddev,
+                &mut coarse_lod_factor,
                 &mut gui,
                 &tf,
                 events,
@@ -213,6 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn slice_viewer_z(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     md: ImageMetaData,
+    render_config: RenderConfig2D,
     slice_num: &mut i32,
     offset: &mut Vector<D2, f32>,
     zoom_level: &mut f32,
@@ -254,7 +258,13 @@ fn slice_viewer_z(
         *zoom_level,
     );
 
-    let slice = crate::operators::sliceviewer::render_slice(vol, md, slice_proj_z, tf.clone());
+    let slice = crate::operators::sliceviewer::render_slice(
+        vol,
+        md,
+        slice_proj_z,
+        tf.clone(),
+        render_config,
+    );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice
@@ -263,6 +273,7 @@ fn slice_viewer_z(
 fn slice_viewer_rot(
     vol: LODVolumeOperator<StaticElementType<f32>>,
     md: ImageMetaData,
+    render_config: RenderConfig2D,
     angle: &mut f32,
     tf: &TransFuncOperator,
     mut events: EventStream,
@@ -287,8 +298,13 @@ fn slice_viewer_rot(
         (*angle).into(),
     );
 
-    let slice =
-        crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_rot, tf.clone());
+    let slice = crate::operators::sliceviewer::render_slice(
+        vol,
+        md.into(),
+        slice_proj_rot,
+        tf.clone(),
+        render_config,
+    );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }
@@ -304,6 +320,7 @@ fn eval_network(
     scale: &mut f32,
     offset: &mut f32,
     stddev: &mut f32,
+    coarse_lod_factor: &mut f32,
     gui: &mut GuiState,
     tf: &TransFuncOperator,
     mut events: EventStream,
@@ -347,6 +364,11 @@ fn eval_network(
                         .logarithmic(true),
                 );
                 ui.add(egui::Slider::new(offset, -10.0..=10.0).text("Offset"));
+                ui.add(
+                    egui::Slider::new(coarse_lod_factor, 0.1..=100.0)
+                        .text("Coarse LOD factor")
+                        .logarithmic(true),
+                );
             });
         });
     });
@@ -370,10 +392,14 @@ fn eval_network(
             scaled
         })
     });
+    let render_config = RenderConfig2D {
+        coarse_lod_factor: *coarse_lod_factor,
+    };
 
     let left = slice_viewer_z(
         vol.clone(),
         splitter.metadata_first(),
+        render_config,
         slice_num,
         slice_offset,
         slice_zoom_level,
@@ -382,7 +408,14 @@ fn eval_network(
     );
 
     let left = gui.render(left);
-    let right = slice_viewer_rot(vol, splitter.metadata_last(), angle, tf, events_r);
+    let right = slice_viewer_rot(
+        vol,
+        splitter.metadata_last(),
+        render_config,
+        angle,
+        tf,
+        events_r,
+    );
     let frame = splitter.render(left, right);
 
     let slice_ref = &frame;

@@ -304,6 +304,7 @@ pub fn render_slice(
         result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
         tf,
+        Default::default(),
     )
     .into_dyn()
     .into())
@@ -407,6 +408,7 @@ pub fn view_image(
         image.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         view_state,
+        Default::default(),
     )
     .into_dyn()
     .into())

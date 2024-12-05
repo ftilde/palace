@@ -2,6 +2,7 @@ use std::alloc::Layout;
 
 use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
+use id::Identify;
 
 use super::{
     raycaster::TransFuncOperator,
@@ -246,6 +247,7 @@ pub fn select_level<'a, D: SmallerDim, T>(
     lod: &'a LODTensorOperator<D::Smaller, T>,
     transform_rw: Matrix<D, f32>,
     neighbor_dirs: &[Vector<D::Smaller, f32>],
+    config: RenderConfig2D,
 ) -> (usize, &'a EmbeddedTensorOperator<D::Smaller, T>) {
     let neighbor_dirs = neighbor_dirs
         .iter()
@@ -254,7 +256,6 @@ pub fn select_level<'a, D: SmallerDim, T>(
 
     let mut selected_level = lod.levels.len() - 1;
 
-    let coarse_lod_factor = 1.0; //TODO: make configurable
     'outer: for (i, level) in lod.levels.iter().enumerate() {
         let emd = &level.embedding_data;
 
@@ -262,7 +263,7 @@ pub fn select_level<'a, D: SmallerDim, T>(
             let abs_dir = dir.map(|v| v.abs()).normalized();
             let dir_spacing_dist = (abs_dir * emd.spacing.clone()).length();
             let pixel_dist = dir.length();
-            if dir_spacing_dist >= pixel_dist * coarse_lod_factor {
+            if dir_spacing_dist >= pixel_dist * config.coarse_lod_factor {
                 selected_level = i;
                 break 'outer;
             }
@@ -272,11 +273,25 @@ pub fn select_level<'a, D: SmallerDim, T>(
     (selected_level, &lod.levels[selected_level])
 }
 
+#[derive(Copy, Clone, Identify)]
+pub struct RenderConfig2D {
+    pub coarse_lod_factor: f32,
+}
+
+impl Default for RenderConfig2D {
+    fn default() -> Self {
+        Self {
+            coarse_lod_factor: 1.0,
+        }
+    }
+}
+
 pub fn render_slice(
     input: LODVolumeOperator<StaticElementType<f32>>,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
     tf: TransFuncOperator,
+    config: RenderConfig2D,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -402,8 +417,9 @@ void main()
             DataParam(result_metadata),
             DataParam(projection_mat),
             DataParam(tf),
+            DataParam(config),
         ),
-        move |ctx, pos, _, (input, result_metadata, projection_mat, tf)| {
+        move |ctx, pos, _, (input, result_metadata, projection_mat, tf, config)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -421,6 +437,7 @@ void main()
                     &input,
                     transform_rw,
                     &[[0.0, 0.0, 1.0].into(), [0.0, 1.0, 0.0].into()],
+                    **config,
                 );
 
                 let m_in = level.metadata;

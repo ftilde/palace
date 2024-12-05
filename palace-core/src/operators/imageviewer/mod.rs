@@ -4,7 +4,10 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use id::Identify;
 
-use super::tensor::{FrameOperator, LODImageOperator};
+use super::{
+    sliceviewer::RenderConfig2D,
+    tensor::{FrameOperator, LODImageOperator},
+};
 
 use crate::{
     array::{ImageEmbeddingData, ImageMetaData},
@@ -112,6 +115,7 @@ pub fn view_image(
     input: LODImageOperator<StaticElementType<Vector<D4, u8>>>,
     result_metadata: ImageMetaData,
     view_state: ImageViewerState,
+    config: RenderConfig2D,
 ) -> FrameOperator {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstants {
@@ -126,8 +130,13 @@ pub fn view_image(
         op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
-        (input, DataParam(result_metadata), DataParam(view_state)),
-        move |ctx, pos, _, (input, result_metadata, view_state)| {
+        (
+            input,
+            DataParam(result_metadata),
+            DataParam(view_state),
+            DataParam(config),
+        ),
+        move |ctx, pos, _, (input, result_metadata, view_state, config)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -152,6 +161,7 @@ pub fn view_image(
                     &input,
                     transform_rw,
                     &[[0.0, 1.0].into(), [1.0, 0.0].into()],
+                    **config,
                 );
 
                 let m_in = level.metadata;

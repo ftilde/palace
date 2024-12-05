@@ -298,8 +298,13 @@ fn slice_viewer_z(
             }))
     });
 
-    let slice =
-        crate::operators::sliceviewer::render_slice(vol, md.into(), slice_proj_z, tf.clone());
+    let slice = crate::operators::sliceviewer::render_slice(
+        vol,
+        md.into(),
+        slice_proj_z,
+        tf.clone(),
+        Default::default(),
+    );
     let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(slice);
 
