@@ -7,7 +7,6 @@ use crate::{
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
     dim::{DynDimension, D1, D3},
     dtypes::{DType, ScalarType, StaticElementType},
-    mat::Matrix,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     task::OpaqueTaskContext,
@@ -56,7 +55,7 @@ pub fn rasterize_seed_points(
                     .vec::<u32>(nd, "tensor_dim_memory")
                     .vec::<u32>(nd, "tensor_dim_logical");
 
-                let to_grid = Matrix::from_scale(&ed.spacing.map(|v| 1.0 / v)).to_homogeneous();
+                let to_grid = ed.physical_to_voxel();
 
                 let pipeline = device.request_state(
                     (

@@ -435,8 +435,15 @@ pub fn apply_tf(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn mandelbrot(md: PyTensorMetaData) -> PyResult<LODTensorOperator> {
-    palace_core::operators::procedural::mandelbrot(md.try_into_dim()?).try_into()
+pub fn mandelbrot(
+    md: PyTensorMetaData,
+    embedding_data: PyTensorEmbeddingData,
+) -> PyResult<LODTensorOperator> {
+    palace_core::operators::procedural::mandelbrot(
+        md.try_into_dim()?,
+        embedding_data.try_into_dim()?,
+    )
+    .try_into()
 }
 
 #[gen_stub_pyfunction]

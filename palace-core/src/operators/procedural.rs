@@ -2,7 +2,7 @@ use ash::vk;
 
 use crate::{
     array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
-    dim::Dimension,
+    dim::{Dimension, D2, D3},
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
@@ -20,9 +20,13 @@ use super::{
     volume::LODVolumeOperator,
 };
 
-pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
+pub fn ball(
+    base_metadata: VolumeMetaData,
+    base_embedding_data: TensorEmbeddingData<D3>,
+) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
+        base_embedding_data,
         r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
             vec3 centered = to_glsl(pos_normalized)-vec3(0.5);
             vec3 sq = centered*centered;
@@ -32,18 +36,26 @@ pub fn ball(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementTyp
     )
 }
 
-pub fn full(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
+pub fn full(
+    base_metadata: VolumeMetaData,
+    base_embedding_data: TensorEmbeddingData<D3>,
+) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
+        base_embedding_data,
         r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {
             return 1.0;
         }"#,
     )
 }
 
-pub fn mandelbulb(base_metadata: VolumeMetaData) -> LODVolumeOperator<StaticElementType<f32>> {
+pub fn mandelbulb(
+    base_metadata: VolumeMetaData,
+    base_embedding_data: TensorEmbeddingData<D3>,
+) -> LODVolumeOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
+        base_embedding_data,
         r#"
 vec3 vec_pow(vec3 v, float n) {
     float r = length(v);
@@ -74,9 +86,13 @@ float run(float[3] pos_normalized, uint[3] pos_voxel) {
     )
 }
 
-pub fn mandelbrot(base_metadata: ImageMetaData) -> LODImageOperator<StaticElementType<f32>> {
+pub fn mandelbrot(
+    base_metadata: ImageMetaData,
+    base_embedding_data: TensorEmbeddingData<D2>,
+) -> LODImageOperator<StaticElementType<f32>> {
     rasterize_lod(
         base_metadata,
+        base_embedding_data,
         r#"
 vec2 complex_square(vec2 v) {
     return vec2(v.x*v.x - v.y*v.y, 2*v.x*v.y);
@@ -104,21 +120,24 @@ float run(float[2] pos_normalized, uint[2] pos_voxel) {
 
 pub fn rasterize_lod<D: Dimension>(
     base_metadata: TensorMetaData<D>,
+    base_embedding_data: TensorEmbeddingData<D>,
     body: &'static str,
 ) -> LODTensorOperator<D, StaticElementType<f32>> {
     let mut levels = Vec::new();
-    let mut spacing = Vector::fill(1.0f32);
+    let mut spacing_mult = Vector::fill(1.0);
     //TODO: maybe we want to compute the spacing based on dimension reduction instead? could be
     //more accurate...
     loop {
         let md = TensorMetaData {
-            dimensions: (base_metadata.dimensions.raw().f32() / spacing)
+            dimensions: (base_metadata.dimensions.raw().f32() / spacing_mult)
                 .map(|v| v.ceil() as u32)
                 .global(),
             chunk_size: base_metadata.chunk_size,
         };
-        levels.push(rasterize(md, body).embedded(TensorEmbeddingData { spacing }));
-        spacing = spacing.scale(2.0);
+        levels.push(rasterize(md, body).embedded(TensorEmbeddingData {
+            spacing: base_embedding_data.spacing * spacing_mult,
+        }));
+        spacing_mult = spacing_mult.scale(2.0);
         let chunk_size: Vector<D, _> = md.chunk_size;
         let dimensions: Vector<D, _> = md.dimensions;
         if chunk_size.raw().zip(&dimensions.raw(), |c, d| c >= d).all() {

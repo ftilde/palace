@@ -121,16 +121,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             };
+            let ed = Default::default();
             match args.scenario {
-                Type::Ball => operators::procedural::ball(md),
-                Type::Full => operators::procedural::full(md),
-                Type::Mandelbulb => operators::procedural::mandelbulb(md),
+                Type::Ball => operators::procedural::ball(md, ed),
+                Type::Full => operators::procedural::full(md, ed),
+                Type::Mandelbulb => operators::procedural::mandelbulb(md, ed),
                 Type::RandomWalker => {
                     let md = array::VolumeMetaData {
                         dimensions: VoxelPosition::fill(args.size.into()),
                         chunk_size: LocalVoxelPosition::fill(args.size.into()),
                     };
-                    let ball = operators::procedural::ball(md).levels[0].clone();
+                    let ball = operators::procedural::ball(md, ed).levels[0].clone();
                     let seeds = operators::procedural::rasterize(
                         md,
                         r#"float run(float[3] pos_normalized, uint[3] pos_voxel) {

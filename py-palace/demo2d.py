@@ -18,7 +18,8 @@ if args.img_file == "mandelbrot":
     b = 1024*2
     s = b*1024*16
     md = pc.TensorMetaData([s, s], [b, b])
-    img = pc.mandelbrot(md)
+    ed = pc.TensorEmbeddingData([1.0, 1.0])
+    img = pc.mandelbrot(md, ed)
     tf = pc.load_tf(args.transfunc)
     tf.min = 0.0;
     tf.max = 1.0;

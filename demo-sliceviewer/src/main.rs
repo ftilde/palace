@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(64.into());
+    let brick_size = LocalVoxelPosition::fill(16.into());
 
     let tf = TransFuncOperator::grey_ramp(0.0, 1.0);
 
@@ -118,37 +118,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dimensions: VoxelPosition::fill(args.size.into()),
                 chunk_size: brick_size,
             };
+            let ed = TensorEmbeddingData {
+                spacing: md.dimensions.map(|v| 1.0 / v.raw as f32),
+            };
             match args.scenario {
-                Type::Ball => operators::procedural::ball(md),
-                Type::Full => operators::procedural::full(md),
-                Type::Mandelbulb => operators::procedural::mandelbulb(md),
+                Type::Ball => operators::procedural::ball(md, ed),
+                Type::Full => operators::procedural::full(md, ed),
+                Type::Mandelbulb => operators::procedural::mandelbulb(md, ed),
                 Type::RandomWalker => {
-                    let md = array::VolumeMetaData {
-                        dimensions: VoxelPosition::fill(args.size.into()),
-                        chunk_size: LocalVoxelPosition::fill(args.size.into()),
-                    };
-                    let ball = operators::procedural::ball(md).levels[0].clone();
+                    //let md = array::VolumeMetaData {
+                    //    dimensions: VoxelPosition::fill(args.size.into()),
+                    //    chunk_size: LocalVoxelPosition::fill(args.size.into()),
+                    //};
+                    //let ball = operators::procedural::ball(md, ed).levels[0].clone();
+                    let ball = operators::procedural::ball(md, ed);
                     let seeds_fg = from_rc(Rc::new([Vector::<D3, f32>::fill(0.5)])).into();
                     let seeds_bg =
                         from_rc(Rc::new([Vector::<D3, f32>::fill(0.1), Vector::fill(0.9)])).into();
 
-                    let seeds = operators::randomwalker::rasterize_seed_points(
+                    //let seeds = operators::randomwalker::rasterize_seed_points(
+                    //    seeds_fg,
+                    //    seeds_bg,
+                    //    ball.metadata,
+                    //    TensorEmbeddingData {
+                    //        spacing: md.dimensions.map(|v| 1.0 / v.raw as f32),
+                    //    },
+                    //);
+                    //operators::randomwalker::random_walker(
+                    //    ball.into(),
+                    //    seeds.inner,
+                    //    operators::randomwalker::WeightFunction::Grady { beta: 1000.0 },
+                    //    1e-6,
+                    //    Default::default(),
+                    //)
+                    //.embedded(Default::default())
+                    //.single_level_lod()
+                    let res = operators::randomwalker::hierchical_random_walker(
+                        ball,
                         seeds_fg,
                         seeds_bg,
-                        ball.metadata,
-                        TensorEmbeddingData {
-                            spacing: md.dimensions.map(|v| 1.0 / v.raw as f32),
-                        },
-                    );
-                    operators::randomwalker::random_walker(
-                        ball.into(),
-                        seeds.inner,
                         operators::randomwalker::WeightFunction::Grady { beta: 1000.0 },
                         1e-6,
                         Default::default(),
-                    )
-                    .embedded(Default::default())
-                    .single_level_lod()
+                    );
+                    dbg!(res.levels.len());
+                    res
                 }
             }
         }
