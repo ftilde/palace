@@ -485,7 +485,7 @@ fn expanded_seeds(
 
                             let out_info = m_out.chunk_info(pos);
 
-                            let grid_to_world = element_out_to_in.invert().unwrap();
+                            let grid_to_grid = element_out_to_in;
                             let world_to_grid = out_ed.physical_to_voxel();
                             let out_tensor_size = m_out.base.dimensions.raw();
                             let out_chunk_size_memory = m_out.mem_size().raw();
@@ -500,7 +500,7 @@ fn expanded_seeds(
                                 let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant_dyn(push_constants, |consts| {
-                                    consts.mat(&grid_to_world)?;
+                                    consts.mat(&grid_to_grid)?;
                                     consts.mat(&world_to_grid)?;
                                     consts.vec(&out_tensor_size)?;
                                     consts.vec(&out_chunk_size_memory)?;
