@@ -36,10 +36,7 @@ bool at_cuboid_border(uint[N] position, uint[N] size) {
 }
 
 // NO_PUSH_main refactor
-bool at_voxel(float[N] voxel, float[N] to_check) {
-    float[N+1] point = to_homogeneous(to_check);
-    float[N] point_voxel = from_homogeneous(mul(consts.world_to_grid, point));
-
+bool at_voxel(float[N] voxel, float[N] point_voxel) {
     //NO_PUSH_main: TODO: Do we actually want to clamp? Probably not...
     //point_voxel = clamp(point_voxel, fill(voxel, 0.0), sub(to_float(consts.out_tensor_size), fill(voxel, 1.0)));
     float[N] diff = abs(sub(voxel, point_voxel));

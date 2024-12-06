@@ -1,4 +1,5 @@
 pub mod array;
+pub mod geometry;
 pub mod gui;
 pub mod imageviewer;
 pub mod kernels;

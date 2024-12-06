@@ -328,7 +328,6 @@ fn expanded_seeds(
 
                 let nd = upper_result.dim().n();
                 let push_constants = DynPushConstants::new()
-                    .mat::<f32>(nd + 1, "world_to_grid")
                     .vec::<f32>(nd, "grid_to_grid_scale")
                     .vec::<u32>(nd, "out_tensor_size")
                     .vec::<u32>(nd, "out_chunk_size_memory")
@@ -498,7 +497,6 @@ fn expanded_seeds(
 
                             let out_info = m_out.chunk_info(pos);
 
-                            let world_to_grid = out_ed.physical_to_voxel();
                             let grid_to_grid_scale =
                                 element_out_to_in.diagonal().to_non_homogeneous_coord();
                             let out_tensor_size = m_out.base.dimensions.raw();
@@ -514,7 +512,6 @@ fn expanded_seeds(
                                 let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant_dyn(push_constants, |consts| {
-                                    consts.mat(&world_to_grid)?;
                                     consts.vec(&grid_to_grid_scale)?;
                                     consts.vec(&out_tensor_size)?;
                                     consts.vec(&out_chunk_size_memory)?;
@@ -733,6 +730,11 @@ fn level_step(
         min_edge_weight,
     );
     let expanded_weights = expand(weights, expansion_by.push_dim_small(0.into()));
+
+    let world_to_grid = current_level.embedding_data.physical_to_voxel();
+    let points_fg = crate::operators::geometry::transform(points_fg, world_to_grid);
+    let points_bg = crate::operators::geometry::transform(points_bg, world_to_grid);
+
     let seeds = expanded_seeds(
         upper_result,
         points_fg,
