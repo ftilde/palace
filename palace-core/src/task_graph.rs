@@ -97,6 +97,7 @@ impl RequestId {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum ProgressIndicator {
     PartialPossible,
     WaitForComplete,

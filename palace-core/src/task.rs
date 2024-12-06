@@ -647,8 +647,8 @@ where
 
 #[pin_project]
 pub struct TasksUnordered<'req, 'inv, R> {
-    children: Vec<ChildTask<'req, R>>,
-    children_waiting_on_requests: Map<usize, Set<RequestId>>,
+    children: Vec<Option<ChildTask<'req, R>>>,
+    children_waiting_on_requests: Map<usize, Map<RequestId, ProgressIndicator>>,
     requests_waited_on_by: Map<RequestId, Set<usize>>,
     //task_map: Map<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
     pending_results: Vec<R>,
@@ -661,7 +661,7 @@ impl<'req, 'inv, R> TasksUnordered<'req, 'inv, R> {
         task_context: OpaqueTaskContext<'req, 'inv>,
         requests: impl Iterator<Item = ChildTask<'req, R>> + 'req,
     ) -> Self {
-        let requests: Vec<_> = requests.collect();
+        let requests: Vec<_> = requests.map(Some).collect();
         Self {
             ready: (0..requests.len()).collect(),
             children: requests,
@@ -692,14 +692,15 @@ impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
                     completed_hints.push(*c);
                     for child in waiting.iter() {
                         let waited_on = s.children_waiting_on_requests.get_mut(child).unwrap();
-                        waited_on.remove(c);
+                        let progress_indicator = waited_on.remove(c).unwrap();
 
-                        //TODO: In theory we should also track progress indicators for children
-                        //in case we nest TasksUnordered (for example). Seems like a lot of
-                        //work, though...
+                        if waited_on.is_empty()
+                            || matches!(progress_indicator, ProgressIndicator::PartialPossible)
+                        {
+                            s.ready.push(*child);
+                        }
                         if waited_on.is_empty() {
                             s.children_waiting_on_requests.remove(child);
-                            s.ready.push(*child);
                         }
                     }
                 }
@@ -709,39 +710,47 @@ impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
             }
 
             let mut all_requested = s.task_context.requests.drain();
+            let mut still_ready = Vec::new();
             for child_id in s.ready.drain(..) {
                 let child = &mut s.children[child_id];
-                match child.0.poll_unpin(cx) {
+                match child.as_mut().unwrap().0.poll_unpin(cx) {
                     Poll::Ready(r) => {
                         s.pending_results.push(r);
+                        s.children[child_id] = None;
                     }
                     Poll::Pending => {
                         let mut newly_requested = s.task_context.requests.drain();
-                        assert!(!newly_requested.is_empty());
+                        //assert!(!newly_requested.is_empty());
                         for r in &mut newly_requested {
                             let r_id = r.id();
                             s.children_waiting_on_requests
                                 .entry(child_id)
                                 .or_default()
-                                .insert(r_id);
+                                .insert(r_id, r.progress_indicator);
                             s.requests_waited_on_by
                                 .entry(r_id)
                                 .or_default()
                                 .insert(child_id);
                             r.progress_indicator = ProgressIndicator::PartialPossible;
                         }
+                        if newly_requested.is_empty() {
+                            still_ready.push(child_id);
+                        }
                         all_requested.append(&mut newly_requested);
                     }
                 }
             }
+            s.ready.extend(still_ready);
             let tmp = s.task_context.requests.replace(all_requested);
             assert!(tmp.is_empty());
         }
         if let Some(r) = s.pending_results.pop() {
             return Poll::Ready(Some(r));
         }
-        if s.children_waiting_on_requests.is_empty() {
+        if s.children_waiting_on_requests.is_empty() && s.ready.is_empty() {
             assert!(s.requests_waited_on_by.is_empty());
+            assert!(s.children_waiting_on_requests.is_empty());
+            assert!(s.children.iter().all(Option::is_none));
             Poll::Ready(None)
         } else {
             Poll::Pending
