@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(16.into());
+    let brick_size = LocalVoxelPosition::fill(32.into());
 
     let tf = TransFuncOperator::grey_ramp(0.0, 1.0);
 
