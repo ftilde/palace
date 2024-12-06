@@ -209,7 +209,7 @@ fn expand<D: DynDimension>(
                                 .into_iter()
                                 .map(|i| {
                                     chunk_pos[i].raw.saturating_sub(1)
-                                        ..(chunk_pos[i].raw + 1).min(dim_in_chunks[i].raw)
+                                        ..(chunk_pos[i].raw + 2).min(dim_in_chunks[i].raw)
                                 })
                                 .multi_cartesian_product()
                                 .map(|coordinates| {
@@ -529,6 +529,7 @@ fn expanded_seeds(
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch_dyn(device, out_chunk_size_memory);
                             });
+
                             unsafe {
                                 gpu_brick_out.initialized(
                                     *ctx,
