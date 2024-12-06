@@ -700,6 +700,7 @@ mod test {
                 img_meta.into(),
                 slice_proj,
                 crate::operators::raycaster::TransFuncOperator::grey_ramp(0.0, 1.0),
+                Default::default(),
             );
             compare_tensor_fn(slice, fill_expected);
         }
