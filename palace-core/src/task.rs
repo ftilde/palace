@@ -650,10 +650,11 @@ pub struct TasksUnordered<'req, 'inv, R> {
     children: Vec<Option<ChildTask<'req, R>>>,
     children_waiting_on_requests: Map<usize, Map<RequestId, ProgressIndicator>>,
     requests_waited_on_by: Map<RequestId, Set<usize>>,
+    resolved_deps: Map<usize, Set<RequestId>>,
     //task_map: Map<RequestId, Vec<(ResultPoll<'req, V>, D)>>,
     pending_results: Vec<R>,
     task_context: OpaqueTaskContext<'req, 'inv>,
-    ready: Vec<usize>,
+    ready: Set<usize>,
 }
 
 impl<'req, 'inv, R> TasksUnordered<'req, 'inv, R> {
@@ -668,6 +669,7 @@ impl<'req, 'inv, R> TasksUnordered<'req, 'inv, R> {
             children_waiting_on_requests: Default::default(),
             requests_waited_on_by: Default::default(),
             pending_results: Default::default(),
+            resolved_deps: Default::default(),
             task_context,
         }
     }
@@ -694,10 +696,12 @@ impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
                         let waited_on = s.children_waiting_on_requests.get_mut(child).unwrap();
                         let progress_indicator = waited_on.remove(c).unwrap();
 
+                        s.resolved_deps.entry(*child).or_default().insert(*c);
+
                         if waited_on.is_empty()
                             || matches!(progress_indicator, ProgressIndicator::PartialPossible)
                         {
-                            s.ready.push(*child);
+                            s.ready.insert(*child);
                         }
                         if waited_on.is_empty() {
                             s.children_waiting_on_requests.remove(child);
@@ -711,12 +715,18 @@ impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
 
             let mut all_requested = s.task_context.requests.drain();
             let mut still_ready = Vec::new();
-            for child_id in s.ready.drain(..) {
+            for child_id in s.ready.drain() {
                 let child = &mut s.children[child_id];
+
+                let resolved_deps = s.resolved_deps.entry(child_id).or_default();
+                s.task_context.hints.swap(resolved_deps);
+
                 match child.as_mut().unwrap().0.poll_unpin(cx) {
                     Poll::Ready(r) => {
                         s.pending_results.push(r);
                         s.children[child_id] = None;
+
+                        assert!(!s.children_waiting_on_requests.contains_key(&child_id));
                     }
                     Poll::Pending => {
                         let mut newly_requested = s.task_context.requests.drain();
@@ -739,6 +749,8 @@ impl<'req, 'inv, R> futures::Stream for TasksUnordered<'req, 'inv, R> {
                         all_requested.append(&mut newly_requested);
                     }
                 }
+
+                s.task_context.hints.swap(resolved_deps);
             }
             s.ready.extend(still_ready);
             let tmp = s.task_context.requests.replace(all_requested);

@@ -1326,6 +1326,10 @@ impl TaskHints {
         let mut completed = self.completed.borrow_mut();
         completed.remove(&id);
     }
+
+    pub fn swap(&self, s: &mut Set<RequestId>) {
+        std::mem::swap(&mut *self.completed.borrow_mut(), s)
+    }
 }
 
 pub struct RequestQueue<'inv> {
