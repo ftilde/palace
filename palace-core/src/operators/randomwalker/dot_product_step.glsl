@@ -6,7 +6,7 @@
 #include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) buffer X {
-    float values[NUM_VALUES];
+    float values[];
 } x;
 
 declare_push_consts(consts);
@@ -17,7 +17,7 @@ void main() {
     uint pos = global_position_linear * consts.stride;
 
     float val;
-    if(pos < NUM_VALUES) {
+    if(pos < consts.num_values) {
         val = x.values[pos];
     } else {
         val = 0.0;

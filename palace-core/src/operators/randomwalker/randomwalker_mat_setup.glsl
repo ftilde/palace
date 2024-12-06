@@ -20,15 +20,15 @@ layout(std430, binding = 2) readonly buffer T2R {
 } tensor_to_rows;
 
 layout(std430, binding = 3) buffer MatValues {
-    float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
+    float values[][MAX_ENTRIES_PER_ROW];
 } mat_values;
 
 layout(std430, binding = 4) buffer MatIndex {
-    uint values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
+    uint values[][MAX_ENTRIES_PER_ROW];
 } mat_index;
 
 layout(std430, binding = 5) buffer Vec {
-    float values[NUM_ROWS];
+    float values[];
 } vec;
 
 declare_push_consts(consts);

@@ -5,15 +5,15 @@
 #include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) readonly buffer Z {
-    float values[NUM_ROWS];
+    float values[];
 } z;
 
 layout(std430, binding = 1) readonly buffer D {
-    float values[NUM_ROWS];
+    float values[];
 } d;
 
 layout(std430, binding = 2) readonly buffer C {
-    float values[NUM_ROWS];
+    float values[];
 } c;
 
 layout(std430, binding = 3) readonly buffer RTH {
@@ -25,29 +25,29 @@ layout(std430, binding = 4) readonly buffer DTZ {
 } dtz;
 
 layout(std430, binding = 5) buffer X {
-    float values[NUM_ROWS];
+    float values[];
 } x;
 
 layout(std430, binding = 6) buffer R {
-    float values[NUM_ROWS];
+    float values[];
 } r;
 
 layout(std430, binding = 7) buffer H {
-    float values[NUM_ROWS];
+    float values[];
 } h;
 
 layout(std430, binding = 8) buffer RTH_P1 {
     float value[];
 } rth_p1;
 
-//declare_push_consts(consts);
+declare_push_consts(consts);
 
 shared float shared_sum[gl_WorkGroupSize.x];
 
 void main() {
     uint row = global_position_linear;
 
-    if(row < NUM_ROWS) {
+    if(row < consts.num_rows) {
         float alpha = (rth.value == dtz.value) ? 1.0 : rth.value / dtz.value;
 
         x.values[row] += alpha * d.values[row];
@@ -55,5 +55,5 @@ void main() {
         h.values[row] = c.values[row] * r.values[row];
     }
 
-    DOT_PRODUCT_INIT(r.values, h.values, row, NUM_ROWS, shared_sum, rth_p1.value);
+    DOT_PRODUCT_INIT(r.values, h.values, row, consts.num_rows, shared_sum, rth_p1.value);
 }

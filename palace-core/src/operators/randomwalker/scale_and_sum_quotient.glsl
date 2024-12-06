@@ -11,21 +11,23 @@ layout(std430, binding = 1) readonly buffer U {
 } u;
 
 layout(std430, binding = 2) readonly buffer X {
-    float values[NUM_ROWS];
+    float values[];
 } x;
 
 layout(std430, binding = 3) readonly buffer Y {
-    float values[NUM_ROWS];
+    float values[];
 } y;
 
 layout(std430, binding = 4) buffer Result {
-    float values[NUM_ROWS];
+    float values[];
 } result;
+
+declare_push_consts(consts);
 
 void main() {
     uint row = global_position_linear;
 
-    if(row >= NUM_ROWS) {
+    if(row >= consts.num_rows) {
         return;
     }
 

@@ -5,35 +5,35 @@
 #include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) readonly buffer MatValues {
-    float values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
+    float values[][MAX_ENTRIES_PER_ROW];
 } a_values;
 
 layout(std430, binding = 1) readonly buffer MatIndex {
-    uint values[NUM_ROWS][MAX_ENTRIES_PER_ROW];
+    uint values[][MAX_ENTRIES_PER_ROW];
 } a_index;
 
 layout(std430, binding = 2) readonly buffer X0 {
-    float values[NUM_ROWS];
+    float values[];
 } x0;
 
 layout(std430, binding = 3) readonly buffer B {
-    float values[NUM_ROWS];
+    float values[];
 } b;
 
 layout(std430, binding = 4) buffer C {
-    float values[NUM_ROWS];
+    float values[];
 } c;
 
 layout(std430, binding = 5) buffer R {
-    float values[NUM_ROWS];
+    float values[];
 } r;
 
 layout(std430, binding = 6) buffer H {
-    float values[NUM_ROWS];
+    float values[];
 } h;
 
 layout(std430, binding = 7) buffer D {
-    float values[NUM_ROWS];
+    float values[];
 } d;
 
 layout(std430, binding = 8) buffer RTH {
@@ -42,12 +42,12 @@ layout(std430, binding = 8) buffer RTH {
 
 shared float shared_sum[gl_WorkGroupSize.x];
 
-//declare_push_consts(consts);
+declare_push_consts(consts);
 
 void main() {
     uint row = global_position_linear;
 
-    if(row < NUM_ROWS) {
+    if(row < consts.num_rows) {
         float c_value;
         float clip_value = 1e-6;
         for(int i=0; i<MAX_ENTRIES_PER_ROW; ++i) {
@@ -66,5 +66,5 @@ void main() {
         d.values[row] = h.values[row];
     }
 
-    DOT_PRODUCT_INIT(r.values, h.values, row, NUM_ROWS, shared_sum, rth.value);
+    DOT_PRODUCT_INIT(r.values, h.values, row, consts.num_rows, shared_sum, rth.value);
 }
