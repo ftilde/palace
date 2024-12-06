@@ -319,8 +319,11 @@ impl<D: SmallerDim, T: Copy> Vector<D, T> {
     pub fn pop_dim_small(&self) -> Vector<D::Smaller, T> {
         self.drop_dim(self.len() - 1)
     }
-    pub fn to_non_homogeneous_coord(self) -> Vector<D::Smaller, T> {
+    pub fn pop_dim_large(&self) -> Vector<D::Smaller, T> {
         self.drop_dim(0)
+    }
+    pub fn to_non_homogeneous_coord(self) -> Vector<D::Smaller, T> {
+        self.pop_dim_large()
     }
 }
 

@@ -79,6 +79,9 @@ impl<D: DynDimension, T: Copy> Matrix<D, T> {
     pub fn transposed(&self) -> Self {
         Self::from_fn_and_dim(self.dim, |row, col| self.at(col, row))
     }
+    pub fn diagonal(&self) -> Vector<D, T> {
+        Vector::try_from_fn_and_len(self.dim.n(), |i| self.at(i, i)).unwrap()
+    }
 }
 impl<D: DynDimension, T: num::Zero + Copy> Matrix<D, T> {
     pub fn from_scale(scale: &Vector<D, T>) -> Self {

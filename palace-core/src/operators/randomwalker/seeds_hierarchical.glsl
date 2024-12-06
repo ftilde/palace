@@ -58,7 +58,7 @@ void main() {
     uint[N] out_chunk_pos = from_linear(gID, consts.out_chunk_size_memory);
 
     uint[N] global_pos = add(out_chunk_pos, consts.out_begin);
-    float[N] sample_pos = from_homogeneous(mul(consts.grid_to_grid, to_homogeneous(to_float(global_pos))));
+    float[N] sample_pos = mul(consts.grid_to_grid_scale, to_float(global_pos));
     //debugPrintfEXT("sample: %f %f %f\n", sample_pos[0], sample_pos[1], sample_pos[2]);
     map(N, sample_pos, sample_pos, round);
 

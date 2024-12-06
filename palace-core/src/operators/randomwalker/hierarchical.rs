@@ -328,8 +328,8 @@ fn expanded_seeds(
 
                 let nd = upper_result.dim().n();
                 let push_constants = DynPushConstants::new()
-                    .mat::<f32>(nd + 1, "grid_to_grid")
                     .mat::<f32>(nd + 1, "world_to_grid")
+                    .vec::<f32>(nd, "grid_to_grid_scale")
                     .vec::<u32>(nd, "out_tensor_size")
                     .vec::<u32>(nd, "out_chunk_size_memory")
                     .vec::<u32>(nd, "out_chunk_size_logical")
@@ -498,8 +498,9 @@ fn expanded_seeds(
 
                             let out_info = m_out.chunk_info(pos);
 
-                            let grid_to_grid = element_out_to_in;
                             let world_to_grid = out_ed.physical_to_voxel();
+                            let grid_to_grid_scale =
+                                element_out_to_in.diagonal().to_non_homogeneous_coord();
                             let out_tensor_size = m_out.base.dimensions.raw();
                             let out_chunk_size_memory = m_out.mem_size().raw();
                             let out_chunk_size_logical = out_info.logical_size().raw();
@@ -513,8 +514,8 @@ fn expanded_seeds(
                                 let mut pipeline = pipeline.bind(cmd);
 
                                 pipeline.push_constant_dyn(push_constants, |consts| {
-                                    consts.mat(&grid_to_grid)?;
                                     consts.mat(&world_to_grid)?;
+                                    consts.vec(&grid_to_grid_scale)?;
                                     consts.vec(&out_tensor_size)?;
                                     consts.vec(&out_chunk_size_memory)?;
                                     consts.vec(&out_chunk_size_logical)?;
