@@ -725,7 +725,7 @@ fn level_step(
     let expansion_by = current_level
         .metadata
         .chunk_size
-        .map(|s| ((s.raw as f32 * 0.125) as u32).into());
+        .map(|s| (((s.raw as f32 * 0.125) as u32).max(1)).into());
     let weights = random_walker_weights(
         current_level.inner.clone(),
         weight_function,
