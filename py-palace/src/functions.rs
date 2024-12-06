@@ -526,6 +526,43 @@ pub fn randomwalker(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn hierarchical_randomwalker(
+    tensor: LODTensorOperator,
+    points_fg: TensorOperator,
+    points_bg: TensorOperator,
+    min_edge_weight: f32,
+    beta: f32,
+    max_iter: Option<usize>,
+    max_residuum_norm: Option<f32>,
+) -> PyResult<LODTensorOperator> {
+    let tensor = tensor.try_into_core_static::<D3>()?.try_into()?;
+    let points_fg = points_fg.try_into_core_static()?;
+    let points_bg = points_bg.try_into_core_static()?;
+
+    let mut config = palace_core::operators::randomwalker::SolverConfig::default();
+    if let Some(max_iter) = max_iter {
+        config.max_iterations = max_iter;
+    }
+    if let Some(max_residuum_norm) = max_residuum_norm {
+        config.max_residuum_norm = max_residuum_norm;
+    }
+    let res: palace_core::operators::tensor::LODTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::hierchical_random_walker(
+            tensor,
+            points_fg,
+            points_bg,
+            palace_core::operators::randomwalker::WeightFunction::Grady { beta },
+            min_edge_weight,
+            config,
+        )
+        .into_dyn()
+        .try_into()?;
+
+    res.try_into()
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn rasterize_seed_points(
     points_fg: TensorOperator,
     points_bg: TensorOperator,
