@@ -162,7 +162,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         1e-6,
                         Default::default(),
                     );
-                    dbg!(res.levels.len());
                     res
                 }
             }
