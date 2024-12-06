@@ -250,7 +250,7 @@ pub fn random_walker_weights_bian(
 
     let out_md = TensorMetaData::single_chunk(out_size);
 
-    TensorOperator::unbatched(
+    TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
         out_md,
@@ -261,7 +261,7 @@ pub fn random_walker_weights_bian(
             DataParam(extent),
             DataParam(min_edge_weight),
         ),
-        |ctx, pos, _, (t_mean, variance, out_md, extent, min_edge_weight)| {
+        |ctx, mut positions, (t_mean, variance, out_md, extent, min_edge_weight)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -297,81 +297,99 @@ pub fn random_walker_weights_bian(
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                let pos_nd = t_mean.metadata.chunk_pos_from_index(pos);
+                positions.sort_by_key(|(v, _)| v.0);
 
-                let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
-                    .await;
+                let push_constants = &push_constants;
 
-                let input = ctx
-                    .submit(t_mean.chunks.request_gpu(device.id, pos, read_info))
-                    .await;
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                        async move {
+                            let pos_nd = t_mean.metadata.chunk_pos_from_index(pos);
 
-                let variance = ctx.submit(variance.request_scalar()).await;
+                            let out_chunk = ctx
+                                .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
+                                .await;
 
-                let kernel_size = 2 * **extent + 1;
-                let variance_correction_factor = 2.0 / (kernel_size.pow(nd as u32 + 1) as f32);
-                let diff_variance =
-                    (variance * variance_correction_factor).max(std::f32::MIN_POSITIVE);
-                let diff_variance_inv = 1.0 / diff_variance;
+                            let input = ctx
+                                .submit(t_mean.chunks.request_gpu(device.id, pos, read_info))
+                                .await;
 
-                let chunk_info = md.chunk_info(pos);
-                {
-                    let out_chunk = &out_chunk;
-                    let input = &input;
-                    let push_constants = &push_constants;
-                    let chunk_info = &chunk_info;
+                            let variance = ctx.submit(variance.request_scalar()).await;
 
-                    let _ = ctx
-                        .run_unordered((0..nd).into_iter().map(|dim| {
-                            async move {
-                                let neighbor_nd = pos_nd.map_element(dim, |e: ChunkCoordinate| {
-                                    (e + 1u32)
-                                        .min(t_mean.metadata.dimension_in_chunks()[dim] - 1u32)
-                                });
-                                let neighbor = ctx
-                                    .submit(t_mean.chunks.request_gpu(
-                                        device.id,
-                                        t_mean.metadata.chunk_index(&neighbor_nd),
-                                        read_info,
-                                    ))
+                            let kernel_size = 2 * **extent + 1;
+                            let variance_correction_factor =
+                                2.0 / (kernel_size.pow(nd as u32 + 1) as f32);
+                            let diff_variance =
+                                (variance * variance_correction_factor).max(std::f32::MIN_POSITIVE);
+                            let diff_variance_inv = 1.0 / diff_variance;
+
+                            let chunk_info = md.chunk_info(pos);
+                            {
+                                let out_chunk = &out_chunk;
+                                let input = &input;
+                                let chunk_info = &chunk_info;
+
+                                let _ = ctx
+                                    .run_unordered((0..nd).into_iter().map(|dim| {
+                                        async move {
+                                            let neighbor_nd =
+                                                pos_nd.map_element(dim, |e: ChunkCoordinate| {
+                                                    (e + 1u32).min(
+                                                        t_mean.metadata.dimension_in_chunks()[dim]
+                                                            - 1u32,
+                                                    )
+                                                });
+                                            let neighbor = ctx
+                                                .submit(t_mean.chunks.request_gpu(
+                                                    device.id,
+                                                    t_mean.metadata.chunk_index(&neighbor_nd),
+                                                    read_info,
+                                                ))
+                                                .await;
+
+                                            let global_size = md.chunk_size.raw();
+
+                                            let descriptor_config = DescriptorConfig::new([
+                                                input, &neighbor, out_chunk,
+                                            ]);
+
+                                            device.with_cmd_buffer(|cmd| unsafe {
+                                                let mut pipeline = pipeline.bind(cmd);
+
+                                                pipeline.push_constant_dyn(
+                                                    &push_constants,
+                                                    |consts| {
+                                                        consts.vec(&md.dimensions.raw())?;
+                                                        consts.vec(&md.chunk_size.raw())?;
+                                                        consts.vec(&chunk_info.begin().raw())?;
+                                                        consts.scalar(dim as u32)?;
+                                                        consts.scalar(**min_edge_weight)?;
+                                                        consts.scalar(diff_variance_inv)?;
+                                                        Ok(())
+                                                    },
+                                                );
+                                                pipeline.write_descriptor_set(0, descriptor_config);
+                                                pipeline.dispatch3d(global_size);
+                                            });
+                                        }
+                                        .into()
+                                    }))
                                     .await;
-
-                                let global_size = md.chunk_size.raw();
-
-                                let descriptor_config =
-                                    DescriptorConfig::new([input, &neighbor, out_chunk]);
-
-                                device.with_cmd_buffer(|cmd| unsafe {
-                                    let mut pipeline = pipeline.bind(cmd);
-
-                                    pipeline.push_constant_dyn(&push_constants, |consts| {
-                                        consts.vec(&md.dimensions.raw())?;
-                                        consts.vec(&md.chunk_size.raw())?;
-                                        consts.vec(&chunk_info.begin().raw())?;
-                                        consts.scalar(dim as u32)?;
-                                        consts.scalar(**min_edge_weight)?;
-                                        consts.scalar(diff_variance_inv)?;
-                                        Ok(())
-                                    });
-                                    pipeline.write_descriptor_set(0, descriptor_config);
-                                    pipeline.dispatch3d(global_size);
-                                });
                             }
-                            .into()
-                        }))
-                        .await;
-                }
 
-                unsafe {
-                    out_chunk.initialized(
-                        *ctx,
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        },
-                    )
-                };
+                            unsafe {
+                                out_chunk.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                )
+                            };
+                        }
+                        .into()
+                    }))
+                    .await;
 
                 Ok(())
             }
