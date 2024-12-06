@@ -56,8 +56,6 @@ pub fn random_walker_weights_grady(
         .metadata
         .push_dim_small((nd as u32).into(), (nd as u32).into());
 
-    //NO_PUSH_main: TODO: This should not be unbatched and will create a bottleneck. Be careful
-    //with nesting TasksUnordered, though.
     TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
