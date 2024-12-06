@@ -381,9 +381,9 @@ fn eval_network(
             //        operators::vesselness::multiscale_vesselness(vol, 3.0.into(), (*stddev).into(), 3);
             //    //let after_kernel = operators::vesselness::vesselness(vol, scalar::constant_pod(*stddev));
             let scaled = jit(vol.into())
-                .mul((*scale).into())
-                .unwrap()
                 .add((*offset).into())
+                .unwrap()
+                .mul((*scale).into())
                 .unwrap()
                 .compile()
                 .unwrap()
