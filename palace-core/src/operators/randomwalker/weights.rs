@@ -2,7 +2,6 @@ use ash::vk;
 use id::Identify;
 
 use crate::{
-    array::TensorMetaData,
     data::ChunkCoordinate,
     dim::{DynDimension, LargerDim},
     dtypes::{ScalarType, StaticElementType},
@@ -259,13 +258,11 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
     let variance = variance(tensor.clone(), extent);
 
     let nd = tensor.metadata.dim().n();
-    let out_size = tensor
-        .metadata
-        .dimensions
-        .clone()
-        .push_dim_small((nd as u32).into());
 
-    let out_md = TensorMetaData::single_chunk(out_size);
+    let out_md = tensor
+        .metadata
+        .clone()
+        .push_dim_small((nd as u32).into(), (nd as u32).into());
 
     TensorOperator::with_state(
         op_descriptor!(),
