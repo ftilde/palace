@@ -452,11 +452,7 @@ pub fn randomwalker_weights(
     min_edge_weight: f32,
     beta: f32,
 ) -> PyResult<TensorOperator> {
-    let input = input
-        .unpack()
-        .into_inner()
-        .try_into_core_static::<D3>()?
-        .try_into()?;
+    let input = input.unpack().into_inner().try_into()?;
     let res: CTensorOperator<DDyn, DType> =
         palace_core::operators::randomwalker::random_walker_weights_grady(
             input,
@@ -475,11 +471,7 @@ pub fn randomwalker_weights_bian(
     min_edge_weight: f32,
     extent: usize,
 ) -> PyResult<TensorOperator> {
-    let input = input
-        .unpack()
-        .into_inner()
-        .try_into_core_static::<D3>()?
-        .try_into()?;
+    let input = input.unpack().into_inner().try_into()?;
     let res: CTensorOperator<DDyn, DType> =
         palace_core::operators::randomwalker::random_walker_weights_bian(
             input,

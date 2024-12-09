@@ -30,13 +30,16 @@ background_seeds = read_vge(args.background_seeds)
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 vol = pc.open_volume(args.volume_file)
-vol = pc.rechunk(vol, [pc.chunk_size_full]*3)
 md: pc.TensorMetaData = vol.inner.metadata
 ed = vol.embedding_data
 
 vol = pc.cast(vol, pc.ScalarType.F32)
 vol = pc.mul(vol, 1.0/(1 << 16))
-seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
+
+vol_min = rt.resolve_scalar(pc.min_value(vol))
+vol_max = rt.resolve_scalar(pc.max_value(vol))
+
+rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -63,7 +66,7 @@ raycaster_config_rw = pc.RaycasterConfig().store(store)
 
 #raycaster_config_rw.compositing_mode().write("DVR")
 
-mode = store.store_primitive("normal")
+mode = store.store_primitive("hierarchical")
 weight_function = store.store_primitive("bian_mean")
 min_edge_weight = store.store_primitive(1e-5)
 
@@ -71,11 +74,6 @@ beta = store.store_primitive(128.0)
 extent = store.store_primitive(1)
 
 gui_state = pc.GuiState(rt)
-
-vol_min = rt.resolve_scalar(pc.min_value(vol))
-vol_max = rt.resolve_scalar(pc.max_value(vol))
-
-rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 
 #print(tf.max)
 #print(tf.min)
@@ -94,23 +92,29 @@ def render(size, events: pc.Events):
 
     match mode.load():
         case "normal":
-            weights = apply_weight_function(rw_input)
+            i = pc.rechunk(rw_input, [pc.chunk_size_full]*3)
+            md: pc.TensorMetaData = i.inner.metadata
+            weights = apply_weight_function(i)
+            seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
             rw_result = rw_result.create_lod(2.0)
+            v = vol.embedded(ed).create_lod(2.0)
 
         case "hierarchical":
             #TODO: use input volume
-            input_lod = rw_input.create_lod(2.0)
-            weights = input_lod.map(lambda level: apply_weight_function(level))
+            i = pc.rechunk(rw_input, [32]*3)
+            input_lod = i.create_lod(2.0)
+            weights = input_lod.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
             rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds)
 
-    v = vol.embedded(ed).create_lod(2.0)
+            v = pc.rechunk(vol, [32]*3).create_lod(2.0)
+
 
 
     # GUI stuff
     widgets = []
 
-    widgets.append(pc.ComboBox("Mode", weight_function, ["normal", "hierarchical"]))
+    widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
     widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean"]))
     match weight_function.load():
         case "grady":
