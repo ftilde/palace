@@ -129,7 +129,7 @@ impl RunTime {
         timeout_ms: u64,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
-        crate::map_result(palace_winit::run_with_window_wrapper(
+        palace_winit::run_with_window_wrapper(
             &mut rt,
             Duration::from_millis(timeout_ms),
             |_event_loop, window, rt, events, timeout| {
@@ -142,12 +142,14 @@ impl RunTime {
 
                 let frame_ref = &frame;
                 let mut rt = rt.borrow_mut();
-                let version = rt.resolve(Some(timeout), false, |ctx, _| {
-                    async move { window.render(ctx, frame_ref).await }.into()
-                })?;
+                let version = rt
+                    .resolve(Some(timeout), false, |ctx, _| {
+                        async move { window.render(ctx, frame_ref).await }.into()
+                    })
+                    .map_err(crate::map_err)?;
 
                 Ok(version)
             },
-        ))
+        )
     }
 }

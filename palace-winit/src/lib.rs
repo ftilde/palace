@@ -151,7 +151,7 @@ pub fn create_window(
     ))
 }
 
-struct AppState<'a, R, F> {
+struct AppState<'a, R, F, E> {
     //state: State,
     last_frame: Instant,
     timeout_per_frame: Duration,
@@ -159,7 +159,7 @@ struct AppState<'a, R, F> {
     window: Option<(WWindow, PWindow)>,
     events: EventSource,
     draw: F,
-    run_result: Result<(), palace_core::Error>,
+    run_result: Result<(), E>,
 }
 
 pub trait MutWrapper<Inner> {
@@ -181,14 +181,15 @@ impl<Inner> MutWrapper<Inner> for Rc<RefCell<Inner>> {
 
 impl<
         R: MutWrapper<RunTime>,
+        E,
         F: FnMut(
             &ActiveEventLoop,
             &mut PWindow,
             &mut R,
             EventStream,
             Deadline,
-        ) -> Result<DataVersionType, palace_core::Error>,
-    > winit::application::ApplicationHandler for AppState<'_, R, F>
+        ) -> Result<DataVersionType, E>,
+    > winit::application::ApplicationHandler for AppState<'_, R, F, E>
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         //event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
@@ -251,18 +252,19 @@ impl<
 
 pub fn run_with_window_wrapper<
     R: MutWrapper<RunTime>,
+    E,
     F: FnMut(
         &ActiveEventLoop,
         &mut PWindow,
         &mut R,
         EventStream,
         Deadline,
-    ) -> Result<DataVersionType, palace_core::Error>,
+    ) -> Result<DataVersionType, E>,
 >(
     runtime: &mut R,
     timeout_per_frame: Duration,
     draw: F,
-) -> Result<(), palace_core::Error> {
+) -> Result<(), E> {
     let event_loop = EventLoop::new().unwrap();
     let mut state = AppState {
         runtime,
