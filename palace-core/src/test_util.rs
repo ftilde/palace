@@ -88,8 +88,8 @@ pub fn compare_tensor_approx<D: Dimension>(
                         let diff = (l - r).abs();
                         if diff > max_diff {
                             panic!(
-                                "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}",
-                                b_l, b_r, diff, max_diff, i
+                                "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}: {} vs. {}",
+                                b_l, b_r, diff, max_diff, i, l, r
                             );
                         }
                     }
