@@ -530,7 +530,7 @@ pub fn hierarchical_randomwalker(
     max_iter: Option<usize>,
     max_residuum_norm: Option<f32>,
 ) -> PyResult<LODTensorOperator> {
-    let weights = weights.try_into_core_static::<D4>()?.try_into()?;
+    let weights = weights.try_into()?;
     let points_fg = points_fg.try_into_core_static()?;
     let points_bg = points_bg.try_into_core_static()?;
 
@@ -545,7 +545,6 @@ pub fn hierarchical_randomwalker(
         palace_core::operators::randomwalker::hierarchical_random_walker_solver(
             weights, points_fg, points_bg, config,
         )
-        .into_dyn()
         .try_into()?;
 
     res.try_into()

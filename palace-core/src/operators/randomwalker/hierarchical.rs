@@ -9,7 +9,7 @@ use crate::{
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
     coordinate::{ChunkCoordinate, LocalCoordinate},
     data::GlobalCoordinate,
-    dim::{DynDimension, LargerDim, D1, D3},
+    dim::{DynDimension, LargerDim, D1},
     dtypes::{DType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OpaqueOperator, Operator, OperatorDescriptor, OperatorNetworkNode},
@@ -27,14 +27,12 @@ use crate::{
 
 use super::SolverConfig;
 
-type D = D3;
-
-pub fn hierarchical_random_walker_solver(
-    weights: LODTensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>>,
+pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
+    weights: LODTensorOperator<D::Larger, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     cfg: SolverConfig,
-) -> LODTensorOperator<D3, StaticElementType<f32>> {
+) -> LODTensorOperator<D, StaticElementType<f32>> {
     let mut levels = weights.levels.into_iter().rev();
     let root_level = levels.next().unwrap();
 
@@ -43,8 +41,8 @@ pub fn hierarchical_random_walker_solver(
     let root_seeds = super::rasterize_seed_points(
         points_fg.clone(),
         points_bg.clone(),
-        root_level.metadata.pop_dim_small(),
-        root_level.embedding_data.pop_dim_small(),
+        root_level.metadata.clone().pop_dim_small(),
+        root_level.embedding_data.clone().pop_dim_small(),
     );
     let root_result = super::random_walker_single_chunk(root_level.inner, root_seeds.into(), cfg)
         .embedded(root_level.embedding_data.pop_dim_small());
@@ -291,13 +289,13 @@ fn expand<D: DynDimension>(
     }
 }
 
-fn expanded_seeds(
-    upper_result: EmbeddedTensorOperator<D3, StaticElementType<f32>>,
+fn expanded_seeds<D: DynDimension + LargerDim>(
+    upper_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     out_md: ExpandedMetaData<D>,
     out_ed: TensorEmbeddingData<D>,
-) -> ExpandedChunkOperator<D3, StaticElementType<f32>> {
+) -> ExpandedChunkOperator<D, StaticElementType<f32>> {
     let metadata = out_md.clone();
 
     let inner = Operator::with_state(
@@ -378,7 +376,7 @@ fn expanded_seeds(
                             let out_info = m_out.chunk_info(pos);
                             let nd = m_in.dim().n();
 
-                            let out_begin = out_info.begin;
+                            let out_begin = out_info.begin.clone();
                             let out_end = out_info.end();
 
                             let aabb = AABB::new(
@@ -541,11 +539,11 @@ fn expanded_seeds(
     ExpandedChunkOperator { inner, metadata }
 }
 
-fn run_rw(
-    weights: ExpandedChunkOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>>,
-    seeds: ExpandedChunkOperator<D3, StaticElementType<f32>>,
+fn run_rw<D: DynDimension + LargerDim>(
+    weights: ExpandedChunkOperator<D::Larger, StaticElementType<f32>>,
+    seeds: ExpandedChunkOperator<D, StaticElementType<f32>>,
     cfg: SolverConfig,
-) -> ExpandedChunkOperator<D3, StaticElementType<f32>> {
+) -> ExpandedChunkOperator<D, StaticElementType<f32>> {
     let metadata = seeds.metadata.clone();
     let inner = Operator::with_state(
         op_descriptor!(),
@@ -570,7 +568,7 @@ fn run_rw(
                             dimensions: chunk_info.logical_size().global(),
                             chunk_size: chunk_info.mem_size,
                         };
-                        random_walker_on_chunk::<D3>(
+                        random_walker_on_chunk(
                             ctx,
                             &weights.inner,
                             &seeds.inner,
@@ -594,9 +592,9 @@ fn run_rw(
     ExpandedChunkOperator { inner, metadata }
 }
 
-fn shrink(
-    input: ExpandedChunkOperator<D3, StaticElementType<f32>>,
-) -> TensorOperator<D3, StaticElementType<f32>> {
+fn shrink<D: DynDimension>(
+    input: ExpandedChunkOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<D, StaticElementType<f32>> {
     let nd = input.metadata.base.dim().n();
 
     let push_constants = DynPushConstants::new()
@@ -618,7 +616,7 @@ fn shrink(
                 let m_out = &m_in.base;
                 let nd = m_out.dim().n();
 
-                let out_chunk_size = m_out.chunk_size;
+                let out_chunk_size = &m_out.chunk_size;
                 let in_chunk_size = m_in.mem_size();
 
                 let pipeline = device.request_state(
@@ -663,7 +661,7 @@ fn shrink(
                                 DescriptorConfig::new([&in_chunk, &gpu_chunk_out]);
 
                             let chunk_info = m_in.chunk_info(pos);
-                            let out_size = m_out.chunk_size;
+                            let out_size = &m_out.chunk_size;
 
                             device.with_cmd_buffer(|cmd| unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
@@ -701,18 +699,15 @@ fn shrink(
     )
 }
 
-fn level_step(
-    current_level_weights: EmbeddedTensorOperator<
-        <D3 as LargerDim>::Larger,
-        StaticElementType<f32>,
-    >,
-    upper_result: EmbeddedTensorOperator<D3, StaticElementType<f32>>,
+fn level_step<D: DynDimension + LargerDim>(
+    current_level_weights: EmbeddedTensorOperator<D::Larger, StaticElementType<f32>>,
+    upper_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     cfg: SolverConfig,
-) -> EmbeddedTensorOperator<D3, StaticElementType<f32>> {
-    let level_md = current_level_weights.metadata.pop_dim_small();
-    let level_ed = current_level_weights.embedding_data.pop_dim_small();
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+    let level_md = current_level_weights.metadata.clone().pop_dim_small();
+    let level_ed = current_level_weights.embedding_data.clone().pop_dim_small();
     let expansion_by = level_md
         .chunk_size
         .map(|s| (((s.raw as f32 * 0.125) as u32).max(1)).into());
@@ -722,7 +717,7 @@ fn level_step(
     );
 
     let world_to_grid = level_ed.physical_to_voxel();
-    let points_fg = crate::operators::geometry::transform(points_fg, world_to_grid);
+    let points_fg = crate::operators::geometry::transform(points_fg, world_to_grid.clone());
     let points_bg = crate::operators::geometry::transform(points_bg, world_to_grid);
 
     let seeds = expanded_seeds(
@@ -733,7 +728,7 @@ fn level_step(
             base: level_md,
             expansion_by,
         },
-        level_ed,
+        level_ed.clone(),
     );
 
     let expanded_result = run_rw(expanded_weights, seeds, cfg);
