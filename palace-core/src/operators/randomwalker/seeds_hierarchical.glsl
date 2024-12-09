@@ -35,10 +35,7 @@ bool at_cuboid_border(uint[N] position, uint[N] size) {
     return any(equal(position, fill(position, 0))) || any(equal(add(position, fill(position, 1)), size));
 }
 
-// NO_PUSH_main refactor
 bool at_voxel(float[N] voxel, float[N] point_voxel) {
-    //NO_PUSH_main: TODO: Do we actually want to clamp? Probably not...
-    //point_voxel = clamp(point_voxel, fill(voxel, 0.0), sub(to_float(consts.out_tensor_size), fill(voxel, 1.0)));
     float[N] diff = abs(sub(voxel, point_voxel));
 
     bool[N] close = less_than_equal(diff, fill(diff, 0.5));
