@@ -55,6 +55,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights_bian, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker, m)?)?;
+    m.add_function(wrap_pyfunction!(hierarchical_randomwalker, m)?)?;
     m.add_function(wrap_pyfunction!(rasterize_seed_points, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<palace_core::operators::sliceviewer::SliceviewState>()?;

@@ -29,7 +29,7 @@ use super::SolverConfig;
 
 type D = D3;
 
-pub fn hierchical_random_walker_solver(
+pub fn hierarchical_random_walker_solver(
     weights: LODTensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,

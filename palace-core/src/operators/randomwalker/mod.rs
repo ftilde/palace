@@ -158,7 +158,7 @@ pub fn hierarchical_random_walker(
     cfg: SolverConfig,
 ) -> LODTensorOperator<D3, StaticElementType<f32>> {
     let weights = random_walker_weights_lod(tensor, weight_function, min_edge_weight);
-    hierchical_random_walker_solver(weights, points_fg, points_bg, cfg)
+    hierarchical_random_walker_solver(weights, points_fg, points_bg, cfg)
 }
 
 #[allow(unused)] // Very useful for debugging

@@ -63,6 +63,7 @@ raycaster_config_rw = pc.RaycasterConfig().store(store)
 
 #raycaster_config_rw.compositing_mode().write("DVR")
 
+mode = store.store_primitive("normal")
 weight_function = store.store_primitive("bian_mean")
 min_edge_weight = store.store_primitive(1e-5)
 
@@ -81,34 +82,35 @@ rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
 
 mouse_pos_and_value = None
 
+def apply_weight_function(volume):
+    match weight_function.load():
+        case "grady":
+            return pc.randomwalker_weights(volume, min_edge_weight.load(), beta.load())
+        case "bian_mean":
+            return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), extent.load())
+
 def render(size, events: pc.Events):
     global mouse_pos_and_value
 
-    match weight_function.load():
-        case "grady":
-            weights = pc.randomwalker_weights(rw_input, min_edge_weight.load(), beta.load())
-        case "bian_mean":
-            weights = pc.randomwalker_weights_bian(rw_input, min_edge_weight.load(), extent.load())
+    match mode.load():
+        case "normal":
+            weights = apply_weight_function(rw_input)
+            rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
+            rw_result = rw_result.create_lod(2.0)
 
-    edge_w = pc.min(pc.min(
-        pc.index(weights.fold_into_dtype(), 0).embedded(ed),
-        pc.index(weights.fold_into_dtype(), 1).embedded(ed)),
-        pc.index(weights.fold_into_dtype(), 2).embedded(ed)).embedded(ed)
-
-    #print(rt.resolve_scalar(pc.min_value(edge_w)))
-    #print(rt.resolve_scalar(pc.max_value(edge_w)))
-
-    rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
-
+        case "hierarchical":
+            #TODO: use input volume
+            input_lod = rw_input.create_lod(2.0)
+            weights = input_lod.map(lambda level: apply_weight_function(level))
+            rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds)
 
     v = vol.embedded(ed).create_lod(2.0)
-    rw_result = rw_result.create_lod(2.0)
-    edge_w = edge_w.create_lod(2.0)
 
 
     # GUI stuff
     widgets = []
 
+    widgets.append(pc.ComboBox("Mode", weight_function, ["normal", "hierarchical"]))
     widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean"]))
     match weight_function.load():
         case "grady":
