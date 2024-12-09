@@ -7,7 +7,7 @@ use id::Identify;
 
 use crate::{
     array::{ChunkIndex, TensorMetaData},
-    dim::{DynDimension, LargerDim, D3},
+    dim::{DynDimension, LargerDim},
     dtypes::StaticElementType,
     operator::{op_descriptor, DataParam, Operator, OperatorDescriptor},
     operators::tensor::TensorOperator,
@@ -31,7 +31,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     seeds: &'inv Operator<StaticElementType<f32>>,
     pos: ChunkIndex,
     cfg: SolverConfig,
-    tensor_md: TensorMetaData<D3>,
+    tensor_md: TensorMetaData<D>,
 ) -> Result<(), crate::Error> {
     assert!(tensor_md.is_single_chunk());
     let device = ctx.preferred_device();
@@ -58,7 +58,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     //dbg!(&super::download::<f32>(*ctx, device, &seeds).await[..]);
 
     let (tensor_to_rows_table, num_rows) =
-        tensor_to_rows_table::<D>(*ctx, device, &seeds, tensor_md).await?;
+        tensor_to_rows_table(*ctx, device, &seeds, tensor_md.clone()).await?;
 
     let flags = vk::BufferUsageFlags::STORAGE_BUFFER
         | vk::BufferUsageFlags::TRANSFER_DST
@@ -78,7 +78,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
             &weights,
             &seeds,
             &tensor_to_rows_table,
-            tensor_md,
+            tensor_md.clone(),
             num_rows,
         )
         .await?;
@@ -161,14 +161,14 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     Ok(())
 }
 
-pub fn random_walker_single_chunk(
-    weights: TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>>,
-    seeds: TensorOperator<D3, StaticElementType<f32>>,
+pub fn random_walker_single_chunk<D: DynDimension + LargerDim>(
+    weights: TensorOperator<D::Larger, StaticElementType<f32>>,
+    seeds: TensorOperator<D, StaticElementType<f32>>,
     cfg: SolverConfig,
-) -> TensorOperator<D3, StaticElementType<f32>> {
+) -> TensorOperator<D, StaticElementType<f32>> {
     assert_eq!(weights.metadata.dimension_in_chunks().hmul(), 1);
     assert_eq!(seeds.metadata.dimension_in_chunks().hmul(), 1);
-    assert_eq!(weights.metadata.pop_dim_small(), seeds.metadata);
+    assert_eq!(weights.metadata.clone().pop_dim_small(), seeds.metadata);
 
     TensorOperator::unbatched(
         op_descriptor!(),
@@ -177,13 +177,13 @@ pub fn random_walker_single_chunk(
         (weights, seeds, DataParam(cfg)),
         move |ctx, _pos, _, (weights, seeds, cfg)| {
             async move {
-                random_walker_on_chunk::<D3>(
+                random_walker_on_chunk::<D>(
                     ctx,
                     &weights.chunks,
                     &seeds.chunks,
                     ChunkIndex(0),
                     **cfg,
-                    seeds.metadata,
+                    seeds.metadata.clone(),
                 )
                 .await
             }
@@ -210,7 +210,7 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &'a DeviceContext,
     seeds: &impl AsBufferDescriptor,
-    tensor_md: TensorMetaData<D3>,
+    tensor_md: TensorMetaData<D>,
 ) -> Result<(TempRessource<'a, Allocation>, u32), crate::Error> {
     #[derive(Copy, Clone, AsStd140, GlslStruct)]
     struct PushConstantsStep {
@@ -383,13 +383,13 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     Ok((table, num_rows))
 }
 
-async fn results_to_tensor<'req, 'inv>(
+async fn results_to_tensor<'req, 'inv, D: DynDimension>(
     device: &DeviceContext,
     seeds: &impl AsBufferDescriptor,
     tensor_to_rows_table: &Allocation,
     result_vec: Option<&Allocation>,
     out_allocation: &impl AsBufferDescriptor,
-    tensor_md: TensorMetaData<D3>,
+    tensor_md: TensorMetaData<D>,
     num_rows: u32,
 ) -> Result<(), crate::Error> {
     let nd = tensor_md.dim().n();
@@ -420,19 +420,19 @@ async fn results_to_tensor<'req, 'inv>(
         let mut pipeline = pipeline.bind(cmd);
 
         pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch3d(global_size);
+        pipeline.dispatch_dyn(device, global_size);
     });
 
     Ok(())
 }
 
-async fn mat_setup<'req, 'inv>(
+async fn mat_setup<'req, 'inv, D: DynDimension>(
     ctx: OpaqueTaskContext<'req, 'inv>,
     device: &DeviceContext,
     weights: &impl AsBufferDescriptor,
     seeds: &impl AsBufferDescriptor,
     tensor_to_rows_table: &Allocation,
-    tensor_md: TensorMetaData<D3>,
+    tensor_md: TensorMetaData<D>,
     num_rows: u32,
 ) -> Result<(SparseMatrix, Allocation), crate::Error> {
     assert!(tensor_md.is_single_chunk());
