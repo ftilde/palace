@@ -4,7 +4,7 @@ use id::Identify;
 use crate::{
     array::TensorMetaData,
     data::ChunkCoordinate,
-    dim::{DynDimension, LargerDim, D3},
+    dim::{DynDimension, LargerDim},
     dtypes::{ScalarType, StaticElementType},
     jit::{self},
     op_descriptor,
@@ -21,11 +21,11 @@ use crate::{
     },
 };
 
-pub fn random_walker_weights(
-    tensor: TensorOperator<D3, StaticElementType<f32>>,
+pub fn random_walker_weights<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
     weight_function: WeightFunction,
     min_edge_weight: f32,
-) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
     match weight_function {
         WeightFunction::Grady { beta } => {
             random_walker_weights_grady(tensor, beta, min_edge_weight)
@@ -36,11 +36,11 @@ pub fn random_walker_weights(
     }
 }
 
-pub fn random_walker_weights_lod(
-    tensor: LODTensorOperator<D3, StaticElementType<f32>>,
+pub fn random_walker_weights_lod<D: DynDimension + LargerDim>(
+    tensor: LODTensorOperator<D, StaticElementType<f32>>,
     weight_function: WeightFunction,
     min_edge_weight: f32,
-) -> LODTensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+) -> LODTensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
     tensor.map(|level| {
         random_walker_weights(level.inner, weight_function, min_edge_weight).embedded(
             crate::array::TensorEmbeddingData {
@@ -62,21 +62,22 @@ pub enum WeightParameters {
     BianMean { extent: usize },
 }
 
-pub fn random_walker_weights_grady(
-    tensor: TensorOperator<D3, StaticElementType<f32>>,
+pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
     beta: f32,
     min_edge_weight: f32,
-) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
     let nd = tensor.metadata.dim().n();
 
     let out_md = tensor
         .metadata
+        .clone()
         .push_dim_small((nd as u32).into(), (nd as u32).into());
 
     TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
-        out_md,
+        out_md.clone(),
         (
             tensor,
             DataParam(beta),
@@ -123,8 +124,6 @@ pub fn random_walker_weights_grady(
                 let _ = ctx
                     .run_unordered(positions.into_iter().map(|(pos, _)| {
                         async move {
-                            let pos_nd = tensor.metadata.chunk_pos_from_index(pos);
-
                             let out_chunk = ctx
                                 .submit(ctx.alloc_slot_gpu(&device, pos, out_md.chunk_size.hmul()))
                                 .await;
@@ -142,6 +141,8 @@ pub fn random_walker_weights_grady(
                                 let _ = ctx
                                     .run_unordered((0..nd).into_iter().map(|dim| {
                                         async move {
+                                            let pos_nd = tensor.metadata.chunk_pos_from_index(pos);
+
                                             let neighbor_nd =
                                                 pos_nd.map_element(dim, |e: ChunkCoordinate| {
                                                     (e + 1u32).min(
@@ -179,7 +180,7 @@ pub fn random_walker_weights_grady(
                                                     },
                                                 );
                                                 pipeline.write_descriptor_set(0, descriptor_config);
-                                                pipeline.dispatch3d(global_size);
+                                                pipeline.dispatch_dyn(device, global_size);
                                             });
                                         }
                                         .into()
@@ -218,8 +219,8 @@ fn mean_filter<D: DynDimension>(
     crate::operators::volume_gpu::separable_convolution(t, kernels)
 }
 
-fn variance(
-    t: TensorOperator<D3, StaticElementType<f32>>,
+fn variance<D: DynDimension>(
+    t: TensorOperator<D, StaticElementType<f32>>,
     extent: usize,
 ) -> ScalarOperator<StaticElementType<f32>> {
     let nd = t.dim().n();
@@ -249,11 +250,11 @@ fn variance(
     })
 }
 
-pub fn random_walker_weights_bian(
-    tensor: TensorOperator<D3, StaticElementType<f32>>,
+pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
     extent: usize,
     min_edge_weight: f32,
-) -> TensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
     let t_mean = mean_filter(tensor.clone(), extent);
     let variance = variance(tensor.clone(), extent);
 
@@ -261,6 +262,7 @@ pub fn random_walker_weights_bian(
     let out_size = tensor
         .metadata
         .dimensions
+        .clone()
         .push_dim_small((nd as u32).into());
 
     let out_md = TensorMetaData::single_chunk(out_size);
@@ -268,7 +270,7 @@ pub fn random_walker_weights_bian(
     TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
-        out_md,
+        out_md.clone(),
         (
             t_mean,
             variance,
@@ -283,7 +285,7 @@ pub fn random_walker_weights_bian(
                 let md = &t_mean.metadata;
                 let nd = md.dim().n();
 
-                let in_size = t_mean.metadata.dimensions;
+                let in_size = &t_mean.metadata.dimensions;
 
                 let push_constants = DynPushConstants::new()
                     .vec::<u32>(nd, "tensor_dim_in")
@@ -319,8 +321,6 @@ pub fn random_walker_weights_bian(
                 let _ = ctx
                     .run_unordered(positions.into_iter().map(|(pos, _)| {
                         async move {
-                            let pos_nd = t_mean.metadata.chunk_pos_from_index(pos);
-
                             let out_chunk = ctx
                                 .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
                                 .await;
@@ -347,6 +347,8 @@ pub fn random_walker_weights_bian(
                                 let _ = ctx
                                     .run_unordered((0..nd).into_iter().map(|dim| {
                                         async move {
+                                            let pos_nd = t_mean.metadata.chunk_pos_from_index(pos);
+
                                             let neighbor_nd =
                                                 pos_nd.map_element(dim, |e: ChunkCoordinate| {
                                                     (e + 1u32).min(
@@ -384,7 +386,7 @@ pub fn random_walker_weights_bian(
                                                     },
                                                 );
                                                 pipeline.write_descriptor_set(0, descriptor_config);
-                                                pipeline.dispatch3d(global_size);
+                                                pipeline.dispatch_dyn(device, global_size);
                                             });
                                         }
                                         .into()

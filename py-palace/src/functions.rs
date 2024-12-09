@@ -314,7 +314,6 @@ pub fn render_slice(
 #[pyfunction]
 pub fn mean_value(vol: MaybeEmbeddedTensorOperatorArg) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
-    let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     Ok(palace_core::operators::volume_gpu::mean(vol).into())
 }
@@ -326,7 +325,6 @@ pub fn min_value(
     num_samples: Option<usize>,
 ) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
-    let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     let sample_method = match num_samples {
         Some(n) => SampleMethod::Subset(n),
@@ -342,7 +340,6 @@ pub fn max_value(
     num_samples: Option<usize>,
 ) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
-    let vol = try_into_static_err(vol)?;
     let vol = vol.try_into()?;
     let sample_method = match num_samples {
         Some(n) => SampleMethod::Subset(n),
@@ -568,8 +565,8 @@ pub fn rasterize_seed_points(
         palace_core::operators::randomwalker::rasterize_seed_points(
             points_fg,
             points_bg,
-            md.try_into_dim()?,
-            ed.try_into_dim()?,
+            md.into(),
+            ed.into(),
         )
         .into_dyn()
         .try_into()?;

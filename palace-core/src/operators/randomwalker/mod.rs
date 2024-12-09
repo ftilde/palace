@@ -5,7 +5,7 @@ use ash::vk;
 use super::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator};
 use crate::{
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
-    dim::{DynDimension, D1, D3},
+    dim::{DynDimension, LargerDim, D1, D3},
     dtypes::{DType, ScalarType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
@@ -27,23 +27,24 @@ pub use hierarchical::*;
 pub use solver::*;
 pub use weights::*;
 
-pub fn rasterize_seed_points(
+pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
-    md: TensorMetaData<D3>,
-    ed: TensorEmbeddingData<D3>,
-) -> EmbeddedTensorOperator<D3, StaticElementType<f32>> {
+    md: TensorMetaData<D>,
+    ed: TensorEmbeddingData<D>,
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let in_dtype = points_fg.dtype();
+    let nd = md.dim().n();
     assert_eq!(in_dtype, points_bg.dtype());
-    assert_eq!(in_dtype.size, 3);
+    assert_eq!(in_dtype.size, nd as u32);
     assert_eq!(in_dtype.scalar, ScalarType::F32);
     assert!(md.is_single_chunk());
 
     TensorOperator::unbatched(
         op_descriptor!(),
         Default::default(),
-        md,
-        (points_fg, points_bg, DataParam(md), DataParam(ed)),
+        md.clone(),
+        (points_fg, points_bg, DataParam(md), DataParam(ed.clone())),
         |ctx, _pos, _, (points_fg, points_bg, md, ed)| {
             async move {
                 let device = ctx.preferred_device();
@@ -115,7 +116,7 @@ pub fn rasterize_seed_points(
                         Ok(())
                     });
                     pipeline.write_descriptor_set(0, descriptor_config);
-                    pipeline.dispatch3d(global_size);
+                    pipeline.dispatch_dyn(device, global_size);
                 });
 
                 unsafe {
@@ -134,8 +135,6 @@ pub fn rasterize_seed_points(
         },
     )
     .embedded(ed)
-    .try_into_static()
-    .unwrap()
 }
 
 pub fn random_walker(

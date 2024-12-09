@@ -28,10 +28,7 @@ use crate::{
 };
 
 use super::{
-    array::ArrayOperator,
-    raycaster::TransFuncOperator,
-    scalar::ScalarOperator,
-    volume::{ChunkSize, VolumeOperator},
+    array::ArrayOperator, raycaster::TransFuncOperator, scalar::ScalarOperator, volume::ChunkSize,
 };
 
 pub fn apply_tf<'op, D: DynDimension>(
@@ -948,28 +945,28 @@ impl AggretationMethod {
     }
 }
 
-pub fn mean<'op>(
-    input: VolumeOperator<StaticElementType<f32>>,
+pub fn mean<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
 ) -> ScalarOperator<StaticElementType<f32>> {
     scalar_aggregation(input, AggretationMethod::Mean, SampleMethod::All)
 }
 
-pub fn min<'op>(
-    input: VolumeOperator<StaticElementType<f32>>,
+pub fn min<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
     sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
     scalar_aggregation(input, AggretationMethod::Min, sample_method)
 }
 
-pub fn max<'op>(
-    input: VolumeOperator<StaticElementType<f32>>,
+pub fn max<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
     sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
     scalar_aggregation(input, AggretationMethod::Max, sample_method)
 }
 
-fn scalar_aggregation<'op>(
-    input: VolumeOperator<StaticElementType<f32>>,
+fn scalar_aggregation<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
     method: AggretationMethod,
     sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
@@ -977,18 +974,14 @@ fn scalar_aggregation<'op>(
         panic!("Mean aggregation not implemented for subset");
     }
 
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        mem_dim: cgmath::Vector3<u32>,
-        logical_dim: cgmath::Vector3<u32>,
-        norm_factor: f32,
-    }
     const SHADER: &'static str = r#"
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_scalar_block_layout : require
 
 #include <util.glsl>
 #include <atomic.glsl>
 #include <size_util.glsl>
+#include <vec.glsl>
 
 layout(std430, binding = 0) readonly buffer InputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -1013,9 +1006,9 @@ void main()
 
     float val;
 
-    uvec3 local = from_linear(gID, consts.mem_dim);
+    uint[ND] local = from_linear(gID, consts.mem_dim);
 
-    if(all(lessThan(local, consts.logical_dim))) {
+    if(all(less_than(local, consts.logical_dim))) {
         val = sourceData.values[gID] * consts.norm_factor;
     } else {
         val = NEUTRAL_VAL;
@@ -1042,7 +1035,14 @@ void main()
             async move {
                 let device = ctx.preferred_device();
 
-                let m = input.metadata;
+                let nd = input.dim().n();
+
+                let push_constants = DynPushConstants::new()
+                    .vec::<u32>(nd, "mem_dim")
+                    .vec::<u32>(nd, "logical_dim")
+                    .scalar::<f32>("norm_factor");
+
+                let m = &input.metadata;
 
                 let mut all_chunks = m.chunk_indices().into_iter().collect::<Vec<_>>();
                 let to_request = match **sample_method {
@@ -1060,14 +1060,15 @@ void main()
                 let batch_size = 1024;
 
                 let pipeline = device.request_state(
-                    (m.chunk_size.hmul(), method),
-                    |device, (mem_size, method)| {
+                    (&push_constants, m.chunk_size.hmul(), method, nd),
+                    |device, (push_constants, mem_size, method, nd)| {
                         let neutral_val_str =
                             format!("uintBitsToFloat({})", method.neutral_val().to_bits());
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
-                                .push_const_block::<PushConstants>()
+                                .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
+                                .define("ND", nd)
                                 .define("AGG_FUNCTION", method.aggregration_function_glsl())
                                 .define(
                                     "AGG_FUNCTION_SUBGROUP",
@@ -1132,13 +1133,12 @@ void main()
                             unsafe {
                                 let mut pipeline = pipeline.bind(cmd);
 
-                                pipeline.push_constant(PushConstants {
-                                    mem_dim: brick_info.mem_dimensions.into_elem::<u32>().into(),
-                                    logical_dim: brick_info
-                                        .logical_dimensions
-                                        .into_elem::<u32>()
-                                        .into(),
-                                    norm_factor: normalization_factor,
+                                pipeline.push_constant_dyn(&push_constants, |consts| {
+                                    consts.vec(&brick_info.mem_dimensions.into_elem::<u32>())?;
+                                    consts
+                                        .vec(&brick_info.logical_dimensions.into_elem::<u32>())?;
+                                    consts.scalar(normalization_factor)?;
+                                    Ok(())
                                 });
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(device, global_size);
@@ -1267,7 +1267,7 @@ mod test {
     }
 
     fn compare_convolution_1d(
-        input: VolumeOperator<StaticElementType<f32>>,
+        input: crate::operators::volume::VolumeOperator<StaticElementType<f32>>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
         dim: usize,
