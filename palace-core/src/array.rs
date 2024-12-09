@@ -136,6 +136,13 @@ impl<D: DynDimension> TensorEmbeddingData<D> {
         }
     }
 }
+impl<D: DynDimension + SmallerDim> TensorEmbeddingData<D> {
+    pub fn pop_dim_small(self) -> TensorEmbeddingData<D::Smaller> {
+        TensorEmbeddingData {
+            spacing: self.spacing.pop_dim_small(),
+        }
+    }
+}
 
 impl<D: LargerDim> TensorEmbeddingData<D> {
     pub fn voxel_to_physical(&self) -> Matrix<D::Larger, f32> {

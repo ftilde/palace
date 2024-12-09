@@ -25,19 +25,17 @@ use crate::{
     },
 };
 
-use super::{random_walker_weights, SolverConfig, WeightFunction};
+use super::SolverConfig;
 
 type D = D3;
 
-pub fn hierchical_random_walker(
-    tensor: LODTensorOperator<D3, StaticElementType<f32>>,
+pub fn hierchical_random_walker_solver(
+    weights: LODTensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
-    weight_function: WeightFunction,
-    min_edge_weight: f32,
     cfg: SolverConfig,
 ) -> LODTensorOperator<D3, StaticElementType<f32>> {
-    let mut levels = tensor.levels.into_iter().rev();
+    let mut levels = weights.levels.into_iter().rev();
     let root_level = levels.next().unwrap();
 
     assert!(root_level.inner.metadata.is_single_chunk());
@@ -45,17 +43,11 @@ pub fn hierchical_random_walker(
     let root_seeds = super::rasterize_seed_points(
         points_fg.clone(),
         points_bg.clone(),
-        root_level.metadata,
-        root_level.embedding_data,
+        root_level.metadata.pop_dim_small(),
+        root_level.embedding_data.pop_dim_small(),
     );
-    let root_result = super::random_walker(
-        root_level.inner,
-        root_seeds.into(),
-        weight_function,
-        min_edge_weight,
-        cfg,
-    )
-    .embedded(root_level.embedding_data);
+    let root_result = super::random_walker_single_chunk(root_level.inner, root_seeds.into(), cfg)
+        .embedded(root_level.embedding_data.pop_dim_small());
 
     let mut output = VecDeque::new();
     output.push_front(root_result.clone());
@@ -67,8 +59,6 @@ pub fn hierchical_random_walker(
             prev_result,
             points_fg.clone(),
             points_bg.clone(),
-            weight_function,
-            min_edge_weight,
             cfg,
         );
         output.push_front(result.clone());
@@ -712,26 +702,26 @@ fn shrink(
 }
 
 fn level_step(
-    current_level: EmbeddedTensorOperator<D3, StaticElementType<f32>>,
+    current_level_weights: EmbeddedTensorOperator<
+        <D3 as LargerDim>::Larger,
+        StaticElementType<f32>,
+    >,
     upper_result: EmbeddedTensorOperator<D3, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
-    weight_function: WeightFunction,
-    min_edge_weight: f32,
     cfg: SolverConfig,
 ) -> EmbeddedTensorOperator<D3, StaticElementType<f32>> {
-    let expansion_by = current_level
-        .metadata
+    let level_md = current_level_weights.metadata.pop_dim_small();
+    let level_ed = current_level_weights.embedding_data.pop_dim_small();
+    let expansion_by = level_md
         .chunk_size
         .map(|s| (((s.raw as f32 * 0.125) as u32).max(1)).into());
-    let weights = random_walker_weights(
-        current_level.inner.clone(),
-        weight_function,
-        min_edge_weight,
+    let expanded_weights = expand(
+        current_level_weights.inner,
+        expansion_by.push_dim_small(0.into()),
     );
-    let expanded_weights = expand(weights, expansion_by.push_dim_small(0.into()));
 
-    let world_to_grid = current_level.embedding_data.physical_to_voxel();
+    let world_to_grid = level_ed.physical_to_voxel();
     let points_fg = crate::operators::geometry::transform(points_fg, world_to_grid);
     let points_bg = crate::operators::geometry::transform(points_bg, world_to_grid);
 
@@ -740,14 +730,14 @@ fn level_step(
         points_fg,
         points_bg,
         ExpandedMetaData {
-            base: current_level.metadata,
+            base: level_md,
             expansion_by,
         },
-        current_level.embedding_data,
+        level_ed,
     );
 
     let expanded_result = run_rw(expanded_weights, seeds, cfg);
-    shrink(expanded_result).embedded(current_level.embedding_data)
+    shrink(expanded_result).embedded(level_ed)
 }
 
 #[cfg(test)]

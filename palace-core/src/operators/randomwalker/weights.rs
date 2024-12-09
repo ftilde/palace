@@ -9,7 +9,10 @@ use crate::{
     jit::{self},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
-    operators::{scalar::ScalarOperator, tensor::TensorOperator},
+    operators::{
+        scalar::ScalarOperator,
+        tensor::{LODTensorOperator, TensorOperator},
+    },
     vec::Vector,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
@@ -31,6 +34,20 @@ pub fn random_walker_weights(
             random_walker_weights_bian(tensor, extent, min_edge_weight)
         }
     }
+}
+
+pub fn random_walker_weights_lod(
+    tensor: LODTensorOperator<D3, StaticElementType<f32>>,
+    weight_function: WeightFunction,
+    min_edge_weight: f32,
+) -> LODTensorOperator<<D3 as LargerDim>::Larger, StaticElementType<f32>> {
+    tensor.map(|level| {
+        random_walker_weights(level.inner, weight_function, min_edge_weight).embedded(
+            crate::array::TensorEmbeddingData {
+                spacing: level.embedding_data.spacing.push_dim_small(1.0),
+            },
+        )
+    })
 }
 
 #[derive(Copy, Clone, Identify)]

@@ -547,7 +547,7 @@ pub fn hierarchical_randomwalker(
         config.max_residuum_norm = max_residuum_norm;
     }
     let res: palace_core::operators::tensor::LODTensorOperator<DDyn, DType> =
-        palace_core::operators::randomwalker::hierchical_random_walker(
+        palace_core::operators::randomwalker::hierarchical_random_walker(
             tensor,
             points_fg,
             points_bg,

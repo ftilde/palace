@@ -472,11 +472,11 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
 }
 
 impl<D: DynDimension, E> LODTensorOperator<D, E> {
-    pub fn map(
+    pub fn map<DO: DynDimension, EO>(
         self,
-        f: impl FnMut(EmbeddedTensorOperator<D, E>) -> EmbeddedTensorOperator<D, E>,
-    ) -> Self {
-        Self {
+        f: impl FnMut(EmbeddedTensorOperator<D, E>) -> EmbeddedTensorOperator<DO, EO>,
+    ) -> LODTensorOperator<DO, EO> {
+        LODTensorOperator {
             levels: self.levels.into_iter().map(f).collect(),
         }
     }

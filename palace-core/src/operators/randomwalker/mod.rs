@@ -2,7 +2,7 @@ use std::alloc::Layout;
 
 use ash::vk;
 
-use super::tensor::{EmbeddedTensorOperator, TensorOperator};
+use super::tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator};
 use crate::{
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
     dim::{DynDimension, D1, D3},
@@ -147,6 +147,18 @@ pub fn random_walker(
 ) -> TensorOperator<D3, StaticElementType<f32>> {
     let weights = random_walker_weights(tensor, weight_function, min_edge_weight);
     random_walker_single_chunk(weights, seeds, cfg)
+}
+
+pub fn hierarchical_random_walker(
+    tensor: LODTensorOperator<D3, StaticElementType<f32>>,
+    points_fg: TensorOperator<D1, DType>,
+    points_bg: TensorOperator<D1, DType>,
+    weight_function: WeightFunction,
+    min_edge_weight: f32,
+    cfg: SolverConfig,
+) -> LODTensorOperator<D3, StaticElementType<f32>> {
+    let weights = random_walker_weights_lod(tensor, weight_function, min_edge_weight);
+    hierchical_random_walker_solver(weights, points_fg, points_bg, cfg)
 }
 
 #[allow(unused)] // Very useful for debugging
@@ -294,7 +306,7 @@ mod test {
 
         let cfg = Default::default();
 
-        let v = hierchical_random_walker(
+        let v = hierarchical_random_walker(
             vol,
             foreground,
             background,

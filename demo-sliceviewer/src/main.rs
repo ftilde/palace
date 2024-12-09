@@ -154,7 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //)
                     //.embedded(Default::default())
                     //.single_level_lod()
-                    let res = operators::randomwalker::hierchical_random_walker(
+                    let res = operators::randomwalker::hierarchical_random_walker(
                         ball,
                         seeds_fg,
                         seeds_bg,

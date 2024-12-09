@@ -111,8 +111,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap()
                     .compile()
                     .unwrap()
-                    .try_into()
-                    .unwrap()
             })
         })
         .try_into()?,
