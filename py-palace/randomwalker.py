@@ -36,11 +36,6 @@ ed = vol.embedding_data
 vol = pc.cast(vol, pc.ScalarType.F32)
 vol = pc.mul(vol, 1.0/(1 << 16))
 
-vol_min = rt.resolve_scalar(pc.min_value(vol))
-vol_max = rt.resolve_scalar(pc.max_value(vol))
-
-rw_input = pc.div(pc.sub(vol, vol_min), vol_max-vol_min)
-
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
 else:
@@ -75,9 +70,6 @@ extent = store.store_primitive(1)
 
 gui_state = pc.GuiState(rt)
 
-#print(tf.max)
-#print(tf.min)
-
 mouse_pos_and_value = None
 
 def apply_weight_function(volume):
@@ -87,29 +79,28 @@ def apply_weight_function(volume):
         case "bian_mean":
             return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), extent.load())
 
-def render(size, events: pc.Events):
-    global mouse_pos_and_value
-
+def apply_rw_mode(input):
     match mode.load():
         case "normal":
-            i = pc.rechunk(rw_input, [pc.chunk_size_full]*3)
+            i = pc.rechunk(input, [pc.chunk_size_full]*3)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
-            rw_result = rw_result.create_lod(2.0)
-            v = vol.embedded(ed).create_lod(2.0)
+            return (i.create_lod(2.0), rw_result.create_lod(2.0))
 
         case "hierarchical":
-            #TODO: use input volume
-            i = pc.rechunk(rw_input, [32]*3)
+            i = pc.rechunk(input, [32]*3)
             input_lod = i.create_lod(2.0)
             weights = input_lod.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
             rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds)
+            return (input_lod, rw_result)
 
-            v = pc.rechunk(vol, [32]*3).create_lod(2.0)
 
+def render(size, events: pc.Events):
+    global mouse_pos_and_value
 
+    v, rw_result = apply_rw_mode(vol)
 
     # GUI stuff
     widgets = []
