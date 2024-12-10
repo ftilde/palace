@@ -28,6 +28,8 @@ const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
 
+const OPERATOR_REQUEST_BATCHING_GRANULARITY: usize = 64;
+
 struct DataRequestItem {
     id: DataId,
     item: TypeErased,
@@ -888,7 +890,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         if fullfillers.is_empty() {
                             let batch_size = match data_request.source.granularity() {
                                 crate::operator::ItemGranularity::Single => 1,
-                                crate::operator::ItemGranularity::Batched => 64,
+                                crate::operator::ItemGranularity::Batched => {
+                                    OPERATOR_REQUEST_BATCHING_GRANULARITY
+                                }
                             };
                             // Add item to batcher to spawn later
                             let fulfiller_task_id =
