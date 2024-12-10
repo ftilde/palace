@@ -366,7 +366,7 @@ pub fn open_volume(
     let brick_size_hint = brick_size_hint.map(|h| LocalVoxelPosition::fill(h.into()));
 
     let hints = palace_volume::Hints {
-        brick_size: brick_size_hint,
+        chunk_size: brick_size_hint,
         location: volume_path_hint,
         ..Default::default()
     };
@@ -379,14 +379,16 @@ pub fn open_volume(
 #[pyfunction]
 pub fn open_or_create_lod(
     path: std::path::PathBuf,
-    brick_size_hint: Option<u32>,
+    chunk_size_hint: Option<Vec<u32>>,
     volume_path_hint: Option<String>,
+    rechunk: Option<bool>,
 ) -> PyResult<LODTensorOperator> {
-    let brick_size_hint = brick_size_hint.map(|h| LocalVoxelPosition::fill(h.into()));
+    let chunk_size_hint = chunk_size_hint.map(|h| LocalVoxelPosition::from_fn(|i| h[i].into()));
 
     let hints = palace_volume::Hints {
-        brick_size: brick_size_hint,
+        chunk_size: chunk_size_hint,
         location: volume_path_hint,
+        rechunk: rechunk.unwrap_or(false),
         ..Default::default()
     };
     let (vol, _) = crate::map_result(palace_volume::open_or_create_lod(path, hints))?;

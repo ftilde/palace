@@ -3,14 +3,18 @@ use std::path::PathBuf;
 use palace_core::{
     dim::D3,
     dtypes::DType,
-    operators::volume::{EmbeddedVolumeOperator, LODVolumeOperator},
+    operators::{
+        volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator},
+        volume_gpu::rechunk,
+    },
     vec::LocalVoxelPosition,
 };
 
 #[derive(Clone, Default)]
 pub struct Hints {
-    pub brick_size: Option<LocalVoxelPosition>,
+    pub chunk_size: Option<LocalVoxelPosition>,
     pub location: Option<String>,
+    pub rechunk: bool,
 }
 
 impl Hints {
@@ -19,12 +23,17 @@ impl Hints {
     }
 
     pub fn brick_size(mut self, brick_size: LocalVoxelPosition) -> Self {
-        self.brick_size = Some(brick_size);
+        self.chunk_size = Some(brick_size);
         self
     }
 
     pub fn location(mut self, location: String) -> Self {
         self.location = Some(location);
+        self
+    }
+
+    pub fn rechunk(mut self, rechunk: bool) -> Self {
+        self.rechunk = rechunk;
         self
     }
 }
@@ -43,7 +52,7 @@ pub fn open(
         [.., "vvd"] => palace_vvd::open(
             &path,
             hints
-                .brick_size
+                .chunk_size
                 .unwrap_or(LocalVoxelPosition::fill(64.into())),
         ),
         [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path),
@@ -97,7 +106,16 @@ pub fn open_or_create_lod(
     Ok(if let Ok(vol) = open_lod(path.clone(), hints.clone()) {
         (vol, LodOrigin::Existing)
     } else {
-        let vol = open(path, hints)?.into_dyn();
+        let mut vol = open(path, hints.clone())?.into_dyn();
+
+        if hints.rechunk {
+            if let Some(chunk_size) = hints.chunk_size {
+                vol = vol
+                    .map_inner(|v| rechunk(v, chunk_size.map(|s| ChunkSize::Fixed(s)).into_dyn()));
+            } else {
+                return Err("rechunk hint is set, but no chunk_size specified".into());
+            }
+        }
 
         let vol: LODVolumeOperator<DType> = palace_core::operators::resample::create_lod(vol, 2.0)
             .try_into_static::<D3>()

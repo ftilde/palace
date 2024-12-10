@@ -29,12 +29,12 @@ background_seeds = read_vge(args.background_seeds)
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
-vol = pc.open_volume(args.volume_file)
-md: pc.TensorMetaData = vol.inner.metadata
-ed = vol.embedding_data
+vol = pc.open_or_create_lod(args.volume_file, rechunk=True, chunk_size_hint=[32,32,32])
+md: pc.TensorMetaData = vol.levels[0].inner.metadata
+ed = vol.levels[0].embedding_data
 
-vol = pc.cast(vol, pc.ScalarType.F32)
-vol = pc.mul(vol, 1.0/(1 << 16))
+vol = vol.map(lambda vol: pc.cast(vol, pc.ScalarType.F32).embedded(ed))
+vol = vol.map(lambda vol: pc.mul(vol, 1.0/(1 << 16)).embedded(ed))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -82,19 +82,19 @@ def apply_weight_function(volume):
 def apply_rw_mode(input):
     match mode.load():
         case "normal":
-            i = pc.rechunk(input, [pc.chunk_size_full]*3)
+            i = pc.rechunk(input.levels[0], [pc.chunk_size_full]*3)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
-            return (i.create_lod(2.0), rw_result.create_lod(2.0))
+            return (input, rw_result.create_lod(2.0))
 
         case "hierarchical":
-            i = pc.rechunk(input, [32]*3)
-            input_lod = i.create_lod(2.0)
-            weights = input_lod.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
+            #i = pc.rechunk(input, [32]*3)
+            #input_lod = i.create_lod(2.0)
+            weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
             rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds)
-            return (input_lod, rw_result)
+            return (input, rw_result)
 
 
 def render(size, events: pc.Events):
