@@ -1057,7 +1057,6 @@ void main()
                         ret
                     }
                 };
-                let batch_size = 1024;
 
                 let pipeline = device.request_state(
                     (&push_constants, m.chunk_size.hmul(), method, nd),
@@ -1108,46 +1107,44 @@ void main()
                 ))
                 .await;
 
-                for chunk in to_request.chunks(batch_size) {
-                    let mut stream = ctx.submit_unordered_with_data(chunk.iter().map(|pos| {
-                        (
-                            input.chunks.request_gpu(
-                                device.id,
-                                *pos,
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ,
-                                },
-                            ),
+                let mut stream = ctx.submit_unordered_with_data(to_request.iter().map(|pos| {
+                    (
+                        input.chunks.request_gpu(
+                            device.id,
                             *pos,
-                        )
-                    }));
-                    while let Some((gpu_brick_in, pos)) = stream.next().await {
-                        let brick_info = m.chunk_info(pos);
+                            DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_READ,
+                            },
+                        ),
+                        *pos,
+                    )
+                }));
+                while let Some((gpu_brick_in, pos)) = stream.next().await {
+                    let brick_info = m.chunk_info(pos);
 
-                        device.with_cmd_buffer(|cmd| {
-                            let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
+                    device.with_cmd_buffer(|cmd| {
+                        let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
 
-                            let global_size = brick_info.mem_elements();
+                        let global_size = brick_info.mem_elements();
 
-                            unsafe {
-                                let mut pipeline = pipeline.bind(cmd);
+                        unsafe {
+                            let mut pipeline = pipeline.bind(cmd);
 
-                                pipeline.push_constant_dyn(&push_constants, |consts| {
-                                    consts.vec(&brick_info.mem_dimensions.into_elem::<u32>())?;
-                                    consts
-                                        .vec(&brick_info.logical_dimensions.into_elem::<u32>())?;
-                                    consts.scalar(normalization_factor)?;
-                                    Ok(())
-                                });
-                                pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch(device, global_size);
-                            }
-                        });
-                    }
-                    ctx.submit(device.wait_for_current_cmd_buffer_completion())
-                        .await;
+                            pipeline.push_constant_dyn(&push_constants, |consts| {
+                                consts.vec(&brick_info.mem_dimensions.into_elem::<u32>())?;
+                                consts.vec(&brick_info.logical_dimensions.into_elem::<u32>())?;
+                                consts.scalar(normalization_factor)?;
+                                Ok(())
+                            });
+                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.dispatch(device, global_size);
+                        }
+                    });
                 }
+                ctx.submit(device.wait_for_current_cmd_buffer_completion())
+                    .await;
+
                 unsafe {
                     sum.initialized(
                         *ctx,
