@@ -36,8 +36,6 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     assert!(tensor_md.is_single_chunk());
     let device = ctx.preferred_device();
 
-    let start = std::time::Instant::now();
-
     if tensor_md.num_chunk_elements() > u32::MAX as usize {
         return Err(format!(
             "Tensor cannot have more than 2^32 elements, but it has {}",
@@ -54,6 +52,8 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         ctx.submit(weights.request_gpu(device.id, pos, read_info)),
         ctx.submit(seeds.request_gpu(device.id, pos, read_info),),
     );
+
+    let start = std::time::Instant::now();
 
     //dbg!(&super::download::<f32>(*ctx, device, &seeds).await[..]);
 
