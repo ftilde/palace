@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, VoxelPosition};
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::operators;
 use palace_core::operators::volume::VolumeOperator;
 use palace_core::runtime::RunTime;
@@ -77,7 +77,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = match args.input {
         Input::File(path) => {
-            palace_volume::open(path.vol, Hints::new().brick_size(brick_size))?.inner
+            let v = palace_volume::open(path.vol, Hints::new().brick_size(brick_size))?.inner;
+            palace_core::jit::jit(v)
+                .cast(ScalarType::F32.into())
+                .unwrap()
+                .compile()
+                .unwrap()
         }
         Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
