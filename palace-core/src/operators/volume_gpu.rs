@@ -1056,7 +1056,7 @@ void main()
                         let mut h = DefaultHasher::new();
                         ctx.current_op().inner().hash(&mut h);
                         let seed = h.finish();
-                        let mut rng = rand::rngs::SmallRng::seed_from_u64(dbg!(seed));
+                        let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
                         let (ret, _) = all_chunks.partial_shuffle(&mut rng, n);
                         ret.sort();
 
