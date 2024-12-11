@@ -1,4 +1,4 @@
-use id::{Identify, IdentifyHash};
+use id::Identify;
 
 use crate::{
     array::{ArrayMetaData, ChunkIndex},
@@ -116,6 +116,7 @@ pub fn comp_kernel_ddgauss_dxdx(stddev: f32) -> Vec<f32> {
 
 pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
+        op_descriptor!(),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_gauss,
@@ -123,6 +124,7 @@ pub fn gauss<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
+        op_descriptor!(),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_dgauss_dx,
@@ -130,6 +132,7 @@ pub fn dgauss_dx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
     gen_kernel_operator(
+        op_descriptor!(),
         stddev,
         |stddev| suitable_extent(*stddev).size(),
         comp_kernel_ddgauss_dxdx,
@@ -137,12 +140,13 @@ pub fn ddgauss_dxdx<'a>(stddev: f32) -> ArrayOperator<StaticElementType<f32>> {
 }
 
 fn gen_kernel_operator<Params: Element + Identify>(
+    descriptor: OperatorDescriptor,
     params: Params,
     get_size: fn(&Params) -> usize,
     gen_kernel: fn(Params) -> Vec<f32>,
 ) -> ArrayOperator<StaticElementType<f32>> {
     TensorOperator::unbatched(
-        op_descriptor!(),
+        descriptor,
         Default::default(),
         {
             let size = get_size(&params) as u32;
@@ -153,8 +157,10 @@ fn gen_kernel_operator<Params: Element + Identify>(
         },
         (
             DataParam(params),
-            DataParam(IdentifyHash(get_size)),
-            DataParam(IdentifyHash(gen_kernel)),
+            //Note: This only works because we are controlling the parameter functions and we take
+            //in the descriptor separately
+            DataParam(id::identify_source_location(get_size)),
+            DataParam(id::identify_source_location(gen_kernel)),
         ),
         move |ctx, pos, _, (params, get_size, gen_kernel)| {
             assert_eq!(pos, ChunkIndex(0));

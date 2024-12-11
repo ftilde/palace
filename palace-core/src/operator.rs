@@ -123,14 +123,7 @@ pub use op_descriptor;
 impl OperatorDescriptor {
     #[track_caller]
     pub fn with_name(name: &'static str) -> Self {
-        let caller = std::panic::Location::caller();
-
-        let id = Id::combine(&[
-            Id::from_data(name.as_bytes()),
-            Id::from_data(caller.file().as_bytes()),
-            Id::hash(&caller.line()),
-            Id::hash(&caller.column()),
-        ]);
+        let id = Id::combine(&[Id::from_data(name.as_bytes()), Id::source_file_location()]);
         let id = OperatorId(id, name);
 
         Self {

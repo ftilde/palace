@@ -39,6 +39,17 @@ impl Id {
         }
         Self(digest_to_u128(sha.digest().bytes()))
     }
+
+    #[track_caller]
+    pub fn source_file_location() -> Self {
+        let caller = std::panic::Location::caller();
+
+        Id::combine(&[
+            Id::from_data(caller.file().as_bytes()),
+            Id::hash(&caller.line()),
+            Id::hash(&caller.column()),
+        ])
+    }
 }
 
 impl From<&[u8]> for Id {
@@ -74,6 +85,31 @@ macro_rules! impl_for_tuples {
 }
 
 impl_for_tuples!(I1, I2, I3, I4, I5, I6, I7, I8, I9, I10,);
+
+pub struct IdentifyConst<T>(T, Id);
+
+pub fn identify_const<T>(value: T, id: Id) -> IdentifyConst<T> {
+    IdentifyConst(value, id)
+}
+
+#[track_caller]
+pub fn identify_source_location<T>(value: T) -> IdentifyConst<T> {
+    IdentifyConst(value, Id::source_file_location())
+}
+
+impl<T> Identify for IdentifyConst<T> {
+    fn id(&self) -> Id {
+        self.1
+    }
+}
+
+impl<T> std::ops::Deref for IdentifyConst<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 pub struct IdentifyHash<T>(pub T);
 

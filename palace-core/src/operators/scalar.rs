@@ -1,7 +1,7 @@
 use crate::{
     dtypes::StaticElementType,
     op_descriptor,
-    operator::{DataParam, Operator, OperatorDescriptor},
+    operator::{DataParam, Operator, OperatorDescriptor, OperatorParameter},
     storage::Element,
     task::{Task, TaskContext},
 };
@@ -9,7 +9,7 @@ use id::{Identify, IdentifyHash};
 
 pub type ScalarOperator<T> = Operator<T>;
 
-pub fn scalar<T: Element, S: Identify + 'static>(
+pub fn scalar<T: Element, S: OperatorParameter>(
     descriptor: OperatorDescriptor,
     state: S,
     compute: for<'cref, 'inv> fn(
@@ -20,7 +20,9 @@ pub fn scalar<T: Element, S: Identify + 'static>(
     Operator::with_state(
         descriptor,
         Default::default(),
-        (DataParam(state), DataParam(IdentifyHash(compute))),
+        // Note: identify_source_location is only valid here because we are taking the descriptor
+        // as an argument (and we assume that descriptor changes whenever compute changes)
+        (state, DataParam(id::identify_source_location(compute))),
         |ctx, d, (s, compute)| {
             assert!(d.len() == 1);
             compute(ctx, s)
