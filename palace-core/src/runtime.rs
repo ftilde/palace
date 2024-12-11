@@ -559,8 +559,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 let c = bytesize::to_string(c, true);
                                 let a = bytesize::to_string(d.storage.allocated(), true);
                                 eprintln!("VRam utilization: {}/{}", a, c);
+                                d.storage.print_usage();
                             }
                             crate::task_graph::export(&self.task_graph);
+
                             //eprintln!("Device states:");
                             //for device in self.data.device_contexts {
                             //    let buf = device.current_command_buffer.borrow();

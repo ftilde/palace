@@ -613,6 +613,36 @@ impl Storage {
         }
     }
 
+    pub fn print_usage(&self) {
+        let index = self.data_index.borrow();
+        let mut entries: Vec<_> = index
+            .iter()
+            .map(|(k, v)| {
+                let (state, size) = match &v.state {
+                    StorageEntryState::Registered => ("registered", 0),
+                    StorageEntryState::Initializing(storage_info) => {
+                        ("initializing", storage_info.layout.size())
+                    }
+                    StorageEntryState::Initialized(storage_info, _visibility, _data_version) => {
+                        ("initialized", storage_info.layout.size())
+                    }
+                };
+                (k, state, size)
+            })
+            .collect();
+
+        entries.sort_by_key(|v| v.2);
+
+        for entry in entries {
+            println!(
+                "{:?} {} {}",
+                entry.0,
+                entry.1,
+                bytesize::to_string(entry.2 as _, true)
+            );
+        }
+    }
+
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
     /// references is done!
     pub unsafe fn free_vram(&self) {
