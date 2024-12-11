@@ -123,10 +123,12 @@ impl RunTime {
         }))
     }
 
+    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false))]
     fn run_with_window(
         &self,
         gen_frame: &Bound<pyo3::types::PyFunction>,
         timeout_ms: u64,
+        record_task_stream: bool,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
         palace_winit::run_with_window_wrapper(
@@ -143,7 +145,7 @@ impl RunTime {
                 let frame_ref = &frame;
                 let mut rt = rt.borrow_mut();
                 let version = rt
-                    .resolve(Some(timeout), false, |ctx, _| {
+                    .resolve(Some(timeout), record_task_stream, |ctx, _| {
                         async move { window.render(ctx, frame_ref).await }.into()
                     })
                     .map_err(crate::map_err)?;
