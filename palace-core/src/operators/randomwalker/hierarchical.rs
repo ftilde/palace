@@ -205,6 +205,8 @@ fn expand<D: DynDimension>(
                                 })
                                 .collect::<Vec<_>>();
 
+                            assert!(in_brick_positions.len() <= 27);
+
                             let in_bricks = ctx
                                 .submit(ctx.group(in_brick_positions.iter().map(|pos| {
                                     input.chunks.request_gpu(

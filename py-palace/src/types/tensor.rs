@@ -96,6 +96,7 @@ impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<Static
     }
 }
 
+//TODO having this in a separate enum serves no purpose, I think
 #[derive(Clone)]
 enum MaybeJitTensorOperator {
     Jit(JitTensorOperator<DDyn>),
@@ -143,6 +144,17 @@ impl TensorOperator {
         EmbeddedTensorOperator {
             inner: self.clone(),
             embedding_data,
+        }
+    }
+
+    fn cache(&self) -> TensorOperator {
+        let t = match &self.inner {
+            MaybeJitTensorOperator::Jit(j) => j.clone().compile().unwrap(),
+            MaybeJitTensorOperator::Tensor(t) => t.clone(),
+        }
+        .cache();
+        TensorOperator {
+            inner: MaybeJitTensorOperator::Tensor(t),
         }
     }
 
@@ -382,6 +394,12 @@ impl EmbeddedTensorOperator {
                 .try_into()?,
         )
     }
+    fn cache(&self) -> EmbeddedTensorOperator {
+        EmbeddedTensorOperator {
+            inner: self.inner.cache(),
+            embedding_data: self.embedding_data.clone(),
+        }
+    }
 }
 
 impl EmbeddedTensorOperator {
@@ -610,5 +628,16 @@ impl LODTensorOperator {
                 })
                 .collect::<PyResult<Vec<_>>>()?,
         })
+    }
+
+    pub fn cache_coarse_levels(&self) -> Self {
+        Self {
+            levels: self
+                .levels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| if i != 0 { l.cache() } else { l.clone() })
+                .collect(),
+        }
     }
 }

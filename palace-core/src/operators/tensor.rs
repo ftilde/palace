@@ -90,7 +90,12 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
             chunks: Operator::unbatched(descriptor, dtype, state_chunks, chunks),
         }
     }
+    pub fn dtype(&self) -> E {
+        self.chunks.dtype()
+    }
+}
 
+impl<D: DynDimension, E> TensorOperator<D, E> {
     pub fn embedded(self, data: TensorEmbeddingData<D>) -> EmbeddedTensorOperator<D, E> {
         EmbeddedTensorOperator {
             inner: self,
@@ -107,9 +112,6 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
 
     pub fn dim(&self) -> D {
         self.metadata.dim()
-    }
-    pub fn dtype(&self) -> E {
-        self.chunks.dtype()
     }
 }
 
@@ -359,12 +361,12 @@ where
     }
 }
 
-impl<D: DynDimension, E: ElementType> EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E> EmbeddedTensorOperator<D, E> {
     pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
 
-    pub fn map_inner<O: ElementType>(
+    pub fn map_inner<O>(
         self,
         f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, O>,
     ) -> EmbeddedTensorOperator<D, O> {
@@ -478,6 +480,17 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
     ) -> LODTensorOperator<DO, EO> {
         LODTensorOperator {
             levels: self.levels.into_iter().map(f).collect(),
+        }
+    }
+
+    pub fn cache_coarse_levels(self) -> Self {
+        LODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .enumerate()
+                .map(|(i, level)| if i != 0 { level.cache() } else { level })
+                .collect(),
         }
     }
 }
