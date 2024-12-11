@@ -353,7 +353,7 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
                             let chunk_info = md.chunk_info(pos);
 
                             let out_chunk = ctx
-                                .submit(ctx.alloc_slot_gpu(&device, pos, out_md.dimensions.hmul()))
+                                .submit(ctx.alloc_slot_gpu(&device, pos, out_md.chunk_size.hmul()))
                                 .await;
 
                             for dim in 0..nd {
