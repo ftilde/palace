@@ -55,6 +55,10 @@ struct CliArgs {
     /// Use the vulkan device with the specified id
     #[arg(long, default_value = "0")]
     device: usize,
+
+    /// Number of chunks to sample. [default: all]
+    #[arg(long)]
+    sample_chunks: Option<usize>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -113,12 +117,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = vol.try_into().unwrap();
 
-    eval_network(&mut runtime, vol)
+    eval_network(&mut runtime, vol, args.sample_chunks)
 }
 
 fn eval_network(
     runtime: &mut RunTime,
     vol: VolumeOperator<StaticElementType<f32>>,
+    num_chunks: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     //let vol = palace_core::jit::jit(vol.into())
     //    .add(10.0.into())
@@ -128,7 +133,7 @@ fn eval_network(
     //    .try_into()
     //    .unwrap();
 
-    let mean_unscaled = volume_gpu::mean(vol);
+    let mean_unscaled = volume_gpu::mean(vol, num_chunks.into());
 
     // Neat: We can even write to references in the closure/future below to get results out.
     let mean_unscaled_ref = &mean_unscaled;

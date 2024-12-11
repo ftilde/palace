@@ -915,6 +915,15 @@ pub enum SampleMethod {
     Subset(usize),
 }
 
+impl From<Option<usize>> for SampleMethod {
+    fn from(value: Option<usize>) -> Self {
+        match value {
+            Some(n) => Self::Subset(n),
+            None => Self::All,
+        }
+    }
+}
+
 impl AggretationMethod {
     fn norm_factor(&self, num_voxels: usize) -> f32 {
         match self {
@@ -947,8 +956,9 @@ impl AggretationMethod {
 
 pub fn mean<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
+    sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    scalar_aggregation(input, AggretationMethod::Mean, SampleMethod::All)
+    scalar_aggregation(input, AggretationMethod::Mean, sample_method)
 }
 
 pub fn min<'op, D: DynDimension>(
@@ -970,10 +980,6 @@ fn scalar_aggregation<'op, D: DynDimension>(
     method: AggretationMethod,
     sample_method: SampleMethod,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    if let (AggretationMethod::Mean, SampleMethod::Subset(_)) = (method, sample_method) {
-        panic!("Mean aggregation not implemented for subset");
-    }
-
     const SHADER: &'static str = r#"
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_EXT_scalar_block_layout : require
@@ -1027,7 +1033,6 @@ void main()
     }
 }
 "#;
-
     crate::operators::scalar::scalar(
         op_descriptor!(),
         (input, DataParam(method), DataParam(sample_method)),
@@ -1045,16 +1050,21 @@ void main()
                 let m = &input.metadata;
 
                 let mut all_chunks = m.chunk_indices().into_iter().collect::<Vec<_>>();
-                let to_request = match **sample_method {
-                    SampleMethod::All => all_chunks.as_slice(),
+                let (to_request, num_elements) = match **sample_method {
+                    SampleMethod::All => (all_chunks.as_slice(), m.dimensions.hmul()),
                     SampleMethod::Subset(n) => {
                         let mut h = DefaultHasher::new();
                         ctx.current_op().inner().hash(&mut h);
                         let seed = h.finish();
-                        let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
+                        let mut rng = rand::rngs::SmallRng::seed_from_u64(dbg!(seed));
                         let (ret, _) = all_chunks.partial_shuffle(&mut rng, n);
                         ret.sort();
-                        ret
+
+                        let num_elements = ret
+                            .iter()
+                            .map(|pos| m.chunk_info(*pos).logical_dimensions.hmul())
+                            .sum();
+                        (&*ret, num_elements)
                     }
                 };
 
@@ -1083,7 +1093,7 @@ void main()
 
                 let sum = ctx.submit(ctx.alloc_scalar_gpu(device)).await;
 
-                let normalization_factor = method.norm_factor(m.dimensions.hmul());
+                let normalization_factor = method.norm_factor(num_elements);
 
                 device.with_cmd_buffer(|cmd| {
                     unsafe {
@@ -1180,7 +1190,7 @@ mod test {
             v as f32
         });
 
-        let output = mean(input);
+        let output = mean(input, SampleMethod::All);
 
         let mut runtime =
             crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();

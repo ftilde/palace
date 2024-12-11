@@ -11,6 +11,7 @@ use crate::{
     operators::{
         scalar::ScalarOperator,
         tensor::{LODTensorOperator, TensorOperator},
+        volume_gpu::SampleMethod,
     },
     vec::Vector,
     vulkan::{
@@ -236,8 +237,10 @@ fn variance<D: DynDimension>(
         .cast(ScalarType::F32.into())
         .unwrap();
 
-    let uncorrected_variance =
-        crate::operators::volume_gpu::mean(diff_sq.compile().unwrap().try_into().unwrap());
+    let uncorrected_variance = crate::operators::volume_gpu::mean(
+        diff_sq.compile().unwrap().try_into().unwrap(),
+        SampleMethod::Subset(10),
+    );
 
     let size = 2 * extent + 1;
     let num_neighborhood_voxels = size.pow(nd as u32);
