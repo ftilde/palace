@@ -38,7 +38,7 @@ impl Hints {
     }
 }
 
-pub fn open(
+pub fn open_single_level(
     path: PathBuf,
     hints: Hints,
 ) -> Result<EmbeddedVolumeOperator<DType>, Box<dyn std::error::Error>> {
@@ -67,6 +67,18 @@ pub fn open(
                 .ok_or_else(|| "Volume is not 3-dimensional".into())
         }
         _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
+    }
+}
+
+pub fn open(
+    path: PathBuf,
+    hints: Hints,
+) -> Result<EmbeddedVolumeOperator<DType>, Box<dyn std::error::Error>> {
+    match open_single_level(path.clone(), hints.clone()) {
+        Ok(o) => Ok(o),
+        Err(e) => open_lod(path, hints)
+            .map_err(|_| e)
+            .map(|lod| lod.levels[0].clone()),
     }
 }
 
