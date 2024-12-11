@@ -82,6 +82,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
             num_rows,
         )
         .await?;
+        std::mem::drop(weights);
 
         let result_vec = ctx
             .submit(device.storage.request_allocate_raw(
