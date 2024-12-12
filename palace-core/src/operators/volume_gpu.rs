@@ -1014,7 +1014,7 @@ void main()
 
     uint[ND] local = from_linear(gID, consts.mem_dim);
 
-    if(all(less_than(local, consts.logical_dim))) {
+    if(all(less_than(local, consts.logical_dim)) && gID < BRICK_MEM_SIZE) {
         val = sourceData.values[gID] * consts.norm_factor;
     } else {
         val = NEUTRAL_VAL;
