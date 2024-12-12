@@ -6,5 +6,5 @@
     1. Create it `python -m venv venv_dir` (only once)
     2. Enable it `source venv_dir/bin/<activate_for_your_shell>` (you'll have to do this for new each shell)
 
-4. Build it: `maturin develop --release` (you can also omit --release for a dev build, but this will result in slower code)
+4. Build it: `./build.sh --release` (you can also omit --release for a dev build, but this will result in slower code)
 5. Run it: `python demo.py`
