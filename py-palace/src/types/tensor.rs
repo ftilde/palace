@@ -96,7 +96,6 @@ impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<Static
     }
 }
 
-//TODO having this in a separate enum serves no purpose, I think
 #[derive(Clone)]
 enum MaybeJitTensorOperator {
     Jit(JitTensorOperator<DDyn>),
