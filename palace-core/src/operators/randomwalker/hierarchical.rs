@@ -221,7 +221,7 @@ fn expand<D: DynDimension>(
                                 .await;
 
                             let gpu_chunk_out = ctx
-                                .submit(ctx.alloc_slot_gpu(device, pos, out_mem_size))
+                                .submit(ctx.alloc_slot_gpu(device, pos, &out_chunk_size))
                                 .await;
 
                             let out_chunk = m_out.chunk_info(pos);
@@ -421,10 +421,8 @@ fn expanded_seeds<D: DynDimension + LargerDim>(
                                 })))
                                 .await;
 
-                            let num_elements_out = m_out.mem_size().hmul();
-
                             let gpu_brick_out = ctx
-                                .submit(ctx.alloc_slot_gpu(device, pos, num_elements_out))
+                                .submit(ctx.alloc_slot_gpu(device, pos, &m_out.mem_size()))
                                 .await;
 
                             let chunk_index = device
@@ -656,7 +654,7 @@ fn shrink<D: DynDimension>(
                                 .await;
 
                             let gpu_chunk_out = ctx
-                                .submit(ctx.alloc_slot_gpu(device, pos, out_chunk_size.hmul()))
+                                .submit(ctx.alloc_slot_gpu(device, pos, &out_chunk_size))
                                 .await;
 
                             let descriptor_config =

@@ -185,7 +185,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             move |ctx, _, values| {
                 async move {
                     let mut out = ctx
-                        .submit(ctx.alloc_slot(ChunkIndex(0), values.len()))
+                        .submit(ctx.alloc_slot_num_elements(ChunkIndex(0), values.len()))
                         .await;
                     let mut out_data = &mut *out;
                     let values: &[E] = &values;
@@ -236,7 +236,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             move |ctx, _, values| {
                 async move {
                     let mut out = ctx
-                        .submit(ctx.alloc_slot(ChunkIndex(0), values.len()))
+                        .submit(ctx.alloc_slot_num_elements(ChunkIndex(0), values.len()))
                         .await;
                     let mut out_data = &mut *out;
                     let values: &[E] = &values;

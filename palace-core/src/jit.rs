@@ -615,7 +615,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                     v.alloc().map(|v| MaybeInplaceHandle::Inplace(v))
                                 }
                                 MaybeInplaceResult::NotInplace => ctx
-                                    .alloc_slot_gpu(device, pos, num_chunk_elements)
+                                    .alloc_slot_gpu(device, pos, &m.chunk_size)
                                     .map(|v| MaybeInplaceHandle::NotInplace(v)),
                             };
                             (output, inputs)

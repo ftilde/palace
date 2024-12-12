@@ -256,7 +256,7 @@ pub fn view_image(
                 };
 
                 let gpu_brick_out = ctx
-                    .submit(ctx.alloc_slot_gpu(device, pos, out_info.mem_elements()))
+                    .submit(ctx.alloc_slot_gpu(device, pos, &out_info.mem_dimensions))
                     .await;
 
                 let chunk_size = m_out.chunk_size.raw();

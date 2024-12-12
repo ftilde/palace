@@ -129,7 +129,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     };
 
     let out_chunk = ctx
-        .submit(ctx.alloc_slot_gpu(&device, pos, tensor_md.num_chunk_elements()))
+        .submit(ctx.alloc_slot_gpu(&device, pos, &tensor_md.chunk_size))
         .await;
 
     results_to_tensor(

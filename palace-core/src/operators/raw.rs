@@ -273,11 +273,9 @@ impl RawVolumeSourceState {
         for (id, batches) in batches_gpus {
             let device = &ctx.device_contexts[id];
             let requests = batches.into_iter().map(|positions| {
-                let num_voxels = m.chunk_size.hmul();
-
                 let brick_handles = positions
                     .iter()
-                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(pos), num_voxels));
+                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(pos), &m.chunk_size));
 
                 (ctx.group(brick_handles), positions)
             });

@@ -119,7 +119,7 @@ void main()
                         (input.chunks.request_gpu(device.id, *pos, access_info), *pos)
                     }))
                     .then_req_with_data(*ctx, |(input, pos)| {
-                        let output = ctx.alloc_slot_gpu(device, pos, m.num_chunk_elements());
+                        let output = ctx.alloc_slot_gpu(device, pos, &m.chunk_size);
                         (output, input)
                     });
 
@@ -802,8 +802,7 @@ void main() {
                 let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
                     *ctx,
                     |(intersecting_bricks, (pos, in_brick_positions))| {
-                        let gpu_brick_out =
-                            ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements());
+                        let gpu_brick_out = ctx.alloc_slot_gpu(device, pos, &m_out.chunk_size);
                         (
                             gpu_brick_out,
                             (intersecting_bricks, pos, in_brick_positions),

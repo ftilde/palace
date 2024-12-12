@@ -99,7 +99,7 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
                     .await;
 
                 let out_chunk = ctx
-                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), md.chunk_size.hmul()))
+                    .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), &md.chunk_size))
                     .await;
 
                 let global_size = md.chunk_size.raw();

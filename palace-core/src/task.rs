@@ -10,6 +10,8 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use crate::array::ChunkIndex;
+use crate::data::LocalCoordinate;
+use crate::dim::DynDimension;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{
     DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
@@ -23,6 +25,7 @@ use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDa
 use crate::task_manager::ThreadSpawner;
 use crate::threadpool::{JobId, JobType};
 use crate::util::{Map, Set};
+use crate::vec::Vector;
 use crate::vulkan::{BarrierInfo, DeviceContext, DeviceId};
 use crate::Error;
 use futures::stream::StreamExt;
@@ -926,7 +929,15 @@ where
 }
 
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {
-    pub fn alloc_slot<'req>(
+    pub fn alloc_slot<'req, D: DynDimension>(
+        &'req self,
+        item: ChunkIndex,
+        size: &Vector<D, LocalCoordinate>,
+    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
+        self.alloc_slot_num_elements(item, size.hmul())
+    }
+
+    pub fn alloc_slot_num_elements<'req>(
         &'req self,
         item: ChunkIndex,
         size: usize,
@@ -943,7 +954,16 @@ pub struct ReuseResult<'a, 'inv> {
 }
 
 impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> {
-    pub fn alloc_slot_gpu<'a>(
+    pub fn alloc_slot_gpu<'a, D: DynDimension>(
+        &'a self,
+        device: &'a DeviceContext,
+        item: ChunkIndex,
+        size: &Vector<D, LocalCoordinate>,
+    ) -> Request<'a, 'inv, WriteHandle<'a>> {
+        self.alloc_slot_num_elements_gpu(device, item, size.hmul())
+    }
+
+    pub fn alloc_slot_num_elements_gpu<'a>(
         &'a self,
         device: &'a DeviceContext,
         item: ChunkIndex,
@@ -1052,10 +1072,11 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Ou
     #[must_use]
     pub fn write_scalar<'a>(&'a self, value: Output) -> Request<'a, 'inv, ()> {
         let ctx = **self;
-        self.alloc_slot(ChunkIndex(0), 1).map(move |mut slot| {
-            slot[0].write(value);
-            unsafe { slot.initialized(ctx) };
-        })
+        self.alloc_slot_num_elements(ChunkIndex(0), 1)
+            .map(move |mut slot| {
+                slot[0].write(value);
+                unsafe { slot.initialized(ctx) };
+            })
     }
 }
 impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Output>> {

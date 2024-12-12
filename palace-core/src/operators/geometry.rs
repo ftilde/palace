@@ -66,7 +66,7 @@ pub fn transform<D: DynDimension>(
                                 .await;
 
                             let out_chunk = ctx
-                                .submit(ctx.alloc_slot_gpu(&device, pos, md.chunk_size.hmul()))
+                                .submit(ctx.alloc_slot_gpu(&device, pos, &md.chunk_size))
                                 .await;
 
                             let descriptor_config =

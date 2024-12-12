@@ -140,7 +140,7 @@ pub fn rechunk<E: Element>(
                     .then_req_with_data(
                         ctx.into(),
                         |(intersecting_bricks, (pos, in_brick_positions))| {
-                            let brick_handle = ctx.alloc_slot(pos, m_out.num_chunk_elements());
+                            let brick_handle = ctx.alloc_slot(pos, &m_out.chunk_size);
                             (brick_handle, (intersecting_bricks, pos, in_brick_positions))
                         },
                     )
@@ -276,7 +276,7 @@ pub fn convolution_1d<const DIM: usize>(
                     .then_req_with_data(
                         ctx.into(),
                         |(intersecting_bricks, (pos, in_brick_positions))| {
-                            let brick_handle = ctx.alloc_slot(pos, m_out.num_chunk_elements());
+                            let brick_handle = ctx.alloc_slot(pos, &m_out.chunk_size);
                             (brick_handle, (intersecting_bricks, pos, in_brick_positions))
                         },
                     )

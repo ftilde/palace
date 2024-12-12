@@ -311,7 +311,7 @@ void main() {
                                 .await;
 
                             let gpu_brick_out = ctx
-                                .submit(ctx.alloc_slot_gpu(device, pos, m_out.num_chunk_elements()))
+                                .submit(ctx.alloc_slot_gpu(device, pos, &m_out.chunk_size))
                                 .await;
 
                             // TODO: It would be nice to share the chunk_index between requests, but then

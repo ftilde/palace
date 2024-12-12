@@ -65,7 +65,7 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     positions: Vec<(ChunkIndex, DataLocation)>,
 ) -> Result<(), Error> {
     let allocs = positions.into_iter().map(|(pos, _)| {
-        let brick_handle_req = ctx.alloc_slot(pos, metadata.num_chunk_elements());
+        let brick_handle_req = ctx.alloc_slot(pos, &metadata.chunk_size);
         (brick_handle_req, pos)
     });
 

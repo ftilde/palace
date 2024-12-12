@@ -146,7 +146,7 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
                             let chunk_info = md.chunk_info(pos);
 
                             let out_chunk = ctx
-                                .submit(ctx.alloc_slot_gpu(&device, pos, out_md.chunk_size.hmul()))
+                                .submit(ctx.alloc_slot_gpu(&device, pos, &out_md.chunk_size))
                                 .await;
                             for dim in 0..nd {
                                 let neighbor = &neighbors[dim];
@@ -335,7 +335,7 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
                             let chunk_info = md.chunk_info(pos);
 
                             let out_chunk = ctx
-                                .submit(ctx.alloc_slot_gpu(&device, pos, out_md.chunk_size.hmul()))
+                                .submit(ctx.alloc_slot_gpu(&device, pos, &out_md.chunk_size))
                                 .await;
 
                             for dim in 0..nd {
