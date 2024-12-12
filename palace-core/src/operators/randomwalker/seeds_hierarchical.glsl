@@ -82,19 +82,26 @@ void main() {
         }
     }
 
+    bool is_foreground = false;
     for(int i=0; i<consts.num_points_fg; ++i) {
         if(at_voxel(to_float(global_pos), points_foreground.values[i])) {
-            seed_value = 1.0;
+            is_foreground = true;
             break;
         }
     }
 
+    bool is_background = false;
     for(int i=0; i<consts.num_points_bg; ++i) {
         if(at_voxel(to_float(global_pos), points_background.values[i])) {
-            seed_value = 0.0;
+            is_background = true;
             break;
         }
     }
+
+    if (is_foreground != is_background) {
+        seed_value = is_foreground ? 1.0 : 0.0;
+    }
+    // else: Implicity: On seed conflict, we do not write a seed value.
 
     outputData.values[gID] = seed_value;
 }
