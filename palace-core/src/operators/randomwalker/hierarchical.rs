@@ -142,8 +142,8 @@ fn expand<D: DynDimension>(
         .all());
 
     let push_constants = DynPushConstants::new()
-        .vec::<u32>(nd, "tensor_dim_in")
-        .vec::<u32>(nd, "tensor_dim_out")
+        .vec::<u32>(nd, "chunk_dim_in")
+        .vec::<u32>(nd, "chunk_dim_out")
         .vec::<u32>(nd, "to_in_offset")
         .vec::<u32>(nd, "to_out_offset")
         .vec::<u32>(nd, "overlap_dim")
@@ -238,8 +238,8 @@ fn expand<D: DynDimension>(
                                 let descriptor_config =
                                     DescriptorConfig::new([&chunk, &gpu_chunk_out]);
 
-                                let tensor_dim_in = m_in.chunk_size.raw();
-                                let tensor_dim_out = out_chunk_size.clone().raw();
+                                let chunk_dim_in = m_in.chunk_size.raw();
+                                let chunk_dim_out = out_chunk_size.clone().raw();
                                 let to_in_offset =
                                     (overlap_begin.clone() - read_chunk.begin().clone()).raw();
                                 let to_out_offset =
@@ -251,8 +251,8 @@ fn expand<D: DynDimension>(
                                     let mut pipeline = pipeline.bind(cmd);
 
                                     pipeline.push_constant_dyn(&push_constants, |w| {
-                                        w.vec(&tensor_dim_in)?;
-                                        w.vec(&tensor_dim_out)?;
+                                        w.vec(&chunk_dim_in)?;
+                                        w.vec(&chunk_dim_out)?;
                                         w.vec(&to_in_offset)?;
                                         w.vec(&to_out_offset)?;
                                         w.vec(&overlap_dim)?;

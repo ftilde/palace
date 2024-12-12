@@ -23,10 +23,10 @@ void main() {
     uint[N] overlap3d = from_linear(global_id, consts.overlap_dim);
 
     uint[N] in3d = add(overlap3d, consts.to_in_offset);
-    uint in_linear = to_linear(in3d, consts.tensor_dim_in);
+    uint in_linear = to_linear(in3d, consts.chunk_dim_in);
 
     uint[N] out3d = add(overlap3d, consts.to_out_offset);
-    uint out_linear = to_linear(out3d, consts.tensor_dim_out);
+    uint out_linear = to_linear(out3d, consts.chunk_dim_out);
 
     out_buf.values[out_linear] = in_buf.values[in_linear];
 }
