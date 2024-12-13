@@ -206,6 +206,7 @@ macro_rules! impl_pod {
     };
 }
 
+impl_pod!(bool);
 impl_pod!(u8);
 impl_pod!(u16);
 impl_pod!(u32);
