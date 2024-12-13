@@ -175,36 +175,37 @@ declare_push_consts(consts);
 void main() {
     uint gID = global_position_linear;
 
-    uint[N] out_brick_pos = from_linear(gID, consts.chunk_dim_in);
-
-    if(all(less_than(out_brick_pos, consts.mem_size_out))) {
-        uint[N] global_pos = add(out_brick_pos, consts.out_begin);
-        float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
-        map(N, sample_pos, sample_pos, round);
-
-        T default_val = T(0);
-
-        TensorMetaData(N) m_in;
-        m_in.dimensions = consts.vol_dim_in;
-        m_in.chunk_size = consts.chunk_dim_in;
-
-        int res;
-        uint sample_brick_pos_linear;
-        T sampled_intensity;
-        try_sample(N, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
-
-        if(res == SAMPLE_RES_FOUND) {
-            // Nothing to do!
-        } else if(res == SAMPLE_RES_NOT_PRESENT) {
-            // This SHOULD not happen...
-            sampled_intensity = default_val;
-        } else /* SAMPLE_RES_OUTSIDE */ {
-            sampled_intensity = default_val;
-        }
-
-        uint gID = to_linear(out_brick_pos, consts.mem_size_out);
-        outputData.values[gID] = sampled_intensity;
+    if(gID >= hmul(consts.mem_size_out)) {
+        return;
     }
+
+    uint[N] out_brick_pos = from_linear(gID, consts.mem_size_out);
+
+    uint[N] global_pos = add(out_brick_pos, consts.out_begin);
+    float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
+    map(N, sample_pos, sample_pos, round);
+
+    T default_val = T(0);
+
+    TensorMetaData(N) m_in;
+    m_in.dimensions = consts.vol_dim_in;
+    m_in.chunk_size = consts.chunk_dim_in;
+
+    int res;
+    uint sample_brick_pos_linear;
+    T sampled_intensity;
+    try_sample(N, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+
+    if(res == SAMPLE_RES_FOUND) {
+        // Nothing to do!
+    } else if(res == SAMPLE_RES_NOT_PRESENT) {
+        // This SHOULD not happen...
+        sampled_intensity = default_val;
+    } else /* SAMPLE_RES_OUTSIDE */ {
+        sampled_intensity = default_val;
+    }
+
+    outputData.values[gID] = sampled_intensity;
 }
 "#;
 
