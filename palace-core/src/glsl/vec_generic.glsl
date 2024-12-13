@@ -143,6 +143,13 @@ uint[_N] from_linear(uint linear_pos, uint[_N] dim) {
         res[i] = linear_pos % ddim;
         linear_pos /= ddim;
     }
+
+    // In case of overflow return a value that should definitely be picked up
+    // by other checks
+    if(linear_pos != 0) {
+        return fill(res, 0xffffffff);
+    }
+
     return res;
 }
 
