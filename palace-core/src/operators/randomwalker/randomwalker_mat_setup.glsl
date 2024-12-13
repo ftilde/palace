@@ -31,9 +31,16 @@ layout(std430, binding = 5) buffer Vec {
     float values[];
 } vec;
 
-layout(std430, binding = 6) buffer Result_Vec {
+layout(std430, binding = 6) buffer ResultVec {
     float values[];
 } result_vec;
+
+
+#if WITH_INIT_VALUES
+layout(std430, binding = 7) readonly buffer InitValues {
+    float values[];
+} init_values;
+#endif
 
 declare_push_consts(consts);
 
@@ -79,7 +86,11 @@ void main() {
     }
     uint cur_row = tensor_to_rows.values[current_linear_memory];
 
+#if WITH_INIT_VALUES
+    result_vec.values[cur_row] = init_values.values[current_linear_memory];
+#else
     result_vec.values[cur_row] = 0.5;
+#endif
 
     for(int dim=ND-1; dim>=0; --dim) {
         for(int offset = -1; offset<2; offset += 2) {

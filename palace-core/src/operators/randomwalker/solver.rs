@@ -11,7 +11,7 @@ use crate::{
     dtypes::StaticElementType,
     operator::{op_descriptor, DataParam, Operator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::gpu::Allocation,
+    storage::gpu::{Allocation, ReadHandle},
     task::{OpaqueTaskContext, TaskContext},
     vulkan::{
         memory::TempRessource,
@@ -29,6 +29,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     ctx: TaskContext<'req, 'inv, StaticElementType<f32>>,
     weights: &'inv Operator<StaticElementType<f32>>,
     seeds: &'inv Operator<StaticElementType<f32>>,
+    init_values: Option<&'inv Operator<StaticElementType<f32>>>,
     pos: ChunkIndex,
     cfg: SolverConfig,
     tensor_md: TensorMetaData<D>,
@@ -48,6 +49,15 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
         access: vk::AccessFlags2::SHADER_READ,
     };
+    let init_values = if let Some(init_values) = init_values {
+        Some(
+            ctx.submit(init_values.request_gpu(device.id, pos, read_info))
+                .await,
+        )
+    } else {
+        None
+    };
+
     let (weights, seeds) = futures::join!(
         ctx.submit(weights.request_gpu(device.id, pos, read_info)),
         ctx.submit(seeds.request_gpu(device.id, pos, read_info),),
@@ -73,6 +83,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
             &device,
             &weights,
             &seeds,
+            init_values.as_ref(),
             &tensor_to_rows_table,
             tensor_md.clone(),
             num_rows,
@@ -159,6 +170,7 @@ pub fn random_walker_single_chunk<D: DynDimension + LargerDim>(
                     ctx,
                     &weights.chunks,
                     &seeds.chunks,
+                    None,
                     ChunkIndex(0),
                     **cfg,
                     seeds.metadata.clone(),
@@ -409,6 +421,7 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
     device: &DeviceContext,
     weights: &impl AsBufferDescriptor,
     seeds: &impl AsBufferDescriptor,
+    init_values: Option<&ReadHandle<'req>>,
     tensor_to_rows_table: &Allocation,
     tensor_md: TensorMetaData<D>,
     num_rows: u32,
@@ -425,13 +438,14 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
     let mat_size = num_rows as usize * max_entries;
 
     let pipeline = device.request_state(
-        (&push_constants, chunk_elements, nd),
-        |device, (push_constants, chunk_elements, nd)| {
+        (&push_constants, chunk_elements, nd, init_values.is_some()),
+        |device, (push_constants, chunk_elements, nd, with_init)| {
             ComputePipelineBuilder::new(
                 Shader::new(include_str!("randomwalker_mat_setup.glsl"))
                     .push_const_block_dyn(&push_constants)
                     .define("BRICK_MEM_SIZE", chunk_elements)
-                    .define("ND", nd),
+                    .define("ND", nd)
+                    .define("WITH_INIT_VALUES", with_init as usize),
             )
             .build(device)
         },
@@ -494,7 +508,7 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
 
     let global_size = tensor_md.dimensions.raw();
 
-    let descriptor_config = DescriptorConfig::new([
+    let mut descriptor_config: Vec<&dyn crate::vulkan::pipeline::AsDescriptors> = vec![
         weights,
         seeds,
         tensor_to_rows_table,
@@ -502,7 +516,12 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
         &index,
         &vec,
         &results_vec,
-    ]);
+    ];
+
+    if let Some(init_values) = init_values {
+        descriptor_config.push(init_values);
+    }
+    let descriptor_config = DescriptorConfig::from_vec(descriptor_config);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);

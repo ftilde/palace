@@ -15,6 +15,7 @@ use crate::{
     operator::{DataParam, OpaqueOperator, Operator, OperatorDescriptor, OperatorNetworkNode},
     operators::{
         randomwalker::random_walker_on_chunk,
+        resample::resample_transform,
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
     },
     vec::Vector,
@@ -223,6 +224,30 @@ fn expand<D: DynDimension>(
                             let gpu_chunk_out = ctx
                                 .submit(ctx.alloc_slot_gpu(device, pos, &out_chunk_size))
                                 .await;
+
+                            // This is useful for debugging sometimes..
+                            //device.with_cmd_buffer(|cmd| unsafe {
+                            //    cmd.functions().cmd_fill_buffer(
+                            //        cmd.raw(),
+                            //        gpu_chunk_out.buffer,
+                            //        0,
+                            //        vk::WHOLE_SIZE,
+                            //        f32::NAN.to_bits(),
+                            //    );
+                            //});
+
+                            //ctx.submit(device.barrier(
+                            //    SrcBarrierInfo {
+                            //        stage: vk::PipelineStageFlags2::TRANSFER,
+                            //        access: vk::AccessFlags2::TRANSFER_WRITE,
+                            //    },
+                            //    DstBarrierInfo {
+                            //        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            //        access: vk::AccessFlags2::SHADER_READ
+                            //            | vk::AccessFlags2::SHADER_WRITE,
+                            //    },
+                            //))
+                            //.await;
 
                             let out_chunk = m_out.chunk_info(pos);
                             let region_end = out_chunk.end();
@@ -542,27 +567,31 @@ fn expanded_seeds<D: DynDimension + LargerDim>(
 fn run_rw<D: DynDimension + LargerDim>(
     weights: ExpandedChunkOperator<D::Larger, StaticElementType<f32>>,
     seeds: ExpandedChunkOperator<D, StaticElementType<f32>>,
+    init_values: ExpandedChunkOperator<D, StaticElementType<f32>>,
     cfg: SolverConfig,
 ) -> ExpandedChunkOperator<D, StaticElementType<f32>> {
     let metadata = seeds.metadata.clone();
     let inner = Operator::with_state(
         op_descriptor!(),
         Default::default(),
-        (weights, seeds, DataParam(cfg)),
-        |ctx, positions, (weights, seeds, cfg)| {
+        (weights, seeds, init_values, DataParam(cfg)),
+        |ctx, positions, (weights, seeds, init_values, cfg)| {
             async move {
                 ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
                     async move {
                         let chunk_info = seeds.metadata.chunk_info(pos);
                         let chunk_info_weights = weights.metadata.chunk_info(pos);
+                        let chunk_info_init = init_values.metadata.chunk_info(pos);
                         assert_eq!(
                             chunk_info.logical_size(),
                             chunk_info_weights.logical_size().pop_dim_small()
                         );
+                        assert_eq!(chunk_info.logical_size(), chunk_info_init.logical_size());
                         assert_eq!(
                             chunk_info.mem_size,
                             chunk_info_weights.mem_size.pop_dim_small(),
                         );
+                        assert_eq!(chunk_info.mem_size, chunk_info_init.mem_size,);
 
                         let virtual_chunk_info = TensorMetaData {
                             dimensions: chunk_info.logical_size().global(),
@@ -572,6 +601,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                             ctx,
                             &weights.inner,
                             &seeds.inner,
+                            Some(&init_values.inner),
                             pos,
                             **cfg,
                             virtual_chunk_info,
@@ -716,6 +746,16 @@ fn level_step<D: DynDimension + LargerDim>(
         expansion_by.push_dim_small(0.into()),
     );
 
+    let current_to_upper =
+        upper_result.embedding_data.physical_to_voxel() * &level_ed.voxel_to_physical();
+
+    let upper_resampled = resample_transform(
+        upper_result.inner.clone(),
+        level_md.clone(),
+        current_to_upper,
+    );
+    let upper_expanded = expand(upper_resampled, expansion_by.clone());
+
     let world_to_grid = level_ed.physical_to_voxel();
     let points_fg = crate::operators::geometry::transform(points_fg, world_to_grid.clone());
     let points_bg = crate::operators::geometry::transform(points_bg, world_to_grid);
@@ -731,7 +771,7 @@ fn level_step<D: DynDimension + LargerDim>(
         level_ed.clone(),
     );
 
-    let expanded_result = run_rw(expanded_weights, seeds, cfg);
+    let expanded_result = run_rw(expanded_weights, seeds, upper_expanded, cfg);
     shrink(expanded_result).embedded(level_ed)
 }
 
