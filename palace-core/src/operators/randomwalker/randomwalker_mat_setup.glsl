@@ -31,6 +31,10 @@ layout(std430, binding = 5) buffer Vec {
     float values[];
 } vec;
 
+layout(std430, binding = 6) buffer Result_Vec {
+    float values[];
+} result_vec;
+
 declare_push_consts(consts);
 
 uint get_mat_index(uint row, uint col) {
@@ -74,6 +78,8 @@ void main() {
         return;
     }
     uint cur_row = tensor_to_rows.values[current_linear_memory];
+
+    result_vec.values[cur_row] = 0.5;
 
     for(int dim=ND-1; dim>=0; --dim) {
         for(int offset = -1; offset<2; offset += 2) {

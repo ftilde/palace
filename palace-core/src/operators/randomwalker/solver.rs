@@ -60,10 +60,6 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     let (tensor_to_rows_table, num_rows) =
         tensor_to_rows_table(*ctx, device, &seeds, tensor_md.clone()).await?;
 
-    let flags = vk::BufferUsageFlags::STORAGE_BUFFER
-        | vk::BufferUsageFlags::TRANSFER_DST
-        | vk::BufferUsageFlags::TRANSFER_SRC;
-
     let (result_vec, num_iterations) = if num_rows > 0 {
         assert!(
             num_rows as usize <= tensor_md.num_tensor_elements(),
@@ -72,7 +68,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
             tensor_md.num_tensor_elements()
         );
 
-        let (mat, vec) = mat_setup(
+        let (mat, vec, result_vec) = mat_setup(
             *ctx,
             &device,
             &weights,
@@ -84,28 +80,9 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         .await?;
         std::mem::drop(weights);
 
-        let result_vec = ctx
-            .submit(device.storage.request_allocate_raw(
-                device,
-                Layout::array::<f32>(num_rows as usize).unwrap(),
-                flags,
-                GpuOnly,
-            ))
-            .await;
-        let result_vec = TempRessource::new(device, result_vec);
-
         let mat = TempRessource::new(device, mat);
         let vec = TempRessource::new(device, vec);
-
-        device.with_cmd_buffer(|cmd| unsafe {
-            cmd.functions().cmd_fill_buffer(
-                cmd.raw(),
-                result_vec.buffer,
-                0,
-                vk::WHOLE_SIZE,
-                f32::to_bits(0.5),
-            );
-        });
+        let result_vec = TempRessource::new(device, result_vec);
 
         //TODO: Try to reduce barriers here. We have one in init_weights already
         //Make result and weights initialization visible
@@ -435,7 +412,7 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
     tensor_to_rows_table: &Allocation,
     tensor_md: TensorMetaData<D>,
     num_rows: u32,
-) -> Result<(SparseMatrix, Allocation), crate::Error> {
+) -> Result<(SparseMatrix, Allocation, Allocation), crate::Error> {
     assert!(tensor_md.is_single_chunk());
     let nd = tensor_md.dim().n();
 
@@ -464,7 +441,7 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
         | vk::BufferUsageFlags::TRANSFER_DST
         | vk::BufferUsageFlags::TRANSFER_SRC;
 
-    let (values, index, vec) = futures::join!(
+    let (values, index, vec, results_vec) = futures::join!(
         ctx.submit(device.storage.request_allocate_raw(
             device,
             Layout::array::<f32>(mat_size).unwrap(),
@@ -474,6 +451,12 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
         ctx.submit(device.storage.request_allocate_raw(
             device,
             Layout::array::<u32>(mat_size).unwrap(),
+            flags,
+            GpuOnly,
+        )),
+        ctx.submit(device.storage.request_allocate_raw(
+            device,
+            Layout::array::<f32>(num_rows as usize).unwrap(),
             flags,
             GpuOnly,
         )),
@@ -511,8 +494,15 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
 
     let global_size = tensor_md.dimensions.raw();
 
-    let descriptor_config =
-        DescriptorConfig::new([weights, seeds, tensor_to_rows_table, &values, &index, &vec]);
+    let descriptor_config = DescriptorConfig::new([
+        weights,
+        seeds,
+        tensor_to_rows_table,
+        &values,
+        &index,
+        &vec,
+        &results_vec,
+    ]);
 
     device.with_cmd_buffer(|cmd| unsafe {
         let mut pipeline = pipeline.bind(cmd);
@@ -534,6 +524,7 @@ async fn mat_setup<'req, 'inv, D: DynDimension>(
             num_rows: num_rows as _,
         },
         vec,
+        results_vec,
     ))
 }
 
