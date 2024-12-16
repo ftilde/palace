@@ -92,8 +92,8 @@ def apply_rw_mode(input):
         case "hierarchical":
             #i = pc.rechunk(input, [32]*3)
             #input_lod = i.create_lod(2.0)
-            weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
-            rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds)
+            weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
+            rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds).cache_coarse_levels()
             return (input, rw_result)
 
 
@@ -160,4 +160,4 @@ def render(size, events: pc.Events):
 
     return frame
 
-rt.run_with_window(render, timeout_ms=10)
+rt.run_with_window(render, timeout_ms=10, record_task_stream=False, bench=False)
