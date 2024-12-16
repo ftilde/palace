@@ -71,6 +71,7 @@ impl EventState {
     }
 }
 
+#[gen_stub_pyclass_enum]
 #[pyclass(unsendable)]
 #[derive(Clone, Copy, Debug)]
 pub enum MouseButton {
