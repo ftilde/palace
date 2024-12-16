@@ -73,6 +73,10 @@ struct CliArgs {
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
+
+    /// Stop after rendering a complete frame
+    #[arg(short, long)]
+    bench: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -200,8 +204,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 timeout,
             )
             .unwrap();
-            if version == DataVersionType::Final {
-                //_event_loop.exit();
+            if args.bench && version == DataVersionType::Final {
+                _event_loop.exit();
             }
             Ok(version)
         },
