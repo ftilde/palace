@@ -5,6 +5,7 @@ use palace_core::{
     array::ChunkIndex,
     dim::{DDyn, DynDimension},
     dtypes::{DType, ScalarType, StaticElementType},
+    storage::DataVersionType,
     vec::Vector,
 };
 use pyo3::{exceptions::PyException, prelude::*};
@@ -123,12 +124,13 @@ impl RunTime {
         }))
     }
 
-    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false))]
+    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false))]
     fn run_with_window(
         &self,
         gen_frame: &Bound<pyo3::types::PyFunction>,
         timeout_ms: u64,
         record_task_stream: bool,
+        bench: bool,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
         palace_winit::run_with_window_wrapper(
@@ -149,6 +151,10 @@ impl RunTime {
                         async move { window.render(ctx, frame_ref).await }.into()
                     })
                     .map_err(crate::map_err)?;
+
+                if bench && version == DataVersionType::Final {
+                    _event_loop.exit();
+                }
 
                 Ok(version)
             },
