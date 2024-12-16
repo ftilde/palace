@@ -18,8 +18,8 @@ disk_cache_size = 20 << 30
 
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
-parser.add_argument('foreground_seeds')
-parser.add_argument('background_seeds')
+parser.add_argument('-fg', '--foreground_seeds', required=False)
+parser.add_argument('-bg', '--background_seeds', required=False)
 parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
@@ -183,9 +183,9 @@ def render(size, events: pc.Events):
     slice2 = overlay_slice(slice_state2)
     ray = overlay_ray(camera_state)
 
-    #frame = palace_util.quad(ray, slice0, slice1, slice2)
+    frame = palace_util.quad(ray, slice0, slice1, slice2)
     #frame = ray
-    frame = slice0
+    #frame = slice0
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     frame = gui.render(frame(size, events))

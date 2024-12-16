@@ -86,6 +86,10 @@ impl<D: DynDimension> TensorMetaData<D> {
         d
     }
 
+    pub fn num_chunks(&self) -> usize {
+        self.dimension_in_chunks().hmul()
+    }
+
     pub fn is_single_chunk(&self) -> bool {
         self.dimension_in_chunks().raw() == Vector::fill_with_len(1u32, self.dimensions.len())
     }
@@ -368,7 +372,11 @@ impl<D: DynDimension> TensorMetaData<D> {
     }
     pub fn dimension_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
         self.dimensions.zip(&self.chunk_size, |a, b| {
-            crate::util::div_round_up(a.raw, b.raw).into()
+            if a.raw == 0 {
+                0.into()
+            } else {
+                crate::util::div_round_up(a.raw, b.raw).into()
+            }
         })
     }
     pub fn chunk_pos(&self, pos: &Vector<D, GlobalCoordinate>) -> Vector<D, ChunkCoordinate> {

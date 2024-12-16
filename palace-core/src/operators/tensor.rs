@@ -166,7 +166,9 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
     ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
         let m = TensorMetaData {
             dimensions: size.clone(),
-            chunk_size: size.map(LocalCoordinate::interpret_as),
+            chunk_size: size
+                .map(LocalCoordinate::interpret_as)
+                .map(|v| v.max(1.into())),
         };
         let n_elem = size.hmul();
         if n_elem != values.len() {
@@ -217,7 +219,9 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
     ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
         let m = TensorMetaData {
             dimensions: size.clone(),
-            chunk_size: size.map(LocalCoordinate::interpret_as),
+            chunk_size: size
+                .map(LocalCoordinate::interpret_as)
+                .map(|v| v.max(1.into())),
         };
         let n_elem = size.hmul();
         if n_elem != values.len() {

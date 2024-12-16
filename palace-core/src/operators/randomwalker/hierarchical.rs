@@ -20,7 +20,7 @@ use crate::{
     },
     vec::Vector,
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, NullBuf},
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -379,22 +379,39 @@ fn expanded_seeds<D: DynDimension + LargerDim>(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
-                let points_fg_buf = ctx
-                    .submit(
-                        points_fg
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                let points_fg_chunk = if points_fg.metadata.num_chunks() > 0 {
+                    Some(
+                        ctx.submit(points_fg.chunks.request_gpu(
+                            device.id,
+                            ChunkIndex(0),
+                            read_info,
+                        ))
+                        .await,
                     )
-                    .await;
-                let points_bg_buf = ctx
-                    .submit(
-                        points_bg
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                } else {
+                    None
+                };
+
+                let points_bg_chunk = if points_bg.metadata.num_chunks() > 0 {
+                    Some(
+                        ctx.submit(points_bg.chunks.request_gpu(
+                            device.id,
+                            ChunkIndex(0),
+                            read_info,
+                        ))
+                        .await,
                     )
-                    .await;
-                let points_fg_buf = &points_fg_buf;
-                let points_bg_buf = &points_bg_buf;
+                } else {
+                    None
+                };
+                let points_fg_chunk = points_fg_chunk
+                    .as_ref()
+                    .map(|v| v as &dyn crate::vulkan::pipeline::AsDescriptors)
+                    .unwrap_or(&NullBuf);
+                let points_bg_chunk = points_bg_chunk
+                    .as_ref()
+                    .map(|v| v as &dyn crate::vulkan::pipeline::AsDescriptors)
+                    .unwrap_or(&NullBuf);
 
                 let _ = ctx
                     .run_unordered(positions.into_iter().map(move |(pos, _)| {
@@ -503,8 +520,8 @@ fn expanded_seeds<D: DynDimension + LargerDim>(
 
                             let descriptor_config = DescriptorConfig::new([
                                 &chunk_index,
-                                points_fg_buf,
-                                points_bg_buf,
+                                points_fg_chunk,
+                                points_bg_chunk,
                                 &gpu_brick_out,
                             ]);
 

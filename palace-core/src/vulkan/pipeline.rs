@@ -571,6 +571,16 @@ impl AsBufferDescriptor for Allocation {
     }
 }
 
+pub struct NullBuf;
+
+impl<'a> AsBufferDescriptor for NullBuf {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::default()
+            .buffer(vk::Buffer::default())
+            .range(0)
+    }
+}
+
 impl<'a> AsBufferDescriptor for ReadHandle<'a> {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::default()
@@ -607,9 +617,19 @@ pub trait AsDescriptors {
     fn gen_buffer_info(&self) -> DescriptorInfos;
 }
 
+fn descriptor_from_iter<'a, T: 'a + AsBufferDescriptor>(
+    iter: impl Iterator<Item = &'a T> + 'a,
+) -> DescriptorInfos {
+    DescriptorInfos::Buffer(
+        iter.map(|i| i.gen_buffer_info())
+            .filter(|v| v.buffer != vk::Buffer::default())
+            .collect(),
+    )
+}
+
 impl<T: AsBufferDescriptor> AsDescriptors for T {
     fn gen_buffer_info(&self) -> DescriptorInfos {
-        DescriptorInfos::Buffer(vec![self.gen_buffer_info()])
+        descriptor_from_iter(std::iter::once(self))
     }
 }
 
@@ -624,13 +644,13 @@ impl AsDescriptors for (vk::ImageView, vk::ImageLayout, vk::Sampler) {
 
 impl<const N: usize, T: AsBufferDescriptor> AsDescriptors for [&T; N] {
     fn gen_buffer_info(&self) -> DescriptorInfos {
-        DescriptorInfos::Buffer(self.iter().map(|i| i.gen_buffer_info()).collect())
+        descriptor_from_iter(self.iter().cloned())
     }
 }
 
 impl<T: AsBufferDescriptor> AsDescriptors for &[&T] {
     fn gen_buffer_info(&self) -> DescriptorInfos {
-        DescriptorInfos::Buffer(self.iter().map(|i| i.gen_buffer_info()).collect())
+        descriptor_from_iter(self.iter().cloned())
     }
 }
 
@@ -668,6 +688,7 @@ impl DescriptorConfig {
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .image_info(&b),
             })
+            .filter(|v| v.descriptor_count > 0) //May happen due to filtering above
             .collect()
     }
 }

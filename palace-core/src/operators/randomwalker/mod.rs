@@ -12,7 +12,7 @@ use crate::{
     task::OpaqueTaskContext,
     vulkan::{
         pipeline::{
-            AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
+            AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants, NullBuf,
         },
         shader::Shader,
         DeviceContext, DstBarrierInfo, SrcBarrierInfo,
@@ -54,25 +54,19 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
                 let push_constants = DynPushConstants::new()
                     .mat::<f32>(nd + 1, "to_grid")
                     .vec::<u32>(nd, "tensor_dim_memory")
-                    .vec::<u32>(nd, "tensor_dim_logical");
+                    .vec::<u32>(nd, "tensor_dim_logical")
+                    .scalar::<u32>("num_points_fg")
+                    .scalar::<u32>("num_points_bg");
 
                 let to_grid = ed.physical_to_voxel();
 
                 let pipeline = device.request_state(
-                    (
-                        &push_constants,
-                        md.chunk_size.hmul(),
-                        points_fg.metadata.dimensions[0].raw,
-                        points_bg.metadata.dimensions[0].raw,
-                        nd,
-                    ),
-                    |device, (push_constants, mem_size, n_points_fg, n_points_bg, nd)| {
+                    (&push_constants, md.chunk_size.hmul(), nd),
+                    |device, (push_constants, mem_size, nd)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("rasterize_points.glsl"))
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
-                                .define("NUM_POINTS_FG", n_points_fg)
-                                .define("NUM_POINTS_BG", n_points_bg)
                                 .define("ND", nd),
                         )
                         .build(device)
@@ -83,20 +77,41 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
                 };
-                let points_fg = ctx
-                    .submit(
-                        points_fg
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
+
+                let points_fg_chunk = if points_fg.metadata.num_chunks() > 0 {
+                    Some(
+                        ctx.submit(points_fg.chunks.request_gpu(
+                            device.id,
+                            ChunkIndex(0),
+                            read_info,
+                        ))
+                        .await,
                     )
-                    .await;
-                let points_bg = ctx
-                    .submit(
-                        points_bg
-                            .chunks
-                            .request_gpu(device.id, ChunkIndex(0), read_info),
+                } else {
+                    None
+                };
+
+                let points_bg_chunk = if points_bg.metadata.num_chunks() > 0 {
+                    Some(
+                        ctx.submit(points_bg.chunks.request_gpu(
+                            device.id,
+                            ChunkIndex(0),
+                            read_info,
+                        ))
+                        .await,
                     )
-                    .await;
+                } else {
+                    None
+                };
+
+                let points_fg_chunk = points_fg_chunk
+                    .as_ref()
+                    .map(|v| v as &dyn crate::vulkan::pipeline::AsDescriptors)
+                    .unwrap_or(&NullBuf);
+                let points_bg_chunk = points_bg_chunk
+                    .as_ref()
+                    .map(|v| v as &dyn crate::vulkan::pipeline::AsDescriptors)
+                    .unwrap_or(&NullBuf);
 
                 let out_chunk = ctx
                     .submit(ctx.alloc_slot_gpu(&device, ChunkIndex(0), &md.chunk_size))
@@ -104,7 +119,8 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
 
                 let global_size = md.chunk_size.raw();
 
-                let descriptor_config = DescriptorConfig::new([&points_fg, &points_bg, &out_chunk]);
+                let descriptor_config =
+                    DescriptorConfig::new([points_fg_chunk, points_bg_chunk, &out_chunk]);
 
                 device.with_cmd_buffer(|cmd| unsafe {
                     let mut pipeline = pipeline.bind(cmd);
@@ -113,6 +129,8 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
                         consts.mat(&to_grid)?;
                         consts.vec(&md.chunk_size.raw())?;
                         consts.vec(&md.dimensions.raw())?;
+                        consts.scalar(points_fg.metadata.dimensions[0].raw)?;
+                        consts.scalar(points_bg.metadata.dimensions[0].raw)?;
                         Ok(())
                     });
                     pipeline.write_descriptor_set(0, descriptor_config);

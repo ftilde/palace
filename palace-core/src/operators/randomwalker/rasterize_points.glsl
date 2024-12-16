@@ -7,11 +7,11 @@
 #include <randomwalker_shared.glsl>
 
 layout(std430, binding = 0) readonly buffer FG {
-    float values[NUM_POINTS_FG][ND];
+    float values[][ND];
 } points_foreground;
 
 layout(std430, binding = 1) readonly buffer BG {
-    float values[NUM_POINTS_BG][ND];
+    float values[][ND];
 } points_background;
 
 layout(std430, binding = 2) buffer Seeds {
@@ -46,14 +46,14 @@ void main() {
     uint[ND] current_i = from_linear(current_linear, consts.tensor_dim_memory);
     float[ND] current = to_float(current_i);
 
-    for(int i=0; i<NUM_POINTS_FG; ++i) {
+    for(int i=0; i<consts.num_points_fg; ++i) {
         if(at_voxel(current, points_foreground.values[i])) {
             seeds.values[current_linear] = 1.0;
             return;
         }
     }
 
-    for(int i=0; i<NUM_POINTS_BG; ++i) {
+    for(int i=0; i<consts.num_points_bg; ++i) {
         if(at_voxel(current, points_background.values[i])) {
             seeds.values[current_linear] = 0.0;
             return;
