@@ -136,9 +136,9 @@ u8vec3 apply_phong_shading(u8vec4 sample_u8, vec3 normal, vec3 view, vec3 light)
     // Welp, there appears to be another graphics driver bug. If the following
     // (pretty much nonsensical) lines are removed, rendering is way slower and
     // there are a few dark voxels in the volume.
-    if(sample_u8.a == 255 && sample_f.a != 0.0) {
-        sample_f.r *= 1.00001;
-    }
+    //if(sample_u8.a == 255 && sample_f.a != 0.0) {
+    //    sample_f.r /= 1.00001;
+    //}
 
     vec3 ambient_light = vec3(0.2);
     vec3 diffuse_light = vec3(0.8);
@@ -150,6 +150,7 @@ u8vec3 apply_phong_shading(u8vec4 sample_u8, vec3 normal, vec3 view, vec3 light)
     o  = color * ambient_light;
     o += color * diffuse_light * max(0.0, dot(normal, light));
     o += color * specular_light * pow(max(0.0, dot(normal, normalize(light + view))), shininess);
+    o = clamp(o, 0.0, 1.0);
 
     return from_uniform(o);
 }
