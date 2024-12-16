@@ -10,7 +10,7 @@ def read_vge(path):
     for elem in root.findall('.//item/item'):
         points.append([float(elem.attrib['z']), float(elem.attrib['y']), float(elem.attrib['x'])])
     #print(points)
-    return pc.from_numpy(np.array(points, dtype=np.float32)).fold_into_dtype()
+    return np.array(points, dtype=np.float32)
 
 ram_size = 8 << 30
 vram_size = 10 << 30
@@ -24,12 +24,20 @@ parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
 
-foreground_seeds = read_vge(args.foreground_seeds)
-background_seeds = read_vge(args.background_seeds)
-
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 vol = pc.open_or_create_lod(args.volume_file, rechunk=True, chunk_size_hint=[32,32,32])
+
+ndim = len(vol.levels[0].inner.metadata.dimensions)
+
+foreground_seeds = np.empty(shape=[0,ndim], dtype=np.float32)
+background_seeds = np.empty(shape=[0,ndim], dtype=np.float32)
+
+if args.foreground_seeds:
+    foreground_seeds = np.concat([foreground_seeds, read_vge(args.foreground_seeds)])
+if args.background_seeds:
+    background_seeds = np.concat([background_seeds, read_vge(args.background_seeds)])
+
 md: pc.TensorMetaData = vol.levels[0].inner.metadata
 ed = vol.levels[0].embedding_data
 
@@ -80,12 +88,16 @@ def apply_weight_function(volume):
             return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), extent.load())
 
 def apply_rw_mode(input):
+
+    fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
+    bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
+
     match mode.load():
         case "normal":
             i = pc.rechunk(input.levels[0], [pc.chunk_size_full]*3)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
-            seeds = pc.rasterize_seed_points(foreground_seeds, background_seeds, md, ed)
+            seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
             return (input, rw_result.create_lod(2.0))
 
@@ -93,7 +105,7 @@ def apply_rw_mode(input):
             #i = pc.rechunk(input, [32]*3)
             #input_lod = i.create_lod(2.0)
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
-            rw_result = pc.hierarchical_randomwalker(weights, foreground_seeds, background_seeds).cache_coarse_levels()
+            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
             return (input, rw_result)
 
 
@@ -120,7 +132,18 @@ def render(size, events: pc.Events):
         widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
         mouse_pos_and_value = None
 
+    def add_seed_point(slice_state, embedded_tensor, pos, frame_size, foreground):
+        global foreground_seeds, background_seeds
+
+        pos3d = palace_util.mouse_to_volume_pos(slice_state.load(), embedded_tensor, pos, frame_size)
+        pos3d = np.array(pos3d, dtype=np.float32).reshape((1, 3))
+        if foreground:
+            foreground_seeds = np.concat([foreground_seeds, pos3d])
+        else:
+            background_seeds = np.concat([background_seeds, pos3d])
+
     def overlay_slice(state):
+
         slice = palace_util.render_slice(v, state, tf)
         slice_rw = palace_util.render_slice(rw_result, state, tf_prob)
 
@@ -129,7 +152,15 @@ def render(size, events: pc.Events):
         out = palace_util.alpha_blending(slice_rw, slice)
         #out = slice_rw
 
-        return palace_util.inspect_component(out, lambda size, events: extract_slice_value(size, events, state, rw_result.levels[0]))
+        def inspect(size, events):
+            vol = rw_result.levels[0]
+            extract_slice_value(size, events, state, vol)
+            events.act([
+                pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)),
+                pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)),
+                ])
+
+        return palace_util.inspect_component(out, inspect)
 
     def overlay_ray(state):
         ray = palace_util.render_raycast(v, state, raycaster_config, tf)
@@ -152,8 +183,9 @@ def render(size, events: pc.Events):
     slice2 = overlay_slice(slice_state2)
     ray = overlay_ray(camera_state)
 
-    frame = palace_util.quad(ray, slice0, slice1, slice2)
+    #frame = palace_util.quad(ray, slice0, slice1, slice2)
     #frame = ray
+    frame = slice0
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     frame = gui.render(frame(size, events))
