@@ -185,7 +185,8 @@ void main() {
     float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
     map(N, sample_pos, sample_pos, round);
 
-    T default_val = T(0);
+    T default_val;
+    DEFAULT_VAL_INIT
 
     TensorMetaData(N) m_in;
     m_in.dimensions = consts.vol_dim_in;
@@ -245,12 +246,26 @@ void main() {
                         dtype_dyn,
                     ),
                     |device, (push_constants, num_chunks, mem_size, nd, dtype_dyn)| {
+                        let default_val_init = if dtype_dyn.vec_size() == 1 {
+                            "default_val = T(0);".to_owned()
+                        } else {
+                            let mut s = String::new();
+                            for i in 0..dtype_dyn.vec_size() {
+                                s.push_str(&format!(
+                                    "default_val[{}] = {}(0);",
+                                    i,
+                                    dtype_dyn.scalar.glsl_type()
+                                ));
+                            }
+                            s
+                        };
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .define("NUM_CHUNKS", num_chunks)
                                 .define("BRICK_MEM_SIZE_IN", mem_size)
                                 .define("N", nd)
                                 .define("T", dtype_dyn.glsl_type())
+                                .define("DEFAULT_VAL_INIT", default_val_init)
                                 .push_const_block_dyn(&push_constants)
                                 .ext(dtype_dyn.glsl_ext())
                                 .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
