@@ -270,11 +270,13 @@ mod py {
         }
     }
 
-    impl<D: Dimension, T: Copy + numpy::Element> IntoPy<PyObject> for Matrix<D, T> {
+    impl<D: DynDimension, T: Copy + numpy::Element> IntoPy<PyObject> for Matrix<D, T> {
         fn into_py(self, py: Python<'_>) -> PyObject {
             numpy::PyArray2::from_owned_array_bound(
                 py,
-                numpy::ndarray::Array::from_shape_fn((4, 4), |(i, j)| self.at(i, j).clone()),
+                numpy::ndarray::Array::from_shape_fn((self.dim.n(), self.dim.n()), |(i, j)| {
+                    self.at(i, j).clone()
+                }),
             )
             .into_py(py)
         }
