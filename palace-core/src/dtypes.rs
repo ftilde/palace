@@ -234,6 +234,10 @@ impl DType {
     pub fn new(scalar: ScalarType, size: u32) -> Self {
         Self { scalar, size }
     }
+
+    fn __str__(&self) -> String {
+        format!("{}[{}]", self.scalar.pretty_type(), self.size)
+    }
 }
 
 impl std::fmt::Display for DType {
