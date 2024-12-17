@@ -10,7 +10,7 @@ use super::{
 };
 
 use crate::{
-    array::{ImageEmbeddingData, ImageMetaData},
+    array::{ImageEmbeddingData, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData},
     chunk_utils::ChunkRequestTable,
     coordinate::GlobalCoordinate,
     data::Vector,
@@ -68,6 +68,39 @@ impl ImageViewerState {
         self.zoom_level *= zoom_change;
 
         self.offset = (self.offset - on) / Vector::fill(zoom_change) + on;
+    }
+
+    #[pyo3(name = "projection_mat")]
+    pub fn projection_mat_py(
+        &self,
+        input_metadata: PyTensorMetaData,
+        embedding_data: PyTensorEmbeddingData,
+        output_size: Vector<D2, GlobalCoordinate>,
+    ) -> PyResult<Matrix<D3, f32>> {
+        Ok(projection_mat(
+            input_metadata.try_into_dim()?,
+            embedding_data.try_into_dim()?,
+            output_size,
+            self.offset,
+            self.zoom_level,
+        ))
+    }
+}
+
+impl ImageViewerState {
+    pub fn projection_mat(
+        &self,
+        input_metadata: ImageMetaData,
+        embedding_data: ImageEmbeddingData,
+        output_size: Vector<D2, GlobalCoordinate>,
+    ) -> Matrix<D3, f32> {
+        projection_mat(
+            input_metadata,
+            embedding_data,
+            output_size,
+            self.offset,
+            self.zoom_level,
+        )
     }
 }
 
