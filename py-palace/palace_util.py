@@ -72,6 +72,18 @@ def mouse_to_volume_pos(slice_state, embedded_tensor, pos, frame_size):
     if (vol_pos >= 0).all() and (vol_pos < md.dimensions).all():
         return vol_pos
 
+# Helper to go from slice to volume coordinates (assuming a sliceviewer)
+def mouse_to_image_pos(image_state: pc.ImageViewerState, embedded_tensor, pos, frame_size):
+    md = embedded_tensor.inner.metadata
+    ed = embedded_tensor.embedding_data
+    pos = np.array([1.0] + pos)
+    mat = image_state.projection_mat(md, ed, frame_size)
+    img_pos = np.dot(mat, pos)[1:]
+    img_pos = np.round(img_pos)
+    img_pos = np.astype(img_pos, np.int32)
+    if (img_pos >= 0).all() and (img_pos < md.dimensions).all():
+        return img_pos
+
 # Helper to extract an element from a tensor
 def extract_tensor_value(rt, embedded_tensor, pos):
     md = embedded_tensor.inner.metadata
