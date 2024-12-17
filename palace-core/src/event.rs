@@ -53,6 +53,18 @@ impl TryFrom<PhysicalPosition<f64>> for MousePosition {
     }
 }
 
+pub struct Conditional<B, F>(pub B, pub F);
+
+impl<B: Behavior, F: Fn(&EventState) -> bool> Behavior for Conditional<B, F> {
+    fn input(&mut self, event: Event) -> EventChain {
+        if (self.1)(&event.state) {
+            self.0.input(event)
+        } else {
+            EventChain::Available(event)
+        }
+    }
+}
+
 pub struct OnMouseClick<F: FnMut(MousePosition)>(pub MouseButton, pub F);
 
 impl<F: FnMut(MousePosition)> Behavior for OnMouseClick<F> {
