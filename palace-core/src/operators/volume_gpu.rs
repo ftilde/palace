@@ -589,7 +589,7 @@ layout(std430, binding = 2) buffer OutputBuffer{
 
 declare_push_consts(consts);
 
-K kernel_val(int p) {
+K sample_kernel(int p) {
     int kernel_buf_index = consts.extent - p;
     return kernel.values[kernel_buf_index];
 }
@@ -604,7 +604,11 @@ void main() {
 
     if(gID < BRICK_MEM_SIZE) {
         uint[N] out_local = from_linear(gID, consts.mem_dim);
-        K acc = K(0);
+
+        K[TND] acc;
+        for(int j = 0; j < TND; ++j) {
+            acc[j] = K(0);
+        }
 
         if(all(less_than(out_local, consts.logical_dim_out))) {
 
@@ -647,14 +651,23 @@ void main() {
 
                     for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        acc += kernel_val(kernel_offset) * K(local_val);
+                        K kernel_val = sample_kernel(kernel_offset);
+
+                        for(int j = 0; j < TND; ++j) {
+                            acc[j] += kernel_val * K(local_val[j]);
+                        }
                     }
                 }
 
                 for (int local=l_begin; local<=l_end; ++local) {
                     int kernel_offset = local - out_pos_rel_to_in_pos_rel;
                     pos[DIM] = local;
-                    acc += kernel_val(kernel_offset) * K(sample_brick(pos, i));
+                    T local_val = sample_brick(pos, i);
+                    K kernel_val = sample_kernel(kernel_offset);
+
+                    for(int j = 0; j < TND; ++j) {
+                        acc[j] += kernel_val * K(local_val[j]);
+                    }
                 }
 
                 // Border handling for last chunk in dim
@@ -664,7 +677,11 @@ void main() {
 
                     for (int local=chunk_end_local+1; local<=l_end_no_clip; ++local) {
                         int kernel_offset = local - out_pos_rel_to_in_pos_rel;
-                        acc += kernel_val(kernel_offset) * K(local_val);
+                        K kernel_val = sample_kernel(kernel_offset);
+
+                        for(int j = 0; j < TND; ++j) {
+                            acc[j] += kernel_val * K(local_val[j]);
+                        }
                     }
                 }
             }
@@ -672,7 +689,9 @@ void main() {
             //acc = NaN;
         }
 
-        outputData.values[gID] = T(acc);
+        for(int j = 0; j < TND; ++j) {
+            outputData.values[gID][j] = T_SCALAR(acc[j]);
+        }
     }
 }
 "#;
@@ -687,6 +706,8 @@ void main() {
 
                 let dtype: DType = input.dtype().into();
                 let kernel_dtype: DType = kernel.dtype().into();
+                assert!(kernel_dtype.is_scalar());
+
                 let nd = input.dim().n();
                 let dim = **dim;
 
@@ -785,8 +806,10 @@ void main() {
                                 .define("MAX_BRICKS", max_bricks)
                                 .define("DIM", dim)
                                 .define("N", nd)
-                                .define("T", dtype.glsl_type())
+                                .define("T", dtype.glsl_type_force_vec())
                                 .define("K", kernel_dtype.glsl_type())
+                                .define("TND", dtype.size)
+                                .define("T_SCALAR", dtype.scalar.glsl_type())
                                 .define("BRICK_MEM_SIZE", mem_size)
                                 .define("KERNEL_SIZE", kernel_size)
                                 .push_const_block_dyn(&push_constants)

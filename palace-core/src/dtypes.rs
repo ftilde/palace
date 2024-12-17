@@ -209,10 +209,14 @@ impl DType {
     pub fn glsl_type(&self) -> String {
         let scalar = self.scalar.glsl_type().to_owned();
         if self.size > 1 {
-            format!("{}[{}]", scalar, self.size)
+            self.glsl_type_force_vec()
         } else {
             scalar
         }
+    }
+    pub fn glsl_type_force_vec(&self) -> String {
+        let scalar = self.scalar.glsl_type().to_owned();
+        format!("{}[{}]", scalar, self.size)
     }
     pub fn glsl_ext(&self) -> Option<&'static str> {
         match self.scalar {
