@@ -157,8 +157,8 @@ def render(size, events: pc.Events):
             vol = rw_result.levels[0]
             extract_slice_value(size, events, state, vol)
             events.act([
-                pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)),
-                pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)),
+                pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)).when(lambda s: s.is_down("ShiftLeft")),
+                pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)).when(lambda s: s.is_down("ShiftLeft")),
                 ])
 
         return palace_util.inspect_component(out, inspect)
