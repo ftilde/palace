@@ -136,11 +136,12 @@ def render(size, events: pc.Events):
         global foreground_seeds, background_seeds
 
         pos3d = palace_util.mouse_to_volume_pos(slice_state.load(), embedded_tensor, pos, frame_size)
-        pos3d = np.array(pos3d, dtype=np.float32).reshape((1, 3))
-        if foreground:
-            foreground_seeds = np.concat([foreground_seeds, pos3d])
-        else:
-            background_seeds = np.concat([background_seeds, pos3d])
+        if pos3d is not None:
+            pos3d = np.array(pos3d, dtype=np.float32).reshape((1, 3))
+            if foreground:
+                foreground_seeds = np.concat([foreground_seeds, pos3d])
+            else:
+                background_seeds = np.concat([background_seeds, pos3d])
 
     def overlay_slice(state):
 
