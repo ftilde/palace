@@ -6,6 +6,7 @@ use palace_core::jit::{self, JitTensorOperator};
 use palace_core::vec::Vector;
 use palace_core::{dim::*, storage::Element};
 use pyo3::types::PyFunction;
+use pyo3::IntoPyObjectExt;
 use pyo3::{exceptions::PyException, prelude::*};
 
 use palace_core::operators::scalar::ScalarOperator as CScalarOperator;
@@ -479,12 +480,12 @@ impl MaybeEmbeddedTensorOperator {
         py: Python,
         f: impl FnOnce(CTensorOperator<DDyn, DType>) -> PyResult<CTensorOperator<DDyn, DType>>,
     ) -> PyResult<PyObject> {
-        Ok(match self {
+        match self {
             MaybeEmbeddedTensorOperator::Not { i } => {
                 let v: CTensorOperator<DDyn, DType> = i.into_core();
                 let v = f(v)?;
                 let v: TensorOperator = v.into();
-                v.into_py(py)
+                v.into_py_any(py)
             }
             MaybeEmbeddedTensorOperator::Embedded { e } => {
                 let v: CTensorOperator<DDyn, DType> = e.inner.into_core();
@@ -494,9 +495,9 @@ impl MaybeEmbeddedTensorOperator {
                     inner: v,
                     embedding_data: e.embedding_data,
                 }
-                .into_py(py)
+                .into_py_any(py)
             }
-        })
+        }
     }
 
     pub fn try_map_inner_jit(
@@ -622,7 +623,7 @@ impl LODTensorOperator {
                 .levels
                 .iter()
                 .map(|l| {
-                    f.call1(py, (l.clone().into_py(py),))
+                    f.call1(py, (l.clone().into_bound_py_any(py).unwrap(),))
                         .and_then(|v| v.extract::<EmbeddedTensorOperator>(py))
                 })
                 .collect::<PyResult<Vec<_>>>()?,

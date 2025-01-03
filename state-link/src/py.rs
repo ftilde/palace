@@ -1,6 +1,6 @@
 use std::any::TypeId;
 
-use pyo3::prelude::*;
+use pyo3::{prelude::*, IntoPyObjectExt};
 
 #[derive(Default)]
 #[pyclass]
@@ -31,7 +31,7 @@ impl Store {
                 },
                 store: this.into(),
             }
-            .into_py(py),
+            .into_py_any(py),
             StorePrimitive::U32(v) => NodeHandleU32 {
                 inner: {
                     let x = this.borrow_mut(py).inner.store(&v);
@@ -39,7 +39,7 @@ impl Store {
                 },
                 store: this.into(),
             }
-            .into_py(py),
+            .into_py_any(py),
             StorePrimitive::String(v) => NodeHandleString {
                 inner: {
                     let x = this.borrow_mut(py).inner.store(&v);
@@ -47,8 +47,9 @@ impl Store {
                 },
                 store: this.into(),
             }
-            .into_py(py),
+            .into_py_any(py),
         }
+        .unwrap()
     }
 }
 
@@ -80,7 +81,7 @@ impl NodeHandleF32 {
     }
 
     fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
-        let val_py = self.load(py).into_py(py);
+        let val_py = self.load(py).into_py_any(py).unwrap();
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<f32>()?;
         self.write(py, val)
@@ -114,7 +115,7 @@ impl NodeHandleU32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
     fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
-        let val_py = self.load(py).into_py(py);
+        let val_py = self.load(py).into_py_any(py).unwrap();
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<u32>()?;
         self.write(py, val)
@@ -148,7 +149,7 @@ impl NodeHandleString {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
     fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
-        let val_py = self.load(py).into_py(py);
+        let val_py = self.load(py).into_py_any(py).unwrap();
         let res_py = f.call1((&val_py,))?;
         let val = res_py.extract::<String>()?;
         self.write(py, val)
@@ -178,7 +179,7 @@ fn write_item<T: super::State + Clone + for<'f> FromPyObject<'f>>(
 }
 
 pub trait PyState:
-    std::any::Any + super::State + Clone + IntoPy<PyObject> + for<'f> FromPyObject<'f> + 'static
+    std::any::Any + super::State + Clone + for<'f> IntoPyObject<'f> + for<'f> FromPyObject<'f> + 'static
 {
     fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject;
 }
@@ -189,7 +190,7 @@ impl PyState for f32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        Py::new(py, init).unwrap().to_object(py)
+        init.into_py_any(py).unwrap()
     }
 }
 
@@ -199,7 +200,7 @@ impl PyState for u32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        Py::new(py, init).unwrap().to_object(py)
+        init.into_py_any(py).unwrap()
     }
 }
 
@@ -209,23 +210,23 @@ impl PyState for String {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
         };
-        Py::new(py, init).unwrap().to_object(py)
+        init.into_py_any(py).unwrap()
     }
 }
 
 impl<const I: usize, T: PyState> PyState for [T; I] {
     fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
         let init = NodeHandleArray::new::<T>(inner, I, store);
-        Py::new(py, init).unwrap().to_object(py)
+        init.into_py_any(py).unwrap()
     }
 }
 
 impl NodeHandleArray {
     pub fn new<
         T: std::any::Any
-            + IntoPy<PyObject>
             + super::State
             + Clone
+            + for<'f> IntoPyObject<'f>
             + for<'f> FromPyObject<'f>
             + PyState,
     >(
@@ -238,7 +239,7 @@ impl NodeHandleArray {
             item_type_name: std::any::type_name::<T>(),
             inner,
             len,
-            load_item: |py, node, store| store.load_unchecked::<T>(node).into_py(py),
+            load_item: |py, node, store| store.load_unchecked::<T>(node).into_py_any(py).unwrap(),
             write_item: write_item::<T>,
             build_item_handle: T::build_handle,
             store,
@@ -264,7 +265,7 @@ impl NodeHandleArray {
             out.push((self.load_item)(py, &self.inner.index(i), &store.inner));
         }
 
-        out.into_py(py)
+        out.into_py_any(py).unwrap()
     }
 
     fn link_to(&self, py: Python, dst: &NodeHandleArray) -> PyResult<()> {

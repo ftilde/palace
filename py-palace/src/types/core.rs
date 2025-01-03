@@ -8,7 +8,7 @@ use palace_core::{
     storage::DataVersionType,
     vec::Vector,
 };
-use pyo3::{exceptions::PyException, prelude::*};
+use pyo3::{exceptions::PyException, prelude::*, IntoPyObjectExt};
 use pyo3_stub_gen::derive::gen_stub_pyclass;
 
 use super::{Events, MaybeEmbeddedTensorOperatorArg, ScalarOperator, TensorOperator};
@@ -28,7 +28,7 @@ impl RunTime {
         chunk_i: ChunkIndex,
     ) -> PyResult<PyObject> {
         let mut rt = self.inner.borrow_mut();
-        map_result(rt.resolve(None, false, |ctx, _| {
+        let data = map_result(rt.resolve(None, false, |ctx, _| {
             async move {
                 let chunk = ctx.submit(op_ref.chunks.request(chunk_i)).await;
                 let chunk_info = op_ref.metadata.chunk_info(chunk_i);
@@ -36,14 +36,15 @@ impl RunTime {
                 Ok(chunk.to_owned())
             }
             .into()
-        }))
-        .map(|v| numpy::PyArray::from_owned_array_bound(py, v).into_py(py))
+        }))?;
+        numpy::PyArray::from_owned_array(py, data).into_py_any(py)
     }
 }
 
 #[pymethods]
 impl RunTime {
     #[new]
+    #[pyo3(signature = (storage_size, gpu_storage_size, disk_cache_size=None, num_compute_threads=None, device=None))]
     pub fn new(
         storage_size: usize,
         gpu_storage_size: u64,

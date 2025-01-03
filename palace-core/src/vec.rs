@@ -556,20 +556,26 @@ impl Vector<D3, f32> {
 #[cfg(feature = "python")]
 mod py {
     use super::*;
-    use pyo3::{prelude::*, types::PyList};
+    use pyo3::{prelude::*, types::PyList, IntoPyObjectExt};
 
     impl<'source, D: DynDimension, T: Copy> FromPyObject<'source> for Vector<D, T>
     where
         D::DynArray<T>: FromPyObject<'source>,
     {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
             ob.extract::<D::DynArray<T>>().map(Self)
         }
     }
 
-    impl<D: DynDimension, T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Vector<D, T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            PyList::new_bound(py, self.into_iter().map(|v| v.into_py(py))).into()
+    impl<'py, D: DynDimension, T: Copy + IntoPyObject<'py>> IntoPyObject<'py> for Vector<D, T> {
+        type Target = PyList;
+
+        type Output = Bound<'py, Self::Target>;
+
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            Ok(PyList::new(py, self.into_iter())?.into_pyobject(py)?)
         }
     }
 
@@ -581,7 +587,7 @@ mod py {
 
     impl<D: Dimension, T: Copy + state_link::py::PyState> state_link::py::PyState for Vector<D, T>
     where
-        D::Array<T>: IntoPy<PyObject> + for<'f> FromPyObject<'f>,
+        D::Array<T>: for<'f> IntoPyObject<'f> + for<'f> FromPyObject<'f>,
     {
         fn build_handle(
             py: Python,
@@ -589,7 +595,7 @@ mod py {
             store: Py<state_link::py::Store>,
         ) -> PyObject {
             let init = state_link::py::NodeHandleArray::new::<T>(inner, D::N, store);
-            Py::new(py, init).unwrap().to_object(py)
+            init.into_py_any(py).unwrap()
         }
     }
 

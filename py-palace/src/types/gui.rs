@@ -179,12 +179,13 @@ pub struct Slider {
 #[pymethods]
 impl Slider {
     #[new]
-    fn new(val: SliderVal, min: f64, max: f64, logarithmic: Option<bool>) -> Self {
+    #[pyo3(signature = (val, min, max, logarithmic=false))]
+    fn new(val: SliderVal, min: f64, max: f64, logarithmic: bool) -> Self {
         Self {
             val,
             min,
             max,
-            logarithmic: logarithmic.unwrap_or(false),
+            logarithmic,
         }
     }
 }

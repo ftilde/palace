@@ -384,7 +384,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         }
 
                         #[pyo3(name = "mutate")]
-                        fn mutate_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+                        fn mutate_py(&self, py: pyo3::Python, f: &pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
                             let val_py = self.load_py(py);
                             f.call1((&val_py,))?;
                             let val = val_py.extract::<#name>(py)?;
@@ -392,7 +392,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         }
 
                         #[pyo3(name = "map")]
-                        fn map_py(&self, py: pyo3::Python, f: &pyo3::types::PyFunction) -> pyo3::PyResult<()> {
+                        fn map_py(&self, py: pyo3::Python, f: &pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
                             let val_py = self.load_py(py);
                             let res_py = f.call1((&val_py,))?;
                             let val = res_py.extract::<#name>()?;
@@ -411,7 +411,9 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                                 inner,
                                 store,
                             };
-                            pyo3::PyCell::new(py, init).unwrap().to_object(py)
+
+                            use pyo3::IntoPyObjectExt;
+                            init.into_py_any(py).unwrap()
                         }
                     }
                 }
@@ -425,7 +427,9 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                                 inner: <<String as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner),
                                 store,
                             };
-                            PyCell::new(py, init).unwrap().to_object(py)
+
+                            use pyo3::IntoPyObjectExt;
+                            init.into_py_any(py).unwrap()
                         }
                     }
                 }

@@ -198,17 +198,22 @@ impl<T> Identify for Coordinate<T> {
 #[cfg(feature = "python")]
 mod py {
     use super::*;
-    use pyo3::prelude::*;
+    use pyo3::{prelude::*, types::PyInt};
 
     impl<'source, T: CoordinateType> FromPyObject<'source> for Coordinate<T> {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
             let raw: u32 = ob.extract()?;
             Ok(Coordinate::from(raw))
         }
     }
-    impl<T: CoordinateType> IntoPy<PyObject> for Coordinate<T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            self.raw.into_py(py)
+
+    impl<'py, T: CoordinateType> IntoPyObject<'py> for Coordinate<T> {
+        type Target = PyInt;
+        type Output = Bound<'py, Self::Target>;
+        type Error = std::convert::Infallible;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            self.raw.into_pyobject(py)
         }
     }
 }

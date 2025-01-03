@@ -23,8 +23,8 @@ use super::tensor::FrameOperator;
 use pyo3::prelude::*;
 
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyclass)]
-#[derive(Clone, Identify)]
+#[cfg_attr(feature = "python", pyclass(eq, eq_int))]
+#[derive(Clone, Identify, PartialEq, Eq)]
 pub enum SplitDirection {
     Horizontal,
     Vertical,

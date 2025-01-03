@@ -60,8 +60,8 @@ impl EventState {
 }
 
 #[gen_stub_pyclass_enum]
-#[pyclass(unsendable)]
-#[derive(Clone, Copy, Debug)]
+#[pyclass(unsendable, eq, eq_int)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -102,19 +102,16 @@ impl Behaviour {
                 Behaviour::OnMouseDrag(b) => e.chain(c::OnMouseDrag(b.0.into(), |p, d| {
                     let p = [p.y(), p.x()];
                     let d = [d.y(), d.x()];
-                    collect_err(&mut err, b.1.call_bound(py, (p, d), None).err());
+                    collect_err(&mut err, b.1.call(py, (p, d), None).err());
                 })),
                 Behaviour::OnMouseClick(b) => e.chain(c::OnMouseClick(b.0.into(), |p| {
                     let p = [p.y(), p.x()];
-                    collect_err(&mut err, b.1.call_bound(py, (p,), None).err());
+                    collect_err(&mut err, b.1.call(py, (p,), None).err());
                 })),
                 Behaviour::OnWheelMove(b) => e.chain(c::OnWheelMove(|d, s| {
                     if let Some(m_state) = &s.mouse_state {
                         let pos = m_state.pos.map(|v| v as f32);
-                        collect_err(
-                            &mut err,
-                            b.0.call_bound(py, (d, [pos.y(), pos.x()]), None).err(),
-                        );
+                        collect_err(&mut err, b.0.call(py, (d, [pos.y(), pos.x()]), None).err());
                     }
                 })),
                 Behaviour::OnKeyPress(b) => e.chain(c::OnKeyPress(b.0, || {
@@ -123,7 +120,7 @@ impl Behaviour {
                 Behaviour::Conditional(b) => e.chain(|e: c::Event| {
                     match b
                         .1
-                        .call_bound(py, (EventState(e.state.clone()),), None)
+                        .call(py, (EventState(e.state.clone()),), None)
                         .and_then(|r| r.extract::<bool>(py))
                     {
                         Ok(res) => {

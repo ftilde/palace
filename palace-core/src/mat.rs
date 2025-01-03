@@ -251,10 +251,10 @@ impl<T: Copy> From<cgmath::Matrix4<T>> for Matrix<D4, T> {
 #[cfg(feature = "python")]
 mod py {
     use super::*;
-    use pyo3::prelude::*;
+    use pyo3::{prelude::*, IntoPyObjectExt};
 
     impl<'source, D: Dimension, T: Copy + numpy::Element> FromPyObject<'source> for Matrix<D, T> {
-        fn extract(ob: &'source PyAny) -> PyResult<Self> {
+        fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
             let np = ob.extract::<numpy::borrow::PyReadonlyArray2<T>>()?;
             let arr = np.as_array();
             let shape = arr.shape();
@@ -270,15 +270,21 @@ mod py {
         }
     }
 
-    impl<D: DynDimension, T: Copy + numpy::Element> IntoPy<PyObject> for Matrix<D, T> {
-        fn into_py(self, py: Python<'_>) -> PyObject {
-            numpy::PyArray2::from_owned_array_bound(
+    impl<'py, D: DynDimension, T: Copy + numpy::Element> IntoPyObject<'py> for Matrix<D, T> {
+        type Target = PyAny;
+
+        type Output = Bound<'py, Self::Target>;
+
+        type Error = PyErr;
+
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            numpy::PyArray2::from_owned_array(
                 py,
                 numpy::ndarray::Array::from_shape_fn((self.dim.n(), self.dim.n()), |(i, j)| {
                     self.at(i, j).clone()
                 }),
             )
-            .into_py(py)
+            .into_bound_py_any(py)
         }
     }
 

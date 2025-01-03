@@ -264,6 +264,7 @@ pub fn entry_exit_points(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (vol, entry_exit_points, config=None, tf=None))]
 pub fn raycast(
     vol: LODTensorOperator,
     entry_exit_points: TensorOperator,
@@ -288,6 +289,7 @@ pub fn raycast(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (input, result_metadata, projection_mat, tf=None))]
 pub fn render_slice(
     input: LODTensorOperator,
     result_metadata: PyTensorMetaData,
@@ -311,6 +313,7 @@ pub fn render_slice(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (vol, num_samples=None))]
 pub fn mean_value(
     vol: MaybeEmbeddedTensorOperatorArg,
     num_samples: Option<usize>,
@@ -322,6 +325,7 @@ pub fn mean_value(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (vol, num_samples=None))]
 pub fn min_value(
     vol: MaybeEmbeddedTensorOperatorArg,
     num_samples: Option<usize>,
@@ -333,6 +337,7 @@ pub fn min_value(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (vol, num_samples=None))]
 pub fn max_value(
     vol: MaybeEmbeddedTensorOperatorArg,
     num_samples: Option<usize>,
@@ -352,6 +357,7 @@ pub fn gauss_kernel(stddev: f32) -> TensorOperator {
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (path, brick_size_hint=None, volume_path_hint=None))]
 pub fn open_volume(
     path: std::path::PathBuf,
     brick_size_hint: Option<u32>,
@@ -371,18 +377,19 @@ pub fn open_volume(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (path, chunk_size_hint=None, volume_path_hint=None, rechunk=false))]
 pub fn open_or_create_lod(
     path: std::path::PathBuf,
     chunk_size_hint: Option<Vec<u32>>,
     volume_path_hint: Option<String>,
-    rechunk: Option<bool>,
+    rechunk: bool,
 ) -> PyResult<LODTensorOperator> {
     let chunk_size_hint = chunk_size_hint.map(|h| LocalVoxelPosition::from_fn(|i| h[i].into()));
 
     let hints = palace_volume::Hints {
         chunk_size: chunk_size_hint,
         location: volume_path_hint,
-        rechunk: rechunk.unwrap_or(false),
+        rechunk,
         ..Default::default()
     };
     let (vol, _) = crate::map_result(palace_volume::open_or_create_lod(path, hints))?;
@@ -481,6 +488,7 @@ pub fn randomwalker_weights_bian(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (weights, seeds, max_iter=None, max_residuum_norm=None))]
 pub fn randomwalker(
     py: Python,
     weights: TensorOperator,
@@ -511,6 +519,7 @@ pub fn randomwalker(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (weights, points_fg, points_bg, max_iter=None, max_residuum_norm=None))]
 pub fn hierarchical_randomwalker(
     weights: LODTensorOperator,
     points_fg: TensorOperator,

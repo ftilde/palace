@@ -26,7 +26,7 @@ pub struct ChunkSizeFull;
 pub struct ChunkSize(pub CChunkSize);
 
 impl<'source> FromPyObject<'source> for ChunkSize {
-    fn extract(val: &'source PyAny) -> PyResult<Self> {
+    fn extract_bound(val: &Bound<'source, PyAny>) -> PyResult<Self> {
         Ok(ChunkSize(if let Ok(_) = val.extract::<ChunkSizeFull>() {
             CChunkSize::Full
         } else {

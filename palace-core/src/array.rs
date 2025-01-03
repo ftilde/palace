@@ -213,15 +213,15 @@ mod py {
 
         #[getter]
         fn dimensions<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
-            PyArray1::from_vec_bound(py, self.dimensions.clone())
+            PyArray1::from_vec(py, self.dimensions.clone())
         }
         #[getter]
         fn chunk_size<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
-            PyArray1::from_vec_bound(py, self.chunk_size.clone())
+            PyArray1::from_vec(py, self.chunk_size.clone())
         }
 
         fn chunk_pos<'a>(&self, pos: Vec<u32>, py: Python<'a>) -> Bound<'a, PyArray1<u32>> {
-            PyArray1::from_vec_bound(
+            PyArray1::from_vec(
                 py,
                 super::TensorMetaData::<DDyn>::from(self.clone())
                     .chunk_pos(&Vector::<DDyn, u32>::new(pos).global())
@@ -236,7 +236,7 @@ mod py {
             global_pos: Vec<u32>,
             py: Python<'a>,
         ) -> Bound<'a, PyArray1<u32>> {
-            PyArray1::from_vec_bound(
+            PyArray1::from_vec(
                 py,
                 super::TensorMetaData::<DDyn>::from(self.clone())
                     .chunk_info_vec(&Vector::<DDyn, u32>::new(chunk_pos).chunk())
@@ -304,7 +304,7 @@ mod py {
 
         #[getter]
         fn get_spacing<'a>(&self, py: Python<'a>) -> Bound<'a, PyArray1<f32>> {
-            PyArray1::from_vec_bound(py, self.spacing.clone())
+            PyArray1::from_vec(py, self.spacing.clone())
         }
 
         #[setter]

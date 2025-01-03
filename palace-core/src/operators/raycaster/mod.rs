@@ -492,7 +492,7 @@ pub fn entry_exit_points(
 }
 
 #[cfg_attr(feature = "python", gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(eq, eq_int))]
 #[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum CompositingMode {
     MOP,
@@ -509,7 +509,7 @@ impl CompositingMode {
 }
 
 #[cfg_attr(feature = "python", gen_stub_pyclass_enum)]
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(eq, eq_int))]
 #[derive(state_link::State, Clone, Copy, Debug, PartialEq, Eq, id::Identify)]
 pub enum Shading {
     None,

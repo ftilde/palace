@@ -9,5 +9,5 @@ itertools = "0.13.0"
 palace-core = { path = "../palace-core" }
 id = { path = "../id" }
 serde_json = "1.0.127"
-zarrs = { version = "0.17.0-beta.0" }
+zarrs = { version = "0.17.0-beta.0", default-features = false, features=["zstd"] }
 zip = "=2.1.3" #Newer verisons are slow: https://github.com/zip-rs/zip2/issues/231
