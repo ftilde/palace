@@ -58,9 +58,7 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 gui_state = pc.GuiState(rt)
 
 def fit_tf_to_values(vol):
-    vol = vol.levels[0]
-    tf.min = rt.resolve_scalar(pc.min_value(vol, 10))
-    tf.max = rt.resolve_scalar(pc.max_value(vol, 10))
+    palace_util.fit_tf_range(rt, vol.levels[0], tf)
 
 # Top-level render component
 def render(size, events):

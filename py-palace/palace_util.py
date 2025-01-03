@@ -111,6 +111,11 @@ def alpha_blending(render_over, render_under):
     return inner
 
 
+def fit_tf_range(rt, vol, tf):
+    tf.min = rt.resolve_scalar(pc.min_value(vol, 10))
+    tf.max = rt.resolve_scalar(pc.max_value(vol, 10))
+
+
 # Gui stuff
 def named_slider(name, state, min, max, logarithmic=False):
     return pc.Horizontal([
