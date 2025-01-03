@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-#[derive(id::Identify, Clone, Copy)]
+#[derive(id::Identify, Clone, Copy, Debug)]
 pub enum UnaryOp {
     Abs,
     Neg,
@@ -86,7 +86,7 @@ impl Display for WriteUnary {
     }
 }
 
-#[derive(id::Identify, Clone, Copy)]
+#[derive(id::Identify, Clone, Copy, Debug)]
 pub enum BinOp {
     Add,
     Mul,
@@ -149,7 +149,7 @@ impl Display for WriteBin {
     }
 }
 
-#[derive(id::Identify, Clone, Copy)]
+#[derive(id::Identify, Clone, Copy, Debug)]
 pub enum ConstValue {
     F32(f32),
 }
@@ -170,16 +170,27 @@ impl ConstValue {
     }
 }
 
-#[derive(id::Identify, Clone)]
-enum Node {
+#[derive(id::Identify, Clone, Debug)]
+enum Instruction {
     Const(ConstValue),
-    UnaryOp(DType, UnaryOp, NodeId),
-    BinOp(DType, BinOp, NodeId, NodeId),
+    Unary(DType, UnaryOp, InstructionOffset),
+    Binary(DType, BinOp, InstructionOffset, InstructionOffset),
     Read(DType, InputId),
 }
 
-#[derive(Clone)]
-struct OrderedSet<T>(Vec<T>);
+impl Instruction {
+    fn dtype(&self) -> DType {
+        match self {
+            Instruction::Const(const_value) => const_value.dtype(),
+            Instruction::Unary(dtype, ..) => *dtype,
+            Instruction::Binary(dtype, ..) => *dtype,
+            Instruction::Read(dtype, ..) => *dtype,
+        }
+    }
+}
+
+#[derive(Clone, Identify)]
+struct OrderedSet<T: Identify>(Vec<T>);
 
 impl<T: Identify> OrderedSet<T> {
     fn add(&mut self, item: T) -> usize {
@@ -197,31 +208,15 @@ impl<T: Identify> OrderedSet<T> {
         };
         pos
     }
-
-    fn merge(mut self, other: OrderedSet<T>) -> Self {
-        for l in other.0.into_iter() {
-            self.add(l);
-        }
-        self
-    }
 }
 
 //TODO: Rc for cheap clone?
-#[derive(Clone)]
+#[derive(Identify, Clone)]
 pub struct JitTensorOperator<D: DynDimension> {
-    root: NodeId,
     metadata: Option<TensorMetaData<D>>,
     dtype: DType,
     operators: OrderedSet<TensorOperator<D, DType>>,
-    nodes: OrderedSet<Node>,
-}
-
-impl<D: DynDimension> id::Identify for JitTensorOperator<D> {
-    fn id(&self) -> Id {
-        // Note: All information (including operators via there ids) is present in the operation
-        // tree `node`
-        self.root.0
-    }
+    instructions: Vec<Instruction>,
 }
 
 impl<D: DynDimension> OperatorParameter for JitTensorOperator<D> {
@@ -265,16 +260,14 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
         Ok({
             let dtype = op.dtype(inner.dtype)?;
-            let node = Node::UnaryOp(dtype, op, inner.root);
-            let root = NodeId(node.id());
-            let mut nodes = inner.nodes;
-            nodes.add(node);
+            let op = Instruction::Unary(dtype, op, InstructionOffset(1));
+            let mut ops = inner.instructions;
+            ops.push(op);
             Self {
-                root,
                 metadata: inner.metadata.clone(),
                 dtype,
                 operators: inner.operators,
-                nodes,
+                instructions: ops,
             }
         })
     }
@@ -286,10 +279,26 @@ impl<D: DynDimension> JitTensorOperator<D> {
         Ok({
             let dtype = op.dtype(l.dtype, r.dtype)?;
 
-            let node = Node::BinOp(dtype, op, l.root, r.root);
-            let root = NodeId(node.id());
-            let mut nodes = l.nodes.merge(r.nodes);
-            nodes.add(node);
+            let mut inputs = l.operators;
+            let old_inputs = r.operators;
+
+            let mut ops = l.instructions;
+            let mut new_ops = r.instructions;
+            for op in &mut new_ops {
+                if let Instruction::Read(_, input_id) = op {
+                    *input_id = InputId(inputs.add(old_inputs.0[input_id.0].clone()));
+                }
+            }
+
+            let op = Instruction::Binary(
+                dtype,
+                op,
+                InstructionOffset(new_ops.len() + 1),
+                InstructionOffset(1),
+            );
+            ops.extend(new_ops);
+            ops.push(op);
+
             Self {
                 metadata: match (l.metadata, r.metadata) {
                     (None, None) => None,
@@ -304,9 +313,8 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     }
                 },
                 dtype,
-                operators: l.operators.merge(r.operators),
-                nodes,
-                root,
+                operators: inputs,
+                instructions: ops,
             }
         })
     }
@@ -314,12 +322,10 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
 impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
     fn from(c: ConstValue) -> Self {
-        let node = Node::Const(c);
-        let root = NodeId(node.id());
-        let nodes = OrderedSet(vec![node]);
+        let op = Instruction::Const(c);
+        let ops = vec![op];
         Self {
-            root,
-            nodes,
+            instructions: ops,
             metadata: None,
             dtype: c.dtype(),
             operators: OrderedSet(Vec::new()),
@@ -336,15 +342,12 @@ impl<D: DynDimension> From<f32> for JitTensorOperator<D> {
 impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
     fn from(c: TensorOperator<D, DType>) -> Self {
         let dtype = c.chunks.dtype();
-        let id = c.chunks.id();
         let metadata = Some(c.metadata.clone());
 
-        let node = Node::Read(dtype, InputId(id));
-        let root = NodeId(node.id());
-        let nodes = OrderedSet(vec![node]);
+        let op = Instruction::Read(dtype, InputId(0));
+        let ops = vec![op];
         Self {
-            root,
-            nodes,
+            instructions: ops,
             metadata,
             dtype,
             operators: OrderedSet(vec![c]),
@@ -377,39 +380,41 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
 }
 
-#[derive(id::Identify, Clone)]
-struct InputId(Id);
+#[derive(id::Identify, Clone, Debug)]
+struct InputId(usize);
+
 impl Display for InputId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "input{}", self.0.raw())
+        write!(f, "input{}", self.0)
     }
 }
 
-#[derive(id::Identify, Copy, Clone)]
-struct NodeId(Id);
+#[derive(Copy, Clone)]
+struct NodeId(usize);
 
 impl Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "v{}", self.0.raw())
+        write!(f, "v{}", self.0)
     }
 }
+
+#[derive(id::Identify, Copy, Clone, Debug)]
+struct InstructionOffset(usize);
 
 pub fn jit<D: DynDimension>(op: TensorOperator<D, DType>) -> JitTensorOperator<D> {
     op.into()
 }
 
-fn compile<D: DynDimension>(
-    nodes: &Vec<Node>,
-    root: NodeId,
-    root_dtype: DType,
-    inputs: &Vec<TensorOperator<D, DType>>,
+fn compile(
+    instructions: &Vec<Instruction>,
+    input_types: &Vec<DType>,
 ) -> Result<(String, Config), crate::Error> {
     let mut shader = String::new();
     let mut config = Config::new();
 
     writeln!(&mut shader, "#include<size_util.glsl>")?;
 
-    for (i, input) in inputs.iter().enumerate() {
+    for (i, dtype) in input_types.iter().enumerate() {
         writeln!(
             &mut shader,
             r#"
@@ -419,7 +424,7 @@ fn compile<D: DynDimension>(
             "#,
             i,
             i,
-            input.chunks.dtype().glsl_type(),
+            dtype.glsl_type(),
             i,
         )?;
     }
@@ -431,8 +436,8 @@ fn compile<D: DynDimension>(
                 {} values[BRICK_MEM_SIZE];
             }} output_buf;
             "#,
-        inputs.len(),
-        root_dtype.glsl_type(),
+        input_types.len(),
+        instructions.last().unwrap().dtype().glsl_type(),
     )?;
 
     writeln!(
@@ -445,25 +450,77 @@ fn compile<D: DynDimension>(
             "#
     )?;
 
-    for (i, input) in inputs.iter().enumerate() {
+    for (i, dtype) in input_types.iter().enumerate() {
         writeln!(
             &mut shader,
             "{} {} = input{}.values[gID];",
-            input.chunks.dtype().glsl_type(),
-            InputId(input.chunks.id()),
+            dtype.glsl_type(),
+            InputId(i),
             i
         )?;
     }
 
-    for node in nodes {
-        let res_id = NodeId(node.id());
-        let dtype = match node {
-            Node::Const(c) => {
+    struct Node<'a> {
+        instr: &'a Instruction,
+        id: Id,
+        instruction_number: usize,
+    }
+
+    impl Identify for Node<'_> {
+        fn id(&self) -> Id {
+            self.id
+        }
+    }
+
+    // Perform a collapse-of-identical-instructions optimization step:
+    // Calculate an id for all instructions and, based on that collect them in a new list
+    // ("nodes"), which automatically deduplicates.
+
+    let mut nodes: OrderedSet<Node> = OrderedSet(Vec::new());
+    let mut instruction_to_node: Vec<NodeId> = Vec::new();
+
+    for (i, instr) in instructions.iter().enumerate() {
+        let id = match instr {
+            Instruction::Const(const_value) => const_value.id(),
+            Instruction::Unary(dtype, unary_op, offset) => {
+                let node_num = instruction_to_node[i - offset.0];
+                Id::combine(&[dtype.id(), unary_op.id(), nodes.0[node_num.0].id])
+            }
+            Instruction::Binary(dtype, bin_op, offset_l, offset_r) => {
+                let node_num_l = instruction_to_node[i - offset_l.0];
+                let node_num_r = instruction_to_node[i - offset_r.0];
+                Id::combine(&[
+                    dtype.id(),
+                    bin_op.id(),
+                    nodes.0[node_num_l.0].id,
+                    nodes.0[node_num_r.0].id,
+                ])
+            }
+            Instruction::Read(dtype, input_id) => Id::combine(&[dtype.id(), input_id.id()]),
+        };
+
+        let node_id = nodes.add(Node {
+            instr: &instr,
+            id,
+            instruction_number: i,
+        });
+
+        instruction_to_node.push(NodeId(node_id));
+    }
+
+    let input_node_id = |own_instruction_number: usize, input_offset: InstructionOffset| {
+        let input_instruction_number = own_instruction_number - input_offset.0;
+        instruction_to_node[input_instruction_number]
+    };
+
+    for (i, node) in nodes.0.iter().enumerate() {
+        let res_id = NodeId(i);
+        let dtype = match node.instr {
+            Instruction::Const(c) => {
                 writeln!(&mut shader, "{} {} = {};", c.dtype().glsl_type(), res_id, c)?;
                 c.dtype()
             }
-            Node::UnaryOp(t, o, a) => {
-                //let param = translate(a, w, value_ids)?;
+            Instruction::Unary(t, o, a) => {
                 writeln!(
                     &mut shader,
                     "{} {}; {} {} = {};",
@@ -471,13 +528,11 @@ fn compile<D: DynDimension>(
                     res_id,
                     VecLoop(t.size),
                     WriteValue(res_id, t.size),
-                    WriteUnary(*o, *a, t.size)
+                    WriteUnary(*o, input_node_id(node.instruction_number, *a), t.size)
                 )?;
                 *t
             }
-            Node::BinOp(t, o, l, r) => {
-                //let param_l = translate(l, w, value_ids)?;
-                //let param_r = translate(r, w, value_ids)?;
+            Instruction::Binary(t, o, l, r) => {
                 writeln!(
                     &mut shader,
                     "{} {}; {} {} = {};",
@@ -485,17 +540,24 @@ fn compile<D: DynDimension>(
                     res_id,
                     VecLoop(t.size),
                     WriteValue(res_id, t.size),
-                    WriteBin(*o, *l, *r, t.size)
+                    WriteBin(
+                        *o,
+                        input_node_id(node.instruction_number, *l),
+                        input_node_id(node.instruction_number, *r),
+                        t.size
+                    )
                 )?;
                 *t
             }
-            Node::Read(t, v) => {
+            Instruction::Read(t, v) => {
                 writeln!(&mut shader, "{} {} = {};", t.glsl_type(), res_id, v)?;
                 *t
             }
         };
         config = config.ext(dtype.glsl_ext());
     }
+
+    let root_node_id = NodeId(nodes.0.len() - 1);
 
     writeln!(
         &mut shader,
@@ -504,7 +566,7 @@ fn compile<D: DynDimension>(
                 }}
             }}
             "#,
-        root,
+        root_node_id,
     )?;
 
     Ok((shader, config))
@@ -524,7 +586,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
             return Err("No metadata information in JitOperator".into());
         };
 
-        if let &[Node::Read(_, _)] = self.nodes.0.as_slice() {
+        if let &[Instruction::Read(_, _)] = self.instructions.as_slice() {
             assert_eq!(self.operators.0.len(), 1);
             return Ok(self.operators.0.pop().unwrap());
         }
@@ -550,15 +612,20 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
                     let num_chunk_elements = m.num_chunk_elements();
 
+                    let input_dtypes = jit_operator
+                        .operators
+                        .0
+                        .iter()
+                        .map(|op| op.dtype())
+                        .collect::<Vec<_>>();
                     let pipeline = device.request_state(
-                        (&jit_operator, jit_operator.dtype, num_chunk_elements),
-                        |device, (&jit_operator, dtype, num_chunk_elements)| {
-                            let (shader, config) = compile(
-                                &jit_operator.nodes.0,
-                                jit_operator.root,
-                                dtype,
-                                &jit_operator.operators.0,
-                            )?;
+                        (
+                            &input_dtypes,
+                            &jit_operator.instructions,
+                            num_chunk_elements,
+                        ),
+                        |device, (input_dtypes, instructions, num_chunk_elements)| {
+                            let (shader, config) = compile(instructions, input_dtypes)?;
                             //println!("{}", shader.as_str());
                             ComputePipelineBuilder::new(
                                 Shader::new(shader.as_str())
