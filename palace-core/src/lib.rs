@@ -18,6 +18,7 @@ pub mod task_manager;
 #[cfg(test)]
 pub mod test_util;
 pub mod threadpool;
+pub mod transfunc;
 pub mod util;
 pub mod vec;
 pub mod vulkan;

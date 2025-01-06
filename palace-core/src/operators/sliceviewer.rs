@@ -4,10 +4,7 @@ use ash::vk;
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use id::Identify;
 
-use super::{
-    raycaster::TransFuncOperator,
-    tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator, LODVolumeOperator},
-};
+use super::tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator, LODVolumeOperator};
 
 use crate::{
     array::{
@@ -21,6 +18,7 @@ use crate::{
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
+    transfunc::TransFuncOperator,
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
@@ -698,7 +696,7 @@ mod test {
                     .single_level_lod(),
                 img_meta.into(),
                 slice_proj,
-                crate::operators::raycaster::TransFuncOperator::grey_ramp(0.0, 1.0),
+                crate::transfunc::TransFuncOperator::grey_ramp(0.0, 1.0),
                 Default::default(),
             );
             compare_tensor_fn(slice, fill_expected);

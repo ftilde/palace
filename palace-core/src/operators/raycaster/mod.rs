@@ -15,6 +15,7 @@ use crate::{
     operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
     storage::DataVersionType,
+    transfunc::TransFuncOperator,
     vulkan::{
         memory::TempRessource,
         pipeline::{
@@ -31,10 +32,7 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3_stub_gen::derive::*;
 
-use super::{
-    array::ArrayOperator,
-    tensor::{FrameOperator, ImageOperator, LODVolumeOperator},
-};
+use super::tensor::{FrameOperator, ImageOperator, LODVolumeOperator};
 
 #[cfg_attr(feature = "python", pyclass)]
 #[derive(state_link::State, Clone)]
@@ -562,66 +560,6 @@ impl Default for RaycasterConfig {
             shading: Shading::None,
         }
     }
-}
-
-pub type TransFuncTableOperator = ArrayOperator<StaticElementType<Vector<D4, u8>>>;
-
-#[derive(Clone, Identify)]
-pub struct TransFuncOperator {
-    pub table: TransFuncTableOperator,
-    pub min: f32,
-    pub max: f32,
-}
-
-impl OperatorNetworkNode for TransFuncOperator {
-    fn descriptor(&self) -> OperatorDescriptor {
-        self.table.descriptor()
-    }
-}
-
-impl TransFuncOperator {
-    pub fn data(&self) -> TransFuncData {
-        TransFuncData {
-            len: self.table.metadata.dimensions[0].raw,
-            min: self.min,
-            max: self.max,
-        }
-    }
-    pub fn gen(min: f32, max: f32, len: usize, g: impl FnMut(usize) -> Vector<D4, u8>) -> Self {
-        let vals = (0..len).map(g).collect::<Vec<_>>();
-        let table = super::array::from_rc(std::rc::Rc::from(vals));
-        Self { table, min, max }
-    }
-    pub fn gen_normalized(
-        min: f32,
-        max: f32,
-        len: usize,
-        mut g: impl FnMut(f32) -> Vector<D4, u8>,
-    ) -> Self {
-        let vals = (0..len)
-            .map(|i| g(i as f32 / len as f32))
-            .collect::<Vec<_>>();
-        let table = super::array::from_rc(std::rc::Rc::from(vals));
-        Self { table, min, max }
-    }
-    pub fn grey_ramp(min: f32, max: f32) -> Self {
-        Self::gen(min, max, 256, |i| Vector::fill(i as u8))
-    }
-    pub fn red_ramp(min: f32, max: f32) -> Self {
-        Self::gen(min, max, 256, |i| Vector::from([i as u8, 0, 0, i as u8]))
-    }
-    pub fn normalized(mut self) -> Self {
-        self.min = 0.0;
-        self.max = 1.0;
-        self
-    }
-}
-
-#[derive(Copy, Clone, AsStd140, GlslStruct)]
-pub struct TransFuncData {
-    pub len: u32,
-    pub min: f32,
-    pub max: f32,
 }
 
 #[repr(u8)]

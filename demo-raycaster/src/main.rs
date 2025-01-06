@@ -6,14 +6,13 @@ use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
 use palace_core::dtypes::StaticElementType;
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::jit::jit;
-use palace_core::operators::raycaster::{
-    CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
-};
+use palace_core::operators::raycaster::{CameraState, CompositingMode, RaycasterConfig, Shading};
 use palace_core::operators::rechunk::ChunkSize;
 use palace_core::operators::tensor::LODVolumeOperator;
 use palace_core::operators::{self};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
+use palace_core::transfunc::TransFuncOperator;
 use palace_core::vulkan::window::Window;
 
 use palace_core::array::{self, ImageMetaData};

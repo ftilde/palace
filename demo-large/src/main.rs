@@ -7,15 +7,14 @@ use palace_core::dim::*;
 use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::event::{EventStream, MouseButton, OnMouseDrag, OnWheelMove};
 use palace_core::operators::gui::{egui, GuiState};
-use palace_core::operators::raycaster::{
-    CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
-};
+use palace_core::operators::raycaster::{CameraState, CompositingMode, RaycasterConfig, Shading};
 use palace_core::operators::rechunk::ChunkSize;
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::{FrameOperator, LODVolumeOperator, VolumeOperator};
 use palace_core::operators::{self, aggregation};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
+use palace_core::transfunc::TransFuncOperator;
 use palace_core::vulkan::window::Window;
 
 use palace_core::array::ImageMetaData;

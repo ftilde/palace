@@ -1,7 +1,7 @@
 use crate::types::*;
 use pyo3::prelude::*;
 
-pub use palace_core::operators::raycaster::TransFuncOperator as CTransFuncOperator;
+pub use palace_core::transfunc::TransFuncOperator as CTransFuncOperator;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
 
 #[pyo3_stub_gen::derive::gen_stub_pyclass]

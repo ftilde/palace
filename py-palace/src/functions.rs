@@ -425,7 +425,7 @@ pub fn apply_tf(
 ) -> PyResult<PyObject> {
     let tf = tf.try_into()?;
     input.unpack().try_map_inner(py, |input| {
-        Ok(palace_core::operators::volume_gpu::apply_tf::<DDyn>(input.try_into()?, tf).into())
+        Ok(palace_core::transfunc::apply::<DDyn>(input.try_into()?, tf).into())
     })
 }
 
