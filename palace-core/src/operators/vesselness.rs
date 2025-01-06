@@ -11,8 +11,8 @@ use crate::vulkan::shader::Shader;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 use crate::{dim::*, op_descriptor};
 
+use super::kernels::*;
 use super::tensor::{EmbeddedVolumeOperator, TensorOperator};
-use super::{kernels::*, volume_gpu};
 
 pub fn multiscale_vesselness(
     input: EmbeddedVolumeOperator<StaticElementType<f32>>,
@@ -134,7 +134,7 @@ void main() {
             f3(scale / spacing[2]),
         ];
         let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-        volume_gpu::separable_convolution(input.inner.clone(), kernel_refs)
+        crate::operators::conv::separable_convolution(input.inner.clone(), kernel_refs)
     };
 
     let xx = g(gauss, gauss, ddgauss_dxdx);

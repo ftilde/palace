@@ -212,7 +212,7 @@ pub fn separable_convolution<'py>(
 
     tensor.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
         Ok(
-            palace_core::operators::volume_gpu::separable_convolution(vol, kernel_refs)
+            palace_core::operators::conv::separable_convolution(vol, kernel_refs)
                 .into_dyn()
                 .into(),
         )

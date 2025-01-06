@@ -1,5 +1,6 @@
 pub mod aggregation;
 pub mod array;
+pub mod conv;
 pub mod geometry;
 pub mod gui;
 pub mod imageviewer;

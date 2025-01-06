@@ -201,7 +201,7 @@ fn mean_filter<D: DynDimension>(
     let size = 2 * extent + 1;
     let kernel = crate::operators::array::from_vec(vec![1.0 / size as f32; size]);
     let kernels = Vector::fill_with_len(&kernel, t.dim().n());
-    crate::operators::volume_gpu::separable_convolution(t, kernels)
+    crate::operators::conv::separable_convolution(t, kernels)
 }
 
 fn variance<D: DynDimension>(

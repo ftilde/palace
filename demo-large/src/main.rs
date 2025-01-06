@@ -423,7 +423,7 @@ fn eval_network(
                 let kernels: [_; 3] =
                     std::array::from_fn(|i| operators::kernels::gauss(factor / spacing[i]));
                 let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-                operators::volume_gpu::separable_convolution(vol, kernel_refs)
+                operators::conv::separable_convolution(vol, kernel_refs)
             })
         }),
         ProcessState::Vesselness => vol.map(|vol| {

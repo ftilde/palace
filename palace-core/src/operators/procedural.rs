@@ -276,3 +276,40 @@ void main()
         },
     )
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        data::{LocalVoxelPosition, VoxelPosition},
+        operators::rechunk::rechunk,
+        test_util::*,
+    };
+
+    #[test]
+    fn test_rasterize_gpu() {
+        let size = VoxelPosition::fill(5.into());
+
+        let fill_expected = |comp: &mut ndarray::ArrayViewMut3<f32>| {
+            for z in 0..size.z().raw {
+                for y in 0..size.y().raw {
+                    for x in 0..size.x().raw {
+                        let pos = VoxelPosition::from([z, y, x]);
+                        comp[pos.as_index()] = x as f32 + y as f32 + z as f32;
+                    }
+                }
+            }
+        };
+        for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
+            let input = rasterize(
+                crate::array::VolumeMetaData {
+                    dimensions: size,
+                    chunk_size: chunk_size.into(),
+                },
+                r#"float run(float[3] pos_normalized, uint[3] pos_voxel) { return float(pos_voxel[0] + pos_voxel[1] + pos_voxel[2]); }"#,
+            );
+            let output = rechunk(input, LocalVoxelPosition::from(chunk_size).into_elem());
+            compare_tensor_fn(output, fill_expected);
+        }
+    }
+}
