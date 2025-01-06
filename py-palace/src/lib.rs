@@ -51,6 +51,13 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cast, m)?)?;
     m.add_function(wrap_pyfunction!(index, m)?)?;
     m.add_function(wrap_pyfunction!(splat, m)?)?;
+    m.add_function(wrap_pyfunction!(lt, m)?)?;
+    m.add_function(wrap_pyfunction!(lt_eq, m)?)?;
+    m.add_function(wrap_pyfunction!(gt, m)?)?;
+    m.add_function(wrap_pyfunction!(gt_eq, m)?)?;
+    m.add_function(wrap_pyfunction!(eq, m)?)?;
+    m.add_function(wrap_pyfunction!(neq, m)?)?;
+    m.add_function(wrap_pyfunction!(select, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights_bian, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker, m)?)?;

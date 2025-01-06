@@ -81,7 +81,7 @@ def render(size, events):
 
     match do_threshold.load():
         case "yes":
-            v = v.map(lambda evol: pc.threshold(evol, threshold_val.load()))
+            v = v.map(lambda evol: pc.select(pc.gt(evol, threshold_val.load()), 1.0, 0.0).embedded(evol.embedding_data))
         case "no":
             pass
 

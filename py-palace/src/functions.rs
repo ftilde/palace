@@ -3,7 +3,7 @@ use numpy::PyUntypedArray;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::data::{Matrix, Vector};
 use palace_core::dtypes::{DType, ScalarType};
-use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
+use palace_core::jit::{BinOp, JitTensorOperator, TernaryOp, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use palace_core::{dim::*, jit};
@@ -121,6 +121,23 @@ fn jit_binary(
     })
 }
 
+fn jit_ternary(
+    op: TernaryOp,
+    v1: JitArgument,
+    v2: JitArgument,
+    v3: JitArgument,
+) -> PyResult<MaybeEmbeddedTensorOperator> {
+    v1.try_map_inner_jit(|v1: JitTensorOperator<DDyn>| {
+        Ok(crate::map_result(JitTensorOperator::<DDyn>::ternary_op(
+            op,
+            v1,
+            v2.into_jit(),
+            v3.into_jit(),
+        ))?
+        .into())
+    })
+}
+
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn add(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
@@ -155,6 +172,52 @@ pub fn max(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOper
 #[pyfunction]
 pub fn min(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
     jit_binary(BinOp::Min, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn lt(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::LessThan, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn lt_eq(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::LessThanEquals, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn gt(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::GreaterThan, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn gt_eq(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::GreaterThanEquals, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn eq(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::Equals, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn neq(v1: JitArgument, v2: JitArgument) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_binary(BinOp::NotEquals, v1, v2)
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn select(
+    if_val: JitArgument,
+    then_val: JitArgument,
+    else_val: JitArgument,
+) -> PyResult<MaybeEmbeddedTensorOperator> {
+    jit_ternary(TernaryOp::IfThenElse, if_val, then_val, else_val)
 }
 
 #[gen_stub_pyfunction]
