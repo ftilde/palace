@@ -222,19 +222,6 @@ pub fn select(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn threshold(
-    py: Python,
-    vol: MaybeEmbeddedTensorOperatorArg,
-    threshold: f32,
-) -> PyResult<PyObject> {
-    vol.unpack()
-        .try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
-            Ok(palace_core::operators::volume_gpu::threshold(vol.try_into()?, threshold).into())
-        })
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
 pub fn separable_convolution<'py>(
     py: Python,
     tensor: MaybeEmbeddedTensorOperatorArg,

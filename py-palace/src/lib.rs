@@ -28,7 +28,6 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mean_value, m)?)?;
     m.add_function(wrap_pyfunction!(min_value, m)?)?;
     m.add_function(wrap_pyfunction!(max_value, m)?)?;
-    m.add_function(wrap_pyfunction!(threshold, m)?)?;
     m.add_function(wrap_pyfunction!(rechunk, m)?)?;
     m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
     m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
