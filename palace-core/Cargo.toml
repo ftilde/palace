@@ -25,7 +25,6 @@ crevice = { version="0.12.0", features = ["cgmath"] }
 graphviz-rust = "0.6.1"
 spirq = "1.2.1"
 spirv = "0.3.0"
-png = "0.17.7"
 cgmath = { version="0.18.0" }
 winit = "0.30"
 winapi = "0.3.9"

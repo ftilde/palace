@@ -5,7 +5,7 @@ members = [
     "palace-hdf5",
     "palace-vvd",
     "palace-nifti",
-    "palace-volume",
+    "palace-io",
     "palace-winit",
     "py-palace",
     "demo-sliceviewer",
@@ -15,7 +15,7 @@ members = [
     "id",
     "id-derive",
     "state-link",
-    "state-link-derive", "palace-zarr", "convert",
+    "state-link-derive", "palace-zarr", "convert", "palace-png",
 ]
 
 resolver = "2"

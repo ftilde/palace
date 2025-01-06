@@ -65,10 +65,10 @@ pub fn chunk<'a, D: DynDimension, T>(
     .unwrap()
 }
 
-pub fn chunk_mut<'a, D: Dimension, T>(
+pub fn chunk_mut<'a, D: DynDimension, T>(
     data: &'a mut [T],
     brick_info: &ChunkInfo<D>,
-) -> ndarray::ArrayViewMut<'a, T, D::NDArrayDim> {
+) -> ndarray::ArrayViewMut<'a, T, D::NDArrayDimDyn> {
     if brick_info.is_contiguous() {
         ndarray::ArrayViewMut::from_shape(contiguous_shape(&brick_info.logical_dimensions), data)
     } else {
@@ -80,7 +80,7 @@ pub fn chunk_mut<'a, D: Dimension, T>(
     .unwrap()
 }
 
-pub fn init_non_full<D: Dimension, T: Clone>(
+pub fn init_non_full<D: DynDimension, T: Clone>(
     data: &mut [std::mem::MaybeUninit<T>],
     chunk_info: &ChunkInfo<D>,
     val: T,

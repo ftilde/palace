@@ -13,12 +13,12 @@ parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
 
-img = pc.read_png(args.img_file)
-md: pc.TensorMetaData = img.metadata
+img = pc.open(args.img_file)
+md: pc.TensorMetaData = img.inner.metadata
 ndim = len(md.dimensions)
 
 img = pc.rechunk(img, [128]*ndim)
-img = img.embedded(pc.TensorEmbeddingData([1.0, 1.0])).create_lod(2.0)
+img = img.create_lod(2.0)
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 

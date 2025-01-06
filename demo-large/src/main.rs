@@ -120,8 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(args.device),
     )?;
 
-    let hints = palace_volume::Hints::new();
-    let vol = palace_volume::open_or_create_lod(args.vol, hints).unwrap();
+    let hints = palace_io::Hints::new();
+    let vol = palace_io::open_or_create_lod(args.vol, hints).unwrap();
 
     let vol: LODVolumeOperator<StaticElementType<f32>> = vol
         .0
@@ -134,6 +134,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap()
             })
         })
+        .try_into_static::<D3>()
+        .unwrap()
         .try_into()
         .unwrap();
     let l0 = vol.levels[0].clone();
@@ -625,11 +627,8 @@ fn eval_network(
     if take_screenshot {
         runtime
             .resolve(Some(deadline), false, |ctx, _| {
-                async move {
-                    palace_core::operators::png::write(ctx, slice_ref, "screenshot.png".into())
-                        .await
-                }
-                .into()
+                async move { palace_png::write(ctx, slice_ref, "screenshot.png".into()).await }
+                    .into()
             })
             .unwrap();
     }

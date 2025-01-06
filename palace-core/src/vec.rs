@@ -100,6 +100,13 @@ impl<D: Dimension, T: Copy> Vector<D, T> {
         Self::from_fn(|_| val)
     }
 }
+
+impl<T: Copy> Vector<DDyn, T> {
+    pub fn from_fn_and_len(size: usize, f: impl FnMut(usize) -> T) -> Self {
+        Self::try_from_fn_and_len(size, f).unwrap()
+    }
+}
+
 impl<D: DynDimension, T: Copy> Vector<D, T> {
     pub fn into_dyn(self) -> Vector<DDyn, T> {
         Vector(D::into_dyn(self.0))
@@ -113,11 +120,11 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
     pub fn try_from_slice(vals: &[T]) -> Result<Self, ()> {
         Vector::try_from_fn_and_len(vals.len(), |i| vals[i])
     }
-    fn from_fn_and_len(size: usize, f: impl FnMut(usize) -> T) -> Self {
+    fn from_fn_and_trusted_len(size: usize, f: impl FnMut(usize) -> T) -> Self {
         Self::try_from_fn_and_len(size, f).unwrap()
     }
     pub fn fill_with_len(val: T, len: usize) -> Self {
-        Self::from_fn_and_len(len, |_| val)
+        Self::from_fn_and_trusted_len(len, |_| val)
     }
     pub fn new(inner: D::DynArray<T>) -> Self {
         Vector(inner)
@@ -132,7 +139,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         self.0
     }
     pub fn map<U: Copy>(&self, mut f: impl FnMut(T) -> U) -> Vector<D, U> {
-        Vector::from_fn_and_len(self.len(), |i| f(self.0[i]))
+        Vector::from_fn_and_trusted_len(self.len(), |i| f(self.0[i]))
     }
     pub fn map_element(mut self, i: usize, f: impl FnOnce(T) -> T) -> Vector<D, T> {
         self.0[i] = f(self.0[i]);
@@ -150,7 +157,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         mut f: impl FnMut(T, U) -> V,
     ) -> Vector<D, V> {
         assert_eq!(self.len(), other.len());
-        Vector::from_fn_and_len(self.len(), |i| f(self.0[i], other.0[i]))
+        Vector::from_fn_and_trusted_len(self.len(), |i| f(self.0[i], other.0[i]))
     }
     pub fn zip_enumerate<U: Copy, V: Copy>(
         &self,
@@ -158,7 +165,7 @@ impl<D: DynDimension, T: Copy> Vector<D, T> {
         mut f: impl FnMut(usize, T, U) -> V,
     ) -> Vector<D, V> {
         assert_eq!(self.len(), other.len());
-        Vector::from_fn_and_len(self.len(), |i| f(i, self.0[i], other.0[i]))
+        Vector::from_fn_and_trusted_len(self.len(), |i| f(i, self.0[i], other.0[i]))
     }
     pub fn into_elem<U: Copy>(self) -> Vector<D, U>
     where
@@ -278,7 +285,7 @@ impl<T: Copy> Vector<D2, T> {
 
 impl<D: LargerDim, T: Copy> Vector<D, T> {
     pub fn push_dim_small(&self, extra: T) -> Vector<D::Larger, T> {
-        Vector::from_fn_and_len(self.len() + 1, |i| {
+        Vector::from_fn_and_trusted_len(self.len() + 1, |i| {
             if i == self.dim().n() {
                 extra
             } else {
@@ -287,7 +294,7 @@ impl<D: LargerDim, T: Copy> Vector<D, T> {
         })
     }
     pub fn push_dim_large(&self, extra: T) -> Vector<D::Larger, T> {
-        Vector::from_fn_and_len(
+        Vector::from_fn_and_trusted_len(
             self.len() + 1,
             |i| if i == 0 { extra } else { self.0[i - 1] },
         )
@@ -308,7 +315,7 @@ impl<D: LargerDim, T: num::One + Copy> Vector<D, T> {
 
 impl<D: SmallerDim, T: Copy> Vector<D, T> {
     pub fn drop_dim(&self, dim: usize) -> Vector<D::Smaller, T> {
-        Vector::from_fn_and_len(self.len() - 1, |i| {
+        Vector::from_fn_and_trusted_len(self.len() - 1, |i| {
             if i < dim {
                 self.0[i]
             } else {
@@ -763,14 +770,14 @@ pub fn from_linear<D: DynDimension, T: CoordinateType>(
     dim: &Vector<D, Coordinate<T>>,
 ) -> Vector<D, Coordinate<T>> {
     let raw = from_linear_u32(linear_pos, &dim.raw());
-    Vector::from_fn_and_len(raw.len(), |i| raw[i].into())
+    Vector::from_fn_and_trusted_len(raw.len(), |i| raw[i].into())
 }
 //TODO: clean this up
 pub fn from_linear_u32<D: DynDimension>(
     mut linear_pos: usize,
     dim: &Vector<D, u32>,
 ) -> Vector<D, u32> {
-    let mut out = Vector::<D, u32>::from_fn_and_len(dim.len(), |_| 0u32);
+    let mut out = Vector::<D, u32>::from_fn_and_trusted_len(dim.len(), |_| 0u32);
     for i in (0..dim.len()).rev() {
         let ddim = dim[i] as usize;
         out[i] = (linear_pos % ddim) as u32;

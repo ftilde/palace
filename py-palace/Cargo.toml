@@ -14,7 +14,7 @@ numpy = "0.23"
 derive_more = "0.99"
 palace-core = { path = "../palace-core" }
 palace-vvd = { path = "../palace-vvd" }
-palace-volume = { path = "../palace-volume" }
+palace-io = { path = "../palace-io" }
 palace-winit = { path = "../palace-winit" }
 state-link = { path = "../state-link" }
 id = { path = "../id" }

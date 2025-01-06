@@ -1,18 +1,20 @@
 use std::path::PathBuf;
 
 use palace_core::{
-    dim::D3,
+    data::LocalCoordinate,
+    dim::DDyn,
     dtypes::DType,
     operators::{
-        volume::{ChunkSize, EmbeddedVolumeOperator, LODVolumeOperator},
+        tensor::{EmbeddedTensorOperator, LODTensorOperator},
+        volume::ChunkSize,
         volume_gpu::rechunk,
     },
-    vec::LocalVoxelPosition,
+    vec::Vector,
 };
 
 #[derive(Clone, Default)]
 pub struct Hints {
-    pub chunk_size: Option<LocalVoxelPosition>,
+    pub chunk_size: Option<Vector<DDyn, LocalCoordinate>>,
     pub location: Option<String>,
     pub rechunk: bool,
 }
@@ -22,7 +24,7 @@ impl Hints {
         Default::default()
     }
 
-    pub fn brick_size(mut self, brick_size: LocalVoxelPosition) -> Self {
+    pub fn chunk_size(mut self, brick_size: Vector<DDyn, LocalCoordinate>) -> Self {
         self.chunk_size = Some(brick_size);
         self
     }
@@ -41,39 +43,47 @@ impl Hints {
 pub fn open_single_level(
     path: PathBuf,
     hints: Hints,
-) -> Result<EmbeddedVolumeOperator<DType>, Box<dyn std::error::Error>> {
+) -> Result<EmbeddedTensorOperator<DDyn, DType>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
     let file = file.to_string_lossy();
     let segments = file.split('.').collect::<Vec<_>>();
 
-    match segments[..] {
+    Ok(match segments[..] {
         [.., "vvd"] => palace_vvd::open(
             &path,
             hints
                 .chunk_size
-                .unwrap_or(LocalVoxelPosition::fill(64.into())),
-        ),
-        [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path),
+                .unwrap_or(Vector::fill_with_len(64.into(), 3))
+                .try_into_static()
+                .ok_or_else(|| "Chunk size hint must be 3-dimensional for vvd".to_owned())?,
+        )?
+        .into_dyn(),
+        [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path)?.into_dyn(),
         [.., "hdr"] => {
             let data = path.with_extension("img");
-            palace_nifti::open_separate(path, data)
+            palace_nifti::open_separate(path, data)?.into_dyn()
         }
-        [.., "h5"] => palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned())),
+        [.., "h5"] => palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned()))?,
         [.., "zarr"] | [.., "zarr", "zip"] => {
             palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
-                .try_into_static::<D3>()
-                .ok_or_else(|| "Volume is not 3-dimensional".into())
         }
-        _ => Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into()),
-    }
+        [.., "png"] => palace_png::read(path)?
+            .embedded(Default::default())
+            .into_dyn()
+            .try_into()
+            .unwrap(),
+        _ => {
+            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
+        }
+    })
 }
 
 pub fn open(
     path: PathBuf,
     hints: Hints,
-) -> Result<EmbeddedVolumeOperator<DType>, Box<dyn std::error::Error>> {
+) -> Result<EmbeddedTensorOperator<DDyn, DType>, Box<dyn std::error::Error>> {
     match open_single_level(path.clone(), hints.clone()) {
         Ok(o) => Ok(o),
         Err(e) => open_lod(path, hints)
@@ -85,7 +95,7 @@ pub fn open(
 pub fn open_lod(
     path: PathBuf,
     hints: Hints,
-) -> Result<LODVolumeOperator<DType>, Box<dyn std::error::Error>> {
+) -> Result<LODTensorOperator<DDyn, DType>, Box<dyn std::error::Error>> {
     let Some(file) = path.file_name() else {
         return Err("No file name in path".into());
     };
@@ -94,9 +104,7 @@ pub fn open_lod(
 
     match segments[..] {
         [.., "zarr"] | [.., "zarr", "zip"] => {
-            palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))?
-                .try_into_static::<D3>()
-                .ok_or_else(|| "Volume is not 3-dimensional".into())
+            palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))
         }
         _ => Err(format!(
             "Unknown lod volume format for file {}",
@@ -114,7 +122,7 @@ pub enum LodOrigin {
 pub fn open_or_create_lod(
     path: PathBuf,
     hints: Hints,
-) -> Result<(LODVolumeOperator<DType>, LodOrigin), Box<dyn std::error::Error>> {
+) -> Result<(LODTensorOperator<DDyn, DType>, LodOrigin), Box<dyn std::error::Error>> {
     Ok(if let Ok(vol) = open_lod(path.clone(), hints.clone()) {
         (vol, LodOrigin::Existing)
     } else {
@@ -129,9 +137,8 @@ pub fn open_or_create_lod(
             }
         }
 
-        let vol: LODVolumeOperator<DType> = palace_core::operators::resample::create_lod(vol, 2.0)
-            .try_into_static::<D3>()
-            .unwrap();
+        let vol: LODTensorOperator<DDyn, DType> =
+            palace_core::operators::resample::create_lod(vol, 2.0);
         (vol.into(), LodOrigin::Dynamic)
     })
 }

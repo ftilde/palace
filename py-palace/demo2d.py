@@ -48,8 +48,8 @@ elif args.img_file == "circle":
     #img = pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4))
     img = img.embedded(pc.TensorEmbeddingData([1.0, 1.0])).single_level_lod()
 else:
-    img = pc.read_png(args.img_file)
-    img = img.embedded(pc.TensorEmbeddingData([1.0, 1.0])).single_level_lod()
+    img = pc.open(args.img_file)
+    img = img.single_level_lod()
 
 store = pc.Store()
 

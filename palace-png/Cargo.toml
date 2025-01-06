@@ -1,0 +1,9 @@
+[package]
+name = "palace-png"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+palace-core = { path = "../palace-core" }
+png = "0.17.7"
+bytemuck = "1.12"

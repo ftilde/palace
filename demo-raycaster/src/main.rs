@@ -99,9 +99,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let brick_size = LocalVoxelPosition::fill(128.into());
 
     let vol = match args.input {
-        Input::File(path) => palace_volume::open_or_create_lod(
+        Input::File(path) => palace_io::open_or_create_lod(
             path.vol,
-            palace_volume::Hints::new().brick_size(brick_size),
+            palace_io::Hints::new().chunk_size(brick_size.into_dyn()),
         )?
         .0
         .map(|v| {
@@ -113,6 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap()
             })
         })
+        .try_into_static()
+        .unwrap()
         .try_into()?,
         Input::Synthetic(args) => {
             let md = array::VolumeMetaData {

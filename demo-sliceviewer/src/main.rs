@@ -101,9 +101,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = match args.input {
         Input::File(path) => {
-            let vol = palace_volume::open_or_create_lod(
+            let vol = palace_io::open_or_create_lod(
                 path.vol,
-                palace_volume::Hints::new().brick_size(brick_size),
+                palace_io::Hints::new().chunk_size(brick_size.into_dyn()),
             )?
             .0;
             vol.map(|v| {
@@ -115,6 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap()
                 })
             })
+            .try_into_static()
+            .unwrap()
             .try_into()
             .unwrap()
         }

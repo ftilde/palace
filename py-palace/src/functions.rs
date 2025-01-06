@@ -1,7 +1,7 @@
 use crate::types::*;
 use numpy::PyUntypedArray;
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
-use palace_core::data::{LocalVoxelPosition, Matrix, Vector};
+use palace_core::data::{Matrix, Vector};
 use palace_core::dtypes::{DType, ScalarType};
 use palace_core::jit::{BinOp, JitTensorOperator, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
@@ -357,42 +357,44 @@ pub fn gauss_kernel(stddev: f32) -> TensorOperator {
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (path, brick_size_hint=None, volume_path_hint=None))]
-pub fn open_volume(
+#[pyo3(signature = (path, chunk_size_hint=None, tensor_path_hint=None))]
+pub fn open(
     path: std::path::PathBuf,
-    brick_size_hint: Option<u32>,
-    volume_path_hint: Option<String>,
+    chunk_size_hint: Option<Vec<u32>>,
+    tensor_path_hint: Option<String>,
 ) -> PyResult<EmbeddedTensorOperator> {
-    let brick_size_hint = brick_size_hint.map(|h| LocalVoxelPosition::fill(h.into()));
+    let chunk_size_hint =
+        chunk_size_hint.map(|h| Vector::from_fn_and_len(h.len(), |i| h[i].into()));
 
-    let hints = palace_volume::Hints {
-        chunk_size: brick_size_hint,
-        location: volume_path_hint,
+    let hints = palace_io::Hints {
+        chunk_size: chunk_size_hint,
+        location: tensor_path_hint,
         ..Default::default()
     };
-    let vol = crate::map_result(palace_volume::open(path, hints))?;
+    let vol = crate::map_result(palace_io::open(path, hints))?;
 
     Ok(vol.into_dyn().into())
 }
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (path, chunk_size_hint=None, volume_path_hint=None, rechunk=false))]
+#[pyo3(signature = (path, chunk_size_hint=None, tensor_path_hint=None, rechunk=false))]
 pub fn open_or_create_lod(
     path: std::path::PathBuf,
     chunk_size_hint: Option<Vec<u32>>,
-    volume_path_hint: Option<String>,
+    tensor_path_hint: Option<String>,
     rechunk: bool,
 ) -> PyResult<LODTensorOperator> {
-    let chunk_size_hint = chunk_size_hint.map(|h| LocalVoxelPosition::from_fn(|i| h[i].into()));
+    let chunk_size_hint =
+        chunk_size_hint.map(|h| Vector::from_fn_and_len(h.len(), |i| h[i].into()));
 
-    let hints = palace_volume::Hints {
+    let hints = palace_io::Hints {
         chunk_size: chunk_size_hint,
-        location: volume_path_hint,
+        location: tensor_path_hint,
         rechunk,
         ..Default::default()
     };
-    let (vol, _) = crate::map_result(palace_volume::open_or_create_lod(path, hints))?;
+    let (vol, _) = crate::map_result(palace_io::open_or_create_lod(path, hints))?;
 
     vol.into_dyn().try_into()
 }
@@ -412,14 +414,6 @@ pub fn view_image(
     )
     .into_dyn()
     .into())
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-pub fn read_png(path: std::path::PathBuf) -> PyResult<TensorOperator> {
-    Ok(crate::map_result(palace_core::operators::png::read(path))?
-        .into_dyn()
-        .into())
 }
 
 #[gen_stub_pyfunction]

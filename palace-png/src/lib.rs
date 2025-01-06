@@ -4,24 +4,23 @@ use std::{io::BufReader, path::PathBuf};
 use std::fs::File;
 use std::io::BufWriter;
 
-use crate::array::ChunkIndex;
-use crate::dtypes::StaticElementType;
-use crate::{data::Vector, dim::*, task::OpaqueTaskContext};
-
-use super::tensor::{FrameOperator, ImageOperator};
+use palace_core::dtypes::StaticElementType;
+use palace_core::operators::tensor::{FrameOperator, ImageOperator};
+use palace_core::{data::Vector, dim::*, task::OpaqueTaskContext};
 
 pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     input: &'inv ImageOperator<StaticElementType<Vector<D4, u8>>>,
     path: PathBuf,
-) -> Result<(), crate::Error> {
+) -> Result<(), palace_core::Error> {
     let m = input.metadata;
 
     if m.dimensions != m.chunk_size.global() {
         return Err("Image must consist of a single chunk".into());
     }
 
-    let img = ctx.submit(input.chunks.request(ChunkIndex(0))).await;
+    let chunk_id = input.metadata.chunk_index(&Vector::fill(0.into()));
+    let img = ctx.submit(input.chunks.request(chunk_id)).await;
 
     let file = File::create(path).unwrap();
     let ref mut w = BufWriter::new(file);
@@ -53,7 +52,9 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
     Ok(())
 }
 
-pub fn read<'cref, 'inv: 'cref, 'op: 'inv>(path: PathBuf) -> Result<FrameOperator, crate::Error> {
+pub fn read<'cref, 'inv: 'cref, 'op: 'inv>(
+    path: PathBuf,
+) -> Result<FrameOperator, palace_core::Error> {
     let file = File::open(path)?;
     let r = BufReader::new(file);
 

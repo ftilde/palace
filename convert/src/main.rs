@@ -5,7 +5,7 @@ use palace_core::{
     operators::{volume::ChunkSize, volume_gpu::rechunk},
     runtime::RunTime,
 };
-use palace_volume::LodOrigin;
+use palace_io::LodOrigin;
 use palace_zarr::WriteHints;
 
 #[derive(Subcommand, Clone)]
@@ -72,14 +72,14 @@ fn main() {
     .unwrap();
 
     let (input_lod, lod_origin) =
-        palace_volume::open_or_create_lod(args.input, palace_volume::Hints::default()).unwrap();
+        palace_io::open_or_create_lod(args.input, palace_io::Hints::default()).unwrap();
 
     let input_lod = if let Some(chunk_size) = args.chunk_size {
         let chunk_size = input_lod.levels[0]
             .metadata
             .chunk_size
             .map(|_| ChunkSize::Fixed(chunk_size.into()));
-        input_lod.map(|t| t.map_inner(|t| rechunk(t, chunk_size)))
+        input_lod.map(|t| t.map_inner(|t| rechunk(t, chunk_size.clone())))
     } else {
         input_lod
     };

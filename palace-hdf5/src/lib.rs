@@ -1,10 +1,11 @@
 use id::{Id, Identify};
-use palace_core::array::{ChunkInfo, VolumeEmbeddingData};
-use palace_core::data::{Coordinate, CoordinateType};
-use palace_core::dim::D3;
+use palace_core::array::{ChunkInfo, TensorEmbeddingData, TensorMetaData};
+use palace_core::data::{Coordinate, CoordinateType, GlobalCoordinate, LocalCoordinate};
+use palace_core::dim::DDyn;
 use palace_core::dtypes::{DType, ElementType, ScalarType};
 use palace_core::op_descriptor;
 use palace_core::operator::{DataDescriptor, DataParam};
+use palace_core::operators::tensor::EmbeddedTensorOperator;
 use palace_core::storage::DataLocation;
 use palace_core::util::Map;
 use palace_core::vulkan::{vk, DeviceId};
@@ -12,60 +13,63 @@ use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use hdf5::Datatype;
+use hdf5::{Datatype, SliceOrIndex};
 
 use palace_core::{
-    array::VolumeMetaData,
-    data::{self, LocalVoxelPosition, Vector, VoxelPosition},
+    data::{self, Vector},
     operator::OperatorDescriptor,
-    operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
+    operators::tensor::TensorOperator,
     Error,
 };
 
 #[derive(Clone)]
-pub struct Hdf5VolumeSourceState {
-    inner: Rc<Hdf5VolumeSourceStateInner>,
+pub struct Hdf5TensorSourceState {
+    inner: Rc<Hdf5TensorSourceStateInner>,
 }
 
-pub struct Hdf5VolumeSourceStateInner {
-    metadata: VolumeMetaData,
-    embedding_data: VolumeEmbeddingData,
+pub struct Hdf5TensorSourceStateInner {
+    metadata: TensorMetaData<DDyn>,
+    embedding_data: TensorEmbeddingData<DDyn>,
     dataset: hdf5::Dataset,
     path: PathBuf,
     volume_location: String,
     dtype: DType,
 }
 
-impl Identify for Hdf5VolumeSourceState {
+impl Identify for Hdf5TensorSourceState {
     fn id(&self) -> id::Id {
         Id::combine(&[self.inner.path.id(), self.inner.volume_location.id()])
     }
 }
 
-fn to_size_vector<C: CoordinateType>(
-    value: Vec<hdf5::Ix>,
-) -> Result<Vector<D3, Coordinate<C>>, palace_core::Error> {
+fn to_size_vector<C: CoordinateType>(value: Vec<hdf5::Ix>) -> Vector<DDyn, Coordinate<C>> {
     to_vector(value.into_iter().map(|v| v as u32).collect())
 }
 
-fn to_vector<I: Copy, O: From<I> + Copy>(
-    value: Vec<I>,
-) -> Result<Vector<D3, O>, palace_core::Error> {
-    match *value {
-        [z, y, x] => Ok([z, y, x].into()),
-        _ => Err("Invalid number of dimensions".into()),
-    }
+fn to_vector<I: Copy, O: From<I> + Copy>(value: Vec<I>) -> Vector<DDyn, O> {
+    Vector::from_fn_and_len(value.len(), |i| value[i].into())
 }
 
-fn to_hdf5(pos: VoxelPosition) -> [usize; 3] {
-    [pos.z().raw as _, pos.y().raw as _, pos.x().raw as _]
+fn to_hdf5(pos: &Vector<DDyn, GlobalCoordinate>) -> Vec<usize> {
+    pos.as_index()
 }
 
-fn to_hdf5_hyperslab(begin: VoxelPosition, end: VoxelPosition) -> hdf5::Hyperslab {
+fn to_hdf5_hyperslab(
+    begin: &Vector<DDyn, GlobalCoordinate>,
+    end: &Vector<DDyn, GlobalCoordinate>,
+) -> hdf5::Hyperslab {
     let begin = to_hdf5(begin);
     let end = to_hdf5(end);
 
-    (begin[0]..end[0], begin[1]..end[1], begin[2]..end[2]).into()
+    assert_eq!(begin.len(), end.len());
+
+    hdf5::Hyperslab::new(
+        begin
+            .iter()
+            .zip(end.iter())
+            .map(|(b, e)| SliceOrIndex::from(*b..*e))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
@@ -108,8 +112,8 @@ fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
 pub fn open(
     path: PathBuf,
     volume_location: String,
-) -> Result<EmbeddedVolumeOperator<DType>, Error> {
-    let state = Hdf5VolumeSourceState::open(path, volume_location)?;
+) -> Result<EmbeddedTensorOperator<DDyn, DType>, Error> {
+    let state = Hdf5TensorSourceState::open(path, volume_location)?;
     Ok(state.operate())
 }
 
@@ -117,7 +121,7 @@ fn copy_chunk_inner<T: hdf5::H5Type + Copy>(
     dataset: &hdf5::Container,
     selection: hdf5::Hyperslab,
     brick_data: &mut [MaybeUninit<u8>],
-    out_info: ChunkInfo<D3>,
+    out_info: ChunkInfo<DDyn>,
 ) {
     let byte_slice_len = brick_data.len();
     assert_eq!(byte_slice_len % std::mem::size_of::<T>(), 0);
@@ -128,7 +132,9 @@ fn copy_chunk_inner<T: hdf5::H5Type + Copy>(
         unsafe { std::slice::from_raw_parts_mut(elm_slice_ptr.cast(), elm_slice_len) };
 
     let mut out_chunk = crate::data::chunk_mut(brick_data, &out_info);
-    let in_chunk = dataset.read_slice::<T, _, ndarray::Ix3>(selection).unwrap();
+    let in_chunk = dataset
+        .read_slice::<T, _, ndarray::IxDyn>(selection)
+        .unwrap();
     ndarray::azip!((o in &mut out_chunk, i in &in_chunk) { o.write(*i); });
 }
 fn copy_chunk(
@@ -136,7 +142,7 @@ fn copy_chunk(
     selection: hdf5::Hyperslab,
     dtype: DType,
     brick_data: &mut [MaybeUninit<u8>],
-    out_info: ChunkInfo<D3>,
+    out_info: ChunkInfo<DDyn>,
 ) {
     assert!(dtype.is_scalar());
 
@@ -151,19 +157,19 @@ fn copy_chunk(
     }
 }
 
-impl Hdf5VolumeSourceState {
+impl Hdf5TensorSourceState {
     pub fn open(path: PathBuf, volume_location: String) -> Result<Self, Error> {
         let file = hdf5::File::open(&path)?;
         let vol = file.dataset(&volume_location)?;
-        let dimensions: VoxelPosition = to_size_vector(vol.shape())?;
-        let brick_size: LocalVoxelPosition =
-            to_size_vector(vol.chunk().unwrap_or_else(|| vol.shape()))?;
+        let dimensions: Vector<DDyn, GlobalCoordinate> = to_size_vector(vol.shape());
+        let chunk_size: Vector<DDyn, LocalCoordinate> =
+            to_size_vector(vol.chunk().unwrap_or_else(|| vol.shape()));
         //println!("Chunksize {:?}", brick_size);
-        let spacing: Result<Vector<D3, f32>, Error> = vol
+        let spacing: Result<Vector<DDyn, f32>, Error> = vol
             .attr("element_size_um")
             .and_then(|a| a.read_1d::<f32>())
             .map_err(|e| e.into())
-            .and_then(|s| to_vector(s.to_vec()).map(|v| v.scale(0.001)));
+            .map(|s| to_vector(s.to_vec()).scale(0.001));
 
         let spacing = match spacing {
             Ok(spacing) => spacing,
@@ -172,21 +178,30 @@ impl Hdf5VolumeSourceState {
                     "Could not load spacing from dataset: {}\n Using default spacing.",
                     e
                 );
-                Vector::fill(1.0)
+                Vector::fill_with_len(1.0, dimensions.len())
             }
         };
 
+        if spacing.len() != dimensions.len() {
+            return Err(format!(
+                "Spacing dimension ({}) does not match tensor dimension ({})",
+                spacing.len(),
+                dimensions.len(),
+            )
+            .into());
+        }
+
         let dtype = dtype_hdf5_to_palace(&vol.dtype()?)?;
 
-        let metadata = VolumeMetaData {
+        let metadata = TensorMetaData {
             dimensions,
-            chunk_size: brick_size,
+            chunk_size,
         };
 
-        let embedding_data = VolumeEmbeddingData { spacing };
+        let embedding_data = TensorEmbeddingData { spacing };
 
-        Ok(Hdf5VolumeSourceState {
-            inner: Rc::new(Hdf5VolumeSourceStateInner {
+        Ok(Hdf5TensorSourceState {
+            inner: Rc::new(Hdf5TensorSourceStateInner {
                 metadata,
                 embedding_data,
                 dataset: vol,
@@ -197,11 +212,11 @@ impl Hdf5VolumeSourceState {
         })
     }
 
-    fn operate(&self) -> EmbeddedVolumeOperator<DType> {
+    fn operate(&self) -> EmbeddedTensorOperator<DDyn, DType> {
         TensorOperator::with_state(
             op_descriptor!(),
             self.inner.dtype,
-            self.inner.metadata,
+            self.inner.metadata.clone(),
             DataParam(self.clone()),
             move |ctx, positions, this| {
                 async move {
@@ -216,11 +231,11 @@ impl Hdf5VolumeSourceState {
                         }
                     }
 
-                    let metadata = this.inner.metadata;
+                    let metadata = &this.inner.metadata;
                     for pos in positions_cpu {
                         let chunk = metadata.chunk_info(pos);
 
-                        let selection = to_hdf5_hyperslab(*chunk.begin(), chunk.end());
+                        let selection = to_hdf5_hyperslab(chunk.begin(), &chunk.end());
 
                         let num_voxels = this.inner.metadata.chunk_size.hmul();
 
@@ -249,7 +264,7 @@ impl Hdf5VolumeSourceState {
                         for pos in positions_gpu {
                             let chunk = metadata.chunk_info(pos);
 
-                            let selection = to_hdf5_hyperslab(*chunk.begin(), chunk.end());
+                            let selection = to_hdf5_hyperslab(chunk.begin(), &chunk.end());
 
                             let num_voxels = this.inner.metadata.chunk_size.hmul();
 
@@ -313,7 +328,7 @@ impl Hdf5VolumeSourceState {
                 .into()
             },
         )
-        .embedded(self.inner.embedding_data)
+        .embedded(self.inner.embedding_data.clone())
         .into()
     }
 }
