@@ -94,12 +94,28 @@ pub enum BinOp {
     Div,
     Max,
     Min,
+    GreaterThan,
+    GreaterThanEquals,
+    LessThan,
+    LessThanEquals,
+    Equals,
+    NotEquals,
 }
 
 impl BinOp {
     fn dtype(&self, input1: DType, input2: DType) -> Result<DType, crate::Error> {
         if input1 == input2 {
-            Ok(input1)
+            match self {
+                BinOp::Add | BinOp::Mul | BinOp::Sub | BinOp::Div | BinOp::Max | BinOp::Min => {
+                    Ok(input1)
+                }
+                BinOp::GreaterThan
+                | BinOp::GreaterThanEquals
+                | BinOp::LessThan
+                | BinOp::LessThanEquals
+                | BinOp::Equals
+                | BinOp::NotEquals => Ok(ScalarType::U32.into()),
+            }
         } else {
             Err(format!(
                 "Mismatched dtypes {:?} and {:?} for binary op",
@@ -168,6 +184,12 @@ impl Display for WriteBin {
             BinOp::Div => write!(f, "{} / {}", l, r),
             BinOp::Max => write!(f, "max({}, {})", l, r),
             BinOp::Min => write!(f, "min({}, {})", l, r),
+            BinOp::GreaterThan => write!(f, "uint({} > {})", l, r),
+            BinOp::GreaterThanEquals => write!(f, "uint({} >= {})", l, r),
+            BinOp::LessThan => write!(f, "uint({} < {})", l, r),
+            BinOp::LessThanEquals => write!(f, "uint({} <= {})", l, r),
+            BinOp::Equals => write!(f, "uint({} == {})", l, r),
+            BinOp::NotEquals => write!(f, "uint({} != {})", l, r),
         }
     }
 }
@@ -487,12 +509,36 @@ impl<D: DynDimension> JitTensorOperator<D> {
         Self::unary_op(UnaryOp::Cast(to), self)
     }
 
-    pub fn if_ne0(
+    pub fn select(
         self,
         yes: JitTensorOperator<D>,
         no: JitTensorOperator<D>,
     ) -> Result<Self, crate::Error> {
         Self::ternary_op(TernaryOp::IfThenElse, self, yes, no)
+    }
+
+    pub fn lt(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::LessThan, self, other)
+    }
+
+    pub fn lt_eq(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::LessThanEquals, self, other)
+    }
+
+    pub fn gt(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::GreaterThan, self, other)
+    }
+
+    pub fn gt_eq(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::GreaterThanEquals, self, other)
+    }
+
+    pub fn eq(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Equals, self, other)
+    }
+
+    pub fn neq(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::NotEquals, self, other)
     }
 }
 
@@ -1003,7 +1049,13 @@ mod test {
         let input3 =
             jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_3).into());
 
-        let output = input1.if_ne0(input2, input3).unwrap().compile().unwrap();
+        let output = input1
+            .neq(1.0.into())
+            .unwrap()
+            .select(input2, input3)
+            .unwrap()
+            .compile()
+            .unwrap();
 
         let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
             let input1 = input_fn_1(v);
