@@ -10,7 +10,8 @@ use palace_core::{
     dtypes::{DType, ScalarType},
     jit::jit,
     operators::{
-        raycaster::TransFuncOperator, tensor::TensorOperator, volume::EmbeddedVolumeOperator,
+        raycaster::TransFuncOperator,
+        tensor::{EmbeddedVolumeOperator, TensorOperator},
     },
     Error,
 };

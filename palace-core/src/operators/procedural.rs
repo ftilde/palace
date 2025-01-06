@@ -15,10 +15,7 @@ use crate::{
     },
 };
 
-use super::{
-    tensor::{LODImageOperator, LODTensorOperator},
-    volume::LODVolumeOperator,
-};
+use super::tensor::{LODImageOperator, LODTensorOperator, LODVolumeOperator};
 
 pub fn ball(
     base_metadata: VolumeMetaData,

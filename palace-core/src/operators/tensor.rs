@@ -598,6 +598,10 @@ pub fn linear_rescale<D: DynDimension>(
     )
 }
 
+pub type VolumeOperator<E> = TensorOperator<D3, E>;
+pub type EmbeddedVolumeOperator<E> = EmbeddedTensorOperator<D3, E>;
+pub type LODVolumeOperator<E> = LODTensorOperator<D3, E>;
+
 pub type ImageOperator<E> = TensorOperator<D2, E>;
 pub type LODImageOperator<E> = LODTensorOperator<D2, E>;
 pub type FrameOperator = ImageOperator<StaticElementType<Vector<D4, u8>>>;

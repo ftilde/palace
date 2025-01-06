@@ -20,7 +20,7 @@ use crate::{
     Error,
 };
 
-use super::volume::VolumeOperator;
+use super::tensor::VolumeOperator;
 
 #[derive(Clone, Deref)]
 pub struct RawVolumeSourceState(Rc<RawVolumeSourceStateInner>);

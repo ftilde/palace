@@ -9,8 +9,8 @@ use palace_core::jit::jit;
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
-use palace_core::operators::volume::{ChunkSize, LODVolumeOperator};
-use palace_core::operators::volume_gpu;
+use palace_core::operators::tensor::LODVolumeOperator;
+use palace_core::operators::volume_gpu::{self, ChunkSize};
 use palace_core::operators::{self};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;

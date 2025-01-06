@@ -11,8 +11,8 @@ use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
 use palace_core::operators::sliceviewer::SliceviewState;
-use palace_core::operators::tensor::FrameOperator;
-use palace_core::operators::volume::{ChunkSize, LODVolumeOperator, VolumeOperator};
+use palace_core::operators::tensor::{FrameOperator, LODVolumeOperator, VolumeOperator};
+use palace_core::operators::volume_gpu::ChunkSize;
 use palace_core::operators::{self, volume_gpu};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;

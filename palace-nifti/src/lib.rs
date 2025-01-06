@@ -10,7 +10,7 @@ use palace_core::{
     dtypes::{DType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
-    operators::{tensor::TensorOperator, volume::EmbeddedVolumeOperator},
+    operators::tensor::{EmbeddedVolumeOperator, TensorOperator},
     Error,
 };
 

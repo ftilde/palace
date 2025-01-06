@@ -11,8 +11,7 @@ use crate::vulkan::shader::Shader;
 use crate::vulkan::{DstBarrierInfo, SrcBarrierInfo};
 use crate::{dim::*, op_descriptor};
 
-use super::tensor::TensorOperator;
-use super::volume::EmbeddedVolumeOperator;
+use super::tensor::{EmbeddedVolumeOperator, TensorOperator};
 use super::{kernels::*, volume_gpu};
 
 pub fn multiscale_vesselness(

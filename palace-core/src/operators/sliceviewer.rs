@@ -6,8 +6,7 @@ use id::Identify;
 
 use super::{
     raycaster::TransFuncOperator,
-    tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator},
-    volume::LODVolumeOperator,
+    tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator, LODVolumeOperator},
 };
 
 use crate::{

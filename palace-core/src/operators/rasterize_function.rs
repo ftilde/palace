@@ -15,7 +15,7 @@ use crate::{
     Error,
 };
 
-use super::{tensor::TensorOperator, volume::VolumeOperator};
+use super::tensor::{TensorOperator, VolumeOperator};
 
 #[derive(Clone)]
 pub struct VoxelPosRasterizer<F> {

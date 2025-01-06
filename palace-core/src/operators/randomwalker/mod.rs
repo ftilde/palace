@@ -289,7 +289,7 @@ mod test {
         let weights = random_walker_weights(vol, WeightFunction::Grady { beta: 100.0 }, 1e-5);
         let weights = crate::operators::volume_gpu::rechunk(
             weights,
-            Vector::fill(crate::operators::volume::ChunkSize::Full),
+            Vector::fill(crate::operators::volume_gpu::ChunkSize::Full),
         );
         let v = random_walker_single_chunk(weights, seeds, cfg);
 

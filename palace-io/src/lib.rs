@@ -6,8 +6,7 @@ use palace_core::{
     dtypes::DType,
     operators::{
         tensor::{EmbeddedTensorOperator, LODTensorOperator},
-        volume::ChunkSize,
-        volume_gpu::rechunk,
+        volume_gpu::{rechunk, ChunkSize},
     },
     vec::Vector,
 };

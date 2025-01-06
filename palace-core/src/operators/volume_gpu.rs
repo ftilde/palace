@@ -1,3 +1,4 @@
+use derive_more::From;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use ash::vk;
@@ -9,7 +10,7 @@ use rand::prelude::*;
 
 use crate::{
     array::ChunkIndex,
-    data::{ChunkCoordinate, LocalCoordinate, Vector},
+    data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Vector},
     dim::*,
     dtypes::{DType, ElementType, StaticElementType},
     op_descriptor,
@@ -27,9 +28,7 @@ use crate::{
     },
 };
 
-use super::{
-    array::ArrayOperator, raycaster::TransFuncOperator, scalar::ScalarOperator, volume::ChunkSize,
-};
+use super::{array::ArrayOperator, raycaster::TransFuncOperator, scalar::ScalarOperator};
 
 pub fn apply_tf<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
@@ -291,6 +290,23 @@ impl GLSLType for f32 {
 
 impl GLSLType for Vector<D4, u8> {
     const TYPE_NAME: &'static str = "uint8_t[4]";
+}
+
+#[derive(Copy, Clone, From, Hash, Debug, id::Identify, PartialEq, Eq)]
+pub enum ChunkSize {
+    Fixed(LocalCoordinate),
+    //Relative(f32),
+    Full,
+}
+
+impl ChunkSize {
+    pub fn apply(self, global_size: GlobalCoordinate) -> LocalCoordinate {
+        match self {
+            ChunkSize::Fixed(l) => l,
+            //RechunkArgument::Relative(f) => ((global_size.raw as f32 * f).round() as u32).into(),
+            ChunkSize::Full => global_size.local(),
+        }
+    }
 }
 
 pub fn rechunk<D: DynDimension, T: ElementType>(
@@ -1296,7 +1312,7 @@ mod test {
     }
 
     fn compare_convolution_1d(
-        input: crate::operators::volume::VolumeOperator<StaticElementType<f32>>,
+        input: crate::operators::tensor::VolumeOperator<StaticElementType<f32>>,
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
         dim: usize,

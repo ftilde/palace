@@ -33,8 +33,7 @@ use pyo3_stub_gen::derive::*;
 
 use super::{
     array::ArrayOperator,
-    tensor::{FrameOperator, ImageOperator},
-    volume::LODVolumeOperator,
+    tensor::{FrameOperator, ImageOperator, LODVolumeOperator},
 };
 
 #[cfg_attr(feature = "python", pyclass)]
