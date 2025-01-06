@@ -12,7 +12,7 @@ pub use self::splitter::*;
 pub use self::tensor::*;
 pub use self::transfer_function::*;
 
-use palace_core::operators::volume_gpu::ChunkSize as CChunkSize;
+use palace_core::operators::rechunk::ChunkSize as CChunkSize;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyclass;
 

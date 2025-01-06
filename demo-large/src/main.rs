@@ -10,10 +10,10 @@ use palace_core::operators::gui::{egui, GuiState};
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
+use palace_core::operators::rechunk::ChunkSize;
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::{FrameOperator, LODVolumeOperator, VolumeOperator};
-use palace_core::operators::volume_gpu::ChunkSize;
-use palace_core::operators::{self, aggregation, volume_gpu};
+use palace_core::operators::{self, aggregation};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
@@ -307,7 +307,7 @@ fn slice_viewer_z(
         tf.clone(),
         Default::default(),
     );
-    let slice = volume_gpu::rechunk(slice, Vector::fill(ChunkSize::Full));
+    let slice = operators::rechunk::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(slice);
 
     frame
@@ -616,7 +616,7 @@ fn eval_network(
         ),
     };
 
-    let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
+    let frame = operators::rechunk::rechunk(frame, Vector::fill(ChunkSize::Full));
     let frame = gui.render(frame);
 
     let slice_ref = &frame;

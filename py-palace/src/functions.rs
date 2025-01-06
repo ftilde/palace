@@ -29,7 +29,7 @@ pub fn rechunk(
     tensor.try_map_inner(
         py,
         |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
-            Ok(palace_core::operators::volume_gpu::rechunk(vol, size).into_dyn())
+            Ok(palace_core::operators::rechunk::rechunk(vol, size).into_dyn())
         },
     )
 }

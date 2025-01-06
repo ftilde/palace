@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::{
-    operators::volume_gpu::{rechunk, ChunkSize},
+    operators::rechunk::{rechunk, ChunkSize},
     runtime::RunTime,
 };
 use palace_io::LodOrigin;

@@ -9,8 +9,8 @@ use palace_core::jit::jit;
 use palace_core::operators::raycaster::{
     CameraState, CompositingMode, RaycasterConfig, Shading, TransFuncOperator,
 };
+use palace_core::operators::rechunk::ChunkSize;
 use palace_core::operators::tensor::LODVolumeOperator;
-use palace_core::operators::volume_gpu::{self, ChunkSize};
 use palace_core::operators::{self};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
@@ -264,7 +264,7 @@ fn eval_network(
     config.compositing_mode = CompositingMode::DVR;
     config.shading = Shading::Phong;
     let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config);
-    let frame = volume_gpu::rechunk(frame, Vector::fill(ChunkSize::Full));
+    let frame = operators::rechunk::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;
     let version = runtime.resolve(Some(deadline), false, |ctx, _| {

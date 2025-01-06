@@ -9,6 +9,7 @@ pub mod randomwalker;
 pub mod rasterize_function;
 pub mod raw;
 pub mod raycaster;
+pub mod rechunk;
 pub mod resample;
 pub mod scalar;
 pub mod sliceviewer;

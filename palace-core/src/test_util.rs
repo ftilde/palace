@@ -4,8 +4,8 @@ use crate::{
     dim::*,
     dtypes::{DType, StaticElementType},
     operators::{
+        rechunk::{rechunk, ChunkSize},
         tensor::{TensorOperator, VolumeOperator},
-        volume_gpu::{rechunk, ChunkSize},
     },
     storage::Element,
 };
