@@ -112,10 +112,10 @@ fn open_storage_for_read(path: &Path) -> Result<Arc<dyn ZarrReadStorage>, Error>
 
 pub fn open(
     path: PathBuf,
-    volume_location: String,
+    tensor_location: String,
 ) -> Result<EmbeddedTensorOperator<DDyn, DType>, Error> {
     let store = open_storage_for_read(&path)?;
-    let array = Array::open(store, &volume_location)?;
+    let array = Array::open(store, &tensor_location)?;
     let state = ZarrSourceState::from_array(path, array)?;
     Ok(state.operate())
 }

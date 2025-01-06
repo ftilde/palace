@@ -118,7 +118,7 @@ void main() {
 
                 // Border handling for first chunk in dim
                 if(chunk_pos == 0) {
-                    pos[DIM] = chunk_begin_local; //Clip to volume/chunk
+                    pos[DIM] = chunk_begin_local; //Clip to tensor/chunk
                     T local_val = sample_brick(pos, i);
 
                     for (int local=l_begin_no_clip; local<chunk_begin_local; ++local) {
@@ -144,7 +144,7 @@ void main() {
 
                 // Border handling for last chunk in dim
                 if(chunk_pos == last_chunk) {
-                    pos[DIM] = chunk_end_local; //Clip to volume/chunk
+                    pos[DIM] = chunk_end_local; //Clip to tensor/chunk
                     T local_val = sample_brick(pos, i);
 
                     for (int local=chunk_end_local+1; local<=l_end_no_clip; ++local) {

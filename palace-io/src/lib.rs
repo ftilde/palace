@@ -74,7 +74,7 @@ pub fn open_single_level(
             .try_into()
             .unwrap(),
         _ => {
-            return Err(format!("Unknown volume format for file {}", path.to_string_lossy()).into())
+            return Err(format!("Unknown tensor format for file {}", path.to_string_lossy()).into())
         }
     })
 }
@@ -106,7 +106,7 @@ pub fn open_lod(
             palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))
         }
         _ => Err(format!(
-            "Unknown lod volume format for file {}",
+            "Unknown lod tensor format for file {}",
             path.to_string_lossy()
         )
         .into()),
