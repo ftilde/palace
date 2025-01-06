@@ -10,10 +10,7 @@ use crate::{
     storage::Element,
 };
 
-pub fn compare_tensor_fn<
-    D: Dimension,
-    T: PartialEq + crate::operators::volume_gpu::GLSLType + Element + Default + std::fmt::Debug,
->(
+pub fn compare_tensor_fn<D: Dimension, T: PartialEq + Element + Default + std::fmt::Debug>(
     vol: TensorOperator<D, StaticElementType<T>>,
     fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut<T, D::NDArrayDim>),
 ) where

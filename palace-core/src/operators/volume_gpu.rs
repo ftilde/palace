@@ -280,18 +280,6 @@ void main()
     )
 }
 
-pub trait GLSLType {
-    const TYPE_NAME: &'static str;
-}
-
-impl GLSLType for f32 {
-    const TYPE_NAME: &'static str = "float";
-}
-
-impl GLSLType for Vector<D4, u8> {
-    const TYPE_NAME: &'static str = "uint8_t[4]";
-}
-
 #[derive(Copy, Clone, From, Hash, Debug, id::Identify, PartialEq, Eq)]
 pub enum ChunkSize {
     Fixed(LocalCoordinate),
