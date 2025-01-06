@@ -110,6 +110,29 @@ impl BinOp {
     }
 }
 
+#[derive(id::Identify, Clone, Copy, Debug)]
+pub enum TernaryOp {
+    IfThenElse,
+}
+
+impl TernaryOp {
+    fn dtype(&self, _input1: DType, input2: DType, input3: DType) -> Result<DType, crate::Error> {
+        match self {
+            TernaryOp::IfThenElse => {
+                if input2 == input3 {
+                    Ok(input2)
+                } else {
+                    Err(format!(
+                        "DTypes of 2nd ({}) and 3nd ({})argument must match",
+                        input2, input3
+                    )
+                    .into())
+                }
+            }
+        }
+    }
+}
+
 const VEC_LOOP_VARIABLE_NAME: &'static str = "i";
 struct VecLoop(u32);
 impl Display for VecLoop {
@@ -149,6 +172,19 @@ impl Display for WriteBin {
     }
 }
 
+struct WriteTernary(TernaryOp, NodeId, NodeId, NodeId, u32);
+impl Display for WriteTernary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let a0 = WriteValue(self.1, self.4);
+        let a1 = WriteValue(self.2, self.4);
+        let a2 = WriteValue(self.3, self.4);
+
+        match self.0 {
+            TernaryOp::IfThenElse => write!(f, "({} != 0) ? {} : {}", a0, a1, a2),
+        }
+    }
+}
+
 #[derive(id::Identify, Clone, Copy, Debug)]
 pub enum ConstValue {
     F32(f32),
@@ -175,6 +211,13 @@ enum Instruction {
     Const(ConstValue),
     Unary(DType, UnaryOp, InstructionOffset),
     Binary(DType, BinOp, InstructionOffset, InstructionOffset),
+    Ternary(
+        DType,
+        TernaryOp,
+        InstructionOffset,
+        InstructionOffset,
+        InstructionOffset,
+    ),
     Read(DType, InputId),
 }
 
@@ -184,6 +227,7 @@ impl Instruction {
             Instruction::Const(const_value) => const_value.dtype(),
             Instruction::Unary(dtype, ..) => *dtype,
             Instruction::Binary(dtype, ..) => *dtype,
+            Instruction::Ternary(dtype, ..) => *dtype,
             Instruction::Read(dtype, ..) => *dtype,
         }
     }
@@ -217,6 +261,54 @@ pub struct JitTensorOperator<D: DynDimension> {
     dtype: DType,
     operators: OrderedSet<TensorOperator<D, DType>>,
     instructions: Vec<Instruction>,
+}
+
+fn merge_instructions<D: DynDimension>(
+    operators0: OrderedSet<TensorOperator<D, DType>>,
+    instructions0: Vec<Instruction>,
+    operators1: OrderedSet<TensorOperator<D, DType>>,
+    instructions1: Vec<Instruction>,
+) -> (
+    OrderedSet<TensorOperator<D, DType>>,
+    Vec<Instruction>,
+    usize,
+    usize,
+) {
+    let mut inputs = operators0;
+    let old_inputs = operators1;
+
+    let mut ops = instructions0;
+    let mut new_ops = instructions1;
+    for op in &mut new_ops {
+        if let Instruction::Read(_, input_id) = op {
+            *input_id = InputId(inputs.add(old_inputs.0[input_id.0].clone()));
+        }
+    }
+
+    let offset_0 = new_ops.len();
+    let offset_1 = 0;
+
+    ops.extend(new_ops);
+
+    (inputs, ops, offset_0, offset_1)
+}
+
+fn merge_metadata<D: DynDimension>(
+    md0: Option<TensorMetaData<D>>,
+    md1: Option<TensorMetaData<D>>,
+) -> Result<Option<TensorMetaData<D>>, crate::Error> {
+    Ok(match (md0, md1) {
+        (None, None) => None,
+        (None, r) => r,
+        (l, None) => l,
+        (l, r) => {
+            if l == r {
+                l
+            } else {
+                return Err(format!("Metadata mismatch {:?}, {:?}", l, r).into());
+            }
+        }
+    })
 }
 
 impl<D: DynDimension> OperatorParameter for JitTensorOperator<D> {
@@ -279,39 +371,55 @@ impl<D: DynDimension> JitTensorOperator<D> {
         Ok({
             let dtype = op.dtype(l.dtype, r.dtype)?;
 
-            let mut inputs = l.operators;
-            let old_inputs = r.operators;
-
-            let mut ops = l.instructions;
-            let mut new_ops = r.instructions;
-            for op in &mut new_ops {
-                if let Instruction::Read(_, input_id) = op {
-                    *input_id = InputId(inputs.add(old_inputs.0[input_id.0].clone()));
-                }
-            }
+            let (inputs, mut ops, offset_l, offset_r) =
+                merge_instructions(l.operators, l.instructions, r.operators, r.instructions);
 
             let op = Instruction::Binary(
                 dtype,
                 op,
-                InstructionOffset(new_ops.len() + 1),
-                InstructionOffset(1),
+                InstructionOffset(offset_l + 1),
+                InstructionOffset(offset_r + 1),
             );
-            ops.extend(new_ops);
             ops.push(op);
 
             Self {
-                metadata: match (l.metadata, r.metadata) {
-                    (None, None) => None,
-                    (None, r) => r,
-                    (l, None) => l,
-                    (l, r) => {
-                        if l == r {
-                            l
-                        } else {
-                            return Err(format!("Metadata mismatch {:?}, {:?}", l, r).into());
-                        }
-                    }
-                },
+                metadata: merge_metadata(l.metadata, r.metadata)?,
+                dtype,
+                operators: inputs,
+                instructions: ops,
+            }
+        })
+    }
+    pub fn ternary_op(
+        op: TernaryOp,
+        a0: JitTensorOperator<D>,
+        a1: JitTensorOperator<D>,
+        a2: JitTensorOperator<D>,
+    ) -> Result<Self, crate::Error> {
+        Ok({
+            let dtype = op.dtype(a0.dtype, a1.dtype, a2.dtype)?;
+
+            let (inputs_initial, ops_initial, offset_0_initial, _) =
+                merge_instructions(a0.operators, a0.instructions, a1.operators, a1.instructions);
+
+            let (inputs, mut ops, offset_1, offset_2) =
+                merge_instructions(inputs_initial, ops_initial, a2.operators, a2.instructions);
+
+            let offset_0 = offset_0_initial + offset_1;
+
+            let op = Instruction::Ternary(
+                dtype,
+                op,
+                InstructionOffset(offset_0 + 1),
+                InstructionOffset(offset_1 + 1),
+                InstructionOffset(offset_2 + 1),
+            );
+            ops.push(op);
+
+            let metadata = merge_metadata(merge_metadata(a0.metadata, a1.metadata)?, a2.metadata)?;
+
+            Self {
+                metadata,
                 dtype,
                 operators: inputs,
                 instructions: ops,
@@ -377,6 +485,14 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)
+    }
+
+    pub fn if_ne0(
+        self,
+        yes: JitTensorOperator<D>,
+        no: JitTensorOperator<D>,
+    ) -> Result<Self, crate::Error> {
+        Self::ternary_op(TernaryOp::IfThenElse, self, yes, no)
     }
 }
 
@@ -496,6 +612,18 @@ fn compile(
                     nodes.0[node_num_r.0].id,
                 ])
             }
+            Instruction::Ternary(dtype, bin_op, offset_0, offset_1, offset_2) => {
+                let node_num_0 = instruction_to_node[i - offset_0.0];
+                let node_num_1 = instruction_to_node[i - offset_1.0];
+                let node_num_2 = instruction_to_node[i - offset_2.0];
+                Id::combine(&[
+                    dtype.id(),
+                    bin_op.id(),
+                    nodes.0[node_num_0.0].id,
+                    nodes.0[node_num_1.0].id,
+                    nodes.0[node_num_2.0].id,
+                ])
+            }
             Instruction::Read(dtype, input_id) => Id::combine(&[dtype.id(), input_id.id()]),
         };
 
@@ -544,6 +672,24 @@ fn compile(
                         *o,
                         input_node_id(node.instruction_number, *l),
                         input_node_id(node.instruction_number, *r),
+                        t.size
+                    )
+                )?;
+                *t
+            }
+            Instruction::Ternary(t, o, a0, a1, a2) => {
+                writeln!(
+                    &mut shader,
+                    "{} {}; {} {} = {};",
+                    t.glsl_type(),
+                    res_id,
+                    VecLoop(t.size),
+                    WriteValue(res_id, t.size),
+                    WriteTernary(
+                        *o,
+                        input_node_id(node.instruction_number, *a0),
+                        input_node_id(node.instruction_number, *a1),
+                        input_node_id(node.instruction_number, *a2),
                         t.size
                     )
                 )?;
@@ -809,6 +955,66 @@ mod test {
             let input2 = input_fn_2(v);
 
             (-(input1 as i32) + (input2 as i32) * (input2 as i32)) as f32
+        });
+
+        compare_tensor(output.try_into().unwrap(), expected);
+    }
+
+    #[test]
+    fn asymmetric() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let input_fn_1 = |v: VoxelPosition| (v.x().raw * v.y().raw * v.z().raw) as f32;
+        let input_fn_2 = |v: VoxelPosition| (v.x().raw + v.y().raw + v.z().raw) as f32;
+
+        let input1 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_1).into());
+        let input2 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_2).into());
+
+        let output = input1.sub(input2).unwrap().compile().unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            let input1 = input_fn_1(v);
+            let input2 = input_fn_2(v);
+
+            input1 - input2
+        });
+
+        compare_tensor(output.try_into().unwrap(), expected);
+    }
+
+    #[test]
+    fn ternary() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let input_fn_1 = |v: VoxelPosition| (v.x().raw > 2) as i32 as f32;
+        let input_fn_2 = |v: VoxelPosition| (v.x().raw * v.y().raw * v.z().raw) as f32;
+        let input_fn_3 = |v: VoxelPosition| (v.x().raw + v.y().raw + v.z().raw) as f32;
+
+        let input1 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_1).into());
+        let input2 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_2).into());
+        let input3 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_3).into());
+
+        let output = input1.if_ne0(input2, input3).unwrap().compile().unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            let input1 = input_fn_1(v);
+            let input2 = input_fn_2(v);
+            let input3 = input_fn_3(v);
+
+            if input1 != 0.0 {
+                input2
+            } else {
+                input3
+            }
         });
 
         compare_tensor(output.try_into().unwrap(), expected);
