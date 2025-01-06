@@ -9,9 +9,9 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     operators::{
+        aggregation::SampleMethod,
         scalar::ScalarOperator,
         tensor::{LODTensorOperator, TensorOperator},
-        volume_gpu::SampleMethod,
     },
     vec::Vector,
     vulkan::{
@@ -222,7 +222,7 @@ fn variance<D: DynDimension>(
         .cast(ScalarType::F32.into())
         .unwrap();
 
-    let uncorrected_variance = crate::operators::volume_gpu::mean(
+    let uncorrected_variance = crate::operators::aggregation::mean(
         diff_sq.compile().unwrap().try_into().unwrap(),
         SampleMethod::Subset(10),
     );

@@ -13,7 +13,7 @@ use palace_core::operators::raycaster::{
 use palace_core::operators::sliceviewer::SliceviewState;
 use palace_core::operators::tensor::{FrameOperator, LODVolumeOperator, VolumeOperator};
 use palace_core::operators::volume_gpu::ChunkSize;
-use palace_core::operators::{self, volume_gpu};
+use palace_core::operators::{self, aggregation, volume_gpu};
 use palace_core::runtime::{Deadline, RunTime};
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window;
@@ -352,14 +352,14 @@ fn fit_transfer_function(
 ) {
     let min_max_sample_bricks = 10;
 
-    let min = palace_core::operators::volume_gpu::min(
+    let min = aggregation::min(
         vol.clone(),
-        volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+        aggregation::SampleMethod::Subset(min_max_sample_bricks),
     );
     let min = &min;
-    let max = palace_core::operators::volume_gpu::max(
+    let max = aggregation::max(
         vol.clone(),
-        volume_gpu::SampleMethod::Subset(min_max_sample_bricks),
+        aggregation::SampleMethod::Subset(min_max_sample_bricks),
     );
     let max = &max;
 

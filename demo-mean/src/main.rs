@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use palace_core::array;
 use palace_core::data::{LocalVoxelPosition, VoxelPosition};
 use palace_core::dim::DDyn;
 use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::operators;
 use palace_core::operators::tensor::TensorOperator;
 use palace_core::runtime::RunTime;
-use palace_core::{array, operators::volume_gpu};
 use palace_io::Hints;
 
 #[derive(Parser, Clone)]
@@ -82,8 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vol = match args.input {
         Input::File(path) => {
-            let v = palace_io::open(path.vol, Hints::new().chunk_size(brick_size.into_dyn()))?
-                .inner;
+            let v =
+                palace_io::open(path.vol, Hints::new().chunk_size(brick_size.into_dyn()))?.inner;
             palace_core::jit::jit(v)
                 .cast(ScalarType::F32.into())
                 .unwrap()
@@ -137,7 +137,7 @@ fn eval_network(
     //    .try_into()
     //    .unwrap();
 
-    let mean_unscaled = volume_gpu::mean(vol, num_chunks.into());
+    let mean_unscaled = operators::aggregation::mean(vol, num_chunks.into());
 
     // Neat: We can even write to references in the closure/future below to get results out.
     let mean_unscaled_ref = &mean_unscaled;

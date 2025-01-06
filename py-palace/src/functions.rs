@@ -320,7 +320,7 @@ pub fn mean_value(
 ) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = vol.try_into()?;
-    Ok(palace_core::operators::volume_gpu::mean(vol, num_samples.into()).into())
+    Ok(palace_core::operators::aggregation::mean(vol, num_samples.into()).into())
 }
 
 #[gen_stub_pyfunction]
@@ -332,7 +332,7 @@ pub fn min_value(
 ) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = vol.try_into()?;
-    Ok(palace_core::operators::volume_gpu::min(vol, num_samples.into()).into())
+    Ok(palace_core::operators::aggregation::min(vol, num_samples.into()).into())
 }
 
 #[gen_stub_pyfunction]
@@ -344,7 +344,7 @@ pub fn max_value(
 ) -> PyResult<ScalarOperator> {
     let vol = vol.unpack().into_inner().into_core();
     let vol = vol.try_into()?;
-    Ok(palace_core::operators::volume_gpu::max(vol, num_samples.into()).into())
+    Ok(palace_core::operators::aggregation::max(vol, num_samples.into()).into())
 }
 
 #[gen_stub_pyfunction]

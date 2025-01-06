@@ -1,3 +1,4 @@
+pub mod aggregation;
 pub mod array;
 pub mod geometry;
 pub mod gui;
