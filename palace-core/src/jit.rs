@@ -1050,7 +1050,7 @@ mod test {
             jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_3).into());
 
         let output = input1
-            .neq(1.0.into())
+            .neq(0.0.into())
             .unwrap()
             .select(input2, input3)
             .unwrap()
