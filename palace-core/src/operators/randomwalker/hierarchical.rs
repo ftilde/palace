@@ -7,10 +7,11 @@ use itertools::Itertools;
 use crate::{
     aabb::AABB,
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
+    chunk_utils::ChunkCopyPipeline,
     coordinate::{ChunkCoordinate, LocalCoordinate},
     data::GlobalCoordinate,
     dim::{DynDimension, LargerDim, D1},
-    dtypes::{DType, StaticElementType},
+    dtypes::{DType, ScalarType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OpaqueOperator, Operator, OperatorDescriptor, OperatorNetworkNode},
     operators::{
@@ -136,19 +137,9 @@ fn expand<D: DynDimension>(
 ) -> ExpandedChunkOperator<D, StaticElementType<f32>> {
     let original_metadata = input.metadata.clone();
 
-    let nd = input.dim().n();
-
     assert!(expansion_by
         .zip(&input.metadata.chunk_size, |l, r| l < r)
         .all());
-
-    let push_constants = DynPushConstants::new()
-        .vec::<u32>(nd, "chunk_dim_in")
-        .vec::<u32>(nd, "chunk_dim_out")
-        .vec::<u32>(nd, "to_in_offset")
-        .vec::<u32>(nd, "to_out_offset")
-        .vec::<u32>(nd, "overlap_dim")
-        .scalar::<u32>("overlap_size");
 
     let m_out = ExpandedMetaData {
         base: original_metadata,
@@ -158,8 +149,8 @@ fn expand<D: DynDimension>(
     let op = Operator::with_state(
         op_descriptor!(),
         Default::default(),
-        (input, DataParam(m_out.clone()), DataParam(push_constants)),
-        |ctx, mut positions, (input, m_out, push_constants)| {
+        (input, DataParam(m_out.clone())),
+        |ctx, mut positions, (input, m_out)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -168,24 +159,12 @@ fn expand<D: DynDimension>(
                 let m_in = &input.metadata;
 
                 let out_chunk_size = m_out.mem_size();
-                let out_mem_size = out_chunk_size.hmul();
 
                 positions.sort_by_key(|(v, _)| v.0);
 
-                let pipeline = device.request_state(
-                    (m_in.chunk_size.hmul(), out_mem_size, nd, &push_constants),
-                    |device, (mem_size_in, mem_size_out, nd, push_constants)| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(include_str!("expand_sample.glsl"))
-                                .define("N", nd)
-                                .define("BRICK_MEM_SIZE_IN", mem_size_in)
-                                .define("BRICK_MEM_SIZE_OUT", mem_size_out)
-                                .push_const_block_dyn(&push_constants),
-                        )
-                        .use_push_descriptor(true)
-                        .build(device)
-                    },
-                )?;
+                let pipeline = device.request_state(&m_in.chunk_size, |device, chunk_size| {
+                    ChunkCopyPipeline::new(device, ScalarType::F32.into(), chunk_size.clone())
+                })?;
 
                 let _ = ctx
                     .run_unordered(positions.into_iter().map(|(pos, _)| {
@@ -260,34 +239,24 @@ fn expand<D: DynDimension>(
                                 let overlap_begin = region_begin.clone().max(read_chunk.begin());
                                 let overlap_end = region_end.min(&read_chunk.end());
 
-                                let descriptor_config =
-                                    DescriptorConfig::new([&chunk, &gpu_chunk_out]);
-
-                                let chunk_dim_in = m_in.chunk_size.raw();
-                                let chunk_dim_out = out_chunk_size.clone().raw();
+                                let chunk_dim_out = out_chunk_size.clone();
                                 let to_in_offset =
-                                    (overlap_begin.clone() - read_chunk.begin().clone()).raw();
-                                let to_out_offset =
-                                    (overlap_begin.clone() - region_begin.clone()).raw();
-                                let overlap_dim = (overlap_end - overlap_begin.clone()).raw();
-                                let overlap_size = overlap_dim.hmul() as u32;
+                                    overlap_begin.clone() - read_chunk.begin().clone();
+                                let to_out_offset = overlap_begin.clone() - region_begin.clone();
+                                let overlap_size = overlap_end - overlap_begin.clone();
 
-                                device.with_cmd_buffer(|cmd| unsafe {
-                                    let mut pipeline = pipeline.bind(cmd);
-
-                                    pipeline.push_constant_dyn(&push_constants, |w| {
-                                        w.vec(&chunk_dim_in)?;
-                                        w.vec(&chunk_dim_out)?;
-                                        w.vec(&to_in_offset)?;
-                                        w.vec(&to_out_offset)?;
-                                        w.vec(&overlap_dim)?;
-                                        w.scalar(overlap_size)?;
-
-                                        Ok(())
-                                    });
-                                    pipeline.push_descriptor_set(0, descriptor_config);
-                                    pipeline.dispatch_dyn(device, overlap_dim);
-                                });
+                                //TODO initialization of outside regions
+                                unsafe {
+                                    pipeline.run(
+                                        device,
+                                        &chunk,
+                                        &gpu_chunk_out,
+                                        &to_in_offset.local(),
+                                        &to_out_offset.local(),
+                                        &chunk_dim_out,
+                                        &overlap_size.local(),
+                                    )
+                                };
                             }
 
                             unsafe {
@@ -642,20 +611,12 @@ fn run_rw<D: DynDimension + LargerDim>(
 fn shrink<D: DynDimension>(
     input: ExpandedChunkOperator<D, StaticElementType<f32>>,
 ) -> TensorOperator<D, StaticElementType<f32>> {
-    let nd = input.metadata.base.dim().n();
-
-    let push_constants = DynPushConstants::new()
-        .vec::<u32>(nd, "tensor_dim_in")
-        .vec::<u32>(nd, "tensor_dim_out")
-        .vec::<u32>(nd, "to_in_offset")
-        .scalar::<u32>("tensor_out_size");
-
     TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
         input.metadata.base.clone(),
-        (input, DataParam(push_constants)),
-        |ctx, positions, (input, push_constants)| {
+        input,
+        |ctx, positions, input| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -666,25 +627,9 @@ fn shrink<D: DynDimension>(
                 let out_chunk_size = &m_out.chunk_size;
                 let in_chunk_size = m_in.mem_size();
 
-                let pipeline = device.request_state(
-                    (
-                        in_chunk_size.hmul(),
-                        out_chunk_size.hmul(),
-                        nd,
-                        &push_constants,
-                    ),
-                    |device, (mem_size_in, mem_size_out, nd, push_constants)| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(include_str!("shrink_sample.glsl"))
-                                .define("N", nd)
-                                .define("BRICK_MEM_SIZE_IN", mem_size_in)
-                                .define("BRICK_MEM_SIZE_OUT", mem_size_out)
-                                .push_const_block_dyn(&push_constants),
-                        )
-                        .use_push_descriptor(true)
-                        .build(device)
-                    },
-                )?;
+                let pipeline = device.request_state(&in_chunk_size, |device, chunk_size| {
+                    ChunkCopyPipeline::new(device, ScalarType::F32.into(), chunk_size.clone())
+                })?;
 
                 let _ = ctx
                     .run_unordered(positions.into_iter().map(|(pos, _)| {
@@ -704,26 +649,20 @@ fn shrink<D: DynDimension>(
                                 .submit(ctx.alloc_slot_gpu(device, pos, &out_chunk_size))
                                 .await;
 
-                            let descriptor_config =
-                                DescriptorConfig::new([&in_chunk, &gpu_chunk_out]);
-
                             let chunk_info = m_in.chunk_info(pos);
                             let out_size = &m_out.chunk_size;
 
-                            device.with_cmd_buffer(|cmd| unsafe {
-                                let mut pipeline = pipeline.bind(cmd);
-
-                                pipeline.push_constant_dyn(&push_constants, |w| {
-                                    w.vec(&m_in.mem_size().raw())?;
-                                    w.vec(&out_size.raw())?;
-                                    w.vec(&chunk_info.size_before.raw())?;
-                                    w.scalar(out_size.hmul() as u32)?;
-
-                                    Ok(())
-                                });
-                                pipeline.push_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch_dyn(device, out_size.raw());
-                            });
+                            unsafe {
+                                pipeline.run(
+                                    device,
+                                    &in_chunk,
+                                    &gpu_chunk_out,
+                                    &chunk_info.size_before,
+                                    &Vector::fill_with_len(0, nd).local(),
+                                    &out_size,
+                                    &out_size,
+                                )
+                            };
 
                             unsafe {
                                 gpu_chunk_out.initialized(

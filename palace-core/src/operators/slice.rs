@@ -3,17 +3,14 @@ use itertools::Itertools;
 
 use crate::{
     array::TensorMetaData,
+    chunk_utils::ChunkCopyPipeline,
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate},
     dim::DynDimension,
     dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     vec::Vector,
-    vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
-        shader::Shader,
-        DstBarrierInfo, SrcBarrierInfo,
-    },
+    vulkan::{DstBarrierInfo, SrcBarrierInfo},
 };
 
 use super::{rechunk::ChunkSize, tensor::TensorOperator};
@@ -50,8 +47,6 @@ pub fn slice<D: DynDimension, T: ElementType>(
 ) -> TensorOperator<D, T> {
     let md = &input.metadata;
 
-    let nd = input.dim().n();
-
     let range = range.zip(&md.dimensions, |r, d| r.apply(d.raw));
     let new_dimensions = range.map(|(from, to)| GlobalCoordinate::from(to - from));
     let new_chunk_size = chunk_size.zip(&md.dimensions, |s, d| s.apply(d));
@@ -61,57 +56,12 @@ pub fn slice<D: DynDimension, T: ElementType>(
         dimensions: new_dimensions,
         chunk_size: new_chunk_size,
     };
-
-    let push_constants = DynPushConstants::new()
-        .vec::<u32>(nd, "mem_size_in")
-        .vec::<u32>(nd, "mem_size_out")
-        .vec::<u32>(nd, "begin_in")
-        .vec::<u32>(nd, "begin_out")
-        .vec::<u32>(nd, "region_size")
-        .scalar::<u32>("global_size");
-
-    const SHADER: &'static str = r#"
-#include <util.glsl>
-#include <vec.glsl>
-#include <size_util.glsl>
-
-layout(std430, binding = 0) readonly buffer InputBuffer{
-    T values[BRICK_MEM_SIZE_IN];
-} sourceData;
-
-layout(std430, binding = 1) buffer OutputBuffer{
-    T values[];
-} outputData;
-
-declare_push_consts(constants);
-
-void main() {
-    uint gID = global_position_linear;
-
-    if(gID < constants.global_size) {
-        uint[N] region_pos = from_linear(gID, constants.region_size);
-
-        uint[N] in_pos = add(constants.begin_in, region_pos);
-        uint[N] out_pos = add(constants.begin_out, region_pos);
-
-        uint in_index = to_linear(in_pos, constants.mem_size_in);
-        uint out_index = to_linear(out_pos, constants.mem_size_out);
-
-        outputData.values[out_index] = sourceData.values[in_index];
-    }
-}
-"#;
     TensorOperator::with_state(
         op_descriptor!(),
         input.chunks.dtype(),
         out_md.clone(),
-        (
-            input,
-            DataParam(out_md),
-            DataParam(offset),
-            DataParam(push_constants),
-        ),
-        |ctx, mut positions, (input, m_out, offset, push_constants)| {
+        (input, DataParam(out_md), DataParam(offset)),
+        |ctx, mut positions, (input, m_out, offset)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -126,19 +76,9 @@ void main() {
                 positions.sort_by_key(|(v, _)| v.0);
 
                 let pipeline = device.request_state(
-                    (&push_constants, &m_in.num_chunk_elements(), &dtype, &nd),
-                    |device, (push_constants, num_elements, dtype, nd)| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER)
-                                .define("BRICK_MEM_SIZE_IN", num_elements)
-                                .define("N", nd)
-                                .define("T", dtype.glsl_type())
-                                .push_const_block_dyn(push_constants)
-                                .ext(dtype.glsl_ext())
-                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
-                        )
-                        .use_push_descriptor(true)
-                        .build(device)
+                    (&dtype, &m_in.chunk_size),
+                    |device, (dtype, chunk_size)| {
+                        ChunkCopyPipeline::new(device, *dtype, chunk_size.clone())
                     },
                 )?;
 
@@ -206,28 +146,18 @@ void main() {
                                 let out_chunk_begin =
                                     out_info.in_chunk(&(overlap_begin - offset.0.clone()));
 
-                                let descriptor_config =
-                                    DescriptorConfig::new([&gpu_chunk_in, &gpu_chunk_out]);
-
-                                let global_size = overlap_size.hmul();
-
                                 //TODO initialization of outside regions
-                                device.with_cmd_buffer(|cmd| unsafe {
-                                    let mut pipeline = pipeline.bind(cmd);
-
-                                    pipeline.push_constant_dyn(&push_constants, |consts| {
-                                        consts.vec(&m_in.chunk_size.raw())?;
-                                        consts.vec(&m_out.chunk_size.raw())?;
-                                        consts.vec(&in_chunk_begin.raw())?;
-                                        consts.vec(&out_chunk_begin.raw())?;
-                                        consts.vec(&overlap_size.raw())?;
-                                        consts.scalar(global_size as u32)?;
-                                        Ok(())
-                                    });
-
-                                    pipeline.push_descriptor_set(0, descriptor_config);
-                                    pipeline.dispatch(device, global_size);
-                                });
+                                unsafe {
+                                    pipeline.run(
+                                        device,
+                                        &gpu_chunk_in,
+                                        &gpu_chunk_out,
+                                        &in_chunk_begin,
+                                        &out_chunk_begin,
+                                        &m_out.chunk_size,
+                                        &overlap_size,
+                                    )
+                                };
                             }
 
                             unsafe {
