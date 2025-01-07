@@ -1,5 +1,5 @@
 /target
-/venv
+/venv*
 /maturin_target
 __pycache__
 palace.pyi
