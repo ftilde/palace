@@ -7,7 +7,7 @@ set -e
 
 export script_dir=$(dirname $(realpath $0))
 export PYO3_PYTHON=$script_dir/venv/bin/python
-export PYO3_ENVIRONMENT_SIGNATURE=cpython-3.12-64bit
+export PYO3_ENVIRONMENT_SIGNATURE=cpython-3.13-64bit
 export CARGO_TARGET_DIR=maturin_target
 #export CARGO_LOG=cargo::core::compiler::fingerprint=info
 
