@@ -13,6 +13,7 @@ pub mod raycaster;
 pub mod rechunk;
 pub mod resample;
 pub mod scalar;
+pub mod slice;
 pub mod sliceviewer;
 pub mod splitter;
 pub mod tensor;
