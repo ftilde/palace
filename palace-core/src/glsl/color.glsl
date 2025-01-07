@@ -3,7 +3,8 @@ u8vec4 from_uniform(vec4 v) {
 }
 
 vec4 to_uniform(u8vec4 v) {
-    return vec4(v)/255.0;
+    // TODO: Why the hell do we need to clamp here? Fixes an overflow bug in DVR, though
+    return min(vec4(1.0), vec4(v)/255.0);
 }
 
 u8vec3 from_uniform(vec3 v) {
@@ -11,7 +12,8 @@ u8vec3 from_uniform(vec3 v) {
 }
 
 vec3 to_uniform(u8vec3 v) {
-    return vec3(v)/255.0;
+    // TODO: Why the hell do we need to clamp here? Fixes an overflow bug in DVR, though
+    return min(vec3(1.0), vec3(v)/255.0);
 }
 
 u8vec4 intensity_to_grey(float v) {
