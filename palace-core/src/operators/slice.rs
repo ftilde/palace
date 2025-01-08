@@ -43,6 +43,21 @@ impl From<std::ops::Range<u32>> for Range {
 pub fn slice<D: DynDimension, T: ElementType>(
     input: TensorOperator<D, T>,
     range: Vector<D, Range>,
+) -> TensorOperator<D, T> {
+    let actual_range = range.zip(&input.metadata.dimensions, |r, d| r.apply(d.raw));
+    let chunk_size = input
+        .metadata
+        .chunk_size
+        .zip(&actual_range, |c, (from, to)| {
+            ChunkSize::Fixed((to - from).min(c.raw).into())
+        });
+
+    slice_and_rechunk(input, range, chunk_size)
+}
+
+pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
+    input: TensorOperator<D, T>,
+    range: Vector<D, Range>,
     chunk_size: Vector<D, ChunkSize>,
 ) -> TensorOperator<D, T> {
     let md = &input.metadata;
