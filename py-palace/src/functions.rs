@@ -7,6 +7,7 @@ use palace_core::jit::{BinOp, JitTensorOperator, TernaryOp, UnaryOp};
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use palace_core::{dim::*, jit};
+use pyo3::types::PySlice;
 use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
 
@@ -30,6 +31,47 @@ pub fn rechunk(
         py,
         |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
             Ok(palace_core::operators::rechunk::rechunk(vol, size).into_dyn())
+        },
+    )
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn slice(
+    py: Python,
+    tensor: MaybeEmbeddedTensorOperatorArg,
+    slice_args: Vec<Bound<PySlice>>,
+) -> PyResult<PyObject> {
+    let tensor = tensor.unpack();
+    if tensor.inner_ref().nd()? != slice_args.len() {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "Slice args must be {}-dimensional to fit tensor",
+            tensor.inner_ref().nd()?
+        )));
+    }
+    let dimensions = &tensor.inner_ref().metadata()?.dimensions;
+
+    let slice_args = slice_args
+        .into_iter()
+        .zip(dimensions.iter())
+        .map(|(slice_arg, dim)| {
+            let slice_arg = slice_arg.indices(*dim as _)?;
+            if slice_arg.step != 1 {
+                return Err(crate::map_err("Step must be 1".into()));
+            }
+
+            Ok(palace_core::operators::slice::Range::FromTo(
+                slice_arg.start.try_into().unwrap(),
+                slice_arg.stop.try_into().unwrap(),
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let slice_args = Vector::<DDyn, _>::new(slice_args);
+
+    tensor.try_map_inner(
+        py,
+        |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
+            Ok(palace_core::operators::slice::slice(vol, slice_args).into_dyn())
         },
     )
 }
