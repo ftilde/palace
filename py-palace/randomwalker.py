@@ -41,8 +41,8 @@ if args.background_seeds:
 md: pc.TensorMetaData = vol.levels[0].inner.metadata
 ed = vol.levels[0].embedding_data
 
-vol = vol.map(lambda vol: pc.cast(vol, pc.ScalarType.F32).embedded(ed))
-vol = vol.map(lambda vol: pc.mul(vol, 1.0/(1 << 16)).embedded(ed))
+vol = vol.map(lambda vol: vol.cast(pc.ScalarType.F32))
+vol = vol.map(lambda vol: vol * (1.0/(1 << 16)))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)

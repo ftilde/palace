@@ -100,13 +100,13 @@ def inspect_component(component, action):
 
 def alpha_blending(render_over, render_under):
     def inner(size, events):
-        max_val = pc.splat(255, 4)
-        over = pc.div(pc.cast(render_over(size, events), pc.ScalarType.F32.vec(4)), max_val)
-        under = pc.div(pc.cast(render_under(size, events), pc.ScalarType.F32.vec(4)), max_val)
+        max_val = pc.jit(255).splat(4)
+        over = render_over(size, events).cast(pc.ScalarType.F32.vec(4)) /  max_val
+        under = render_under(size, events).cast(pc.ScalarType.F32.vec(4)) / max_val
 
-        alpha = pc.splat(pc.index(over, 3), 4);
-        one_minus_alpha = pc.sub(pc.splat(1.0, 4), alpha)
-        return pc.cast(pc.mul(pc.add(pc.mul(over, alpha), pc.mul(under, one_minus_alpha)), max_val), pc.ScalarType.U8.vec(4)).inner()
+        alpha = over.index(3).splat(4)
+        one_minus_alpha = pc.jit(1.0).splat(4) - alpha
+        return ((over * alpha + under * one_minus_alpha) * max_val).cast(pc.ScalarType.U8.vec(4))
 
     return inner
 

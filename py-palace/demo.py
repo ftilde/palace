@@ -16,7 +16,7 @@ args = parser.parse_args()
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
 vol = pc.open_or_create_lod(args.volume_file)
-vol = vol.map(lambda v: pc.cast(v, pc.ScalarType.F32).embedded(v.embedding_data))
+vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -39,7 +39,7 @@ camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
 processing = store.store_primitive("passthrough")
-do_threshold = store.store_primitive("no")
+do_threshold = store.store_primitive("yes")
 threshold_val = store.store_primitive(0.5)
 
 smoothing_std = store.store_primitive(min_scale * 2.0)
@@ -81,7 +81,7 @@ def render(size, events):
 
     match do_threshold.load():
         case "yes":
-            v = v.map(lambda evol: pc.select(pc.gt(evol, threshold_val.load()), 1.0, 0.0).embedded(evol.embedding_data))
+            v = v.map(lambda evol: (evol >= threshold_val.load()).select(1.0, 0.0))
         case "no":
             pass
 

@@ -5,6 +5,7 @@ use palace_core::{
 use pyo3::{exceptions::PyException, prelude::*};
 
 mod functions;
+mod jit;
 mod types;
 
 fn map_result<T>(e: Result<T, palace_core::Error>) -> PyResult<T> {
@@ -29,7 +30,6 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(min_value, m)?)?;
     m.add_function(wrap_pyfunction!(max_value, m)?)?;
     m.add_function(wrap_pyfunction!(rechunk, m)?)?;
-    m.add_function(wrap_pyfunction!(slice, m)?)?;
     m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
     m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
@@ -40,29 +40,12 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_tf, m)?)?;
     m.add_function(wrap_pyfunction!(mandelbrot, m)?)?;
     m.add_function(wrap_pyfunction!(from_numpy, m)?)?;
-    m.add_function(wrap_pyfunction!(add, m)?)?;
-    m.add_function(wrap_pyfunction!(sub, m)?)?;
-    m.add_function(wrap_pyfunction!(mul, m)?)?;
-    m.add_function(wrap_pyfunction!(div, m)?)?;
-    m.add_function(wrap_pyfunction!(min, m)?)?;
-    m.add_function(wrap_pyfunction!(max, m)?)?;
-    m.add_function(wrap_pyfunction!(abs, m)?)?;
-    m.add_function(wrap_pyfunction!(neg, m)?)?;
-    m.add_function(wrap_pyfunction!(cast, m)?)?;
-    m.add_function(wrap_pyfunction!(index, m)?)?;
-    m.add_function(wrap_pyfunction!(splat, m)?)?;
-    m.add_function(wrap_pyfunction!(lt, m)?)?;
-    m.add_function(wrap_pyfunction!(lt_eq, m)?)?;
-    m.add_function(wrap_pyfunction!(gt, m)?)?;
-    m.add_function(wrap_pyfunction!(gt_eq, m)?)?;
-    m.add_function(wrap_pyfunction!(eq, m)?)?;
-    m.add_function(wrap_pyfunction!(neq, m)?)?;
-    m.add_function(wrap_pyfunction!(select, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights_bian, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker, m)?)?;
     m.add_function(wrap_pyfunction!(hierarchical_randomwalker, m)?)?;
     m.add_function(wrap_pyfunction!(rasterize_seed_points, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::jit::jit, m)?)?;
     m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<palace_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<palace_core::operators::splitter::SplitDirection>()?;

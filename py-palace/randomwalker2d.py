@@ -67,11 +67,11 @@ def apply_rw_mode(input):
     bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
 
     def sq_f32(t):
-        t = pc.cast(t, pc.ScalarType.F32)
-        return pc.mul(t, t)
+        t = t.cast(pc.ScalarType.F32)
+        return t * t
 
     def to_scalar(input):
-        return input.map(lambda l: pc.add(pc.add(sq_f32(pc.index(l, 0)), sq_f32(pc.index(l, 1))), sq_f32(pc.index(l, 2))).embedded(ed))
+        return input.map(lambda l: sq_f32(l.index(0)) + sq_f32(l.index(1)) + sq_f32(l.index(2)))
 
     match mode.load():
         case "normal":
