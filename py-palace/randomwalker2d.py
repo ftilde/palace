@@ -17,7 +17,7 @@ img = pc.open(args.img_file)
 md: pc.TensorMetaData = img.inner.metadata
 ndim = len(md.dimensions)
 
-img = pc.rechunk(img, [128]*ndim)
+img = img.rechunk([128]*ndim)
 img = img.create_lod(2.0)
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
@@ -75,8 +75,8 @@ def apply_rw_mode(input):
 
     match mode.load():
         case "normal":
-            i = pc.rechunk(input.levels[0], [pc.chunk_size_full]*ndim)
-            i = to_scalar(i)
+            i = to_scalar(input)
+            i = i.levels[0].rechunk([pc.chunk_size_full]*ndim)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
@@ -84,8 +84,6 @@ def apply_rw_mode(input):
             return (input, rw_result.create_lod(2.0))
 
         case "hierarchical":
-            #i = pc.rechunk(input, [32]*3)
-            #input_lod = i.create_lod(2.0)
             i = to_scalar(input)
             weights = i.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
             rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()

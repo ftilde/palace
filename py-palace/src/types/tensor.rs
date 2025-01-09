@@ -18,6 +18,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_py
 
 use crate::jit::{jit_binary, jit_ternary, jit_unary, JitArgument};
 
+use super::ChunkSize;
+
 #[gen_stub_pyclass]
 #[pyclass(unsendable)]
 pub struct ScalarOperator {
@@ -613,6 +615,21 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                 }
             }
 
+            #[pyo3(signature = (num_samples=None))]
+            pub fn max_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+                self.inner.clone().max_value(num_samples)
+            }
+
+            #[pyo3(signature = (num_samples=None))]
+            pub fn min_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+                self.inner.clone().min_value(num_samples)
+            }
+
+            #[pyo3(signature = (num_samples=None))]
+            pub fn mean_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+                self.inner.clone().mean_value(num_samples)
+            }
+
             $(
             fn $fn_name(&self, $($arg : $type,)* ) -> PyResult<Self> {
                 self.map_inner(|i| i.$fn_name($($arg,)*))
@@ -684,6 +701,62 @@ impl TensorOperator {
             .unfold_dtype()
             .map_err(crate::map_err)?
             .into())
+    }
+    fn rechunk(&self, size: Vec<ChunkSize>) -> PyResult<Self> {
+        if self.nd()? != size.len() {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "Chunk size must be {}-dimensional to fit tensor",
+                self.nd()?
+            )));
+        }
+
+        let size = Vector::<DDyn, _>::new(size).map(|s: ChunkSize| s.0);
+        self.clone().map_core(
+            |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
+                Ok(palace_core::operators::rechunk::rechunk(vol, size).into_dyn())
+            },
+        )
+    }
+    fn separable_convolution(&self, kernels: Vec<MaybeConstTensorOperator>) -> PyResult<Self> {
+        if self.nd()? != kernels.len() {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "Expected {} kernels for tensor, but got {}",
+                self.nd()?,
+                kernels.len()
+            )));
+        }
+
+        let kernels = kernels
+            .into_iter()
+            .map(|k| {
+                let ret: CTensorOperator<D1, DType> = try_into_static_err(k.try_into_core()?)?;
+                Ok(ret)
+            })
+            .collect::<Result<Vec<_>, PyErr>>()?;
+
+        for kernel in &kernels {
+            if self.dtype() != kernel.dtype() {
+                return Err(PyErr::new::<PyValueError, _>(format!(
+                    "Kernel must have the same type as tensor ({:?}), but has {:?}",
+                    self.dtype(),
+                    kernel.dtype(),
+                )));
+            }
+        }
+
+        let kernel_refs =
+            Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(kernels.len(), |i| {
+                &kernels[i]
+            })
+            .unwrap();
+
+        self.clone().map_core(|vol: CTensorOperator<DDyn, DType>| {
+            Ok(
+                palace_core::operators::conv::separable_convolution(vol, kernel_refs)
+                    .into_dyn()
+                    .into(),
+            )
+        })
     }
 
     fn __getitem__(&self, slice_args: Vec<Bound<PySlice>>) -> PyResult<Self> {
@@ -780,9 +853,32 @@ impl TensorOperator {
     fn select(&self, then_val: JitArgument, else_val: JitArgument) -> PyResult<Self> {
         jit_ternary(TernaryOp::IfThenElse, self, then_val, else_val)
     }
+
+    #[pyo3(signature = (num_samples=None))]
+    pub fn mean_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+        let vol = self.clone().into_core();
+        let vol = vol.try_into()?;
+        Ok(palace_core::operators::aggregation::mean(vol, num_samples.into()).into())
+    }
+
+    #[pyo3(signature = (num_samples=None))]
+    pub fn min_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+        let vol = self.clone().into_core();
+        let vol = vol.try_into()?;
+        Ok(palace_core::operators::aggregation::min(vol, num_samples.into()).into())
+    }
+
+    #[pyo3(signature = (num_samples=None))]
+    pub fn max_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
+        let vol = self.clone().into_core();
+        let vol = vol.try_into()?;
+        Ok(palace_core::operators::aggregation::max(vol, num_samples.into()).into())
+    }
 }
 
 impl_embedded_tensor_operator_with_delegate!(
+    rechunk(size: Vec<ChunkSize>),
+    separable_convolution(kernels: Vec<MaybeConstTensorOperator>),
     __getitem__(slice_args: Vec<Bound<PySlice>>),
 
     unfold_dtype(),

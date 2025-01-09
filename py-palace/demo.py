@@ -39,7 +39,7 @@ camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
 view = store.store_primitive("raycast")
 processing = store.store_primitive("passthrough")
-do_threshold = store.store_primitive("yes")
+do_threshold = store.store_primitive("no")
 threshold_val = store.store_primitive(0.5)
 
 smoothing_std = store.store_primitive(min_scale * 2.0)
@@ -71,7 +71,7 @@ def render(size, events):
             pass
         case "smooth":
             def smooth(evol, k):
-                return pc.separable_convolution(evol, [pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
+                return evol.separable_convolution([pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
 
             k = smoothing_std.load()
             v = v.map(lambda evol: smooth(evol, k))

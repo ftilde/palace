@@ -6,81 +6,8 @@ use palace_core::dim::*;
 use palace_core::dtypes::DType;
 use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-pub fn rechunk(
-    py: Python,
-    tensor: MaybeEmbeddedTensorOperatorArg,
-    size: Vec<ChunkSize>,
-) -> PyResult<PyObject> {
-    let tensor = tensor.unpack();
-    if tensor.inner_ref().nd()? != size.len() {
-        return Err(PyErr::new::<PyValueError, _>(format!(
-            "Chunk size must be {}-dimensional to fit tensor",
-            tensor.inner_ref().nd()?
-        )));
-    }
-
-    let size = Vector::<DDyn, _>::new(size).map(|s: ChunkSize| s.0);
-    tensor.try_map_inner(
-        py,
-        |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
-            Ok(palace_core::operators::rechunk::rechunk(vol, size).into_dyn())
-        },
-    )
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-pub fn separable_convolution<'py>(
-    py: Python,
-    tensor: MaybeEmbeddedTensorOperatorArg,
-    kernels: Vec<MaybeConstTensorOperator>,
-) -> PyResult<PyObject> {
-    let tensor = tensor.unpack();
-    if tensor.inner_ref().nd()? != kernels.len() {
-        return Err(PyErr::new::<PyValueError, _>(format!(
-            "Expected {} kernels for tensor, but got {}",
-            tensor.inner_ref().nd()?,
-            kernels.len()
-        )));
-    }
-
-    let kernels = kernels
-        .into_iter()
-        .map(|k| {
-            let ret: CTensorOperator<D1, DType> = try_into_static_err(k.try_into_core()?)?;
-            Ok(ret)
-        })
-        .collect::<Result<Vec<_>, PyErr>>()?;
-
-    for kernel in &kernels {
-        if tensor.inner_ref().dtype() != kernel.dtype() {
-            return Err(PyErr::new::<PyValueError, _>(format!(
-                "Kernel must have the same type as tensor ({:?}), but has {:?}",
-                tensor.inner_ref().dtype(),
-                kernel.dtype(),
-            )));
-        }
-    }
-
-    let kernel_refs =
-        Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(kernels.len(), |i| {
-            &kernels[i]
-        })
-        .unwrap();
-
-    tensor.try_map_inner(py, |vol: CTensorOperator<DDyn, DType>| {
-        Ok(
-            palace_core::operators::conv::separable_convolution(vol, kernel_refs)
-                .into_dyn()
-                .into(),
-        )
-    })
-}
 
 //#[gen_stub_pyfunction] TODO: Not working because PyUntypedArray does not impl the required type
 #[pyfunction]
@@ -172,42 +99,6 @@ pub fn render_slice(
     )
     .into_dyn()
     .into())
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-#[pyo3(signature = (vol, num_samples=None))]
-pub fn mean_value(
-    vol: MaybeEmbeddedTensorOperatorArg,
-    num_samples: Option<usize>,
-) -> PyResult<ScalarOperator> {
-    let vol = vol.unpack().into_inner().into_core();
-    let vol = vol.try_into()?;
-    Ok(palace_core::operators::aggregation::mean(vol, num_samples.into()).into())
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-#[pyo3(signature = (vol, num_samples=None))]
-pub fn min_value(
-    vol: MaybeEmbeddedTensorOperatorArg,
-    num_samples: Option<usize>,
-) -> PyResult<ScalarOperator> {
-    let vol = vol.unpack().into_inner().into_core();
-    let vol = vol.try_into()?;
-    Ok(palace_core::operators::aggregation::min(vol, num_samples.into()).into())
-}
-
-#[gen_stub_pyfunction]
-#[pyfunction]
-#[pyo3(signature = (vol, num_samples=None))]
-pub fn max_value(
-    vol: MaybeEmbeddedTensorOperatorArg,
-    num_samples: Option<usize>,
-) -> PyResult<ScalarOperator> {
-    let vol = vol.unpack().into_inner().into_core();
-    let vol = vol.try_into()?;
-    Ok(palace_core::operators::aggregation::max(vol, num_samples.into()).into())
 }
 
 #[gen_stub_pyfunction]

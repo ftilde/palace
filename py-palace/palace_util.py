@@ -36,7 +36,7 @@ def render_raycast(vol, camera_state, config, tf):
 
         eep = pc.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
         frame = pc.raycast(vol, eep, config.load(), tf)
-        frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
+        frame = frame.rechunk([pc.chunk_size_full]*2)
 
         return frame
     return inner
@@ -55,7 +55,7 @@ def render_slice(vol, slice_state, tf=None):
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
         frame = pc.render_slice(vol, md, proj, tf)
-        frame = pc.rechunk(frame, [pc.chunk_size_full]*2)
+        frame = frame.rechunk([pc.chunk_size_full]*2)
 
         return frame
     return inner
@@ -112,8 +112,8 @@ def alpha_blending(render_over, render_under):
 
 
 def fit_tf_range(rt, vol, tf):
-    tf.min = rt.resolve_scalar(pc.min_value(vol, 10))
-    tf.max = rt.resolve_scalar(pc.max_value(vol, 10))
+    tf.min = rt.resolve_scalar(vol.min_value(10))
+    tf.max = rt.resolve_scalar(vol.max_value(10))
 
 
 # Gui stuff

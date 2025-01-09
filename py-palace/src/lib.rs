@@ -26,11 +26,6 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(grey_ramp_tf, m)?)?;
     m.add_function(wrap_pyfunction!(tf_from_numpy, m)?)?;
-    m.add_function(wrap_pyfunction!(mean_value, m)?)?;
-    m.add_function(wrap_pyfunction!(min_value, m)?)?;
-    m.add_function(wrap_pyfunction!(max_value, m)?)?;
-    m.add_function(wrap_pyfunction!(rechunk, m)?)?;
-    m.add_function(wrap_pyfunction!(separable_convolution, m)?)?;
     m.add_function(wrap_pyfunction!(entry_exit_points, m)?)?;
     m.add_function(wrap_pyfunction!(raycast, m)?)?;
     m.add_function(wrap_pyfunction!(render_slice, m)?)?;
