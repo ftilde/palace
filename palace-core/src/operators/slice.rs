@@ -2,10 +2,10 @@ use ash::vk;
 use itertools::Itertools;
 
 use crate::{
-    array::TensorMetaData,
+    array::{TensorEmbeddingData, TensorMetaData},
     chunk_utils::ChunkCopyPipeline,
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate},
-    dim::DynDimension,
+    dim::{DDyn, DynDimension, SmallerDim},
     dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
@@ -13,17 +13,26 @@ use crate::{
     vulkan::{DstBarrierInfo, SrcBarrierInfo},
 };
 
-use super::{rechunk::ChunkSize, tensor::TensorOperator};
+use super::{
+    rechunk::ChunkSize,
+    tensor::{EmbeddedTensorOperator, TensorOperator},
+};
 
 #[derive(Copy, Clone)]
 pub enum Range {
+    Scalar(u32),
     FromTo(u32, u32),
 }
 
 impl Range {
     fn apply(&self, size: u32) -> (u32, u32) {
         match self {
-            Range::FromTo(begin, end) => (*begin, begin + (end - begin).min(size)),
+            Range::Scalar(at) => {
+                let start = (*at).min(size);
+                let end = (at + 1).min(size);
+                (start, end)
+            }
+            Range::FromTo(begin, end) => ((*begin).min(size), (*end).min(size)),
         }
     }
 }
@@ -40,10 +49,77 @@ impl From<std::ops::Range<u32>> for Range {
     }
 }
 
+pub fn try_squash_dim<D: DynDimension + SmallerDim, T: ElementType>(
+    input: TensorOperator<D, T>,
+    dim: usize,
+) -> Result<TensorOperator<D::Smaller, T>, crate::Error> {
+    if input.metadata.dimensions[dim].raw != 1 {
+        return Err(format!(
+            "Dimensions must be one to squash, but is {}",
+            input.metadata.dimensions[dim].raw
+        )
+        .into());
+    }
+    if input.metadata.chunk_size[dim].raw != 1 {
+        return Err(format!(
+            "Chunk size must be one to squash, but is {}",
+            input.metadata.chunk_size[dim].raw
+        )
+        .into());
+    }
+
+    let new_md = TensorMetaData {
+        dimensions: input.metadata.dimensions.drop_dim(dim),
+        chunk_size: input.metadata.chunk_size.drop_dim(dim),
+    };
+
+    Ok(TensorOperator {
+        metadata: new_md,
+        chunks: input.chunks,
+    })
+}
+
+pub fn slice_and_squash<D: DynDimension + SmallerDim, T: ElementType>(
+    input: TensorOperator<D, T>,
+    range: Vector<D, Range>,
+) -> Result<TensorOperator<DDyn, T>, crate::Error> {
+    let mut input = slice(input.into_dyn(), range.clone().into_dyn())?;
+    for (dim, arg) in range.into_iter().enumerate() {
+        if matches!(arg, Range::Scalar(_)) {
+            input = try_squash_dim(input, dim).unwrap();
+        }
+    }
+    Ok(input)
+}
+pub fn squash_embedding_data_for_slice<D: DynDimension + SmallerDim>(
+    input: TensorEmbeddingData<D>,
+    range: Vector<D, Range>,
+) -> TensorEmbeddingData<DDyn> {
+    let mut ed = input.into_dyn();
+    for (dim, arg) in range.into_iter().enumerate() {
+        if matches!(arg, Range::Scalar(_)) {
+            ed = ed.drop_dim(dim)
+        }
+    }
+    ed
+}
+
+pub fn slice_and_squash_embedded<D: DynDimension + SmallerDim, T: ElementType>(
+    input: EmbeddedTensorOperator<D, T>,
+    range: Vector<D, Range>,
+) -> Result<EmbeddedTensorOperator<DDyn, T>, crate::Error> {
+    Ok(
+        slice_and_squash(input.inner, range.clone())?.embedded(squash_embedding_data_for_slice(
+            input.embedding_data.into_dyn(),
+            range.into_dyn(),
+        )),
+    )
+}
+
 pub fn slice<D: DynDimension, T: ElementType>(
     input: TensorOperator<D, T>,
     range: Vector<D, Range>,
-) -> TensorOperator<D, T> {
+) -> Result<TensorOperator<D, T>, crate::Error> {
     let actual_range = range.zip(&input.metadata.dimensions, |r, d| r.apply(d.raw));
     let chunk_size = input
         .metadata
@@ -59,7 +135,7 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
     input: TensorOperator<D, T>,
     range: Vector<D, Range>,
     chunk_size: Vector<D, ChunkSize>,
-) -> TensorOperator<D, T> {
+) -> Result<TensorOperator<D, T>, crate::Error> {
     let md = &input.metadata;
 
     let range = range.zip(&md.dimensions, |r, d| r.apply(d.raw));
@@ -67,11 +143,15 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
     let new_chunk_size = chunk_size.zip(&md.dimensions, |s, d| s.apply(d));
     let offset = range.map(|(from, _)| from);
 
+    if new_dimensions.hmul() == 0 {
+        return Err("Slicing would result in a zero size tensor".into());
+    }
+
     let out_md = TensorMetaData {
         dimensions: new_dimensions,
         chunk_size: new_chunk_size,
     };
-    TensorOperator::with_state(
+    Ok(TensorOperator::with_state(
         op_descriptor!(),
         input.chunks.dtype(),
         out_md.clone(),
@@ -193,7 +273,7 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
             }
             .into()
         },
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -231,7 +311,8 @@ mod test {
                 input.clone(),
                 Vector::new([slice_pos.into(), (0..5).into(), (0..5).into()]),
                 LocalVoxelPosition::from(chunk_size).into_elem(),
-            );
+            )
+            .unwrap();
             compare_tensor_fn(output, fill_expected);
         }
     }

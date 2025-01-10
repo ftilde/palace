@@ -349,7 +349,7 @@ impl EmbeddedTensorOperator {
         &self,
         f: impl FnOnce(&TensorOperator) -> PyResult<TensorOperator>,
     ) -> PyResult<Self> {
-        Ok(f(&self.inner)?.embedded(self.embedding_data.clone()))
+        Ok(f(&self.inner)?.embedded(self.embedding_data.clone())?)
     }
     pub fn map_core_inner(
         self,
@@ -398,11 +398,11 @@ pub enum MaybeEmbeddedTensorOperator {
 //#[gen_stub_pymethods] results in internal error: entered unreachable code
 #[pymethods]
 impl MaybeEmbeddedTensorOperator {
-    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
-        match self {
-            MaybeEmbeddedTensorOperator::Not { i } => i.embedded(embedding_data),
+    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> PyResult<EmbeddedTensorOperator> {
+        Ok(match self {
+            MaybeEmbeddedTensorOperator::Not { i } => i.embedded(embedding_data)?,
             MaybeEmbeddedTensorOperator::Embedded { e } => e.clone(),
-        }
+        })
     }
     pub fn inner(&self) -> TensorOperator {
         self.inner_ref().clone()
@@ -564,6 +564,14 @@ impl LODTensorOperator {
         self.levels[0].embedding_data.clone()
     }
 
+    pub fn nd(&self) -> PyResult<usize> {
+        let nd = self.levels[0].nd()?;
+        for level in &self.levels {
+            assert_eq!(level.nd()?, nd);
+        }
+        Ok(nd)
+    }
+
     pub fn map(&self, py: Python, f: Py<PyFunction>) -> PyResult<Self> {
         Ok(Self {
             levels: self
@@ -614,6 +622,9 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                     embedding_data: self.embedding_data.clone(),
                 }
             }
+            pub fn nd(&self) -> PyResult<usize> {
+                self.inner.nd()
+            }
 
             #[pyo3(signature = (num_samples=None))]
             pub fn max_value(&self, num_samples: Option<usize>) -> PyResult<ScalarOperator> {
@@ -630,6 +641,13 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                 self.inner.clone().mean_value(num_samples)
             }
 
+            fn __getitem__(&self, py: Python, slice_args: Vec<SliceArg>) -> PyResult<Self> {
+                let slice_args = convert_slice_args(py, slice_args, &self.inner.metadata()?.dimensions)?;
+
+                let t = self.clone().into_core();
+                Ok(palace_core::operators::slice::slice_and_squash_embedded(t, slice_args).map_err(crate::map_err)?.into())
+            }
+
             $(
             fn $fn_name(&self, $($arg : $type,)* ) -> PyResult<Self> {
                 self.map_inner(|i| i.$fn_name($($arg,)*))
@@ -644,6 +662,48 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
 pub enum MaybeScalarDType {
     Scalar(ScalarType),
     DType(DType),
+}
+
+#[gen_stub_pyclass_enum]
+#[derive(FromPyObject)]
+pub enum SliceArg {
+    Scalar(u32),
+    Range(Py<PySlice>),
+}
+
+fn convert_slice_args(
+    py: Python,
+    slice_args: Vec<SliceArg>,
+    tensor_dim: &Vec<u32>,
+) -> PyResult<Vector<DDyn, palace_core::operators::slice::Range>> {
+    if tensor_dim.len() != slice_args.len() {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "Slice args must be {}-dimensional to fit tensor",
+            tensor_dim.len(),
+        )));
+    }
+
+    let slice_args = slice_args
+        .into_iter()
+        .zip(tensor_dim.iter())
+        .map(|(slice_arg, dim)| {
+            Ok(match slice_arg {
+                SliceArg::Scalar(s) => palace_core::operators::slice::Range::Scalar(s),
+                SliceArg::Range(slice_arg) => {
+                    let slice_arg = slice_arg.into_bound(py);
+                    let slice_arg = slice_arg.indices(*dim as _)?;
+                    if slice_arg.step != 1 {
+                        return Err(crate::map_err("Step must be 1".into()));
+                    }
+                    palace_core::operators::slice::Range::FromTo(
+                        slice_arg.start.try_into().unwrap(),
+                        slice_arg.stop.try_into().unwrap(),
+                    )
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Vector::<DDyn, _>::new(slice_args))
 }
 
 #[gen_stub_pymethods]
@@ -668,11 +728,21 @@ impl TensorOperator {
             MaybeJitTensorOperator::Tensor(i) => i.metadata.clone().into(),
         })
     }
-    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> EmbeddedTensorOperator {
-        EmbeddedTensorOperator {
+    fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> PyResult<EmbeddedTensorOperator> {
+        if self.nd()? != embedding_data.nd() {
+            return Err(crate::map_err(
+                format!(
+                    "Embedding data dimension mismatch: Must be {}, but is {}",
+                    self.nd()?,
+                    embedding_data.nd()
+                )
+                .into(),
+            ));
+        }
+        Ok(EmbeddedTensorOperator {
             inner: self.clone(),
             embedding_data,
-        }
+        })
     }
 
     fn cache(&self) -> TensorOperator {
@@ -759,36 +829,19 @@ impl TensorOperator {
         })
     }
 
-    fn __getitem__(&self, slice_args: Vec<Bound<PySlice>>) -> PyResult<Self> {
+    fn __getitem__(&self, py: Python, slice_args: Vec<SliceArg>) -> PyResult<Self> {
         let tensor = self;
-        if tensor.nd()? != slice_args.len() {
-            return Err(PyErr::new::<PyValueError, _>(format!(
-                "Slice args must be {}-dimensional to fit tensor",
-                tensor.nd()?
-            )));
-        }
         let dimensions = &tensor.metadata()?.dimensions;
 
-        let slice_args = slice_args
-            .into_iter()
-            .zip(dimensions.iter())
-            .map(|(slice_arg, dim)| {
-                let slice_arg = slice_arg.indices(*dim as _)?;
-                if slice_arg.step != 1 {
-                    return Err(crate::map_err("Step must be 1".into()));
-                }
-
-                Ok(palace_core::operators::slice::Range::FromTo(
-                    slice_arg.start.try_into().unwrap(),
-                    slice_arg.stop.try_into().unwrap(),
-                ))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let slice_args = Vector::<DDyn, _>::new(slice_args);
+        let slice_args = convert_slice_args(py, slice_args, dimensions)?;
 
         tensor.clone().map_core(
             |vol: palace_core::operators::tensor::TensorOperator<DDyn, DType>| {
-                Ok(palace_core::operators::slice::slice(vol, slice_args).into_dyn())
+                Ok(
+                    palace_core::operators::slice::slice_and_squash(vol, slice_args)
+                        .map_err(crate::map_err)?
+                        .into_dyn(),
+                )
             },
         )
     }
@@ -879,7 +932,6 @@ impl TensorOperator {
 impl_embedded_tensor_operator_with_delegate!(
     rechunk(size: Vec<ChunkSize>),
     separable_convolution(kernels: Vec<MaybeConstTensorOperator>),
-    __getitem__(slice_args: Vec<Bound<PySlice>>),
 
     unfold_dtype(),
     fold_into_dtype(),

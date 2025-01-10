@@ -146,6 +146,11 @@ impl<D: DynDimension + SmallerDim> TensorEmbeddingData<D> {
             spacing: self.spacing.pop_dim_small(),
         }
     }
+    pub fn drop_dim(self, dim: usize) -> TensorEmbeddingData<D::Smaller> {
+        TensorEmbeddingData {
+            spacing: self.spacing.drop_dim(dim),
+        }
+    }
 }
 
 impl<D: LargerDim> TensorEmbeddingData<D> {
@@ -319,6 +324,10 @@ mod py {
 
             self.spacing = value.to_vec()?;
             Ok(())
+        }
+
+        pub fn nd(&self) -> usize {
+            self.spacing.len()
         }
     }
 
