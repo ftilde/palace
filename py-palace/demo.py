@@ -15,8 +15,19 @@ args = parser.parse_args()
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
-vol = pc.open_or_create_lod(args.volume_file)
+try:
+    vol = pc.open_lod(args.volume_file)
+except:
+    vol = pc.open(args.volume_file)
+    steps = list(reversed([2.0 if i < 3 else None for i in range(0, vol.nd())]))
+    #vol = vol.create_lod(steps)
+    vol = vol.single_level_lod()
+
 vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
+
+print(vol.levels[0].inner.metadata.dimensions)
+print(vol.levels[0].inner.metadata.chunk_size)
+
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -25,9 +36,20 @@ else:
 
 store = pc.Store()
 
-l0 = vol.levels[0]
-l0md = l0.inner.metadata
-l0ed = l0.embedding_data
+nd = vol.nd()
+
+def select_vol_from_ts(ts):
+    match nd:
+        case 3:
+            return vol
+        case 4:
+            return vol.map(lambda l: l[ts,:,:,:])
+        case o:
+            raise f"Invalid number of tensor dimensions: {o}"
+
+v0 = select_vol_from_ts(0)
+l0md = v0.fine_metadata()
+l0ed = v0.fine_embedding_data()
 
 min_scale = l0ed.spacing.min() / 10.0
 max_scale = (l0ed.spacing * l0md.dimensions).mean() / 5.0
@@ -41,6 +63,7 @@ view = store.store_primitive("raycast")
 processing = store.store_primitive("passthrough")
 do_threshold = store.store_primitive("no")
 threshold_val = store.store_primitive(0.5)
+timestep = store.store_primitive(0)
 
 smoothing_std = store.store_primitive(min_scale * 2.0)
 vesselness_rad_min = store.store_primitive(min_scale * 2.0)
@@ -57,12 +80,25 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 
 gui_state = pc.GuiState(rt)
 
+animate = False
+def animate_on():
+    global animate
+    animate = True
+def animate_off():
+    global animate
+    animate = False
+
 def fit_tf_to_values(vol):
     palace_util.fit_tf_range(rt, vol.levels[0], tf)
 
 # Top-level render component
 def render(size, events):
-    v = vol
+    v = select_vol_from_ts(timestep.load())
+    #print("===")
+    #for level in v.levels:
+    #    print(level.inner.metadata.dimensions)
+    #    print(level.inner.metadata.chunk_size)
+    #    print(level.embedding_data.spacing)
 
     # Volume Processing
     match processing.load():
@@ -117,6 +153,14 @@ def render(size, events):
             widgets.append(palace_util.named_slider("Threshold Value", threshold_val, 0.01, 10.0, logarithmic=True))
         case "no":
             pass
+
+    if nd != 3:
+        widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
+        if animate:
+            timestep.map(lambda s: (s + 1) % vol.fine_metadata().dimensions[0])
+            widgets.append(pc.Button("Stop animation", lambda: animate_off()))
+        else:
+            widgets.append(pc.Button("Start animation", lambda: animate_on()))
 
     widgets.append(pc.Button("Fit Transfer Function", lambda: fit_tf_to_values(v)))
 
