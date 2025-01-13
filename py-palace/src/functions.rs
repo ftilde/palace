@@ -132,6 +132,27 @@ pub fn open(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (path, chunk_size_hint=None, tensor_path_hint=None))]
+pub fn open_lod(
+    path: std::path::PathBuf,
+    chunk_size_hint: Option<Vec<u32>>,
+    tensor_path_hint: Option<String>,
+) -> PyResult<LODTensorOperator> {
+    let chunk_size_hint =
+        chunk_size_hint.map(|h| Vector::from_fn_and_len(h.len(), |i| h[i].into()));
+
+    let hints = palace_io::Hints {
+        chunk_size: chunk_size_hint,
+        location: tensor_path_hint,
+        ..Default::default()
+    };
+    let vol = crate::map_result(palace_io::open_lod(path, hints))?;
+
+    vol.into_dyn().try_into()
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 #[pyo3(signature = (path, chunk_size_hint=None, tensor_path_hint=None, rechunk=false))]
 pub fn open_or_create_lod(
     path: std::path::PathBuf,

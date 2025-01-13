@@ -22,6 +22,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     use crate::types::*;
 
     m.add_function(wrap_pyfunction!(open, m)?)?;
+    m.add_function(wrap_pyfunction!(open_lod, m)?)?;
     m.add_function(wrap_pyfunction!(open_or_create_lod, m)?)?;
     m.add_function(wrap_pyfunction!(load_tf, m)?)?;
     m.add_function(wrap_pyfunction!(grey_ramp_tf, m)?)?;
@@ -68,6 +69,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<ComboBox>()?;
     m.add_class::<DType>()?;
     m.add_class::<ScalarType>()?;
+    m.add_class::<FixedStep>()?;
 
     m.add_class::<state_link::py::Store>()?;
     Ok(())

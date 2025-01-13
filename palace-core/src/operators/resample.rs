@@ -83,25 +83,65 @@ pub fn smooth_downsample<'op, D: LargerDim, T: ElementType>(
     resample(v, output_size)
 }
 
+#[derive(Copy, Clone)]
+pub enum DownsampleStep {
+    Ignore,
+    Fixed(f32),
+    Synchronized(f32),
+}
+
 pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
     input: &EmbeddedTensorOperator<D, E>,
-    step_factor: f32,
+    steps: Vector<D, DownsampleStep>,
 ) -> TensorMetaData<D> {
-    assert!(step_factor > 1.0);
-
-    let dim = input.dim();
+    assert_eq!(input.dim().n(), steps.len());
 
     let e = input.embedding_data.clone();
     let m = input.metadata.clone();
 
-    let new_spacing_raw = e.spacing.clone() * Vector::fill_with_len(step_factor, dim.n());
-    let smallest_new = new_spacing_raw.fold(f32::MAX, |a, b| a.min(b));
-    let new_spacing = e
-        .spacing
-        .clone()
-        .zip(&Vector::fill_with_len(smallest_new, dim.n()), |a, b| {
-            a.max(b)
-        });
+    let synchronized_mask = steps.map(|f| matches!(f, DownsampleStep::Synchronized(_)));
+    let raw_factors = steps.map(|f| match f {
+        DownsampleStep::Ignore => 1.0,
+        DownsampleStep::Fixed(f) => f,
+        DownsampleStep::Synchronized(f) => f,
+    });
+
+    let dim_in_chunks = input.metadata.dimension_in_chunks();
+
+    let raw_factors = raw_factors.zip(
+        &dim_in_chunks,
+        |f, n_chunks| {
+            if n_chunks.raw == 1 {
+                1.0
+            } else {
+                f
+            }
+        },
+    );
+
+    assert!(raw_factors.hmin() >= 1.0);
+
+    let new_spacing_raw = e.spacing.clone() * raw_factors;
+
+    let progressing = synchronized_mask.zip(&dim_in_chunks, |sync, nc| sync && nc.raw > 1);
+    let smallest_synchronized = new_spacing_raw
+        .iter()
+        .zip(progressing.iter())
+        .filter(|(_f, m)| **m)
+        .map(|(f, _m)| *f)
+        .fold(f32::MAX, |a, b| a.min(b));
+
+    let new_spacing = new_spacing_raw.zip(&e.spacing, |new, old| (new, old)).zip(
+        &synchronized_mask,
+        |(new, old), sync| {
+            if sync {
+                old.max(smallest_synchronized)
+            } else {
+                new
+            }
+        },
+    );
+
     let element_ratio = e.spacing / new_spacing;
     let new_dimensions = (m.dimensions.raw().f32() * element_ratio)
         .map(|v| v.ceil() as u32)
@@ -112,19 +152,30 @@ pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
     }
 }
 
+pub fn can_reduce_further<D: DynDimension>(
+    chunk_dim: &Vector<D, ChunkCoordinate>,
+    steps: &Vector<D, DownsampleStep>,
+) -> bool {
+    let reducing_mask = steps.map(|f| !matches!(f, DownsampleStep::Ignore));
+
+    chunk_dim
+        .iter()
+        .zip(reducing_mask.iter())
+        .filter(|(_nc, reducing)| **reducing)
+        .any(|(nc, _r)| nc.raw > 1)
+}
+
 pub fn create_lod<D: LargerDim, T: ElementType>(
     input: EmbeddedTensorOperator<D, T>,
-    step_factor: f32,
+    steps: Vector<D, DownsampleStep>,
 ) -> LODTensorOperator<D, T> {
-    assert!(step_factor > 1.0);
-
     let mut levels = Vec::new();
     let mut current = input;
 
     levels.push(current.clone());
 
-    while current.metadata.dimension_in_chunks().hmul() != 1 {
-        let new_md = coarser_lod_md(&current, step_factor);
+    while can_reduce_further(&current.metadata.dimension_in_chunks(), &steps) {
+        let new_md = coarser_lod_md(&current, steps.clone());
 
         //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
         //like "cache everything but the highest resolution layer" on LODTensorOperator

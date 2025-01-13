@@ -17,7 +17,7 @@ use palace_core::{
     dtypes::{DType, ElementType, ScalarType},
     operator::{DataDescriptor, DataParam, OperatorDescriptor},
     operators::{
-        resample::smooth_downsample,
+        resample::{smooth_downsample, DownsampleStep},
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
     },
     runtime::RunTime,
@@ -355,7 +355,7 @@ impl ZarrSourceState {
 
 fn create_array_for_tensor<'cref, 'inv>(
     t: &'inv TensorOperator<DDyn, DType>,
-    hints: WriteHints,
+    hints: &WriteHints,
 ) -> Result<ArrayBuilder, palace_core::Error> {
     let md = &t.metadata;
     let dtype = t.dtype();
@@ -377,22 +377,24 @@ fn create_array_for_tensor<'cref, 'inv>(
     Ok(builder)
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct WriteHints {
     pub compression_level: i32,
+    pub lod_downsample_steps: Option<Vector<DDyn, DownsampleStep>>,
 }
 
 impl Default for WriteHints {
     fn default() -> Self {
         Self {
             compression_level: 1,
+            lod_downsample_steps: None,
         }
     }
 }
 
 fn create_array_for_embedded_tensor<'cref, 'inv>(
     t: &'inv EmbeddedTensorOperator<DDyn, DType>,
-    hints: WriteHints,
+    hints: &WriteHints,
 ) -> Result<ArrayBuilder, palace_core::Error> {
     let mut attributes = serde_json::Map::new();
     attributes.insert(
@@ -465,7 +467,7 @@ pub async fn save_tensor<'cref, 'inv>(
     hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
-    let array = create_array_for_tensor(t, hints)?.build(store, "/array")?;
+    let array = create_array_for_tensor(t, &hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
     write_tensor(ctx, &array, t).await
@@ -478,7 +480,7 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
     hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
     let store = Arc::new(FilesystemStore::new(&path)?);
-    let array = create_array_for_embedded_tensor(t, hints)?.build(store, "/array")?;
+    let array = create_array_for_embedded_tensor(t, &hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
 
@@ -503,12 +505,16 @@ pub fn save_lod_tensor(
     group.store_metadata()?;
 
     if recreate_lod {
-        let step_factor = 2.0;
-
         let mut current = t.levels[0].clone();
         let mut current_level = 0;
 
+        let steps = hints.lod_downsample_steps.clone().unwrap_or_else(|| {
+            Vector::fill_with_len(DownsampleStep::Synchronized(2.0), t.levels[0].dim().n())
+        });
+
         loop {
+            let hints = &hints;
+
             let current_location = level_path(current_level);
             let current_location_ref = &current_location;
             let current_ref = &current;
@@ -524,11 +530,14 @@ pub fn save_lod_tensor(
                 .into()
             })?;
 
-            if current.metadata.dimension_in_chunks().hmul() == 1 {
+            if !palace_core::operators::resample::can_reduce_further(
+                &current.metadata.dimension_in_chunks(),
+                &steps,
+            ) {
                 break;
             }
 
-            let new_md = palace_core::operators::resample::coarser_lod_md(&current, step_factor);
+            let new_md = palace_core::operators::resample::coarser_lod_md(&current, steps.clone());
 
             current = open(path.into(), current_location)?;
 
@@ -541,7 +550,7 @@ pub fn save_lod_tensor(
         runtime.resolve(None, false, |ctx, _| {
             async move {
                 for (level, tensor) in t.levels.iter().enumerate() {
-                    let array = create_array_for_embedded_tensor(tensor, hints)?
+                    let array = create_array_for_embedded_tensor(tensor, &hints)?
                         .build(Arc::clone(store), &level_path(level))?;
 
                     array.store_metadata()?;

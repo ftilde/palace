@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use palace_core::{
     data::LocalCoordinate,
-    dim::DDyn,
+    dim::{DDyn, DynDimension},
     dtypes::DType,
     operators::{
         rechunk::{rechunk, ChunkSize},
+        resample::DownsampleStep,
         tensor::{EmbeddedTensorOperator, LODTensorOperator},
     },
     vec::Vector,
@@ -16,6 +17,7 @@ pub struct Hints {
     pub chunk_size: Option<Vector<DDyn, LocalCoordinate>>,
     pub location: Option<String>,
     pub rechunk: bool,
+    pub lod_downsample_steps: Option<Vector<DDyn, DownsampleStep>>,
 }
 
 impl Hints {
@@ -136,8 +138,12 @@ pub fn open_or_create_lod(
             }
         }
 
+        let steps = hints.lod_downsample_steps.clone().unwrap_or_else(|| {
+            Vector::fill_with_len(DownsampleStep::Synchronized(2.0), vol.dim().n())
+        });
+
         let vol: LODTensorOperator<DDyn, DType> =
-            palace_core::operators::resample::create_lod(vol, 2.0);
+            palace_core::operators::resample::create_lod(vol, steps);
         (vol.into(), LodOrigin::Dynamic)
     })
 }

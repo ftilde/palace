@@ -93,6 +93,7 @@ fn main() {
 
     let write_hints = WriteHints {
         compression_level: args.compression_level,
+        lod_downsample_steps: None,
     };
 
     match args.output_type {

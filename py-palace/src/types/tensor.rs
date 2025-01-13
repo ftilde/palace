@@ -597,6 +597,31 @@ impl LODTensorOperator {
     }
 }
 
+#[pyclass]
+#[derive(Copy, Clone)]
+pub struct FixedStep(f32);
+
+#[gen_stub_pyclass_enum]
+pub enum DownsampleStep {
+    Ignore,
+    Fixed(f32),
+    Synchronized(f32),
+}
+
+impl<'py> FromPyObject<'py> for DownsampleStep {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        Ok(if let Ok(FixedStep(f)) = ob.extract::<FixedStep>() {
+            DownsampleStep::Fixed(f)
+        } else {
+            let v = ob.extract::<Option<f32>>()?;
+            match v {
+                Some(f) => DownsampleStep::Synchronized(f),
+                None => DownsampleStep::Ignore,
+            }
+        })
+    }
+}
+
 // Methods for [Embedded]TensorOperator
 
 macro_rules! impl_embedded_tensor_operator_with_delegate {
@@ -609,10 +634,16 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                     levels: vec![self.clone()],
                 })
             }
-            fn create_lod(&self, step_factor: f32) -> PyResult<LODTensorOperator> {
+            fn create_lod(&self, steps: Vec<DownsampleStep>) -> PyResult<LODTensorOperator> {
+                use palace_core::operators::resample::DownsampleStep as CDownsampleStep;
+                let steps = Vector::from_fn_and_len(steps.len(), |i| match steps[i] {
+                    DownsampleStep::Ignore => CDownsampleStep::Ignore,
+                    DownsampleStep::Fixed(f) => CDownsampleStep::Fixed(f),
+                    DownsampleStep::Synchronized(f) => CDownsampleStep::Synchronized(f),
+                });
                 Ok(palace_core::operators::resample::create_lod(
                     self.clone().into_core(),
-                    step_factor,
+                    steps,
                 )
                 .try_into()?)
             }
