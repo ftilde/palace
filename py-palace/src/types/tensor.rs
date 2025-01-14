@@ -318,10 +318,12 @@ where
 impl Into<CEmbeddedTensorOperator<DDyn, DType>> for EmbeddedTensorOperator {
     fn into(self) -> CEmbeddedTensorOperator<DDyn, DType> {
         let inner = self.inner.into();
-        CEmbeddedTensorOperator {
+        let ret = CEmbeddedTensorOperator {
             inner,
             embedding_data: self.embedding_data.try_into().unwrap(),
-        }
+        };
+        assert_eq!(ret.inner.dim().n(), ret.embedding_data.spacing.len());
+        ret
     }
 }
 impl<T> TryInto<CEmbeddedTensorOperator<DDyn, StaticElementType<T>>> for EmbeddedTensorOperator
@@ -600,6 +602,14 @@ impl LODTensorOperator {
 #[pyclass]
 #[derive(Copy, Clone)]
 pub struct FixedStep(f32);
+
+#[pymethods]
+impl FixedStep {
+    #[new]
+    fn new(v: f32) -> Self {
+        Self(v)
+    }
+}
 
 #[gen_stub_pyclass_enum]
 pub enum DownsampleStep {
