@@ -21,8 +21,8 @@ try:
 except:
     vol = pc.open(args.volume_file)
     steps = list(reversed([2.0 if i < 3 else None for i in range(0, vol.nd())]))
-    #vol = vol.create_lod(steps)
-    vol = vol.single_level_lod()
+    vol = vol.create_lod(steps)
+    #vol = vol.single_level_lod()
 
 vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
 
@@ -185,9 +185,9 @@ def render(size, events):
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     # Actual composition of the rendering
-    slice0 = palace_util.render_slice(v, slice_state0)
-    slice1 = palace_util.render_slice(v, slice_state1)
-    slice2 = palace_util.render_slice(v, slice_state2)
+    slice0 = palace_util.render_slice(v, slice_state0, tf)
+    slice1 = palace_util.render_slice(v, slice_state1, tf)
+    slice2 = palace_util.render_slice(v, slice_state2, tf)
     ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
 
     match view.load():
