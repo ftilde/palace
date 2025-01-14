@@ -128,6 +128,10 @@ impl<D: Dimension> Default for TensorEmbeddingData<D> {
 impl<D: Dimension> Copy for TensorEmbeddingData<D> where Vector<D, f32>: Copy {}
 
 impl<D: DynDimension> TensorEmbeddingData<D> {
+    pub fn dim(&self) -> D {
+        self.spacing.dim()
+    }
+
     pub fn try_into_static<DF: Dimension>(self) -> Option<TensorEmbeddingData<DF>> {
         Some(TensorEmbeddingData {
             spacing: self.spacing.try_into_static()?,
@@ -187,7 +191,7 @@ pub use py::TensorMetaData as PyTensorMetaData;
 #[cfg(feature = "python")]
 mod py {
     use numpy::{PyArray1, PyArrayMethods};
-    use pyo3::{exceptions::PyException, prelude::*};
+    use pyo3::{exceptions::PyException, prelude::*, IntoPyObjectExt};
 
     use super::*;
 
@@ -249,6 +253,17 @@ mod py {
                     .raw()
                     .inner(),
             )
+        }
+
+        pub fn norm_to_voxel(&self, py: Python) -> PyResult<PyObject> {
+            super::TensorMetaData::<DDyn>::from(self.clone())
+                .norm_to_voxel()
+                .into_py_any(py)
+        }
+        pub fn voxel_to_norm(&self, py: Python) -> PyResult<PyObject> {
+            super::TensorMetaData::<DDyn>::from(self.clone())
+                .voxel_to_norm()
+                .into_py_any(py)
         }
     }
 
@@ -329,6 +344,17 @@ mod py {
         pub fn nd(&self) -> usize {
             self.spacing.len()
         }
+
+        pub fn voxel_to_physical(&self, py: Python) -> PyResult<PyObject> {
+            super::TensorEmbeddingData::<DDyn>::from(self.clone())
+                .voxel_to_physical()
+                .into_py_any(py)
+        }
+        pub fn physical_to_voxel(&self, py: Python) -> PyResult<PyObject> {
+            super::TensorEmbeddingData::<DDyn>::from(self.clone())
+                .physical_to_voxel()
+                .into_py_any(py)
+        }
     }
 
     impl From<super::TensorEmbeddingData<DDyn>> for TensorEmbeddingData {
@@ -353,7 +379,7 @@ mod py {
             let l = md.spacing.len();
             md.try_into_static().ok_or_else(|| {
                 PyErr::new::<PyException, _>(format!(
-                    "Expected TensorMetaData<{}>, but got TensorMetaData<{}>",
+                    "Expected TensorEmbeddingData<{}>, but got TensorEmbeddingData<{}>",
                     D::N,
                     l,
                 ))
