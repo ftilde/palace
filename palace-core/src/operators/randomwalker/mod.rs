@@ -33,6 +33,7 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
     md: TensorMetaData<D>,
     ed: TensorEmbeddingData<D>,
 ) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+    assert_eq!(md.dim(), ed.dim());
     let in_dtype = points_fg.dtype();
     let nd = md.dim().n();
     assert_eq!(in_dtype, points_bg.dtype());
