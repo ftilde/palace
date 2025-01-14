@@ -336,16 +336,17 @@ impl<D: SmallerDim, T: Copy> Vector<D, T> {
 
 pub struct VecIter<D: DynDimension, T: Copy> {
     vec: Vector<D, T>,
-    i: usize,
+    front: usize,
+    back: usize,
 }
 
 impl<D: DynDimension, T: Copy> Iterator for VecIter<D, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i < self.vec.len() {
-            let i = self.i;
-            self.i += 1;
+        if self.front < self.back {
+            let i = self.front;
+            self.front += 1;
             Some(self.vec[i])
         } else {
             None
@@ -354,7 +355,17 @@ impl<D: DynDimension, T: Copy> Iterator for VecIter<D, T> {
 }
 impl<D: DynDimension, T: Copy> ExactSizeIterator for VecIter<D, T> {
     fn len(&self) -> usize {
-        self.vec.len() - self.i
+        self.back - self.front
+    }
+}
+impl<D: DynDimension, T: Copy> DoubleEndedIterator for VecIter<D, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front < self.back {
+            self.back -= 1;
+            Some(self.vec[self.back])
+        } else {
+            None
+        }
     }
 }
 
@@ -364,7 +375,12 @@ impl<D: DynDimension, T: Copy> IntoIterator for Vector<D, T> {
     type IntoIter = VecIter<D, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        VecIter { vec: self, i: 0 }
+        let back = self.len();
+        VecIter {
+            vec: self,
+            front: 0,
+            back,
+        }
     }
 }
 

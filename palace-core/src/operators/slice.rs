@@ -84,7 +84,7 @@ pub fn slice_and_squash<D: DynDimension + SmallerDim, T: ElementType>(
     range: Vector<D, Range>,
 ) -> Result<TensorOperator<DDyn, T>, crate::Error> {
     let mut input = slice(input.into_dyn(), range.clone().into_dyn())?;
-    for (dim, arg) in range.into_iter().enumerate() {
+    for (dim, arg) in range.into_iter().enumerate().rev() {
         if matches!(arg, Range::Scalar(_)) {
             input = try_squash_dim(input, dim).unwrap();
         }
@@ -96,7 +96,7 @@ pub fn squash_embedding_data_for_slice<D: DynDimension + SmallerDim>(
     range: Vector<D, Range>,
 ) -> TensorEmbeddingData<DDyn> {
     let mut ed = input.into_dyn();
-    for (dim, arg) in range.into_iter().enumerate() {
+    for (dim, arg) in range.into_iter().enumerate().rev() {
         if matches!(arg, Range::Scalar(_)) {
             ed = ed.drop_dim(dim)
         }
