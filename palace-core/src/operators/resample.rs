@@ -124,17 +124,19 @@ pub fn coarser_lod_md<D: LargerDim, E: ElementType>(
     let new_spacing_raw = e.spacing.clone() * raw_factors;
 
     let progressing = synchronized_mask.zip(&dim_in_chunks, |sync, nc| sync && nc.raw > 1);
+
+    let min_default = f32::MAX;
     let smallest_synchronized = new_spacing_raw
         .iter()
         .zip(progressing.iter())
         .filter(|(_f, m)| **m)
         .map(|(f, _m)| *f)
-        .fold(f32::MAX, |a, b| a.min(b));
+        .fold(min_default, |a, b| a.min(b));
 
     let new_spacing = new_spacing_raw.zip(&e.spacing, |new, old| (new, old)).zip(
         &synchronized_mask,
         |(new, old), sync| {
-            if sync {
+            if sync && smallest_synchronized != min_default {
                 old.max(smallest_synchronized)
             } else {
                 new
