@@ -2,6 +2,7 @@ import numpy as np
 import palace as pc
 import palace_util
 import argparse
+import time
 
 ram_size = 8 << 30
 vram_size = 10 << 30
@@ -81,12 +82,29 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 gui_state = pc.GuiState(rt)
 
 animate = False
+next_update = None
+
 def animate_on():
-    global animate
+    global animate, next_update
     animate = True
+    next_update = None
 def animate_off():
     global animate
     animate = False
+
+def map_timestep(ts):
+    global next_update
+    if next_update is None:
+        next_update = time.time()
+
+    update_time_step = 0.3
+
+    if next_update < time.time():
+        next_update += update_time_step
+        return (ts + 1) % vol.fine_metadata().dimensions[0]
+    else:
+        return ts
+
 
 def fit_tf_to_values(vol):
     palace_util.fit_tf_range(rt, vol.levels[0], tf)
@@ -157,7 +175,7 @@ def render(size, events):
     if nd != 3:
         widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
         if animate:
-            timestep.map(lambda s: (s + 1) % vol.fine_metadata().dimensions[0])
+            timestep.map(map_timestep)
             widgets.append(pc.Button("Stop animation", lambda: animate_off()))
         else:
             widgets.append(pc.Button("Start animation", lambda: animate_on()))
