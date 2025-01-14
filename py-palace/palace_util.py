@@ -115,6 +115,18 @@ def fit_tf_range(rt, vol, tf):
     tf.min = rt.resolve_scalar(vol.min_value(10))
     tf.max = rt.resolve_scalar(vol.max_value(10))
 
+def slice_time_4d(ts, v):
+    def select_time_slice_4d_lod(ts, base_level, target_level):
+        #assert base_level.dim() == 4
+        #assert target_level.dim() == 4
+
+        pos = np.array([1, ts, 0, 0, 0], dtype=np.float32)
+        pos = target_level.inner.metadata.norm_to_voxel().dot(base_level.inner.metadata.voxel_to_norm().dot(pos));
+        ts = round(pos[1])
+        return target_level[ts,:,:,:]
+
+    return v.map(lambda l: select_time_slice_4d_lod(ts, v.levels[0], l))
+
 
 # Gui stuff
 def named_slider(name, state, min, max, logarithmic=False):

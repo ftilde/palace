@@ -20,14 +20,17 @@ try:
     vol = pc.open_lod(args.volume_file)
 except:
     vol = pc.open(args.volume_file)
-    steps = list(reversed([2.0 if i < 3 else None for i in range(0, vol.nd())]))
+    steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
     vol = vol.create_lod(steps)
     #vol = vol.single_level_lod()
 
 vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
-
-print(vol.levels[0].inner.metadata.dimensions)
-print(vol.levels[0].inner.metadata.chunk_size)
+#for l in vol.levels:
+#    print(l.inner.metadata.dimensions)
+#    print(l.inner.metadata.chunk_size)
+#
+#print(vol.levels[0].inner.metadata.dimensions)
+#print(vol.levels[0].inner.metadata.chunk_size)
 
 
 if args.transfunc:
@@ -44,7 +47,7 @@ def select_vol_from_ts(ts):
         case 3:
             return vol
         case 4:
-            return vol.map(lambda l: l[ts,:,:,:])
+            return palace_util.slice_time_4d(ts, vol)
         case o:
             raise f"Invalid number of tensor dimensions: {o}"
 
