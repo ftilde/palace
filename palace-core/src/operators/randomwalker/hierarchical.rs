@@ -185,7 +185,7 @@ fn expand<D: DynDimension>(
                                 })
                                 .collect::<Vec<_>>();
 
-                            assert!(in_brick_positions.len() <= 27);
+                            assert!(in_brick_positions.len() <= 3usize.pow(nd as u32));
 
                             let in_bricks = ctx
                                 .submit(ctx.group(in_brick_positions.iter().map(|pos| {
