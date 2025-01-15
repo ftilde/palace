@@ -1,5 +1,5 @@
 use sha1_smol::Sha1;
-use std::hash::Hash;
+use std::{borrow::Cow, hash::Hash};
 
 pub use id_derive::Identify;
 
@@ -193,6 +193,12 @@ impl Identify for std::path::PathBuf {
 impl Identify for String {
     fn id(&self) -> Id {
         self.as_str().id()
+    }
+}
+
+impl<'a, I: Identify + ToOwned + ?Sized> Identify for Cow<'a, I> {
+    fn id(&self) -> Id {
+        self.as_ref().id()
     }
 }
 

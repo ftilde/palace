@@ -2,7 +2,7 @@ use ahash::HashMapExt;
 use ash::vk;
 use spirq::ReflectConfig;
 use spirv_compiler::ShaderKind;
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{borrow::Cow, cell::RefCell, collections::BTreeMap};
 
 use crate::{
     data::Vector,
@@ -58,23 +58,23 @@ pub mod ext {
 }
 
 pub struct Shader<'a> {
-    pub program_parts: Vec<&'a str>,
+    pub program_parts: Vec<Cow<'a, str>>,
     pub config: Config,
     pub defines: ShaderDefines,
 }
 
 impl<'a> Shader<'a> {
-    pub fn new(program: &'a str) -> Self {
+    pub fn new(program: impl Into<Cow<'a, str>>) -> Self {
         Self {
-            program_parts: vec![program],
+            program_parts: vec![program.into()],
             config: Config::new(),
             defines: ShaderDefines::new(),
         }
     }
 
-    pub fn from_parts(program_parts: Vec<&'a str>) -> Self {
+    pub fn from_parts<C: Into<Cow<'a, str>>>(program_parts: Vec<C>) -> Self {
         Self {
-            program_parts,
+            program_parts: program_parts.into_iter().map(|v| v.into()).collect(),
             config: Config::new(),
             defines: ShaderDefines::new(),
         }

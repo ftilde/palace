@@ -5,6 +5,7 @@ use palace_core::data::{Matrix, Vector};
 use palace_core::dim::*;
 use palace_core::dtypes::DType;
 use palace_core::operators::raycaster::RaycasterConfig;
+use palace_core::operators::sliceviewer::RenderConfig2D;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
@@ -79,12 +80,13 @@ pub fn raycast(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (input, result_metadata, projection_mat, tf=None))]
+#[pyo3(signature = (input, result_metadata, projection_mat, tf=None, coarse_lod_factor=1.0))]
 pub fn render_slice(
     input: LODTensorOperator,
     result_metadata: PyTensorMetaData,
     projection_mat: Matrix<D4, f32>,
     tf: Option<TransFuncOperator>,
+    coarse_lod_factor: f32,
 ) -> PyResult<TensorOperator> {
     let tf = tf
         .map(|tf| tf.try_into())
@@ -95,7 +97,7 @@ pub fn render_slice(
         result_metadata.try_into_dim()?,
         projection_mat.try_into()?,
         tf,
-        Default::default(),
+        RenderConfig2D { coarse_lod_factor },
     )
     .into_dyn()
     .into())
@@ -202,6 +204,21 @@ pub fn apply_tf(
     input.unpack().try_map_inner(py, |input| {
         Ok(palace_core::transfunc::apply::<DDyn>(input.try_into()?, tf).into())
     })
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn procedural(
+    md: PyTensorMetaData,
+    embedding_data: PyTensorEmbeddingData,
+    body: String,
+) -> PyResult<LODTensorOperator> {
+    palace_core::operators::procedural::rasterize_lod(
+        md.try_into()?,
+        embedding_data.try_into()?,
+        body,
+    )
+    .try_into()
 }
 
 #[gen_stub_pyfunction]

@@ -121,7 +121,7 @@ impl<'a> ComputePipelineBuilder<'a> {
             local_size.z()
         );
         let mut shader = self.shader;
-        shader.program_parts.insert(0, &local_size_str);
+        shader.program_parts.insert(0, local_size_str.into());
 
         let mut shader =
             ShaderModule::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;

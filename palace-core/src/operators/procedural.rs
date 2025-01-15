@@ -1,15 +1,17 @@
+use std::borrow::Cow;
+
 use ash::vk;
 
 use crate::{
     array::{ImageMetaData, TensorEmbeddingData, TensorMetaData, VolumeMetaData},
-    dim::{Dimension, D2, D3},
+    dim::{DynDimension, D2, D3},
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     vec::Vector,
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig},
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
         SrcBarrierInfo,
     },
@@ -115,28 +117,32 @@ float run(float[2] pos_normalized, uint[2] pos_voxel) {
     )
 }
 
-pub fn rasterize_lod<D: Dimension>(
+pub fn rasterize_lod<D: DynDimension>(
     base_metadata: TensorMetaData<D>,
     base_embedding_data: TensorEmbeddingData<D>,
-    body: &'static str,
+    body: impl Into<Cow<'static, str>>,
 ) -> LODTensorOperator<D, StaticElementType<f32>> {
     let mut levels = Vec::new();
-    let mut spacing_mult = Vector::fill(1.0);
+    let nd = base_metadata.dim().n();
+    let mut spacing_mult = Vector::fill_with_len(1.0, nd);
+    let body = body.into();
     //TODO: maybe we want to compute the spacing based on dimension reduction instead? could be
     //more accurate...
     loop {
         let md = TensorMetaData {
-            dimensions: (base_metadata.dimensions.raw().f32() / spacing_mult)
+            dimensions: (base_metadata.dimensions.raw().f32() / spacing_mult.clone())
                 .map(|v| v.ceil() as u32)
                 .global(),
-            chunk_size: base_metadata.chunk_size,
+            chunk_size: base_metadata.chunk_size.clone(),
         };
-        levels.push(rasterize(md, body).embedded(TensorEmbeddingData {
-            spacing: base_embedding_data.spacing * spacing_mult,
-        }));
+        levels.push(
+            rasterize(md.clone(), body.clone()).embedded(TensorEmbeddingData {
+                spacing: base_embedding_data.spacing.clone() * spacing_mult.clone(),
+            }),
+        );
         spacing_mult = spacing_mult.scale(2.0);
         let chunk_size: Vector<D, _> = md.chunk_size;
-        let dimensions: Vector<D, _> = md.dimensions;
+        let dimensions: Vector<D, _> = md.dimensions.clone();
         if chunk_size.raw().zip(&dimensions.raw(), |c, d| c >= d).all() {
             break;
         }
@@ -145,22 +151,17 @@ pub fn rasterize_lod<D: Dimension>(
     LODTensorOperator { levels }
 }
 
-pub fn rasterize<D: Dimension>(
+pub fn rasterize<D: DynDimension>(
     metadata: TensorMetaData<D>,
-    gen_fn: &'static str,
+    gen_fn: impl Into<Cow<'static, str>>,
 ) -> TensorOperator<D, StaticElementType<f32>> {
-    #[derive(Clone, bytemuck::Zeroable)]
-    #[repr(C)]
-    struct PushConstants<D: Dimension> {
-        offset: Vector<D, u32>,
-        mem_dim: Vector<D, u32>,
-        logical_dim: Vector<D, u32>,
-        vol_dim: Vector<D, u32>,
-    }
+    let nd = metadata.dim().n();
 
-    impl<D: Dimension> Copy for PushConstants<D> where Vector<D, u32>: Copy {}
-    //TODO: This is fine for the current layout, but we really want a better general approach
-    unsafe impl<D: Dimension> bytemuck::Pod for PushConstants<D> where PushConstants<D>: Copy {}
+    let push_constants = DynPushConstants::new()
+        .vec::<u32>(nd, "offset")
+        .vec::<u32>(nd, "logical_dim")
+        .vec::<u32>(nd, "mem_dim")
+        .vec::<u32>(nd, "vol_dim");
 
     let shader_parts = vec![
         r#"
@@ -170,12 +171,7 @@ pub fn rasterize<D: Dimension>(
 #include <vec.glsl>
 #include <size_util.glsl>
 
-layout(scalar, push_constant) uniform PushConsts {
-    uint[N] offset;
-    uint[N] mem_dim;
-    uint[N] logical_dim;
-    uint[N] vol_dim;
-} consts;
+declare_push_consts(consts);
 
 layout(std430, binding = 0) buffer OutputBuffer{
     float values[BRICK_MEM_SIZE];
@@ -184,8 +180,9 @@ layout(std430, binding = 0) buffer OutputBuffer{
 //float run(uint[N] pos_normalized, float[n] pos_voxel) {
 //  ...
 //}
-"#,
-        gen_fn,
+"#
+        .into(),
+        gen_fn.into(),
         r#"
 
 void main()
@@ -207,27 +204,33 @@ void main()
         outputData.values[gID] = result;
     }
 }
-"#,
+"#
+        .into(),
     ];
 
     TensorOperator::with_state(
         op_descriptor!(),
         Default::default(),
-        metadata,
-        (DataParam(metadata), DataParam(shader_parts)),
-        |ctx, positions, (metadata, shader_parts)| {
+        metadata.clone(),
+        (
+            DataParam(metadata),
+            DataParam(shader_parts),
+            DataParam(push_constants),
+        ),
+        |ctx, positions, (metadata, shader_parts, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
                 let m = metadata;
 
                 let pipeline = device.request_state(
-                    (&shader_parts, m.chunk_size.hmul()),
-                    |device, (shader_parts, chunk_size)| {
+                    (&push_constants, &shader_parts, m.chunk_size.clone()),
+                    |device, (push_constants, shader_parts, chunk_size)| {
                         ComputePipelineBuilder::new(
                             Shader::from_parts(shader_parts.to_vec())
-                                .define("BRICK_MEM_SIZE", chunk_size)
-                                .define("N", D::N),
+                                .push_const_block_dyn(&push_constants)
+                                .define("BRICK_MEM_SIZE", chunk_size.hmul())
+                                .define("N", chunk_size.len()),
                         )
                         .use_push_descriptor(true)
                         .build(device)
@@ -248,12 +251,14 @@ void main()
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant_pod(PushConstants {
-                                offset: brick_info.begin.into_elem::<u32>(),
-                                logical_dim: brick_info.logical_dimensions.into_elem::<u32>(),
-                                mem_dim: m.chunk_size.into_elem::<u32>(),
-                                vol_dim: m.dimensions.into_elem::<u32>(),
+                            pipeline.push_constant_dyn(&push_constants, |consts| {
+                                consts.vec(&brick_info.begin.raw())?;
+                                consts.vec(&brick_info.logical_dimensions.raw())?;
+                                consts.vec(&m.chunk_size.raw())?;
+                                consts.vec(&m.dimensions.raw())?;
+                                Ok(())
                             });
+
                             pipeline.push_descriptor_set(0, descriptor_config);
                             pipeline.dispatch_dyn(device, global_size);
                         }
