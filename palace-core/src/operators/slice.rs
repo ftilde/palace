@@ -307,7 +307,7 @@ mod test {
             }
         };
         for chunk_size in [[5, 1, 1], [4, 4, 1], [2, 3, 4], [1, 1, 1], [5, 5, 5]] {
-            let output = slice(
+            let output = slice_and_rechunk(
                 input.clone(),
                 Vector::new([slice_pos.into(), (0..5).into(), (0..5).into()]),
                 LocalVoxelPosition::from(chunk_size).into_elem(),
