@@ -313,7 +313,12 @@ mod test {
         .embedded(TensorEmbeddingData {
             spacing: Vector::fill(1.0),
         });
-        let vol = crate::operators::resample::create_lod(vol, 2.0);
+        let vol = crate::operators::resample::create_lod(
+            vol,
+            Vector::fill(crate::operators::resample::DownsampleStep::Synchronized(
+                2.0,
+            )),
+        );
 
         let background = from_vec(vec![Vector::<D3, f32>::fill(0.0)])
             .try_into()
