@@ -67,12 +67,14 @@ impl SliceviewState {
         embedding_data: VolumeEmbeddingData,
         output_size: Vector<D2, GlobalCoordinate>,
     ) -> Matrix<D4, f32> {
+        let slice =
+            ((self.depth / embedding_data.spacing[self.dim as usize]).round() as u32).into();
         slice_projection_mat(
             self.dim as _,
             input_metadata,
             embedding_data,
             output_size,
-            ((self.depth / self.dim_spacing).round() as u32).into(),
+            slice,
             self.offset,
             self.zoom_level,
         )
