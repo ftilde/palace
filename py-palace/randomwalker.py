@@ -194,8 +194,10 @@ def render(size, events: pc.Events):
         #out = slice_rw
 
         def inspect(size, events):
+            global mouse_pos_and_value
+
             vol = rw_result.levels[0]
-            extract_slice_value(size, events, state, vol)
+            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol)
             events.act([
                 pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)).when(lambda s: s.is_down("ShiftLeft")),
                 pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)).when(lambda s: s.is_down("ShiftLeft")),
@@ -209,14 +211,6 @@ def render(size, events: pc.Events):
 
         return palace_util.alpha_blending(ray_rw, ray)
         #return ray_rw
-
-    def extract_slice_value(size, events: pc.Events, slice_state, volume):
-        global mouse_pos_and_value
-        mouse_pos = events.latest_state().mouse_pos()
-        vol_pos = mouse_pos and palace_util.mouse_to_volume_pos(slice_state.load(), volume, mouse_pos, size)
-        if vol_pos is not None:
-            value = palace_util.extract_tensor_value(rt, volume, vol_pos)
-            mouse_pos_and_value = (vol_pos, value)
 
     # Actual composition of the rendering
     slice0 = overlay_slice(slice_state0)

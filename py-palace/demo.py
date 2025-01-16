@@ -16,13 +16,30 @@ args = parser.parse_args()
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
-try:
-    vol = pc.open_lod(args.volume_file)
-except:
-    vol = pc.open(args.volume_file)
-    steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
-    vol = vol.create_lod(steps)
-    #vol = vol.single_level_lod()
+if args.volume_file == "fill":
+    b = 32
+    s = 1000
+    nd = 3
+    md = pc.TensorMetaData([s]*nd, [b]*nd)
+    ed = pc.TensorEmbeddingData([1.0]*nd)
+    prog = """
+        float run(float[3] pos_normalized, uint[3] pos_voxel) {
+            return 1.0;
+            //return ((pos_voxel[0]+pos_voxel[1]+pos_voxel[2]) % 2) * 1.0;
+        }
+        """
+    vol = pc.procedural(md, ed, prog).levels[0]
+    vol = vol.create_lod([2.0]*nd)
+
+else:
+    try:
+        vol = pc.open_lod(args.volume_file)
+    except:
+        vol = pc.open(args.volume_file)
+        steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
+        vol = vol.create_lod(steps)
+        #vol = vol.single_level_lod()
+
 
 vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
 #for l in vol.levels:
@@ -63,7 +80,7 @@ slice_state1 = pc.SliceviewState.for_volume(l0md, l0ed, 1).store(store)
 slice_state2 = pc.SliceviewState.for_volume(l0md, l0ed, 2).store(store)
 camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
-view = store.store_primitive("raycast")
+view = store.store_primitive("quad")
 processing = store.store_primitive("passthrough")
 do_threshold = store.store_primitive("no")
 threshold_val = store.store_primitive(0.5)
@@ -83,6 +100,8 @@ slice_state2.depth().link_to(camera_state.trackball().center().at(2))
 #slice_state2.offset().link_to(slice_state0.offset())
 
 gui_state = pc.GuiState(rt)
+
+mouse_pos_and_value = None
 
 animate = False
 next_update = None
@@ -114,6 +133,8 @@ def fit_tf_to_values(vol):
 
 # Top-level render component
 def render(size, events):
+    global mouse_pos_and_value
+
     v = select_vol_from_ts(timestep.load())
     #print("===")
     #for level in v.levels:
@@ -145,6 +166,7 @@ def render(size, events):
 
     # GUI stuff
     widgets = []
+
 
     widgets.append(pc.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]))
     match view.load():
@@ -185,12 +207,27 @@ def render(size, events):
 
     widgets.append(pc.Button("Fit Transfer Function", lambda: fit_tf_to_values(v)))
 
+    if mouse_pos_and_value is not None:
+        vol_pos, value = mouse_pos_and_value
+        widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
+        mouse_pos_and_value = None
+
+    def render_slice(v, state, tf):
+        out = palace_util.render_slice(v, state, tf, 10.0)
+
+        def inspect(size, events):
+            global mouse_pos_and_value
+            vol = v.levels[0]
+            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol)
+
+        return palace_util.inspect_component(out, inspect)
+
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     # Actual composition of the rendering
-    slice0 = palace_util.render_slice(v, slice_state0, tf)
-    slice1 = palace_util.render_slice(v, slice_state1, tf)
-    slice2 = palace_util.render_slice(v, slice_state2, tf)
+    slice0 = render_slice(v, slice_state0, tf)
+    slice1 = render_slice(v, slice_state1, tf)
+    slice2 = render_slice(v, slice_state2, tf)
     ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
 
     match view.load():

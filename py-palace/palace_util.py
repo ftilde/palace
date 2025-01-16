@@ -42,7 +42,7 @@ def render_raycast(vol, camera_state, config, tf):
     return inner
 
 # Slice render component
-def render_slice(vol, slice_state, tf=None):
+def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -54,7 +54,7 @@ def render_slice(vol, slice_state, tf=None):
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
-        frame = pc.render_slice(vol, md, proj, tf)
+        frame = pc.render_slice(vol, md, proj, tf, coarse_lod_factor)
         frame = frame.rechunk([pc.chunk_size_full]*2)
 
         return frame
@@ -91,6 +91,14 @@ def extract_tensor_value(rt, embedded_tensor, pos):
     chunk = rt.resolve(embedded_tensor, chunk_pos)
     pos_in_chunk = md.pos_in_chunk(chunk_pos, pos)
     return chunk[tuple(pos_in_chunk)]
+
+def extract_slice_value(rt, size, events: pc.Events, slice_state, volume):
+    mouse_pos = events.latest_state().mouse_pos()
+    vol_pos = mouse_pos and mouse_to_volume_pos(slice_state.load(), volume, mouse_pos, size)
+    if vol_pos is not None:
+        value = extract_tensor_value(rt, volume, vol_pos)
+        return (vol_pos, value)
+
 
 def inspect_component(component, action):
     def inner(size, events):
