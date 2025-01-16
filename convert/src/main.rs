@@ -2,8 +2,13 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use palace_core::{
-    operators::rechunk::{rechunk, ChunkSize},
+    dim::DDyn,
+    operators::{
+        rechunk::{rechunk, ChunkSize},
+        resample::DownsampleStep,
+    },
     runtime::RunTime,
+    vec::Vector,
 };
 use palace_io::LodOrigin;
 use palace_zarr::WriteHints;
@@ -11,7 +16,11 @@ use palace_zarr::WriteHints;
 #[derive(Subcommand, Clone)]
 enum Output {
     Zarr,
-    ZarrLod,
+    ZarrLod {
+        /// Use the vulkan device with the specified id
+        #[arg(long)]
+        lod_steps: Option<String>,
+    },
 }
 
 #[derive(Parser)]
@@ -91,7 +100,7 @@ fn main() {
     let input = &input;
     let input_lod = &input_lod;
 
-    let write_hints = WriteHints {
+    let mut write_hints = WriteHints {
         compression_level: args.compression_level,
         lod_downsample_steps: None,
     };
@@ -103,13 +112,29 @@ fn main() {
             }
             .into()
         }),
-        Output::ZarrLod => palace_zarr::save_lod_tensor(
-            &mut runtime,
-            &args.output_path,
-            input_lod,
-            write_hints,
-            matches!(lod_origin, LodOrigin::Dynamic),
-        ),
+        Output::ZarrLod { lod_steps } => {
+            if let Some(s) = lod_steps {
+                let vec = s
+                    .split(",")
+                    .map(|v| {
+                        let mut c = v.chars();
+                        match c.next().unwrap() {
+                            'i' => DownsampleStep::Ignore,
+                            'f' => DownsampleStep::Fixed(c.as_str().parse::<f32>().unwrap()),
+                            _ => DownsampleStep::Synchronized(v.parse::<f32>().unwrap()),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                write_hints.lod_downsample_steps = Some(Vector::<DDyn, _>::new(vec));
+            }
+            palace_zarr::save_lod_tensor(
+                &mut runtime,
+                &args.output_path,
+                input_lod,
+                write_hints,
+                matches!(lod_origin, LodOrigin::Dynamic),
+            )
+        }
     }
     .unwrap();
 }
