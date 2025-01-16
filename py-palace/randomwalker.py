@@ -72,9 +72,14 @@ def fit_tf_to_values(vol):
 
 num_tf_values = 128
 def prob_tf_from_values(values):
+    def tf_curve(v):
+        gamma = 0.25
+        return np.pow(v/255, gamma)*255
+    values = [list(map(tf_curve, l)) for l in values]
     #tf_table = [[0, 0, 255, 255] for i in range(num_tf_values)] + [[255, 0, 0, 255] for i in range(num_tf_values)]
     tf_table = pc.from_numpy(np.array(values, np.uint8)).fold_into_dtype()
     return pc.TransFuncOperator(0.0, 1.0, tf_table)
+
 
 tf_prob = prob_tf_from_values([[0, 0, num_tf_values-i-1, num_tf_values-i-1] for i in range(num_tf_values)] + [[i, 0, 0, i] for i in range(num_tf_values)])
 tf_prob3d = prob_tf_from_values([[0, 0, 0, 0] for i in range(num_tf_values)] + [[i, i, 0, i] for i in range(num_tf_values)])
