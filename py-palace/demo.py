@@ -218,7 +218,7 @@ def render(size, events):
         def inspect(size, events):
             global mouse_pos_and_value
             vol = v.levels[0]
-            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol)
+            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol) or mouse_pos_and_value
 
         return palace_util.inspect_component(out, inspect)
 

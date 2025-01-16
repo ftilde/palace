@@ -202,7 +202,7 @@ def render(size, events: pc.Events):
             global mouse_pos_and_value
 
             vol = rw_result.levels[0]
-            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol)
+            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol) or mouse_pos_and_value
             events.act([
                 pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)).when(lambda s: s.is_down("ShiftLeft")),
                 pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)).when(lambda s: s.is_down("ShiftLeft")),
