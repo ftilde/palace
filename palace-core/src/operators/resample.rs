@@ -237,6 +237,7 @@ void main() {
     uint[N] global_pos = add(out_brick_pos, consts.out_begin);
     float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
     map(N, sample_pos, sample_pos, round);
+    float[N] sample_pos_clamp = clamp(sample_pos, fill(sample_pos, 0.0), sub(to_float(consts.vol_dim_in), fill(sample_pos, 1)));
 
     T default_val;
     DEFAULT_VAL_INIT
@@ -248,7 +249,7 @@ void main() {
     int res;
     uint sample_brick_pos_linear;
     T sampled_intensity;
-    try_sample(N, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+    try_sample(N, sample_pos_clamp, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
     if(res == SAMPLE_RES_FOUND) {
         // Nothing to do!
@@ -256,6 +257,7 @@ void main() {
         // This SHOULD not happen...
         sampled_intensity = default_val;
     } else /* SAMPLE_RES_OUTSIDE */ {
+        // Should also not happen due to clamping
         sampled_intensity = default_val;
     }
 
