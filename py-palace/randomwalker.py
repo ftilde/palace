@@ -157,13 +157,13 @@ def render(size, events: pc.Events):
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
     widgets.append(pc.Button("Fit Transfer Function", lambda: fit_tf_to_values(v)))
 
+    if nd != 3:
+        widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
+
     if mouse_pos_and_value is not None:
         vol_pos, value = mouse_pos_and_value
         widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
         mouse_pos_and_value = None
-
-    if nd != 3:
-        widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
 
     def add_seed_point(slice_state, embedded_tensor, pos, frame_size, foreground):
         global foreground_seeds, background_seeds
