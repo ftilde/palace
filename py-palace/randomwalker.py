@@ -91,7 +91,10 @@ slice_state1 = pc.SliceviewState.for_volume(l0md, l0ed, 1).store(store)
 slice_state2 = pc.SliceviewState.for_volume(l0md, l0ed, 2).store(store)
 camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
+lod_coarseness_2d = store.store_primitive(1.0)
+lod_coarseness_2d.link_to(raycaster_config.lod_coarseness())
 raycaster_config_rw = pc.RaycasterConfig().store(store)
+view = store.store_primitive("quad")
 timestep = store.store_primitive(0)
 
 #raycaster_config_rw.compositing_mode().write("DVR")
@@ -146,6 +149,9 @@ def render(size, events: pc.Events):
     # GUI stuff
     widgets = []
 
+    widgets.append(pc.ComboBox("View", view, ["quad", "raycast", "x", "y", "z"]))
+    widgets.append(palace_util.named_slider("LOD coarseness", lod_coarseness_2d, 1.0, 10, logarithmic=True))
+
     widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
     widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean"]))
     match weight_function.load():
@@ -190,8 +196,8 @@ def render(size, events: pc.Events):
 
     def overlay_slice(state):
 
-        slice = palace_util.render_slice(v, state, tf)
-        slice_rw = palace_util.render_slice(rw_result, state, tf_prob)
+        slice = palace_util.render_slice(v, state, tf, lod_coarseness_2d.load())
+        slice_rw = palace_util.render_slice(rw_result, state, tf_prob, lod_coarseness_2d.load())
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
@@ -223,11 +229,19 @@ def render(size, events: pc.Events):
     slice2 = overlay_slice(slice_state2)
     ray = overlay_ray(camera_state)
 
-    frame = palace_util.quad(ray, slice0, slice1, slice2)
-    #frame = ray
-    #frame = slice0
-    gui = gui_state.setup(events, pc.Vertical(widgets))
+    match view.load():
+        case "quad":
+            frame = palace_util.quad(ray, slice0, slice1, slice2)
+        case "raycast":
+            frame = ray
+        case "x":
+            frame = slice0
+        case "y":
+            frame = slice1
+        case "z":
+            frame = slice2
 
+    gui = gui_state.setup(events, pc.Vertical(widgets))
     frame = gui.render(frame(size, events))
 
     return frame
