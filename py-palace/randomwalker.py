@@ -109,6 +109,10 @@ extent = store.store_primitive(1)
 
 gui_state = pc.GuiState(rt)
 
+mouse_reading_enabled = False
+def set_mouse_reading(enabled):
+    global mouse_reading_enabled
+    mouse_reading_enabled = enabled
 mouse_pos_and_value = None
 
 def apply_weight_function(volume):
@@ -139,6 +143,7 @@ def apply_rw_mode(input):
 
 
 def render(size, events: pc.Events):
+    global mouse_reading_enabled
     global mouse_pos_and_value
 
     v, rw_result = apply_rw_mode(vol)
@@ -166,10 +171,16 @@ def render(size, events: pc.Events):
     if nd != 3:
         widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
 
-    if mouse_pos_and_value is not None:
-        vol_pos, value = mouse_pos_and_value
-        widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
-        mouse_pos_and_value = None
+    mouse_widgets = []
+    if mouse_reading_enabled:
+        mouse_widgets.append(pc.Button("Disable", lambda: set_mouse_reading(False)))
+        if mouse_pos_and_value is not None:
+            vol_pos, value = mouse_pos_and_value
+            mouse_widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
+            mouse_pos_and_value = None
+    else:
+        mouse_widgets.append(pc.Button("Enable mouse read", lambda: set_mouse_reading(True)))
+    widgets.append(pc.Horizontal(mouse_widgets))
 
     def add_seed_point(slice_state, embedded_tensor, pos, frame_size, foreground):
         global foreground_seeds, background_seeds
@@ -208,7 +219,8 @@ def render(size, events: pc.Events):
             global mouse_pos_and_value
 
             vol = rw_result.levels[0]
-            mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol) or mouse_pos_and_value
+            if mouse_reading_enabled:
+                mouse_pos_and_value = palace_util.extract_slice_value(rt, size, events, state, vol) or mouse_pos_and_value
             events.act([
                 pc.OnMouseClick(pc.MouseButton.Left, lambda x: add_seed_point(state, vol, x, size, True)).when(lambda s: s.is_down("ShiftLeft")),
                 pc.OnMouseClick(pc.MouseButton.Right, lambda x: add_seed_point(state, vol, x, size, False)).when(lambda s: s.is_down("ShiftLeft")),
