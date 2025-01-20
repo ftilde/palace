@@ -3,6 +3,7 @@ import palace as pc
 import palace_util
 import argparse
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 def read_vge(path):
     root = ET.parse(path)
@@ -11,6 +12,15 @@ def read_vge(path):
         points.append([float(elem.attrib['z']), float(elem.attrib['y']), float(elem.attrib['x'])])
     #print(points)
     return np.array(points, dtype=np.float32)
+
+def read_seeds(path):
+    match Path(path).suffix:
+        case ".vge":
+            return read_vge(path)
+        case ".npy":
+            return np.load(path)
+        case o:
+            raise f"Unknown suffix {o}"
 
 ram_size = 8 << 30
 vram_size = 10 << 30
@@ -42,9 +52,9 @@ foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
 background_seeds = np.empty(shape=[0,nd], dtype=np.float32)
 
 if args.foreground_seeds:
-    foreground_seeds = np.concat([foreground_seeds, read_vge(args.foreground_seeds)])
+    foreground_seeds = np.concat([foreground_seeds, read_seeds(args.foreground_seeds)])
 if args.background_seeds:
-    background_seeds = np.concat([background_seeds, read_vge(args.background_seeds)])
+    background_seeds = np.concat([background_seeds, read_seeds(args.background_seeds)])
 
 def select_vol_from_ts(v, ts):
     match nd:
@@ -115,6 +125,10 @@ def set_mouse_reading(enabled):
     mouse_reading_enabled = enabled
 mouse_pos_and_value = None
 
+def save_seeds():
+    np.save("seeds_foreground", foreground_seeds)
+    np.save("seeds_background", background_seeds)
+
 def apply_weight_function(volume):
     match weight_function.load():
         case "grady":
@@ -140,7 +154,6 @@ def apply_rw_mode(input):
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
             rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
             return (input, rw_result)
-
 
 def render(size, events: pc.Events):
     global mouse_reading_enabled
@@ -170,6 +183,8 @@ def render(size, events: pc.Events):
 
     if nd != 3:
         widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
+
+    widgets.append(pc.Button("Save seeds", lambda: save_seeds()))
 
     mouse_widgets = []
     if mouse_reading_enabled:
