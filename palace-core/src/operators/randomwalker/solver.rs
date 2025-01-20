@@ -28,7 +28,7 @@ use crate::{
 pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     ctx: TaskContext<'req, 'inv, StaticElementType<f32>>,
     weights: &'inv Operator<StaticElementType<f32>>,
-    seeds: &'inv Operator<StaticElementType<f32>>,
+    seeds: &impl AsBufferDescriptor,
     init_values: Option<&'inv Operator<StaticElementType<f32>>>,
     pos: ChunkIndex,
     cfg: SolverConfig,
@@ -58,17 +58,16 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         None
     };
 
-    let (weights, seeds) = futures::join!(
-        ctx.submit(weights.request_gpu(device.id, pos, read_info)),
-        ctx.submit(seeds.request_gpu(device.id, pos, read_info),),
-    );
+    let weights = ctx
+        .submit(weights.request_gpu(device.id, pos, read_info))
+        .await;
 
     let start = std::time::Instant::now();
 
     //dbg!(&super::download::<f32>(*ctx, device, &seeds).await[..]);
 
     let (tensor_to_rows_table, num_rows) =
-        tensor_to_rows_table(*ctx, device, &seeds, tensor_md.clone()).await?;
+        tensor_to_rows_table(*ctx, device, seeds, tensor_md.clone()).await?;
 
     let (result_vec, num_iterations) = if num_rows > 0 {
         assert!(
@@ -82,7 +81,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
             *ctx,
             &device,
             &weights,
-            &seeds,
+            seeds,
             init_values.as_ref(),
             &tensor_to_rows_table,
             tensor_md.clone(),
@@ -122,7 +121,7 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
 
     results_to_tensor(
         device,
-        &seeds,
+        seeds,
         &tensor_to_rows_table,
         result_vec.as_deref(),
         &out_chunk,
@@ -166,14 +165,24 @@ pub fn random_walker_single_chunk<D: DynDimension + LargerDim>(
         (weights, seeds, DataParam(cfg)),
         move |ctx, _pos, _, (weights, seeds, cfg)| {
             async move {
+                let device = ctx.preferred_device();
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+                let metadata = seeds.metadata.clone();
+                let pos = ChunkIndex(0);
+                let seeds = ctx
+                    .submit(seeds.chunks.request_gpu(device.id, pos, read_info))
+                    .await;
                 random_walker_on_chunk::<D>(
                     ctx,
                     &weights.chunks,
-                    &seeds.chunks,
+                    &seeds,
                     None,
-                    ChunkIndex(0),
+                    pos,
                     **cfg,
-                    seeds.metadata.clone(),
+                    metadata,
                 )
                 .await
             }
