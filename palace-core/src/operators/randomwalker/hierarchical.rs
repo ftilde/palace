@@ -20,6 +20,7 @@ use crate::{
         resample::resample_transform,
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
     },
+    storage::gpu::InplaceHandle,
     vec::Vector,
     vulkan::{
         memory::TempRessource,
@@ -456,6 +457,29 @@ fn run_rw<D: DynDimension + LargerDim>(
                             .await;
                         let seeds_buf = TempRessource::new(device, seeds_buf);
 
+                        let min_max_layout = Layout::array::<f32>(2).unwrap();
+                        let min_max_buf = ctx
+                            .submit(device.storage.request_allocate_raw(
+                                device,
+                                min_max_layout,
+                                flags,
+                                GpuOnly,
+                            ))
+                            .await;
+                        let min_max_buf = TempRessource::new(device, min_max_buf);
+
+                        // Init min/max
+                        device.with_cmd_buffer(|cmd| {
+                            unsafe {
+                                device.functions().cmd_update_buffer(
+                                    cmd.raw(),
+                                    min_max_buf.buffer,
+                                    0,
+                                    bytemuck::cast_slice(&[1.0f32, 0.0]),
+                                )
+                            };
+                        });
+
                         let chunk_index = device
                             .storage
                             .get_index(
@@ -512,6 +536,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                             points_fg_chunk,
                             points_bg_chunk,
                             &*seeds_buf,
+                            &*min_max_buf,
                         ]);
 
                         let grid_to_grid_scale =
@@ -560,35 +585,98 @@ fn run_rw<D: DynDimension + LargerDim>(
                         ))
                         .await;
 
-                        // Actual rw solving:
-
-                        let chunk_info_weights = weights.metadata.chunk_info(pos);
-                        let chunk_info_init = init_values.metadata.chunk_info(pos);
-                        assert_eq!(
-                            out_info.logical_size(),
-                            chunk_info_weights.logical_size().pop_dim_small()
-                        );
-                        assert_eq!(out_info.logical_size(), chunk_info_init.logical_size());
-                        assert_eq!(
-                            out_info.mem_size,
-                            chunk_info_weights.mem_size.pop_dim_small(),
-                        );
-                        assert_eq!(out_info.mem_size, chunk_info_init.mem_size,);
-
-                        let virtual_chunk_info = TensorMetaData {
-                            dimensions: out_info.logical_size().global(),
-                            chunk_size: out_info.mem_size,
+                        let mut min_max_cpu = [0.0f32; 2];
+                        let min_max_cpu_bytes: &mut [u8] =
+                            bytemuck::cast_slice_mut(min_max_cpu.as_mut_slice());
+                        unsafe {
+                            crate::vulkan::memory::copy_to_cpu(
+                                *ctx,
+                                device,
+                                min_max_buf.buffer,
+                                min_max_layout,
+                                min_max_cpu_bytes.as_mut_ptr().cast(),
+                            )
+                            .await
                         };
-                        random_walker_on_chunk(
-                            ctx,
-                            &weights.inner,
-                            &*seeds_buf,
-                            Some(&init_values.inner),
-                            pos,
-                            **cfg,
-                            virtual_chunk_info,
-                        )
-                        .await
+
+                        let [min, max] = min_max_cpu;
+                        let dt = 0.1;
+
+                        let skip = min > 0.5 + dt || max < 0.5 - dt;
+
+                        if skip {
+                            let access_info = DstBarrierInfo {
+                                stage: vk::PipelineStageFlags2::TRANSFER,
+                                access: vk::AccessFlags2::TRANSFER_READ,
+                            };
+                            let inplace_res = ctx
+                                .submit(init_values.inner.request_inplace_gpu(
+                                    device.id,
+                                    pos,
+                                    ctx.current_op_desc().unwrap(),
+                                    init_values.inner.dtype().into(),
+                                    init_values.metadata.mem_size().hmul(),
+                                    access_info,
+                                ))
+                                .await;
+
+                            let inplace_res = ctx.submit(inplace_res.alloc()).await;
+                            if let InplaceHandle::New(r, w) = &inplace_res {
+                                device.with_cmd_buffer(|cmd| {
+                                    let copy_info =
+                                        vk::BufferCopy::default().size(r.layout.size() as _);
+                                    unsafe {
+                                        device.functions().cmd_copy_buffer(
+                                            cmd.raw(),
+                                            r.buffer,
+                                            w.buffer,
+                                            &[copy_info],
+                                        );
+                                    }
+                                });
+                            }
+
+                            unsafe {
+                                inplace_res.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::TRANSFER,
+                                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                                    },
+                                )
+                            };
+                            Ok(())
+                        } else {
+                            // Actual rw solving:
+
+                            let chunk_info_weights = weights.metadata.chunk_info(pos);
+                            let chunk_info_init = init_values.metadata.chunk_info(pos);
+                            assert_eq!(
+                                out_info.logical_size(),
+                                chunk_info_weights.logical_size().pop_dim_small()
+                            );
+                            assert_eq!(out_info.logical_size(), chunk_info_init.logical_size());
+                            assert_eq!(
+                                out_info.mem_size,
+                                chunk_info_weights.mem_size.pop_dim_small(),
+                            );
+                            assert_eq!(out_info.mem_size, chunk_info_init.mem_size,);
+
+                            let virtual_chunk_info = TensorMetaData {
+                                dimensions: out_info.logical_size().global(),
+                                chunk_size: out_info.mem_size,
+                            };
+                            random_walker_on_chunk(
+                                ctx,
+                                &weights.inner,
+                                &*seeds_buf,
+                                Some(&init_values.inner),
+                                pos,
+                                **cfg,
+                                virtual_chunk_info,
+                            )
+                            .await
+                        }
                     }
                     .into()
                 }))
