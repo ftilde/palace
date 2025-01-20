@@ -6,14 +6,18 @@ use id::Identify;
 use rand::{seq::SliceRandom, SeedableRng};
 
 use crate::{
+    array::ChunkInfo,
     dim::DynDimension,
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
+        pipeline::{
+            AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
+            LocalSizeConfig,
+        },
         shader::Shader,
-        DstBarrierInfo, SrcBarrierInfo,
+        DeviceContext, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -62,7 +66,7 @@ impl AggretationMethod {
             AggretationMethod::Max => "subgroupMax",
         }
     }
-    fn neutral_val(&self) -> f32 {
+    pub fn neutral_val(&self) -> f32 {
         match self {
             AggretationMethod::Mean => 0.0,
             AggretationMethod::Min => f32::INFINITY,
@@ -92,11 +96,14 @@ pub fn max<'op, D: DynDimension>(
     scalar_aggregation(input, AggretationMethod::Max, sample_method)
 }
 
-fn scalar_aggregation<'op, D: DynDimension>(
-    input: TensorOperator<D, StaticElementType<f32>>,
+pub async unsafe fn aggregation_on_chunk<D: DynDimension>(
+    buf: &impl AsBufferDescriptor,
+    result: &impl AsBufferDescriptor,
+    device: &DeviceContext,
+    chunk_info: ChunkInfo<D>,
     method: AggretationMethod,
-    sample_method: SampleMethod,
-) -> ScalarOperator<StaticElementType<f32>> {
+    normalization_factor: f32,
+) -> Result<(), crate::Error> {
     const SHADER: &'static str = r#"
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_EXT_scalar_block_layout : require
@@ -150,19 +157,72 @@ void main()
     }
 }
 "#;
+    let nd = chunk_info.mem_dimensions.len();
+    let push_constants = DynPushConstants::new()
+        .vec::<u32>(nd, "mem_dim")
+        .vec::<u32>(nd, "logical_dim")
+        .scalar::<f32>("norm_factor");
+
+    let pipeline = device.request_state(
+        (
+            &push_constants,
+            chunk_info.mem_dimensions.hmul(),
+            method,
+            nd,
+        ),
+        |device, (push_constants, mem_size, method, nd)| {
+            let neutral_val_str = format!("uintBitsToFloat({})", method.neutral_val().to_bits());
+            ComputePipelineBuilder::new(
+                Shader::new(SHADER)
+                    .push_const_block_dyn(push_constants)
+                    .define("BRICK_MEM_SIZE", mem_size)
+                    .define("ND", nd)
+                    .define("AGG_FUNCTION", method.aggregration_function_glsl())
+                    .define(
+                        "AGG_FUNCTION_SUBGROUP",
+                        method.subgroup_aggregration_function_glsl(),
+                    )
+                    .define("NEUTRAL_VAL", neutral_val_str),
+            )
+            .local_size(LocalSizeConfig::Large)
+            .use_push_descriptor(true)
+            .build(device)
+        },
+    )?;
+
+    device.with_cmd_buffer(|cmd| {
+        let descriptor_config = DescriptorConfig::new([buf, result]);
+
+        let global_size = chunk_info.mem_elements();
+
+        unsafe {
+            let mut pipeline = pipeline.bind(cmd);
+
+            pipeline.push_constant_dyn(&push_constants, |consts| {
+                consts.vec(&chunk_info.mem_dimensions.into_elem::<u32>())?;
+                consts.vec(&chunk_info.logical_dimensions.into_elem::<u32>())?;
+                consts.scalar(normalization_factor)?;
+                Ok(())
+            });
+            pipeline.push_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(device, global_size);
+        }
+    });
+
+    Ok(())
+}
+
+fn scalar_aggregation<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
+    method: AggretationMethod,
+    sample_method: SampleMethod,
+) -> ScalarOperator<StaticElementType<f32>> {
     crate::operators::scalar::scalar(
         op_descriptor!(),
         (input, DataParam(method), DataParam(sample_method)),
         move |ctx, (input, method, sample_method)| {
             async move {
                 let device = ctx.preferred_device();
-
-                let nd = input.dim().n();
-
-                let push_constants = DynPushConstants::new()
-                    .vec::<u32>(nd, "mem_dim")
-                    .vec::<u32>(nd, "logical_dim")
-                    .scalar::<f32>("norm_factor");
 
                 let m = &input.metadata;
 
@@ -184,29 +244,6 @@ void main()
                         (&*ret, num_elements)
                     }
                 };
-
-                let pipeline = device.request_state(
-                    (&push_constants, m.chunk_size.hmul(), method, nd),
-                    |device, (push_constants, mem_size, method, nd)| {
-                        let neutral_val_str =
-                            format!("uintBitsToFloat({})", method.neutral_val().to_bits());
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER)
-                                .push_const_block_dyn(push_constants)
-                                .define("BRICK_MEM_SIZE", mem_size)
-                                .define("ND", nd)
-                                .define("AGG_FUNCTION", method.aggregration_function_glsl())
-                                .define(
-                                    "AGG_FUNCTION_SUBGROUP",
-                                    method.subgroup_aggregration_function_glsl(),
-                                )
-                                .define("NEUTRAL_VAL", neutral_val_str),
-                        )
-                        .local_size(LocalSizeConfig::Large)
-                        .use_push_descriptor(true)
-                        .build(device)
-                    },
-                )?;
 
                 let sum = ctx.submit(ctx.alloc_scalar_gpu(device)).await;
 
@@ -250,28 +287,24 @@ void main()
                 while let Some((gpu_brick_in, pos)) = stream.next().await {
                     let brick_info = m.chunk_info(pos);
 
-                    device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([&gpu_brick_in, &sum]);
-
-                        let global_size = brick_info.mem_elements();
-
-                        unsafe {
-                            let mut pipeline = pipeline.bind(cmd);
-
-                            pipeline.push_constant_dyn(&push_constants, |consts| {
-                                consts.vec(&brick_info.mem_dimensions.into_elem::<u32>())?;
-                                consts.vec(&brick_info.logical_dimensions.into_elem::<u32>())?;
-                                consts.scalar(normalization_factor)?;
-                                Ok(())
-                            });
-                            pipeline.push_descriptor_set(0, descriptor_config);
-                            pipeline.dispatch(device, global_size);
-                        }
-                    });
+                    unsafe {
+                        aggregation_on_chunk(
+                            &gpu_brick_in,
+                            &sum,
+                            device,
+                            brick_info,
+                            **method,
+                            normalization_factor,
+                        )
+                        .await?;
+                    }
                 }
+                //TODO: why this?
                 ctx.submit(device.wait_for_current_cmd_buffer_completion())
                     .await;
 
+                //TODO: maybe this is the source of the write after write hazards? do we need
+                //transfer write here, too?
                 unsafe {
                     sum.initialized(
                         *ctx,
