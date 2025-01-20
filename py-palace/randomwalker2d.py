@@ -18,7 +18,7 @@ md: pc.TensorMetaData = img.inner.metadata
 ndim = len(md.dimensions)
 
 img = img.rechunk([128]*ndim)
-img = img.create_lod(2.0)
+img = img.create_lod([2.0]*2)
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
 
@@ -81,7 +81,7 @@ def apply_rw_mode(input):
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
-            return (input, rw_result.create_lod(2.0))
+            return (input, rw_result.create_lod([2.0]*2))
 
         case "hierarchical":
             i = to_scalar(input)
