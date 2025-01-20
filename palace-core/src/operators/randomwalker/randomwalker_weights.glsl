@@ -13,7 +13,7 @@ layout(std430, binding = 1) readonly buffer Neighbor {
     float values[BRICK_MEM_SIZE];
 } neighbor_buf;
 
-layout(std430, binding = 2) buffer Seeds {
+layout(std430, binding = 2) buffer Weights {
     float values[BRICK_MEM_SIZE][ND];
 } weights;
 

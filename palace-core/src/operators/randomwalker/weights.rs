@@ -100,7 +100,7 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
                     .scalar::<f32>("grady_beta");
 
                 let pipeline = device.request_state(
-                    (out_md.chunk_size.hmul(), nd, &push_constants),
+                    (md.chunk_size.hmul(), nd, &push_constants),
                     |device, (mem_size, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
@@ -279,7 +279,7 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
                     .scalar::<f32>("diff_variance_inv");
 
                 let pipeline = device.request_state(
-                    (out_md.chunk_size.hmul(), nd, &push_constants),
+                    (md.chunk_size.hmul(), nd, &push_constants),
                     |device, (mem_size, nd, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights.glsl"))
