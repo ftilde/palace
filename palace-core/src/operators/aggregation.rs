@@ -249,16 +249,16 @@ fn scalar_aggregation<'op, D: DynDimension>(
 
                 let normalization_factor = method.norm_factor(num_elements);
 
-                device.with_cmd_buffer(|cmd| {
-                    unsafe {
-                        device.functions().cmd_update_buffer(
-                            cmd.raw(),
-                            sum.buffer,
-                            0,
-                            bytemuck::cast_slice(&[method.neutral_val()]),
-                        )
-                    };
+                device.with_cmd_buffer(|cmd| unsafe {
+                    cmd.functions().cmd_fill_buffer(
+                        cmd.raw(),
+                        sum.buffer,
+                        0,
+                        std::mem::size_of::<f32>() as _,
+                        method.neutral_val().to_bits(),
+                    );
                 });
+
                 ctx.submit(device.barrier(
                     SrcBarrierInfo {
                         stage: vk::PipelineStageFlags2::TRANSFER,
