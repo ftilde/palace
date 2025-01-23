@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{any::Any, rc::Rc};
 
 use crate::{
     array::ChunkIndex,
@@ -194,24 +194,11 @@ impl DataDescriptor {
     }
 }
 
-pub struct TypeErased(*mut ());
-impl TypeErased {
-    pub fn pack<T>(v: T) -> Self {
-        TypeErased(Box::into_raw(Box::new(v)) as *mut ())
-    }
-    pub unsafe fn unpack<T>(self) -> T {
-        *Box::from_raw(self.0 as *mut T)
-    }
-    pub unsafe fn unpack_ref<T>(&self) -> &T {
-        &*(self.0 as *mut T)
-    }
-}
-
 pub type ComputeFunction<Output> = Rc<
     dyn for<'cref, 'inv> Fn(
         TaskContext<'cref, 'inv, Output>,
         Vec<(ChunkIndex, DataLocation)>,
-        &'inv TypeErased,
+        &'inv dyn Any,
     ) -> Task<'cref>,
 >;
 
@@ -252,7 +239,7 @@ pub trait OpaqueOperator {
 
 pub struct Operator<OutputType> {
     descriptor: OperatorDescriptor,
-    state: Rc<TypeErased>,
+    state: Rc<dyn Any>,
     granularity: ItemGranularity,
     compute: ComputeFunction<OutputType>,
     dtype: OutputType,
@@ -438,12 +425,10 @@ impl<OutputType: ElementType> Operator<OutputType> {
         Self {
             descriptor,
             dtype,
-            state: Rc::new(TypeErased::pack(state)),
+            state: Rc::new(state),
             granularity: ItemGranularity::Batched,
             compute: Rc::new(move |ctx, items, state| {
-                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
-                // then packed and then unpacked again here to `S: 'op`.
-                let state = unsafe { state.unpack_ref() };
+                let state = state.downcast_ref().unwrap();
                 compute(ctx, items, state)
             }),
         }
@@ -465,12 +450,10 @@ impl<OutputType: ElementType> Operator<OutputType> {
         Self {
             descriptor,
             dtype,
-            state: Rc::new(TypeErased::pack(state)),
+            state: Rc::new(state),
             granularity: ItemGranularity::Single,
             compute: Rc::new(move |ctx, items, state| {
-                // Safety: `state` (passed as parameter to this function is precisely `S: 'op`,
-                // then packed and then unpacked again here to `S: 'op`.
-                let state = unsafe { state.unpack_ref() };
+                let state = state.downcast_ref().unwrap();
                 assert_eq!(items.len(), 1);
                 let item = items.into_iter().next().unwrap();
                 compute(ctx, item.0, item.1, state)
@@ -678,7 +661,7 @@ impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
         items: Vec<(ChunkIndex, DataLocation)>,
     ) -> Task<'cref> {
         let ctx = TaskContext::new(ctx, self.dtype.clone());
-        (self.compute)(ctx, items, &self.state)
+        (self.compute)(ctx, items, &*self.state)
     }
 }
 
