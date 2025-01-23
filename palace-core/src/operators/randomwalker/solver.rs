@@ -125,15 +125,20 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
         &tensor_to_rows_table,
         result_vec.as_deref(),
         &out_chunk,
-        tensor_md,
+        tensor_md.clone(),
         num_rows,
     )
     .await?;
 
+    let ms = start.elapsed().as_millis();
+    let ms_per_iter = ms as f32 / num_iterations as f32;
+
     println!(
-        "RW took {}ms, {} iter",
-        start.elapsed().as_millis(),
-        num_iterations
+        "RW took {}ms, {} iter \t ({} ms/iter)| \t {}",
+        ms,
+        num_iterations,
+        ms_per_iter,
+        tensor_md.chunk_size.hmul(),
     );
 
     unsafe {
