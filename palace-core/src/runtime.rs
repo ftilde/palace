@@ -9,7 +9,8 @@ use std::{
 };
 
 use crate::{
-    operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased},
+    array::ChunkIndex,
+    operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId},
     storage::{
         disk, gpu::BarrierEpoch, ram, CpuDataLocation, DataLocation, DataVersionType,
         VisibleDataLocation,
@@ -32,7 +33,8 @@ const OPERATOR_REQUEST_BATCHING_GRANULARITY: usize = 64;
 
 struct DataRequestItem {
     id: DataId,
-    item: TypeErased,
+    item: ChunkIndex,
+    location: DataLocation,
 }
 
 impl PartialEq for DataRequestItem {
@@ -113,6 +115,7 @@ impl<'inv> RequestBatcher<'inv> {
         let req_item = DataRequestItem {
             id: request.id,
             item: request.item,
+            location: request.location.into(),
         };
 
         let batches = self
@@ -138,7 +141,7 @@ impl<'inv> RequestBatcher<'inv> {
         }
     }
 
-    fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, Vec<TypeErased>) {
+    fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, Vec<(ChunkIndex, DataLocation)>) {
         let batches = self.pending_batches.get_mut(&tid.operator()).unwrap();
         let items = if batches.unfinished_batch_id == tid {
             let (n_tid, finished_batch) = batches.finish_current();
@@ -148,7 +151,10 @@ impl<'inv> RequestBatcher<'inv> {
             batches.finished.remove(&tid).unwrap()
         };
 
-        let items = items.into_iter().map(|i| i.item).collect::<Vec<_>>();
+        let items = items
+            .into_iter()
+            .map(|i| (i.item, i.location))
+            .collect::<Vec<_>>();
 
         (batches.op, items)
     }

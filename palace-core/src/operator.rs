@@ -246,7 +246,7 @@ pub trait OpaqueOperator {
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         context: OpaqueTaskContext<'cref, 'inv>,
-        items: Vec<TypeErased>,
+        items: Vec<(ChunkIndex, DataLocation)>,
     ) -> Task<'cref>;
 }
 
@@ -675,12 +675,8 @@ impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
-        items: Vec<TypeErased>,
+        items: Vec<(ChunkIndex, DataLocation)>,
     ) -> Task<'cref> {
-        let items = items
-            .into_iter()
-            .map(|v| unsafe { v.unpack() })
-            .collect::<Vec<_>>();
         let ctx = TaskContext::new(ctx, self.dtype.clone());
         (self.compute)(ctx, items, &self.state)
     }

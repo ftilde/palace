@@ -13,9 +13,7 @@ use crate::array::ChunkIndex;
 use crate::data::LocalCoordinate;
 use crate::dim::DynDimension;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
-use crate::operator::{
-    DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId, TypeErased,
-};
+use crate::operator::{DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId};
 use crate::runtime::{CompletedRequests, Deadline, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
 use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
@@ -68,22 +66,22 @@ pub struct DataRequest<'inv> {
     pub id: DataId,
     pub location: VisibleDataLocation,
     pub source: &'inv dyn OpaqueOperator,
-    pub item: TypeErased,
+    pub item: ChunkIndex,
     _use_the_constructor: (),
 }
 
 impl<'inv> DataRequest<'inv> {
-    pub(crate) fn new<T>(
+    pub(crate) fn new(
         id: DataId,
         location: VisibleDataLocation,
         source: &'inv dyn OpaqueOperator,
-        item: T,
+        item: ChunkIndex,
     ) -> Self {
         Self {
             id,
             location,
             source,
-            item: TypeErased::pack((item, DataLocation::from(location))),
+            item,
             _use_the_constructor: (),
         }
     }
