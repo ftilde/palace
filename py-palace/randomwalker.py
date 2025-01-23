@@ -91,7 +91,8 @@ def prob_tf_from_values(values):
     return pc.TransFuncOperator(0.0, 1.0, tf_table)
 
 
-tf_prob = prob_tf_from_values([[0, 0, num_tf_values-i-1, num_tf_values-i-1] for i in range(num_tf_values)] + [[i, 0, 0, i] for i in range(num_tf_values)])
+alpha_mul = 0.01
+tf_prob = prob_tf_from_values([[0, 0, num_tf_values-i-1, alpha_mul*(num_tf_values-i-1)] for i in range(num_tf_values)] + [[i, 0, 0, alpha_mul*i] for i in range(num_tf_values)])
 tf_prob3d = prob_tf_from_values([[0, 0, 0, 0] for i in range(num_tf_values)] + [[i, i, 0, i] for i in range(num_tf_values)])
 
 store = pc.Store()
