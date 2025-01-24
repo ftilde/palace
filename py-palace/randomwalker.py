@@ -3,6 +3,7 @@ import palace as pc
 import palace_util
 import argparse
 import xml.etree.ElementTree as ET
+import time
 from pathlib import Path
 
 def read_vge(path):
@@ -47,6 +48,7 @@ except:
     #vol = vol.single_level_lod()
 
 nd = vol.nd()
+dim_t = vol.fine_metadata().dimensions[0]
 
 foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
 background_seeds = np.empty(shape=[0,nd], dtype=np.float32)
@@ -126,6 +128,36 @@ def set_mouse_reading(enabled):
     mouse_reading_enabled = enabled
 mouse_pos_and_value = None
 
+animate = False
+next_update = None
+
+def animate_on():
+    global animate, next_update
+    animate = True
+    next_update = None
+def animate_off():
+    global animate
+    animate = False
+
+def ts_next(ts):
+    ts.write((ts.load() + 1) % dim_t)
+
+def ts_prev(ts):
+    ts.write((ts.load() + dim_t - 1) % dim_t)
+
+def map_timestep(ts):
+    global next_update
+    if next_update is None:
+        next_update = time.time()
+
+    update_time_step = 0.3
+
+    if next_update < time.time():
+        next_update += update_time_step
+        return (ts + 1) % dim_t
+    else:
+        return ts
+
 def save_seeds():
     np.save("seeds_foreground", foreground_seeds)
     np.save("seeds_background", background_seeds)
@@ -184,6 +216,11 @@ def render(size, events: pc.Events):
 
     if nd != 3:
         widgets.append(palace_util.named_slider("Timestep", timestep, 0, vol.fine_metadata().dimensions[0]-1))
+        if animate:
+            timestep.map(map_timestep)
+            widgets.append(pc.Button("Stop animation", lambda: animate_off()))
+        else:
+            widgets.append(pc.Button("Start animation", lambda: animate_on()))
 
     widgets.append(pc.Button("Save seeds", lambda: save_seeds()))
 
@@ -250,6 +287,11 @@ def render(size, events: pc.Events):
 
         return palace_util.alpha_blending(ray_rw, ray)
         #return ray_rw
+
+    events.act([
+        pc.OnKeyPress("N", lambda: ts_next(timestep)),
+        pc.OnKeyPress("P", lambda: ts_prev(timestep)),
+        ])
 
     # Actual composition of the rendering
     slice0 = overlay_slice(slice_state0)
