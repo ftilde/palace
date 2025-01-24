@@ -597,6 +597,12 @@ impl LODTensorOperator {
                 .collect(),
         }
     }
+
+    pub fn cache(&self) -> Self {
+        Self {
+            levels: self.levels.iter().map(|l| l.cache()).collect(),
+        }
+    }
 }
 
 #[pyclass]
