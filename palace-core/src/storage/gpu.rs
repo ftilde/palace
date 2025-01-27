@@ -1650,6 +1650,17 @@ impl Allocator {
     }
 
     fn allocated(&self) -> u64 {
+        //let mut allocator = self.allocator.borrow_mut();
+        //let allocator = allocator.as_mut().unwrap();
+        //let report = allocator.generate_report();
+        //let a = bytesize::to_string(report.total_allocated_bytes, true);
+        //let b = bytesize::to_string(report.total_reserved_bytes, true);
+        //println!("allocated {}, reserved {}", a, b);
+        //for block in report.blocks {
+        //    dbg!(bytesize::to_string(block.size, true));
+        //    dbg!(block.allocations.len());
+        //}
+
         self.num_alloced.get()
     }
 
