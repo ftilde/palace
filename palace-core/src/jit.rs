@@ -24,6 +24,7 @@ use crate::{
 pub enum UnaryOp {
     Abs,
     Neg,
+    Log,
     Cast(DType),
     Index(u32),
     Splat(u32),
@@ -33,6 +34,7 @@ impl UnaryOp {
     fn dtype(&self, input: DType) -> Result<DType, crate::Error> {
         Ok(match self {
             UnaryOp::Abs => input,
+            UnaryOp::Log => input,
             UnaryOp::Cast(output) => {
                 if input.vec_size() == output.vec_size() {
                     *output
@@ -72,16 +74,17 @@ impl UnaryOp {
         })
     }
 }
-struct WriteUnary(UnaryOp, NodeId, u32);
+struct WriteUnary(UnaryOp, NodeWithDType);
 impl Display for WriteUnary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let v = WriteValue(self.1, self.2);
+        let v = &self.1;
         match self.0 {
+            UnaryOp::Log => write!(f, "log({})", v),
             UnaryOp::Abs => write!(f, "abs({})", v),
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
-            UnaryOp::Index(i) => write!(f, "{}[{}]", v, i),
-            UnaryOp::Splat(_i) => write!(f, "{}", WriteValue(self.1, 1)),
+            UnaryOp::Index(i) => write!(f, "{}[{}]", v.0, i),
+            UnaryOp::Splat(_i) => write!(f, "{}", v),
         }
     }
 }
@@ -100,13 +103,16 @@ pub enum BinOp {
     LessThanEquals,
     Equals,
     NotEquals,
+    Concat,
 }
 
 impl BinOp {
     fn dtype(&self, input1: DType, input2: DType) -> Result<DType, crate::Error> {
-        if input1 == input2 {
+        if input1.scalar == input2.scalar {
             match self {
-                BinOp::Add | BinOp::Mul | BinOp::Sub | BinOp::Div | BinOp::Max | BinOp::Min => {
+                BinOp::Add | BinOp::Mul | BinOp::Sub | BinOp::Div | BinOp::Max | BinOp::Min
+                    if input1.size == input2.size =>
+                {
                     Ok(input1)
                 }
                 BinOp::GreaterThan
@@ -114,7 +120,21 @@ impl BinOp {
                 | BinOp::LessThan
                 | BinOp::LessThanEquals
                 | BinOp::Equals
-                | BinOp::NotEquals => Ok(ScalarType::U32.into()),
+                | BinOp::NotEquals
+                    if input1.size == input2.size =>
+                {
+                    Ok(ScalarType::U32.into())
+                }
+                BinOp::Concat => Ok({
+                    let mut out = input1;
+                    out.size += input2.size;
+                    out
+                }),
+                _ => Err(format!(
+                    "Mismatched dtype sizes {:?} and {:?} for binary op",
+                    input1.size, input2.size
+                )
+                .into()),
             }
         } else {
             Err(format!(
@@ -172,11 +192,23 @@ impl Display for WriteValue {
     }
 }
 
-struct WriteBin(BinOp, NodeId, NodeId, u32);
+struct NodeWithDType(NodeId, DType);
+impl Display for NodeWithDType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.1.size;
+        if s == 1 {
+            write!(f, "{}", self.0)
+        } else {
+            write!(f, "{}[{}]", self.0, VEC_LOOP_VARIABLE_NAME)
+        }
+    }
+}
+
+struct WriteBin(BinOp, NodeWithDType, NodeWithDType);
 impl Display for WriteBin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let l = WriteValue(self.1, self.3);
-        let r = WriteValue(self.2, self.3);
+        let l = &self.1;
+        let r = &self.2;
         match self.0 {
             BinOp::Add => write!(f, "{} + {}", l, r),
             BinOp::Sub => write!(f, "{} - {}", l, r),
@@ -190,16 +222,24 @@ impl Display for WriteBin {
             BinOp::LessThanEquals => write!(f, "uint({} <= {})", l, r),
             BinOp::Equals => write!(f, "uint({} == {})", l, r),
             BinOp::NotEquals => write!(f, "uint({} != {})", l, r),
+            BinOp::Concat => {
+                write!(f, "({} < {}) ? {} : ", VEC_LOOP_VARIABLE_NAME, l.1.size, l)?;
+                if r.1.size == 1 {
+                    write!(f, "{}", r.0)
+                } else {
+                    write!(f, "{}[{} - {}]", r.0, VEC_LOOP_VARIABLE_NAME, l.1.size)
+                }
+            }
         }
     }
 }
 
-struct WriteTernary(TernaryOp, NodeId, NodeId, NodeId, u32);
+struct WriteTernary(TernaryOp, NodeWithDType, NodeWithDType, NodeWithDType);
 impl Display for WriteTernary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let a0 = WriteValue(self.1, self.4);
-        let a1 = WriteValue(self.2, self.4);
-        let a2 = WriteValue(self.3, self.4);
+        let a0 = &self.1;
+        let a1 = &self.2;
+        let a2 = &self.3;
 
         match self.0 {
             TernaryOp::IfThenElse => write!(f, "({} != 0) ? {} : {}", a0, a1, a2),
@@ -469,6 +509,10 @@ impl<D: DynDimension> From<f32> for JitTensorOperator<D> {
     }
 }
 
+pub fn scalar<D: DynDimension>(value: f32) -> JitTensorOperator<D> {
+    value.into()
+}
+
 impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
     fn from(c: TensorOperator<D, DType>) -> Self {
         let dtype = c.chunks.dtype();
@@ -495,18 +539,36 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn mul(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Mul, self, other)
     }
+    pub fn div(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Div, self, other)
+    }
     pub fn max(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Max, self, other)
     }
+    pub fn concat(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Concat, self, other)
+    }
 
+    pub fn square(self) -> Self {
+        self.clone().mul(self).unwrap()
+    }
     pub fn abs(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Abs, self)
     }
     pub fn neg(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Neg, self)
     }
+    pub fn log(self) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Log, self)
+    }
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)
+    }
+    pub fn splat(self, size: u32) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Splat(size), self)
+    }
+    pub fn index(self, i: u32) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Index(i), self)
     }
 
     pub fn select(
@@ -682,11 +744,15 @@ fn compile(
         instruction_to_node.push(NodeId(node_id));
     }
 
-    let input_node_id = |own_instruction_number: usize, input_offset: InstructionOffset| {
-        let input_instruction_number = own_instruction_number - input_offset.0;
-        instruction_to_node[input_instruction_number]
-    };
+    let input_node_id =
+        |own_instruction_number: usize, input_offset: InstructionOffset, dtypes: &Vec<DType>| {
+            let input_instruction_number = own_instruction_number - input_offset.0;
+            let dtype = dtypes[input_instruction_number];
+            let id = instruction_to_node[input_instruction_number];
+            NodeWithDType(id, dtype)
+        };
 
+    let mut dtypes = Vec::new();
     for (i, node) in nodes.0.iter().enumerate() {
         let res_id = NodeId(i);
         let dtype = match node.instr {
@@ -702,7 +768,7 @@ fn compile(
                     res_id,
                     VecLoop(t.size),
                     WriteValue(res_id, t.size),
-                    WriteUnary(*o, input_node_id(node.instruction_number, *a), t.size)
+                    WriteUnary(*o, input_node_id(node.instruction_number, *a, &dtypes))
                 )?;
                 *t
             }
@@ -716,9 +782,8 @@ fn compile(
                     WriteValue(res_id, t.size),
                     WriteBin(
                         *o,
-                        input_node_id(node.instruction_number, *l),
-                        input_node_id(node.instruction_number, *r),
-                        t.size
+                        input_node_id(node.instruction_number, *l, &dtypes),
+                        input_node_id(node.instruction_number, *r, &dtypes),
                     )
                 )?;
                 *t
@@ -733,10 +798,9 @@ fn compile(
                     WriteValue(res_id, t.size),
                     WriteTernary(
                         *o,
-                        input_node_id(node.instruction_number, *a0),
-                        input_node_id(node.instruction_number, *a1),
-                        input_node_id(node.instruction_number, *a2),
-                        t.size
+                        input_node_id(node.instruction_number, *a0, &dtypes),
+                        input_node_id(node.instruction_number, *a1, &dtypes),
+                        input_node_id(node.instruction_number, *a2, &dtypes),
                     )
                 )?;
                 *t
@@ -747,6 +811,7 @@ fn compile(
             }
         };
         config = config.ext(dtype.glsl_ext());
+        dtypes.push(dtype);
     }
 
     let root_node_id = NodeId(nodes.0.len() - 1);
@@ -1070,5 +1135,32 @@ mod test {
         });
 
         compare_tensor(output.try_into().unwrap(), expected);
+    }
+
+    #[test]
+    fn concat() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let input_fn_1 = |v: VoxelPosition| (v.x().raw > 2) as i32 as f32;
+        let input_fn_2 = |v: VoxelPosition| (v.x().raw * v.y().raw * v.z().raw) as f32;
+
+        let input1 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_1).into());
+        let input2 =
+            jit(crate::operators::rasterize_function::voxel(size, brick_size, input_fn_2).into());
+
+        let output = input1.concat(input2).unwrap();
+        let output1 = output.clone().index(0).unwrap().compile().unwrap();
+        let output2 = output.index(1).unwrap().compile().unwrap();
+
+        let expected1 =
+            crate::operators::rasterize_function::voxel(size, brick_size, move |v| input_fn_1(v));
+        let expected2 =
+            crate::operators::rasterize_function::voxel(size, brick_size, move |v| input_fn_2(v));
+
+        compare_tensor(output1.try_into().unwrap(), expected1);
+        compare_tensor(output2.try_into().unwrap(), expected2);
     }
 }
