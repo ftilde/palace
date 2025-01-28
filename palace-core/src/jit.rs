@@ -192,6 +192,7 @@ impl Display for WriteValue {
     }
 }
 
+#[derive(Copy, Clone)]
 struct NodeWithDType(NodeId, DType);
 impl Display for NodeWithDType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -684,6 +685,7 @@ fn compile(
         )?;
     }
 
+    #[derive(Debug)]
     struct Node<'a> {
         instr: &'a Instruction,
         id: Id,
@@ -701,14 +703,15 @@ fn compile(
     // ("nodes"), which automatically deduplicates.
 
     let mut nodes: OrderedSet<Node> = OrderedSet(Vec::new());
-    let mut instruction_to_node: Vec<NodeId> = Vec::new();
+    dbg!(&instructions);
+    let mut instruction_to_node: Vec<NodeWithDType> = Vec::new();
 
     for (i, instr) in instructions.iter().enumerate() {
         let id = match instr {
             Instruction::Const(const_value) => const_value.id(),
             Instruction::Unary(dtype, unary_op, offset) => {
                 let node_num = instruction_to_node[i - offset.0];
-                Id::combine(&[dtype.id(), unary_op.id(), nodes.0[node_num.0].id])
+                Id::combine(&[dtype.id(), unary_op.id(), nodes.0[node_num.0 .0].id])
             }
             Instruction::Binary(dtype, bin_op, offset_l, offset_r) => {
                 let node_num_l = instruction_to_node[i - offset_l.0];
@@ -716,8 +719,8 @@ fn compile(
                 Id::combine(&[
                     dtype.id(),
                     bin_op.id(),
-                    nodes.0[node_num_l.0].id,
-                    nodes.0[node_num_r.0].id,
+                    nodes.0[node_num_l.0 .0].id,
+                    nodes.0[node_num_r.0 .0].id,
                 ])
             }
             Instruction::Ternary(dtype, bin_op, offset_0, offset_1, offset_2) => {
@@ -727,9 +730,9 @@ fn compile(
                 Id::combine(&[
                     dtype.id(),
                     bin_op.id(),
-                    nodes.0[node_num_0.0].id,
-                    nodes.0[node_num_1.0].id,
-                    nodes.0[node_num_2.0].id,
+                    nodes.0[node_num_0.0 .0].id,
+                    nodes.0[node_num_1.0 .0].id,
+                    nodes.0[node_num_2.0 .0].id,
                 ])
             }
             Instruction::Read(dtype, input_id) => Id::combine(&[dtype.id(), input_id.id()]),
@@ -741,19 +744,17 @@ fn compile(
             instruction_number: i,
         });
 
-        instruction_to_node.push(NodeId(node_id));
+        let node_id = NodeId(node_id);
+        let dtype = instr.dtype();
+        instruction_to_node.push(NodeWithDType(node_id, dtype));
     }
 
-    let input_node_id =
-        |own_instruction_number: usize, input_offset: InstructionOffset, dtypes: &Vec<DType>| {
-            let input_instruction_number = own_instruction_number - input_offset.0;
-            let dtype = dtypes[input_instruction_number];
-            let id = instruction_to_node[input_instruction_number];
-            NodeWithDType(id, dtype)
-        };
+    let input_node_id = |own_instruction_number: usize, input_offset: InstructionOffset| {
+        let input_instruction_number = own_instruction_number - input_offset.0;
+        instruction_to_node[input_instruction_number]
+    };
 
-    let mut dtypes = Vec::new();
-    for (i, node) in nodes.0.iter().enumerate() {
+    for (i, node) in dbg!(&nodes.0).iter().enumerate() {
         let res_id = NodeId(i);
         let dtype = match node.instr {
             Instruction::Const(c) => {
@@ -768,7 +769,7 @@ fn compile(
                     res_id,
                     VecLoop(t.size),
                     WriteValue(res_id, t.size),
-                    WriteUnary(*o, input_node_id(node.instruction_number, *a, &dtypes))
+                    WriteUnary(*o, input_node_id(node.instruction_number, *a))
                 )?;
                 *t
             }
@@ -782,8 +783,8 @@ fn compile(
                     WriteValue(res_id, t.size),
                     WriteBin(
                         *o,
-                        input_node_id(node.instruction_number, *l, &dtypes),
-                        input_node_id(node.instruction_number, *r, &dtypes),
+                        input_node_id(node.instruction_number, *l),
+                        input_node_id(node.instruction_number, *r),
                     )
                 )?;
                 *t
@@ -798,9 +799,9 @@ fn compile(
                     WriteValue(res_id, t.size),
                     WriteTernary(
                         *o,
-                        input_node_id(node.instruction_number, *a0, &dtypes),
-                        input_node_id(node.instruction_number, *a1, &dtypes),
-                        input_node_id(node.instruction_number, *a2, &dtypes),
+                        input_node_id(node.instruction_number, *a0),
+                        input_node_id(node.instruction_number, *a1),
+                        input_node_id(node.instruction_number, *a2),
                     )
                 )?;
                 *t
@@ -811,7 +812,6 @@ fn compile(
             }
         };
         config = config.ext(dtype.glsl_ext());
-        dtypes.push(dtype);
     }
 
     let root_node_id = NodeId(nodes.0.len() - 1);
