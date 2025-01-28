@@ -1,10 +1,11 @@
 use std::alloc::Layout;
 
 use ash::vk;
+use itertools::Itertools;
 
 use crate::{
-    array::ChunkIndex,
-    data::LocalCoordinate,
+    array::{ChunkIndex, TensorMetaData},
+    data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate},
     dim::{Dimension, DynDimension},
     dtypes::{DType, StaticElementType},
     operators::tensor::TensorOperator,
@@ -353,5 +354,56 @@ void main() {
             pipeline.push_descriptor_set(0, descriptor_config);
             pipeline.dispatch(device, global_size);
         });
+    }
+}
+
+pub struct ChunkNeighborhood<'a, D: DynDimension> {
+    pub begin_chunk: Vector<D, ChunkCoordinate>,
+    pub end_chunk: Vector<D, ChunkCoordinate>, //inclusive!
+    md: &'a TensorMetaData<D>,
+}
+
+impl<'a, D: DynDimension> ChunkNeighborhood<'a, D> {
+    pub fn around(
+        md: &'a TensorMetaData<D>,
+        pos: ChunkIndex,
+        expand_minus: Vector<D, GlobalCoordinate>,
+        expand_plus: Vector<D, GlobalCoordinate>,
+    ) -> Self {
+        let out_info = md.chunk_info(pos);
+        let out_begin = out_info.begin();
+        let out_end = out_info.end();
+
+        let in_begin = out_begin
+            .clone()
+            .zip(&expand_minus, |l, r| l.raw.saturating_sub(r.raw).into());
+        let in_end = out_end
+            .clone()
+            .zip(&expand_plus, |l, r| l.raw + r.raw)
+            .zip(&md.dimensions, |l, r| GlobalCoordinate::from(l.min(r.raw)));
+
+        let begin_chunk = md.chunk_pos(&in_begin);
+        let end_chunk = md.chunk_pos(&in_end.map(|v| v - 1u32));
+
+        Self {
+            begin_chunk,
+            end_chunk,
+            md,
+        }
+    }
+
+    pub fn chunk_indices_linear<'b>(&'b self) -> impl Iterator<Item = ChunkIndex> + 'b {
+        self.chunk_positions_linear()
+            .map(|p| self.md.chunk_index(&p))
+    }
+
+    pub fn chunk_positions_linear<'b>(&self) -> impl Iterator<Item = Vector<D, ChunkCoordinate>> {
+        let nd = self.md.dim().n();
+
+        (0..nd)
+            .into_iter()
+            .map(|i| self.begin_chunk[i].raw..=self.end_chunk[i].raw)
+            .multi_cartesian_product()
+            .map(|coordinates| Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap())
     }
 }

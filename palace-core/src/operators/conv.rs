@@ -1,10 +1,10 @@
 use ash::vk;
 use futures::StreamExt;
-use itertools::Itertools;
 
 use crate::{
     array::ChunkIndex,
-    data::ChunkCoordinate,
+    chunk_utils::ChunkNeighborhood,
+    data::GlobalCoordinate,
     dim::DynDimension,
     dtypes::{DType, ElementType},
     op_descriptor,
@@ -211,28 +211,13 @@ void main() {
                 positions.sort_by_key(|(v, _)| v.0);
 
                 let requests = positions.into_iter().map(|(pos, _)| {
-                    let out_info = m_out.chunk_info(pos);
-                    let out_begin = out_info.begin();
-                    let out_end = out_info.end();
+                    let extent_vec = Vector::<_, GlobalCoordinate>::fill_with_len(0.into(), nd)
+                        .map_element(dim, |_v| extent.into());
+                    let chunk_neighbors =
+                        ChunkNeighborhood::around(&m_out, pos, extent_vec.clone(), extent_vec);
 
-                    let in_begin = out_begin
-                        .clone()
-                        .map_element(dim, |v| (v.raw.saturating_sub(extent as u32)).into());
-                    let in_end = out_end
-                        .clone()
-                        .map_element(dim, |v| (v + extent as u32).min(m_out.dimensions[dim]));
-
-                    let in_begin_brick = m_in.chunk_pos(&in_begin);
-                    let in_end_brick = m_in.chunk_pos(&in_end.map(|v| v - 1u32));
-
-                    let in_brick_positions = (0..nd)
-                        .into_iter()
-                        .map(|i| in_begin_brick[i].raw..=in_end_brick[i].raw)
-                        .multi_cartesian_product()
-                        .map(|coordinates| {
-                            Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap()
-                        })
-                        .collect::<Vec<_>>();
+                    let in_brick_positions =
+                        chunk_neighbors.chunk_positions_linear().collect::<Vec<_>>();
 
                     let intersecting_bricks = ctx.group(in_brick_positions.iter().map(|pos| {
                         input.chunks.request_gpu(
