@@ -298,6 +298,51 @@ mod test {
     }
 
     #[test]
+    fn variable_gaussian() {
+        let size = VoxelPosition::fill(20.into());
+        let brick_size_full = size.local();
+        let brick_size = LocalVoxelPosition::fill(4.into());
+
+        let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v.x().raw < size.x().raw / 2 {
+                0.1
+            } else {
+                0.9
+            }
+        });
+
+        let seeds = crate::operators::rasterize_function::voxel(size, brick_size_full, move |v| {
+            if v == VoxelPosition::fill(0.into()) {
+                0.0
+            } else if v == size - VoxelPosition::fill(1.into()) {
+                1.0
+            } else {
+                -2.0
+            }
+        });
+
+        let expected =
+            crate::operators::rasterize_function::voxel(size, brick_size_full, move |v| {
+                if v.x().raw < size.x().raw / 2 {
+                    0.0
+                } else {
+                    1.0
+                }
+            });
+
+        let cfg = Default::default();
+
+        let weights = random_walker_weights_variable_gaussian(vol, 1, 1e-5);
+        let weights = crate::operators::rechunk::rechunk(
+            weights,
+            Vector::fill(crate::operators::rechunk::ChunkSize::Full),
+        );
+        let v = random_walker_single_chunk(weights, seeds, cfg);
+
+        compare_tensor_approx(v, expected, cfg.max_residuum_norm);
+    }
+
+    #[test]
     fn hierarchical_rw() {
         let s = 10;
         let size = VoxelPosition::fill(s.into());

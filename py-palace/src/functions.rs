@@ -274,6 +274,25 @@ pub fn randomwalker_weights_bian(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn randomwalker_weights_variable_gaussian(
+    input: MaybeEmbeddedTensorOperatorArg,
+    min_edge_weight: f32,
+    extent: usize,
+) -> PyResult<TensorOperator> {
+    let input = input.unpack().into_inner().try_into()?;
+    let res: CTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::random_walker_weights_variable_gaussian(
+            input,
+            extent,
+            min_edge_weight,
+        )
+        .into_dyn()
+        .into();
+    Ok(res.into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 #[pyo3(signature = (weights, seeds, max_iter=None, max_residuum_norm=None))]
 pub fn randomwalker(
     py: Python,

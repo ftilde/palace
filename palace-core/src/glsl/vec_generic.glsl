@@ -94,6 +94,54 @@ float[_N] max(float[_N] l, float[_N] r) {
     return res;
 }
 
+int[_N] add(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] + r[i];
+    }
+    return res;
+}
+
+int[_N] sub(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] - r[i];
+    }
+    return res;
+}
+
+int[_N] mul(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] * r[i];
+    }
+    return res;
+}
+
+int[_N] div(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] / r[i];
+    }
+    return res;
+}
+
+int[_N] min(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = min(l[i], r[i]);
+    }
+    return res;
+}
+
+int[_N] max(int[_N] l, int[_N] r) {
+    int[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = max(l[i], r[i]);
+    }
+    return res;
+}
+
 float[_N] clamp(float[_N] val, float[_N] low, float[_N] high) {
     float[_N] res;
     for(int i=0; i<_N; i+=1) {
