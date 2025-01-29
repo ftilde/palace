@@ -703,7 +703,6 @@ fn compile(
     // ("nodes"), which automatically deduplicates.
 
     let mut nodes: OrderedSet<Node> = OrderedSet(Vec::new());
-    dbg!(&instructions);
     let mut instruction_to_node: Vec<NodeWithDType> = Vec::new();
 
     for (i, instr) in instructions.iter().enumerate() {
@@ -754,7 +753,7 @@ fn compile(
         instruction_to_node[input_instruction_number]
     };
 
-    for (i, node) in dbg!(&nodes.0).iter().enumerate() {
+    for (i, node) in nodes.0.iter().enumerate() {
         let res_id = NodeId(i);
         let dtype = match node.instr {
             Instruction::Const(c) => {
