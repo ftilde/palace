@@ -37,7 +37,7 @@ void init_regions(uint[ND] center_uint, out uint[ND] begin, out uint[ND] end) {
     int[ND] center = to_int(center_uint);
     int[ND] extent = fill(center, int(consts.extent));
     begin = to_uint(max(sub(center, extent), fill(center, 0)));
-    end = min(to_uint(add(center, extent)), consts.dimensions);
+    end = min(to_uint(add(add(center, extent), fill(center, 1))), consts.dimensions);
 }
 
 float square(float v) {
