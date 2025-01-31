@@ -6,7 +6,7 @@ use crate::{
     data::{ChunkCoordinate, GlobalCoordinate},
     dim::{DynDimension, LargerDim},
     dtypes::{ScalarType, StaticElementType},
-    jit::{self},
+    jit::{self, JitTensorOperator},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
     operators::{
@@ -205,6 +205,26 @@ fn mean_filter<D: DynDimension>(
     crate::operators::conv::separable_convolution(t, kernels)
 }
 
+fn variances<D: DynDimension>(
+    t: JitTensorOperator<D>,
+    t_mean: JitTensorOperator<D>,
+    extent: usize,
+) -> JitTensorOperator<D> {
+    let size = 2 * extent + 1;
+    let nd = t.metadata().unwrap().dim().n();
+    let num_elements = size.pow(nd as _);
+    let kernel = crate::operators::array::from_vec(vec![1.0; size]);
+    let kernels = Vector::fill_with_len(&kernel, nd);
+
+    let diff = t.clone().sub(t_mean.clone()).unwrap();
+    let sqrd = diff.clone().mul(diff).unwrap();
+
+    let diff_sum =
+        crate::operators::conv::separable_convolution(sqrd.compile().unwrap().into(), kernels);
+    let diff_sum = jit::jit(diff_sum.into());
+    diff_sum.div(((num_elements - 1) as f32).into()).unwrap()
+}
+
 fn variance<D: DynDimension>(
     t: TensorOperator<D, StaticElementType<f32>>,
     extent: usize,
@@ -245,10 +265,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
     //TODO: This does not quite work like this. Border handling
     let t_mean = jit::jit(mean_filter(tensor.clone(), extent).into());
     let t = jit::jit(tensor.clone().into());
-    let diff = t.clone().sub(t_mean.clone()).unwrap();
-    let sqrd = diff.clone().mul(diff).unwrap();
-    // TODO: Norm factor is wrong here!!!
-    let t_var = jit::jit(mean_filter(sqrd.compile().unwrap().try_into().unwrap(), extent).into());
+    let t_var = variances(t.clone(), t_mean.clone(), extent);
 
     let add = t_var.clone().log().unwrap().mul(0.5.into()).unwrap();
     let mul = jit::scalar(0.5).div(t_var).unwrap();
@@ -288,7 +305,6 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                     .vec::<u32>(nd, "center_chunk_offset")
                     .scalar::<u32>("extent");
                 let num_neighbors_max = 3u32.pow(nd as u32);
-                assert!(num_neighbors_max > 0);
 
                 let pipeline = device.request_state(
                     (md.chunk_size.hmul(), nd, num_neighbors_max, &push_constants),
@@ -337,6 +353,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| mean_mul_add.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
+                            assert!(neighbors.len() < num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()
                                 .chain(std::iter::repeat(&neighbors[0]))
@@ -374,6 +391,17 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                     pipeline.dispatch(device, chunk_info.mem_elements());
                                 }
                             });
+
+                            //let foo = super::download::<Vector<crate::dim::D2, i8>>(
+                            //    *ctx, device, &out_chunk,
+                            //)
+                            //.await;
+                            //for (i, v) in foo.iter().enumerate().take(100) {
+                            //    println!("{} {:?}", i, v);
+                            //}
+                            //for v in foo.iter() {
+                            //    assert!(v.map(|v| v.abs() as usize <= **extent).all(), "{:?}", v);
+                            //}
 
                             unsafe {
                                 out_chunk.initialized(
@@ -443,7 +471,6 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                     .scalar::<f32>("min_edge_weight");
 
                 let num_neighbors_max = 3u32.pow(nd as u32);
-                assert!(num_neighbors_max > 0);
 
                 let pipeline = device.request_state(
                     (md.chunk_size.hmul(), nd, num_neighbors_max, &push_constants),
@@ -509,6 +536,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| tensor.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
+                            assert!(neighbors.len() < num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()
                                 .chain(std::iter::repeat(&neighbors[0]))
