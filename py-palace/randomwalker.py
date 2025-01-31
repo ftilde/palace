@@ -185,7 +185,7 @@ def apply_rw_mode(input):
 
         case "hierarchical":
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
-            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
+            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache()
             return (input, rw_result)
 
 def render(size, events: pc.Events):
