@@ -37,5 +37,7 @@ void swap(inout float v1, inout float v2) {
 
 
 #define NaN (intBitsToFloat(int(0xFFC00000u)));
+#define POS_INFINITY (uintBitsToFloat(0x7F800000));
+#define NEG_INFINITY (uintBitsToFloat(0xFF800000));
 
 #endif

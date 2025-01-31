@@ -50,38 +50,45 @@ void main() {
         return;
     }
 
-    int[ND] current = to_int(add(from_linear(current_linear, consts.chunk_size), consts.center_chunk_offset));
+    uint[ND] current = add(from_linear(current_linear, consts.chunk_size), consts.center_chunk_offset);
+    int[ND] current_i = to_int(current);
 
-    int[ND] extent = fill(current, int(consts.extent));
-    uint[ND] region_begin = to_uint(max(sub(current, extent), fill(current, 0)));
-    uint[ND] region_end = min(to_uint(add(add(current, extent), fill(current, 1))), consts.dimensions);
+    int[ND] best_offset;
 
-    uint[ND] region_size = sub(region_end, region_begin);
-    uint region_size_linear = hmul(region_size);
+    if(all(less_than(current, consts.dimensions))) {
+        int[ND] extent = fill(current_i, int(consts.extent));
+        uint[ND] region_begin = to_uint(max(sub(current_i, extent), fill(current_i, 0)));
+        uint[ND] region_end = min(to_uint(add(add(current_i, extent), fill(current_i, 1))), consts.dimensions);
 
-    TensorMetaData(ND) md;
-    md.dimensions = consts.dimensions;
-    md.chunk_size = consts.chunk_size;
+        uint[ND] region_size = sub(region_end, region_begin);
+        uint region_size_linear = hmul(region_size);
 
-    float local_sample = input_buf.values[current_linear];
+        TensorMetaData(ND) md;
+        md.dimensions = consts.dimensions;
+        md.chunk_size = consts.chunk_size;
 
-    uint[ND] arg_max = region_begin;
-    float max_fit = 0;
+        float local_sample = input_buf.values[current_linear];
 
-    for(int i=0; i<region_size_linear; ++i) {
-        uint[ND] region_pos = from_linear(i, region_size);
-        uint[ND] pos = add(region_pos, region_begin);
+        uint[ND] arg_max = current;
+        float max_fit = NEG_INFINITY;
 
-        float[3] mean_mul_add = sample_neighbors(md, pos);
-        float fit_value = fit_quality(local_sample, mean_mul_add);
+        for(int i=0; i<region_size_linear; ++i) {
+            uint[ND] region_pos = from_linear(i, region_size);
+            uint[ND] pos = add(region_pos, region_begin);
 
-        if(fit_value > max_fit) {
-            arg_max = pos;
-            max_fit = fit_value;
+            float[3] mean_mul_add = sample_neighbors(md, pos);
+            float fit_value = fit_quality(local_sample, mean_mul_add);
+
+            if(fit_value > max_fit) {
+                arg_max = pos;
+                max_fit = fit_value;
+            }
         }
-    }
+        best_offset = sub(to_int(arg_max), current_i);
 
-    int[ND] best_offset = sub(to_int(arg_max), current);
+    } else {
+        best_offset = fill(best_offset, 127);
+    }
 
     for(int i=0; i<ND; ++i) {
         best_centers.values[current_linear][i] = int8_t(best_offset[i]);
