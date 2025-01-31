@@ -353,7 +353,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| mean_mul_add.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
-                            assert!(neighbors.len() < num_neighbors_max as _);
+                            assert!(neighbors.len() <= num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()
                                 .chain(std::iter::repeat(&neighbors[0]))
@@ -536,7 +536,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| tensor.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
-                            assert!(neighbors.len() < num_neighbors_max as _);
+                            assert!(neighbors.len() <= num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()
                                 .chain(std::iter::repeat(&neighbors[0]))
