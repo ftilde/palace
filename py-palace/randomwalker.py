@@ -24,7 +24,7 @@ def read_seeds(path):
             raise f"Unknown suffix {o}"
 
 ram_size = 8 << 30
-vram_size = 10 << 30
+vram_size = 8 << 30
 disk_cache_size = 20 << 30
 
 parser = argparse.ArgumentParser()
