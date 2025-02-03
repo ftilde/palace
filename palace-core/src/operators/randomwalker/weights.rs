@@ -34,6 +34,9 @@ pub fn random_walker_weights<D: DynDimension + LargerDim>(
         WeightFunction::BianMean { extent } => {
             random_walker_weights_bian(tensor, extent, min_edge_weight)
         }
+        WeightFunction::VarGaussian { extent } => {
+            random_walker_weights_variable_gaussian(tensor, extent, min_edge_weight)
+        }
     }
 }
 
@@ -55,6 +58,7 @@ pub fn random_walker_weights_lod<D: DynDimension + LargerDim>(
 pub enum WeightFunction {
     Grady { beta: f32 },
     BianMean { extent: usize },
+    VarGaussian { extent: usize },
 }
 
 #[derive(Copy, Clone, Identify)]
