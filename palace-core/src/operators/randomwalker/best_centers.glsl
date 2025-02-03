@@ -62,8 +62,8 @@ void main() {
 
     if(all(less_than(current, consts.dimensions))) {
         int[ND] extent = fill(current_i, int(consts.extent));
-        uint[ND] region_begin = to_uint(max(sub(current_i, extent), fill(current_i, 0)));
-        uint[ND] region_end = min(to_uint(add(add(current_i, extent), fill(current_i, 1))), consts.dimensions);
+        uint[ND] region_begin = to_uint(max(sub(current_i, extent), extent));
+        uint[ND] region_end = to_uint(min(add(add(current_i, extent), fill(current_i, 1)), sub(to_int(consts.dimensions), extent)));
 
         uint[ND] region_size = sub(region_end, region_begin);
         uint region_size_linear = hmul(region_size);
@@ -74,7 +74,7 @@ void main() {
 
         float local_sample = input_buf.values[current_linear];
 
-        uint[ND] arg_max = current;
+        uint[ND] arg_max = region_begin;
         float max_fit = NEG_INFINITY;
 
         for(int i=0; i<region_size_linear; ++i) {
