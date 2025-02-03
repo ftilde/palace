@@ -40,7 +40,12 @@ float fit_quality(float value, float[3] mean_mul_add) {
     float add = mean_mul_add[2];
 
     float diff = value-mean;
-    return - diff * diff * mul + add;
+    if(isinf(mul)) {
+        // -> zero variance
+        return diff == 0 ? 1.0 : NEG_INFINITY;
+    } else {
+        return - diff * diff * mul + add;
+    }
 }
 
 void main() {
