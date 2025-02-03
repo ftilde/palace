@@ -311,7 +311,7 @@ uint hmul(uint[_N] v) {
 }
 
 float dot(float[_N] l, float[_N] r) {
-    float res;
+    float res=0.0;
     for(int i=0; i<_N; i+= 1) {
         res += l[i]*r[i];
     }
