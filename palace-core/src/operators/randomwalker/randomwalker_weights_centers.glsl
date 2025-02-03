@@ -33,6 +33,60 @@ declare_push_consts(consts);
 // dim
 // min_edge_weight
 
+struct RegionIter {
+    uint current_i;
+    uint max_i;
+    uint[ND] region_begin;
+    uint[ND] region_size;
+    uint[ND] overlap_begin;
+    uint[ND] overlap_end;
+    float[ND] overlap_center;
+    float[ND] to_other_p;
+};
+
+RegionIter region_iter(uint[ND] region_begin, uint[ND] region_end, uint[ND] overlap_begin, uint[ND] overlap_end, uint[ND] this_p, uint[ND] other_p) {
+    RegionIter o;
+
+    o.current_i = 0;
+    o.region_size = sub(region_end, region_begin);
+    o.max_i = hmul(o.region_size);
+    o.overlap_begin = min(sub(overlap_begin, region_begin), o.region_size);
+    o.overlap_end = saturating_sub(overlap_end, region_begin); //TODO: possibly wrong
+    o.region_begin = region_begin;
+    o.overlap_center = scale(to_float(add(sub(o.overlap_end, fill(o.overlap_end, 1)), o.overlap_begin)), 0.5);
+    o.to_other_p = sub(to_float(other_p), to_float(this_p));
+
+    return o;
+}
+
+bool next_value(in out RegionIter iter, out uint[ND] pos) {
+    while(iter.current_i < iter.max_i) {
+        uint[ND] region_pos = from_linear(iter.current_i, iter.region_size);
+        iter.current_i += 1;
+
+        bool in_overlap = all(less_than_equal(iter.overlap_begin, region_pos)) && all(less_than(region_pos, iter.overlap_end));
+        bool in_this_region;
+        if(in_overlap) {
+            float[ND] from_overlap_center = sub(to_float(region_pos), iter.overlap_center);
+            if(dot(from_overlap_center, iter.to_other_p) < 0) {
+                in_this_region = true;
+            } else {
+                // Either in other overlap half or ambiguous (on the border)
+                in_this_region = false;
+            }
+        } else {
+            in_this_region = true;
+        }
+        if(in_this_region) {
+            pos = add(region_pos, iter.region_begin);
+            return true;
+        }
+    }
+    return false;
+}
+
+
+
 void init_regions(uint[ND] center_uint, out uint[ND] begin, out uint[ND] end) {
     int[ND] center = to_int(center_uint);
     int[ND] extent = fill(center, int(consts.extent));
@@ -57,30 +111,28 @@ float sample_tensor(TensorMetaData(ND) md, uint[ND] global_pos) {
     return neighbor_buf[neighbor_linear].values[pos_in_chunk_linear];
 }
 
-void mean_and_var(uint[ND] begin, uint[ND] end, out float mean, out float var, out uint region_size_linear) {
-    uint[ND] region_size = sub(end, begin);
-    region_size_linear = hmul(region_size);
-
+void mean_and_var(uint[ND] begin, uint[ND] end, uint[ND] overlap_begin, uint[ND] overlap_end, uint[ND] this_p, uint[ND] other_p, out float mean, out float var, out uint region_size_linear) {
     TensorMetaData(ND) md;
     md.dimensions = consts.dimensions;
     md.chunk_size = consts.chunk_size;
 
     float sum = 0.0;
-    for(int i=0; i<region_size_linear; ++i) {
-        uint[ND] region_pos = from_linear(i, region_size);
-        uint[ND] pos = add(region_pos, begin);
+    region_size_linear = 0;
+    RegionIter iter = region_iter(begin, end, overlap_begin, overlap_end, this_p, other_p);
+    uint[ND] pos;
 
+    while(next_value(iter, pos)) {
         float val = sample_tensor(md, pos);
 
         sum += val;
+        region_size_linear += 1;
     }
     mean = sum / float(region_size_linear);
 
     float sum_of_diffs = 0.0;
-    for(int i=0; i<region_size_linear; ++i) {
-        uint[ND] region_pos = from_linear(i, region_size);
-        uint[ND] pos = add(region_pos, begin);
+    iter = region_iter(begin, end, overlap_begin, overlap_end, this_p, other_p);
 
+    while(next_value(iter, pos)) {
         float val = sample_tensor(md, pos);
 
         sum_of_diffs += square(val - mean);
@@ -153,10 +205,13 @@ void main() {
         init_regions(current_center, begin1, end1);
         init_regions(neighbor_center, begin2, end2);
 
+        uint[ND] overlap_begin = max(begin1, begin2);
+        uint[ND] overlap_end = min(end1, end2);
+
         float mean1, mean2, var1, var2;
         uint n1, n2;
-        mean_and_var(begin1, end1, mean1, var1, n1);
-        mean_and_var(begin2, end2, mean2, var2, n2);
+        mean_and_var(begin1, end1, overlap_begin, overlap_end, current, neighbor, mean1, var1, n1);
+        mean_and_var(begin2, end2, overlap_begin, overlap_end, neighbor, current, mean2, var2, n2);
 
         float weight = bhattacharyya_var_gaussian(mean1, mean2, var1, var2, n1);
 
