@@ -14,6 +14,14 @@ uint[_N] sub(uint[_N] l, uint[_N] r) {
     return res;
 }
 
+uint[_N] saturating_sub(uint[_N] l, uint[_N] r) {
+    uint[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] > r[i] ? l[i] - r[i] : 0;
+    }
+    return res;
+}
+
 uint[_N] mul(uint[_N] l, uint[_N] r) {
     uint[_N] res;
     for(int i=0; i<_N; i+=1) {
