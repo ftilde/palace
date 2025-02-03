@@ -78,6 +78,14 @@ float[_N] mul(float[_N] l, float[_N] r) {
     return res;
 }
 
+float[_N] scale(float[_N] l, float a) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = l[i] * a;
+    }
+    return res;
+}
+
 float[_N] div(float[_N] l, float[_N] r) {
     float[_N] res;
     for(int i=0; i<_N; i+=1) {
