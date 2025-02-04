@@ -86,6 +86,14 @@ float[_N] scale(float[_N] l, float a) {
     return res;
 }
 
+float[_N] neg(float[_N] l) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        res[i] = -l[i];
+    }
+    return res;
+}
+
 float[_N] div(float[_N] l, float[_N] r) {
     float[_N] res;
     for(int i=0; i<_N; i+=1) {
