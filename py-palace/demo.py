@@ -213,7 +213,7 @@ def render(size, events):
         mouse_pos_and_value = None
 
     def render_slice(v, state, tf):
-        out = palace_util.render_slice(v, state, tf, 10.0)
+        out = palace_util.render_slice(v, state, tf, 1.0)
 
         def inspect(size, events):
             global mouse_pos_and_value
