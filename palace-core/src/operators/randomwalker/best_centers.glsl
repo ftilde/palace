@@ -44,7 +44,7 @@ float fit_quality(float value, float[3] mean_mul_add) {
         // -> zero variance
         return diff == 0 ? 1.0 : NEG_INFINITY;
     } else {
-        return - diff * diff * mul + add;
+        return - (diff * diff * mul + add);
     }
 }
 
