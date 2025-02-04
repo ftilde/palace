@@ -239,6 +239,12 @@ fn variance<D: DynDimension>(
     let t = jit::jit(t.into());
     let t_mean = jit::jit(t_mean.into());
 
+    // TODO: This is not actually the correct estimate as in Angs paper.
+    // We actually want
+    // diff := t_mean[center] - t[pos]
+    // instead of (what we have now)
+    // diff := t_mean[pos] - t[pos]
+
     let diff = t.sub(t_mean).unwrap();
     let diff_sq = diff
         .clone()
@@ -266,7 +272,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
     extent: usize,
 ) -> TensorOperator<D::Larger, StaticElementType<i8>> {
-    //TODO: This does not quite work like this. Border handling
+    //TODO: The border handling is not quite right here.
     let t_mean = jit::jit(mean_filter(tensor.clone(), extent).into());
     let t = jit::jit(tensor.clone().into());
     let t_var = variances(t.clone(), t_mean.clone(), extent);
@@ -395,17 +401,6 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                     pipeline.dispatch(device, chunk_info.mem_elements());
                                 }
                             });
-
-                            //let foo = super::download::<Vector<crate::dim::D2, i8>>(
-                            //    *ctx, device, &out_chunk,
-                            //)
-                            //.await;
-                            //for (i, v) in foo.iter().enumerate().take(100) {
-                            //    println!("{} {:?}", i, v);
-                            //}
-                            //for v in foo.iter() {
-                            //    assert!(v.map(|v| v.abs() as usize <= **extent).all(), "{:?}", v);
-                            //}
 
                             unsafe {
                                 out_chunk.initialized(
