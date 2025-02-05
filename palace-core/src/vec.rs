@@ -746,6 +746,9 @@ impl<D: DynDimension> Vector<D, u32> {
     pub fn hmul(&self) -> usize {
         self.iter().map(|v| *v as usize).product()
     }
+    pub fn hadd(&self) -> usize {
+        self.iter().map(|v| *v as usize).sum()
+    }
 }
 
 //impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {

@@ -14,7 +14,7 @@ use crate::{
     storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
     task::{Request, RequestStream},
     vulkan::{
-        pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig},
+        pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::{Config, Shader},
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -24,6 +24,8 @@ use crate::{
 enum NullaryOp {
     Const(ConstValue),
     Read(InputId),
+    Position,
+    Dimensions,
 }
 
 struct WriteNullary(NullaryOp);
@@ -32,6 +34,32 @@ impl Display for WriteNullary {
         match &self.0 {
             NullaryOp::Const(const_value) => write!(f, "{}", const_value),
             NullaryOp::Read(input_id) => write!(f, "{}", input_id),
+            NullaryOp::Position => write!(
+                f,
+                "add(from_linear(gID, consts.chunk_size), consts.chunk_offset)",
+            ),
+            NullaryOp::Dimensions => write!(f, "consts.dimensions"),
+        }
+    }
+}
+
+#[derive(id::Identify, Clone, Copy, Debug)]
+pub enum FoldOp {
+    Sum,
+    Mul,
+    Min,
+    Max,
+}
+
+struct WriteFold(FoldOp, NodeId, NodeId);
+
+impl Display for WriteFold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            FoldOp::Sum => write!(f, "{}+{}[{}]", self.1, self.2, FOLD_LOOP_VARIABLE_NAME),
+            FoldOp::Mul => write!(f, "{}*{}[{}]", self.1, self.2, FOLD_LOOP_VARIABLE_NAME),
+            FoldOp::Min => write!(f, "min({},{}[{}])", self.1, self.2, FOLD_LOOP_VARIABLE_NAME),
+            FoldOp::Max => write!(f, "min({},{}[{}])", self.1, self.2, FOLD_LOOP_VARIABLE_NAME),
         }
     }
 }
@@ -44,6 +72,7 @@ pub enum UnaryOp {
     Cast(DType),
     Index(u32),
     Splat(u32),
+    Fold(FoldOp),
 }
 
 impl UnaryOp {
@@ -87,20 +116,37 @@ impl UnaryOp {
                     );
                 }
             }
+            UnaryOp::Fold(_) => input.scalar.into(),
         })
     }
 }
-struct WriteUnary(UnaryOp, NodeWithDType);
+struct WriteUnary(NodeId, UnaryOp, NodeWithDType);
 impl Display for WriteUnary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let v = &self.1;
-        match self.0 {
+        let v = &self.2;
+        match self.1 {
             UnaryOp::Log => write!(f, "log({})", v),
             UnaryOp::Abs => write!(f, "abs({})", v),
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
             UnaryOp::Index(i) => write!(f, "{}[{}]", v.0, i),
             UnaryOp::Splat(_i) => write!(f, "{}", v),
+            UnaryOp::Fold(fold_op) => {
+                if v.1.size == 1 {
+                    write!(f, "{}", v.0)
+                } else {
+                    let fold = WriteFold(fold_op, self.0, v.0);
+                    write!(
+                        f,
+                        "{input}[0]; for(int {var} = 1; {var} < {size}; ++{var}) {{ {out} = {fold};}}",
+                        input = v.0,
+                        size = v.1.size,
+                        out = self.0,
+                        fold = fold,
+                        var = FOLD_LOOP_VARIABLE_NAME
+                    )
+                }
+            }
         }
     }
 }
@@ -186,6 +232,7 @@ impl TernaryOp {
 }
 
 const VEC_LOOP_VARIABLE_NAME: &'static str = "i";
+const FOLD_LOOP_VARIABLE_NAME: &'static str = "j";
 struct VecLoop(u32);
 impl Display for VecLoop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -528,6 +575,30 @@ pub fn scalar<D: DynDimension>(value: f32) -> JitTensorOperator<D> {
     value.into()
 }
 
+pub fn dimensions<D: DynDimension>(d: D) -> JitTensorOperator<D> {
+    let dtype = ScalarType::U32.vec(d.n() as _);
+    let op = Instruction::NullAry(dtype, NullaryOp::Dimensions);
+    let ops = vec![op];
+    JitTensorOperator {
+        instructions: ops,
+        metadata: None,
+        dtype,
+        operators: OrderedSet(Vec::new()),
+    }
+}
+
+pub fn position<D: DynDimension>(d: D) -> JitTensorOperator<D> {
+    let dtype = ScalarType::U32.vec(d.n() as _);
+    let op = Instruction::NullAry(dtype, NullaryOp::Position);
+    let ops = vec![op];
+    JitTensorOperator {
+        instructions: ops,
+        metadata: None,
+        dtype,
+        operators: OrderedSet(Vec::new()),
+    }
+}
+
 impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
     fn from(c: TensorOperator<D, DType>) -> Self {
         let dtype = c.chunks.dtype();
@@ -584,6 +655,18 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn index(self, i: u32) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Index(i), self)
+    }
+    pub fn hmul(self) -> Self {
+        Self::unary_op(UnaryOp::Fold(FoldOp::Mul), self).unwrap()
+    }
+    pub fn hadd(self) -> Self {
+        Self::unary_op(UnaryOp::Fold(FoldOp::Sum), self).unwrap()
+    }
+    pub fn hmin(self) -> Self {
+        Self::unary_op(UnaryOp::Fold(FoldOp::Min), self).unwrap()
+    }
+    pub fn hmax(self) -> Self {
+        Self::unary_op(UnaryOp::Fold(FoldOp::Max), self).unwrap()
     }
 
     pub fn select(
@@ -649,9 +732,10 @@ fn compile(
     input_types: &Vec<DType>,
 ) -> Result<(String, Config), crate::Error> {
     let mut shader = String::new();
-    let mut config = Config::new();
+    let mut config = Config::new().ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT));
 
     writeln!(&mut shader, "#include<size_util.glsl>")?;
+    writeln!(&mut shader, "#include<vec.glsl>")?;
 
     for (i, dtype) in input_types.iter().enumerate() {
         writeln!(
@@ -682,6 +766,7 @@ fn compile(
     writeln!(
         &mut shader,
         r#"
+            declare_push_consts(consts);
             void main() {{
                 uint gID = global_position_linear;
 
@@ -787,7 +872,7 @@ fn compile(
                     res_id,
                     VecLoop(t.size),
                     WriteValue(res_id, t.size),
-                    WriteUnary(*o, input_node_id(node.instruction_number, *a))
+                    WriteUnary(res_id, *o, input_node_id(node.instruction_number, *a))
                 )?;
                 *t
             }
@@ -862,12 +947,18 @@ impl<D: DynDimension> JitTensorOperator<D> {
             return Ok(self.operators.0.pop().unwrap());
         }
 
+        let nd = metadata.dim().n();
+        let push_constants = DynPushConstants::new()
+            .vec::<u32>(nd, "dimensions")
+            .vec::<u32>(nd, "chunk_size")
+            .vec::<u32>(nd, "chunk_offset");
+
         Ok(TensorOperator::with_state(
             op_descriptor!(),
             self.dtype,
             metadata.clone(),
-            (self, DataParam(metadata)),
-            |ctx, positions, (jit_operator, metadata)| {
+            (self, DataParam(metadata), DataParam(push_constants)),
+            |ctx, positions, (jit_operator, metadata, push_constants)| {
                 async move {
                     let inplace_operator_index = jit_operator.operators.0.iter().position(|o| {
                         o.dtype().element_layout() == jit_operator.dtype.element_layout()
@@ -894,12 +985,14 @@ impl<D: DynDimension> JitTensorOperator<D> {
                             &input_dtypes,
                             &jit_operator.instructions,
                             num_chunk_elements,
+                            push_constants,
                         ),
-                        |device, (input_dtypes, instructions, num_chunk_elements)| {
+                        |device, (input_dtypes, instructions, num_chunk_elements, push_constants)| {
                             let (shader, config) = compile(instructions, input_dtypes)?;
                             //println!("{}", shader.as_str());
                             ComputePipelineBuilder::new(
                                 Shader::new(shader.as_str())
+                                    .push_const_block_dyn(push_constants)
                                     .define("BRICK_MEM_SIZE", num_chunk_elements)
                                     .with_config(config),
                             )
@@ -956,10 +1049,10 @@ impl<D: DynDimension> JitTensorOperator<D> {
                                     .alloc_slot_gpu(device, pos, &m.chunk_size)
                                     .map(|v| MaybeInplaceHandle::NotInplace(v)),
                             };
-                            (output, inputs)
+                            (output, (inputs, pos))
                         });
 
-                    while let Some((output, inputs)) = brick_stream.next().await {
+                    while let Some((output, (inputs, pos))) = brick_stream.next().await {
                         device.with_cmd_buffer(|cmd| {
                             let mut descriptors: Vec<&dyn AsDescriptors> = Vec::new();
                             match &output {
@@ -991,8 +1084,22 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
                             let global_size = num_chunk_elements;
 
+                            let chunk_info = metadata.chunk_info(pos);
+
                             unsafe {
+                                let has_push_consts = pipeline.has_push_constants();
+
                                 let mut pipeline = pipeline.bind(cmd);
+
+                                if has_push_consts {
+                                    pipeline.push_constant_dyn(&push_constants, |w| {
+                                        w.vec(&metadata.dimensions.raw())?;
+                                        w.vec(&metadata.chunk_size.raw())?;
+                                        w.vec(&chunk_info.begin().raw())?;
+
+                                        Ok(())
+                                    });
+                                }
 
                                 pipeline.push_descriptor_set(0, descriptor_config);
                                 pipeline.dispatch(device, global_size);
@@ -1176,5 +1283,55 @@ mod test {
 
         compare_tensor(output1.try_into().unwrap(), expected1);
         compare_tensor(output2.try_into().unwrap(), expected2);
+    }
+
+    #[test]
+    fn dimensions() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let f = move |_v: VoxelPosition| size.hmul() as f32;
+
+        let output = super::dimensions(size.dim())
+            .with_md(TensorMetaData {
+                dimensions: size,
+                chunk_size: brick_size,
+            })
+            .unwrap()
+            .hmul()
+            .cast(ScalarType::F32.into())
+            .unwrap()
+            .compile()
+            .unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| f(v));
+
+        compare_tensor(output.try_into().unwrap(), expected);
+    }
+
+    #[test]
+    fn position() {
+        let s = [4, 4, 4];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+
+        let f = move |v: VoxelPosition| v.raw().hadd() as f32;
+
+        let output = super::position(size.dim())
+            .with_md(TensorMetaData {
+                dimensions: size,
+                chunk_size: brick_size,
+            })
+            .unwrap()
+            .hadd()
+            .cast(ScalarType::F32.into())
+            .unwrap()
+            .compile()
+            .unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| f(v));
+
+        compare_tensor(output.try_into().unwrap(), expected);
     }
 }
