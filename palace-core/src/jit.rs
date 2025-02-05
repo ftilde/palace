@@ -20,6 +20,22 @@ use crate::{
     },
 };
 
+#[derive(id::Identify, Copy, Clone, Debug)]
+enum NullaryOp {
+    Const(ConstValue),
+    Read(InputId),
+}
+
+struct WriteNullary(NullaryOp);
+impl Display for WriteNullary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            NullaryOp::Const(const_value) => write!(f, "{}", const_value),
+            NullaryOp::Read(input_id) => write!(f, "{}", input_id),
+        }
+    }
+}
+
 #[derive(id::Identify, Clone, Copy, Debug)]
 pub enum UnaryOp {
     Abs,
@@ -271,7 +287,7 @@ impl ConstValue {
 
 #[derive(id::Identify, Clone, Debug)]
 enum Instruction {
-    Const(ConstValue),
+    NullAry(DType, NullaryOp),
     Unary(DType, UnaryOp, InstructionOffset),
     Binary(DType, BinOp, InstructionOffset, InstructionOffset),
     Ternary(
@@ -281,17 +297,15 @@ enum Instruction {
         InstructionOffset,
         InstructionOffset,
     ),
-    Read(DType, InputId),
 }
 
 impl Instruction {
     fn dtype(&self) -> DType {
         match self {
-            Instruction::Const(const_value) => const_value.dtype(),
+            Instruction::NullAry(dtype, ..) => *dtype,
             Instruction::Unary(dtype, ..) => *dtype,
             Instruction::Binary(dtype, ..) => *dtype,
             Instruction::Ternary(dtype, ..) => *dtype,
-            Instruction::Read(dtype, ..) => *dtype,
         }
     }
 }
@@ -343,7 +357,7 @@ fn merge_instructions<D: DynDimension>(
     let mut ops = instructions0;
     let mut new_ops = instructions1;
     for op in &mut new_ops {
-        if let Instruction::Read(_, input_id) = op {
+        if let Instruction::NullAry(_, NullaryOp::Read(input_id)) = op {
             *input_id = InputId(inputs.add(old_inputs.0[input_id.0].clone()));
         }
     }
@@ -493,7 +507,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
 impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
     fn from(c: ConstValue) -> Self {
-        let op = Instruction::Const(c);
+        let op = Instruction::NullAry(c.dtype(), NullaryOp::Const(c));
         let ops = vec![op];
         Self {
             instructions: ops,
@@ -519,7 +533,7 @@ impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
         let dtype = c.chunks.dtype();
         let metadata = Some(c.metadata.clone());
 
-        let op = Instruction::Read(dtype, InputId(0));
+        let op = Instruction::NullAry(dtype, NullaryOp::Read(InputId(0)));
         let ops = vec![op];
         Self {
             instructions: ops,
@@ -605,7 +619,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
 }
 
-#[derive(id::Identify, Clone, Debug)]
+#[derive(id::Identify, Copy, Clone, Debug)]
 struct InputId(usize);
 
 impl Display for InputId {
@@ -707,7 +721,7 @@ fn compile(
 
     for (i, instr) in instructions.iter().enumerate() {
         let id = match instr {
-            Instruction::Const(const_value) => const_value.id(),
+            Instruction::NullAry(dtype, op) => Id::combine(&[dtype.id(), op.id()]),
             Instruction::Unary(dtype, unary_op, offset) => {
                 let node_num = instruction_to_node[i - offset.0];
                 Id::combine(&[dtype.id(), unary_op.id(), nodes.0[node_num.0 .0].id])
@@ -734,7 +748,6 @@ fn compile(
                     nodes.0[node_num_2.0 .0].id,
                 ])
             }
-            Instruction::Read(dtype, input_id) => Id::combine(&[dtype.id(), input_id.id()]),
         };
 
         let node_id = nodes.add(Node {
@@ -756,9 +769,15 @@ fn compile(
     for (i, node) in nodes.0.iter().enumerate() {
         let res_id = NodeId(i);
         let dtype = match node.instr {
-            Instruction::Const(c) => {
-                writeln!(&mut shader, "{} {} = {};", c.dtype().glsl_type(), res_id, c)?;
-                c.dtype()
+            Instruction::NullAry(t, c) => {
+                writeln!(
+                    &mut shader,
+                    "{} {} = {};",
+                    t.glsl_type(),
+                    res_id,
+                    WriteNullary(*c)
+                )?;
+                *t
             }
             Instruction::Unary(t, o, a) => {
                 writeln!(
@@ -805,10 +824,6 @@ fn compile(
                 )?;
                 *t
             }
-            Instruction::Read(t, v) => {
-                writeln!(&mut shader, "{} {} = {};", t.glsl_type(), res_id, v)?;
-                *t
-            }
         };
         config = config.ext(dtype.glsl_ext());
     }
@@ -842,7 +857,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
             return Err("No metadata information in JitOperator".into());
         };
 
-        if let &[Instruction::Read(_, _)] = self.instructions.as_slice() {
+        if let &[Instruction::NullAry(_, NullaryOp::Read(_))] = self.instructions.as_slice() {
             assert_eq!(self.operators.0.len(), 1);
             return Ok(self.operators.0.pop().unwrap());
         }
