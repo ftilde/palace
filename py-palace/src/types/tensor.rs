@@ -689,6 +689,19 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                 self.inner.clone().mean_value(num_samples)
             }
 
+            //TODO: Quite annoying that we cannot annotate the default argument with the macro
+            //expansion below. Don't really know how to do that... We could maybe add the
+            //#[pyo3(...)] annotation into the list with $fn_name etc., but that seems like a lot
+            //of trouble...
+            #[pyo3(signature = (kernels, border_handling="repeat"))]
+            fn separable_convolution(
+                &self,
+                kernels: Vec<MaybeConstTensorOperator>,
+                border_handling: &str,
+            ) -> PyResult<Self> {
+                self.map_inner(|v| v.separable_convolution(kernels, border_handling))
+            }
+
             fn __getitem__(&self, py: Python, slice_args: Vec<SliceArg>) -> PyResult<Self> {
                 let slice_args = convert_slice_args(py, slice_args, &self.inner.metadata()?.dimensions)?;
 
@@ -836,7 +849,7 @@ impl TensorOperator {
         )
     }
 
-    #[pyo3(signature = (kernels, border_handling = "repeat"))]
+    #[pyo3(signature = (kernels, border_handling="repeat"))]
     fn separable_convolution(
         &self,
         kernels: Vec<MaybeConstTensorOperator>,
@@ -998,7 +1011,6 @@ impl TensorOperator {
 
 impl_embedded_tensor_operator_with_delegate!(
     rechunk(size: Vec<ChunkSize>),
-    separable_convolution(kernels: Vec<MaybeConstTensorOperator>, border_handling: &str),
 
     unfold_dtype(),
     fold_into_dtype(),
