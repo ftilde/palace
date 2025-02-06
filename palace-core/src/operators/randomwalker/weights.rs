@@ -206,7 +206,11 @@ fn mean_filter<D: DynDimension>(
     let size = 2 * extent + 1;
     let kernel = crate::operators::array::from_vec(vec![1.0 / size as f32; size]);
     let kernels = Vector::fill_with_len(&kernel, t.dim().n());
-    crate::operators::conv::separable_convolution(t, kernels)
+    crate::operators::conv::separable_convolution(
+        t,
+        kernels,
+        crate::operators::conv::BorderHandling::Repeat,
+    )
 }
 
 fn variances<D: DynDimension>(
@@ -223,8 +227,17 @@ fn variances<D: DynDimension>(
     let diff = t.clone().sub(t_mean.clone()).unwrap();
     let sqrd = diff.clone().mul(diff).unwrap();
 
-    let diff_sum =
-        crate::operators::conv::separable_convolution(sqrd.compile().unwrap().into(), kernels);
+    // TODO: This is not actually the correct estimate as in Angs paper.
+    // We actually want
+    // diff := t_mean[center] - t[pos]
+    // instead of (what we have now)
+    // diff := t_mean[pos] - t[pos]
+
+    let diff_sum = crate::operators::conv::separable_convolution(
+        sqrd.compile().unwrap().into(),
+        kernels,
+        crate::operators::conv::BorderHandling::Repeat,
+    );
     let diff_sum = jit::jit(diff_sum.into());
     diff_sum.div(((num_elements - 1) as f32).into()).unwrap()
 }
@@ -238,12 +251,6 @@ fn variance<D: DynDimension>(
 
     let t = jit::jit(t.into());
     let t_mean = jit::jit(t_mean.into());
-
-    // TODO: This is not actually the correct estimate as in Angs paper.
-    // We actually want
-    // diff := t_mean[center] - t[pos]
-    // instead of (what we have now)
-    // diff := t_mean[pos] - t[pos]
 
     let diff = t.sub(t_mean).unwrap();
     let diff_sq = diff

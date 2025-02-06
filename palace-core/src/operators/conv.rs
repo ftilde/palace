@@ -1,5 +1,6 @@
 use ash::vk;
 use futures::StreamExt;
+use id::Identify;
 
 use crate::{
     array::ChunkIndex,
@@ -20,13 +21,18 @@ use crate::{
 
 use super::{array::ArrayOperator, tensor::TensorOperator};
 
-/// A one dimensional convolution in the specified (constant) axis. Currently, clamping is the only
-/// supported (and thus always applied) border handling routine.
-//TODO It should be relatively easy to support other strategies now
+#[derive(Copy, Clone, Identify)]
+pub enum BorderHandling {
+    Repeat,
+    Pad0,
+}
+
+/// A one dimensional convolution in the specified (constant) axis.
 pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
     input: TensorOperator<D, T>,
     kernel: ArrayOperator<K>,
     dim: usize,
+    border_handling: BorderHandling,
 ) -> TensorOperator<D, T> {
     let nd = input.dim().n();
 
@@ -116,6 +122,7 @@ void main() {
 
                 uint[N] pos = out_local;
 
+                #ifdef BORDER_HANDLE_REPEAT
                 // Border handling for first chunk in dim
                 if(chunk_pos == 0) {
                     pos[DIM] = chunk_begin_local; //Clip to tensor/chunk
@@ -130,6 +137,7 @@ void main() {
                         }
                     }
                 }
+                #endif
 
                 for (int local=l_begin; local<=l_end; ++local) {
                     int kernel_offset = local - out_pos_rel_to_in_pos_rel;
@@ -142,6 +150,7 @@ void main() {
                     }
                 }
 
+                #ifdef BORDER_HANDLE_REPEAT
                 // Border handling for last chunk in dim
                 if(chunk_pos == last_chunk) {
                     pos[DIM] = chunk_end_local; //Clip to tensor/chunk
@@ -156,6 +165,7 @@ void main() {
                         }
                     }
                 }
+                #endif
             }
         } else {
             //acc = NaN;
@@ -171,8 +181,14 @@ void main() {
         op_descriptor!(),
         input.chunks.dtype(),
         input.metadata.clone(),
-        (input, kernel, DataParam(push_constants), DataParam(dim)),
-        |ctx, mut positions, (input, kernel, push_constants, dim)| {
+        (
+            input,
+            kernel,
+            DataParam(push_constants),
+            DataParam(dim),
+            DataParam(border_handling),
+        ),
+        |ctx, mut positions, (input, kernel, push_constants, dim, border_handling)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -185,16 +201,6 @@ void main() {
 
                 let m_in = &input.metadata;
                 let kernel_m = kernel.metadata;
-                let kernel_handle = ctx
-                    .submit(kernel.chunks.request_gpu(
-                        device.id,
-                        ChunkIndex(0),
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_READ,
-                        },
-                    ))
-                    .await;
 
                 let m_out = m_in.clone();
 
@@ -207,6 +213,69 @@ void main() {
                 let kernel_size = *kernel_m.dimensions.raw();
                 assert!(kernel_size % 2 == 1, "Kernel size must be odd");
                 let extent = kernel_size / 2;
+
+                let max_bricks =
+                    2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
+
+                let pipeline = device.request_state(
+                    (
+                        push_constants,
+                        max_bricks,
+                        dim,
+                        nd,
+                        dtype,
+                        kernel_dtype,
+                        m_in.chunk_size.hmul(),
+                        kernel_size,
+                        border_handling,
+                    ),
+                    |device,
+                     (
+                        push_constants,
+                        max_bricks,
+                        dim,
+                        nd,
+                        dtype,
+                        kernel_dtype,
+                        mem_size,
+                        kernel_size,
+                        border_handling,
+                    )| {
+                        ComputePipelineBuilder::new({
+                            let s = Shader::new(SHADER)
+                                .define("MAX_BRICKS", max_bricks)
+                                .define("DIM", dim)
+                                .define("N", nd)
+                                .define("T", dtype.glsl_type_force_vec())
+                                .define("K", kernel_dtype.glsl_type())
+                                .define("TND", dtype.size)
+                                .define("T_SCALAR", dtype.scalar.glsl_type())
+                                .define("BRICK_MEM_SIZE", mem_size)
+                                .define("KERNEL_SIZE", kernel_size)
+                                .push_const_block_dyn(&push_constants)
+                                .ext(dtype.glsl_ext())
+                                .ext(kernel_dtype.glsl_ext())
+                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT));
+                            match **border_handling {
+                                BorderHandling::Repeat => s.define("BORDER_HANDLE_REPEAT", 1),
+                                BorderHandling::Pad0 => s.define("BORDER_HANDLE_PAD0", 1),
+                            }
+                        })
+                        .use_push_descriptor(true)
+                        .build(device)
+                    },
+                )?;
+
+                let kernel_handle = ctx
+                    .submit(kernel.chunks.request_gpu(
+                        device.id,
+                        ChunkIndex(0),
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ,
+                        },
+                    ))
+                    .await;
 
                 positions.sort_by_key(|(v, _)| v.0);
 
@@ -232,52 +301,6 @@ void main() {
 
                     (intersecting_bricks, (pos, in_brick_positions))
                 });
-
-                let max_bricks =
-                    2 * crate::util::div_round_up(extent, m_in.chunk_size[dim].raw) + 1;
-
-                let pipeline = device.request_state(
-                    (
-                        push_constants,
-                        max_bricks,
-                        dim,
-                        nd,
-                        dtype,
-                        kernel_dtype,
-                        m_in.chunk_size.hmul(),
-                        kernel_size,
-                    ),
-                    |device,
-                     (
-                        push_constants,
-                        max_bricks,
-                        dim,
-                        nd,
-                        dtype,
-                        kernel_dtype,
-                        mem_size,
-                        kernel_size,
-                    )| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER)
-                                .define("MAX_BRICKS", max_bricks)
-                                .define("DIM", dim)
-                                .define("N", nd)
-                                .define("T", dtype.glsl_type_force_vec())
-                                .define("K", kernel_dtype.glsl_type())
-                                .define("TND", dtype.size)
-                                .define("T_SCALAR", dtype.scalar.glsl_type())
-                                .define("BRICK_MEM_SIZE", mem_size)
-                                .define("KERNEL_SIZE", kernel_size)
-                                .push_const_block_dyn(&push_constants)
-                                .ext(dtype.glsl_ext())
-                                .ext(kernel_dtype.glsl_ext())
-                                .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT)),
-                        )
-                        .use_push_descriptor(true)
-                        .build(device)
-                    },
-                )?;
 
                 let mut stream = ctx.submit_unordered_with_data(requests).then_req_with_data(
                     *ctx,
@@ -373,10 +396,11 @@ void main() {
 pub fn separable_convolution<D: DynDimension, T: ElementType, K: ElementType>(
     mut v: TensorOperator<D, T>,
     kernels: Vector<D, &ArrayOperator<K>>,
+    border_handling: BorderHandling,
 ) -> TensorOperator<D, T> {
     assert_eq!(v.dim(), kernels.dim());
     for dim in (0..v.dim().n()).rev() {
-        v = convolution_1d(v, kernels[dim].clone(), dim);
+        v = convolution_1d(v, kernels[dim].clone(), dim, border_handling);
     }
     v
 }
@@ -396,8 +420,14 @@ mod test {
         kernel: &[f32],
         fill_expected: impl FnOnce(&mut ndarray::ArrayViewMut3<f32>),
         dim: usize,
+        border_handling: BorderHandling,
     ) {
-        let output = convolution_1d(input, crate::operators::array::from_rc(kernel.into()), dim);
+        let output = convolution_1d(
+            input,
+            crate::operators::array::from_rc(kernel.into()),
+            dim,
+            border_handling,
+        );
         compare_tensor_fn(output, fill_expected);
     }
 
@@ -416,6 +446,7 @@ mod test {
                 comp[center.map_element(dim, |v| v + 1u32).as_index()] = 2.0;
             },
             dim,
+            BorderHandling::Repeat,
         );
 
         // Larger
@@ -440,6 +471,7 @@ mod test {
                 comp[center.map_element(dim, |v| v + extent - 1u32).as_index()] = 2.0;
             },
             dim,
+            BorderHandling::Repeat,
         );
     }
 
@@ -457,7 +489,7 @@ mod test {
     }
 
     #[test]
-    fn test_convolution_1d_clamp() {
+    fn test_convolution_1d_repeat() {
         let size = VoxelPosition::fill(5.into());
         let start = VoxelPosition::fill(0.into());
         let end = size - VoxelPosition::fill(1.into());
@@ -482,6 +514,37 @@ mod test {
                 comp[[4, 4, 4]] = 8.0;
             },
             2,
+            BorderHandling::Repeat,
+        );
+    }
+
+    #[test]
+    fn test_convolution_1d_pad0() {
+        let size = VoxelPosition::fill(5.into());
+        let start = VoxelPosition::fill(0.into());
+        let end = size - VoxelPosition::fill(1.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+
+        let vol = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            if v == start || v == end {
+                1.0
+            } else {
+                0.0
+            }
+        });
+
+        compare_convolution_1d(
+            vol,
+            &[7.0, 1.0, 3.0],
+            |comp| {
+                comp[[0, 0, 0]] = 1.0;
+                comp[[0, 0, 1]] = 3.0;
+
+                comp[[4, 4, 3]] = 7.0;
+                comp[[4, 4, 4]] = 1.0;
+            },
+            2,
+            BorderHandling::Pad0,
         );
     }
 
@@ -496,7 +559,7 @@ mod test {
         let kernels: [_; 3] =
             std::array::from_fn(|i| crate::operators::array::from_static(kernels[i]));
         let kernels = Vector::from_fn(|i| &kernels[i]);
-        let output = separable_convolution(point_vol, kernels);
+        let output = separable_convolution(point_vol, kernels, BorderHandling::Repeat);
         compare_tensor_fn(output, |comp| {
             for dz in -1..=1 {
                 for dy in -1..=1 {

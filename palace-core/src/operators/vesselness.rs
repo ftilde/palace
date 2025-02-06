@@ -134,7 +134,11 @@ void main() {
             f3(scale / spacing[2]),
         ];
         let kernel_refs = Vector::<D3, _>::from_fn(|i| &kernels[i]);
-        crate::operators::conv::separable_convolution(input.inner.clone(), kernel_refs)
+        crate::operators::conv::separable_convolution(
+            input.inner.clone(),
+            kernel_refs,
+            crate::operators::conv::BorderHandling::Repeat,
+        )
     };
 
     let xx = g(gauss, gauss, ddgauss_dxdx);

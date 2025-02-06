@@ -76,7 +76,14 @@ pub fn smooth_downsample<'op, D: LargerDim, T: ElementType>(
         let scale = scale[dim];
         if scale != DOWNSAMPLE_SCALE_MULT {
             let kernel = crate::operators::kernels::gauss(scale);
-            v = v.map_inner(|v| crate::operators::conv::convolution_1d(v, kernel, dim));
+            v = v.map_inner(|v| {
+                crate::operators::conv::convolution_1d(
+                    v,
+                    kernel,
+                    dim,
+                    crate::operators::conv::BorderHandling::Repeat,
+                )
+            });
         }
     }
 

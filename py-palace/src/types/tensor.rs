@@ -3,6 +3,7 @@ use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, ScalarType, StaticElementType};
 use palace_core::jit::{self, BinOp, JitTensorOperator, TernaryOp, UnaryOp};
+use palace_core::operators::conv::BorderHandling;
 use palace_core::vec::Vector;
 use palace_core::{dim::*, storage::Element};
 use pyo3::exceptions::PyValueError;
@@ -834,7 +835,24 @@ impl TensorOperator {
             },
         )
     }
-    fn separable_convolution(&self, kernels: Vec<MaybeConstTensorOperator>) -> PyResult<Self> {
+
+    #[pyo3(signature = (kernels, border_handling = "repeat"))]
+    fn separable_convolution(
+        &self,
+        kernels: Vec<MaybeConstTensorOperator>,
+        border_handling: &str,
+    ) -> PyResult<Self> {
+        let border_handling = match border_handling {
+            "repeat" => BorderHandling::Repeat,
+            "pad0" => BorderHandling::Pad0,
+            o => {
+                return Err(PyErr::new::<PyValueError, _>(format!(
+                    "Invalid border handling strategy {}",
+                    o
+                )))
+            }
+        };
+
         if self.nd()? != kernels.len() {
             return Err(PyErr::new::<PyValueError, _>(format!(
                 "Expected {} kernels for tensor, but got {}",
@@ -868,11 +886,13 @@ impl TensorOperator {
             .unwrap();
 
         self.clone().map_core(|vol: CTensorOperator<DDyn, DType>| {
-            Ok(
-                palace_core::operators::conv::separable_convolution(vol, kernel_refs)
-                    .into_dyn()
-                    .into(),
+            Ok(palace_core::operators::conv::separable_convolution(
+                vol,
+                kernel_refs,
+                border_handling,
             )
+            .into_dyn()
+            .into())
         })
     }
 
@@ -978,7 +998,7 @@ impl TensorOperator {
 
 impl_embedded_tensor_operator_with_delegate!(
     rechunk(size: Vec<ChunkSize>),
-    separable_convolution(kernels: Vec<MaybeConstTensorOperator>),
+    separable_convolution(kernels: Vec<MaybeConstTensorOperator>, border_handling: &str),
 
     unfold_dtype(),
     fold_into_dtype(),

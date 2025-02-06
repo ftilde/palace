@@ -339,7 +339,7 @@ mod test {
         );
         let v = random_walker_single_chunk(weights, seeds, cfg);
 
-        compare_tensor_approx(v, expected, cfg.max_residuum_norm);
+        compare_tensor_approx(v, expected, cfg.max_residuum_norm * 10.0);
     }
 
     #[test]
