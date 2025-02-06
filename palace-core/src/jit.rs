@@ -1,3 +1,4 @@
+use derive_more::From;
 use std::fmt::{Display, Write};
 
 use ash::vk;
@@ -311,15 +312,17 @@ impl Display for WriteTernary {
     }
 }
 
-#[derive(id::Identify, Clone, Copy, Debug)]
+#[derive(id::Identify, Clone, Copy, Debug, From)]
 pub enum ConstValue {
     F32(f32),
+    U32(u32),
 }
 
 impl Display for ConstValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConstValue::F32(v) => write!(f, "{}", v),
+            ConstValue::U32(v) => write!(f, "{}", v),
         }
     }
 }
@@ -328,6 +331,7 @@ impl ConstValue {
     fn dtype(&self) -> DType {
         match self {
             ConstValue::F32(_) => DType::scalar(ScalarType::F32),
+            ConstValue::U32(_) => DType::scalar(ScalarType::U32),
         }
     }
 }
@@ -571,8 +575,9 @@ impl<D: DynDimension> From<f32> for JitTensorOperator<D> {
     }
 }
 
-pub fn scalar<D: DynDimension>(value: f32) -> JitTensorOperator<D> {
-    value.into()
+pub fn scalar<D: DynDimension, V: Into<ConstValue>>(value: V) -> JitTensorOperator<D> {
+    let c: ConstValue = value.into();
+    c.into()
 }
 
 pub fn dimensions<D: DynDimension>(d: D) -> JitTensorOperator<D> {
@@ -631,6 +636,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn max(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Max, self, other)
     }
+    pub fn min(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Min, self, other)
+    }
     pub fn concat(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Concat, self, other)
     }
@@ -650,8 +658,8 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)
     }
-    pub fn splat(self, size: u32) -> Result<Self, crate::Error> {
-        Self::unary_op(UnaryOp::Splat(size), self)
+    pub fn splat(self, size: u32) -> Self {
+        Self::unary_op(UnaryOp::Splat(size), self).unwrap()
     }
     pub fn index(self, i: u32) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Index(i), self)

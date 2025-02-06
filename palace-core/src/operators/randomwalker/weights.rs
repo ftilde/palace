@@ -11,6 +11,7 @@ use crate::{
     operator::{DataParam, OperatorDescriptor},
     operators::{
         aggregation::SampleMethod,
+        conv::BorderHandling,
         scalar::ScalarOperator,
         tensor::{LODTensorOperator, TensorOperator},
     },
@@ -199,18 +200,32 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
     )
 }
 
+fn num_filter_elements<D: DynDimension>(dim: D, extent: usize) -> JitTensorOperator<D> {
+    let nd = dim.n();
+    let pos = jit::position(dim);
+    let one = jit::scalar(1u32).splat(nd as _);
+    let end = jit::dimensions(dim).sub(one.clone()).unwrap();
+    let extent = jit::scalar(extent as u32).splat(nd as _);
+    let filter_size_minus = pos.clone().min(extent.clone()).unwrap();
+    let filter_size_plus = end.sub(pos).unwrap().min(extent).unwrap();
+    let filter_size = filter_size_minus
+        .add(one.add(filter_size_plus).unwrap())
+        .unwrap();
+    filter_size.hmul()
+}
+
 fn mean_filter<D: DynDimension>(
     t: TensorOperator<D, StaticElementType<f32>>,
     extent: usize,
-) -> TensorOperator<D, StaticElementType<f32>> {
+) -> JitTensorOperator<D> {
     let size = 2 * extent + 1;
-    let kernel = crate::operators::array::from_vec(vec![1.0 / size as f32; size]);
+    let kernel = crate::operators::array::from_vec(vec![1.0; size]);
     let kernels = Vector::fill_with_len(&kernel, t.dim().n());
-    crate::operators::conv::separable_convolution(
-        t,
-        kernels,
-        crate::operators::conv::BorderHandling::Repeat,
-    )
+    let sum = crate::operators::conv::separable_convolution(t, kernels, BorderHandling::Pad0);
+    let num_elements = num_filter_elements(sum.dim(), extent);
+    jit::jit(sum.into())
+        .div(num_elements.cast(ScalarType::F32.into()).unwrap())
+        .unwrap()
 }
 
 fn variances<D: DynDimension>(
@@ -220,7 +235,6 @@ fn variances<D: DynDimension>(
 ) -> JitTensorOperator<D> {
     let size = 2 * extent + 1;
     let nd = t.metadata().unwrap().dim().n();
-    let num_elements = size.pow(nd as _);
     let kernel = crate::operators::array::from_vec(vec![1.0; size]);
     let kernels = Vector::fill_with_len(&kernel, nd);
 
@@ -236,10 +250,20 @@ fn variances<D: DynDimension>(
     let diff_sum = crate::operators::conv::separable_convolution(
         sqrd.compile().unwrap().into(),
         kernels,
-        crate::operators::conv::BorderHandling::Repeat,
+        BorderHandling::Pad0,
     );
+
+    let num_elements = num_filter_elements(diff_sum.dim(), extent);
     let diff_sum = jit::jit(diff_sum.into());
-    diff_sum.div(((num_elements - 1) as f32).into()).unwrap()
+    diff_sum
+        .div(
+            num_elements
+                .sub(jit::scalar(1u32))
+                .unwrap()
+                .cast(ScalarType::F32.into())
+                .unwrap(),
+        )
+        .unwrap()
 }
 
 fn variance<D: DynDimension>(
@@ -250,7 +274,6 @@ fn variance<D: DynDimension>(
     let t_mean = mean_filter(t.clone(), extent);
 
     let t = jit::jit(t.into());
-    let t_mean = jit::jit(t_mean.into());
 
     let diff = t.sub(t_mean).unwrap();
     let diff_sq = diff
@@ -280,7 +303,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
     extent: usize,
 ) -> TensorOperator<D::Larger, StaticElementType<i8>> {
     //TODO: The border handling is not quite right here.
-    let t_mean = jit::jit(mean_filter(tensor.clone(), extent).into());
+    let t_mean = mean_filter(tensor.clone(), extent);
     let t = jit::jit(tensor.clone().into());
     let t_var = variances(t.clone(), t_mean.clone(), extent);
 
@@ -614,7 +637,7 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
     extent: usize,
     min_edge_weight: f32,
 ) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
-    let t_mean = mean_filter(tensor.clone(), extent);
+    let t_mean = mean_filter(tensor.clone(), extent).compile().unwrap();
     let variance = variance(tensor.clone(), extent);
 
     let nd = tensor.metadata.dim().n();
