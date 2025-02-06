@@ -141,7 +141,7 @@ impl<'a> ComputePipelineBuilder<'a> {
             .descriptor_bindings
             .create_descriptor_set_layout(&device.functions, self.use_push_descriptor);
 
-        let push_constant_size = dbg!(info.push_const.map(|i| i.size as usize));
+        let push_constant_size = info.push_const.map(|i| i.size as usize);
         let push_constant_ranges = info
             .push_const
             .as_ref()
