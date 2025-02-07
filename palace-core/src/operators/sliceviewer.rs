@@ -429,6 +429,7 @@ void main()
 
                 let m_out = result_metadata;
                 let emd_0 = input.levels[0].embedding_data;
+                let md_0 = &input.levels[0].metadata;
                 let pixel_to_voxel = &**projection_mat;
 
                 let transform_rw = emd_0.voxel_to_physical() * pixel_to_voxel;
@@ -440,10 +441,8 @@ void main()
                 );
 
                 let m_in = level.metadata;
-                let emd_l = level.embedding_data;
 
-                let transform =
-                    emd_l.physical_to_voxel() * &emd_0.voxel_to_physical() * pixel_to_voxel;
+                let transform = m_in.norm_to_voxel() * &md_0.voxel_to_norm() * pixel_to_voxel;
 
                 assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
                 let tf_data_gpu = ctx
