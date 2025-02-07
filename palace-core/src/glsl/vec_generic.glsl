@@ -310,6 +310,22 @@ bool any(bool[_N] v) {
     return res;
 }
 
+bool[_N] and(bool[_N] l, bool[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+= 1) {
+        res[i] = l[i] && r[i];
+    }
+    return res;
+}
+
+bool[_N] or(bool[_N] l, bool[_N] r) {
+    bool[_N] res;
+    for(int i=0; i<_N; i+= 1) {
+        res[i] = l[i] || r[i];
+    }
+    return res;
+}
+
 uint hmul(uint[_N] v) {
     uint res = 1;
     for(int i=0; i<_N; i+=1) {

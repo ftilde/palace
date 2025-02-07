@@ -25,14 +25,15 @@ bool at_voxel(float[ND] voxel, float[ND] to_check) {
     float[ND] point_voxel = from_homogeneous(mul(consts.to_grid, point));
 
     point_voxel = clamp(point_voxel, fill(voxel, 0.0), sub(to_float(consts.tensor_dim_logical), fill(voxel, 1.0)));
-    float[ND] diff = abs(sub(voxel, point_voxel));
+    float[ND] diff = sub(voxel, point_voxel);
 
     //if(voxel[2] >= 2.0) {
     //    debugPrintfEXT("voxel: %f %f %f\n", voxel[0], voxel[1], voxel[2]);
     //    debugPrintfEXT("diff: %f %f %f\n", diff[0], diff[1], diff[2]);
     //}
 
-    bool[ND] close = less_than_equal(diff, fill(diff, 0.5));
+    float[ND] p05 = fill(diff, 0.5);
+    bool[ND] close = and(less_than(neg(p05), diff), less_than_equal(diff, p05));
     return all(close);
 }
 
