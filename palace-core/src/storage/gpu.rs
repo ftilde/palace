@@ -1168,6 +1168,27 @@ impl Storage {
             entry.state = StorageEntryState::Initializing(info);
         }
 
+        #[cfg(feature = "alloc_fill_nan")]
+        device.with_cmd_buffer(|cmd| {
+            let init_value = f32::NAN.to_bits();
+            unsafe {
+                device
+                    .functions()
+                    .cmd_fill_buffer(cmd.raw(), buffer, 0, vk::WHOLE_SIZE, init_value)
+            };
+            self.barrier_manager.issue(
+                cmd,
+                SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::TRANSFER,
+                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                },
+                DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+                    access: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+                },
+            )
+        });
+
         Ok((buffer, AccessToken::new(self, device, key)))
     }
 
