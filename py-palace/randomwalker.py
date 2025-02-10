@@ -107,6 +107,7 @@ raycaster_config = pc.RaycasterConfig().store(store)
 lod_coarseness_2d = store.store_primitive(1.0)
 lod_coarseness_2d.link_to(raycaster_config.lod_coarseness())
 raycaster_config_rw = pc.RaycasterConfig().store(store)
+raycaster_config.lod_coarseness().link_to(raycaster_config_rw.lod_coarseness())
 view = store.store_primitive("quad")
 timestep = store.store_primitive(0)
 
