@@ -76,7 +76,7 @@ void main() {
 
         float seed_value = UNSEEDED;
 
-        bool inside = all(less_than_equal(global_pos, consts.out_tensor_size));
+        bool inside = all(less_than(global_pos, consts.out_tensor_size));
 
         if(inside) {
             bool at_volume_border = at_cuboid_border(global_pos, consts.out_tensor_size);
