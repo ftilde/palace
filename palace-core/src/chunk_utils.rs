@@ -372,18 +372,20 @@ impl<'a, D: DynDimension> ChunkNeighborhood<'a, D> {
     ) -> Self {
         let out_info = md.chunk_info(pos);
         let out_begin = out_info.begin();
-        let out_end = out_info.end();
+        let out_last = out_info.end().map(|v| v - 1u32);
 
         let in_begin = out_begin
             .clone()
             .zip(&expand_minus, |l, r| l.raw.saturating_sub(r.raw).into());
-        let in_end = out_end
+        let in_end = out_last
             .clone()
             .zip(&expand_plus, |l, r| l.raw + r.raw)
-            .zip(&md.dimensions, |l, r| GlobalCoordinate::from(l.min(r.raw)));
+            .zip(&md.dimensions, |l, r| {
+                GlobalCoordinate::from(l.min(r.raw - 1))
+            });
 
         let begin_chunk = md.chunk_pos(&in_begin);
-        let end_chunk = md.chunk_pos(&in_end.map(|v| v - 1u32));
+        let end_chunk = md.chunk_pos(&in_end);
 
         Self {
             begin_chunk,
