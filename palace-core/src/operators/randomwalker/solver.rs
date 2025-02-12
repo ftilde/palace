@@ -695,6 +695,9 @@ async fn conjugate_gradient<'req, 'inv>(
 
             let r_norm_sq = read_scalar::<f32>(ctx, device, &r_norm_sq_buf).await;
 
+            if r_norm_sq.is_nan() {
+                panic!("Norm nan after {} it!", iteration);
+            }
             if r_norm_sq.sqrt() < cfg.max_residuum_norm {
                 total_it = iteration + 1;
                 break;
