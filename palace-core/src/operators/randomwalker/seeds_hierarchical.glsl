@@ -46,7 +46,8 @@ bool at_cuboid_border(uint[N] position, uint[N] size) {
 bool at_voxel(float[N] voxel, float[N] point_voxel) {
     float[N] diff = abs(sub(voxel, point_voxel));
 
-    bool[N] close = less_than_equal(diff, fill(diff, 0.5));
+    float[N] p05 = fill(diff, 0.5);
+    bool[N] close = and(less_than(neg(p05), diff), less_than_equal(diff, p05));
     return all(close);
 }
 
