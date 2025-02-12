@@ -72,7 +72,7 @@ l0md: pc.TensorMetaData = v0.fine_metadata()
 l0ed = v0.fine_embedding_data()
 
 vol = vol.map(lambda vol: vol.cast(pc.ScalarType.F32))
-vol = vol.map(lambda vol: vol * (1.0/(1 << 16)))
+#vol = vol.map(lambda vol: vol * (1.0/(1 << 16)))
 
 if args.transfunc:
     tf = pc.load_tf(args.transfunc)
@@ -169,6 +169,8 @@ def apply_weight_function(volume):
             return pc.randomwalker_weights(volume, min_edge_weight.load(), beta.load())
         case "bian_mean":
             return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), extent.load())
+        case "var_gaussian":
+            return pc.randomwalker_weights_variable_gaussian(volume, min_edge_weight.load(), extent.load())
 
 def apply_rw_mode(input):
     fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
@@ -205,11 +207,11 @@ def render(size, events: pc.Events):
     widgets.append(palace_util.named_slider("LOD coarseness", lod_coarseness_2d, 1.0, 10, logarithmic=True))
 
     widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
-    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean"]))
+    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "var_gaussian"]))
     match weight_function.load():
         case "grady":
             widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
-        case "bian_mean":
+        case "bian_mean" | "var_gaussian":
             widgets.append(palace_util.named_slider("extent", extent, 1, 5))
 
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
