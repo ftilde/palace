@@ -384,8 +384,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                             let chunk_neighbors =
                                 ChunkNeighborhood::around(&md, pos, extent_vec.clone(), extent_vec);
 
-                            let neighbor_chunks = chunk_neighbors.end_chunk.clone()
-                                - chunk_neighbors.begin_chunk.clone();
+                            let neighbor_chunks = chunk_neighbors.dim_in_chunks();
                             let first_chunk_pos = chunk_neighbors.begin_chunk.raw();
 
                             let neighbor_requests = chunk_neighbors
@@ -393,6 +392,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| mean_mul_add.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
+                            assert_eq!(neighbors.len(), neighbor_chunks.hmul());
                             assert!(neighbors.len() <= num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()
@@ -556,8 +556,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                             let chunk_neighbors =
                                 ChunkNeighborhood::around(&md, pos, extent_vec.clone(), extent_vec);
 
-                            let neighbor_chunks = chunk_neighbors.end_chunk.clone()
-                                - chunk_neighbors.begin_chunk.clone();
+                            let neighbor_chunks = chunk_neighbors.dim_in_chunks();
                             let first_chunk_pos = chunk_neighbors.begin_chunk.raw();
 
                             let neighbor_requests = chunk_neighbors
@@ -565,6 +564,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                                 .map(|p| tensor.chunks.request_gpu(device.id, p, read_info));
 
                             let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
+                            assert_eq!(neighbors.len(), neighbor_chunks.hmul());
                             assert!(neighbors.len() <= num_neighbors_max as _);
                             let neighbor_refs = neighbors
                                 .iter()

@@ -394,6 +394,11 @@ impl<'a, D: DynDimension> ChunkNeighborhood<'a, D> {
         }
     }
 
+    pub fn dim_in_chunks(&self) -> Vector<D, ChunkCoordinate> {
+        self.end_chunk.clone() - self.begin_chunk.clone()
+            + Vector::fill_with_len(ChunkCoordinate::from(1), self.begin_chunk.len())
+    }
+
     pub fn chunk_indices_linear<'b>(&'b self) -> impl Iterator<Item = ChunkIndex> + 'b {
         self.chunk_positions_linear()
             .map(|p| self.md.chunk_index(&p))
