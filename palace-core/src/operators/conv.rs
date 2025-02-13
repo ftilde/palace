@@ -49,6 +49,7 @@ pub fn convolution_1d<D: DynDimension, T: ElementType, K: ElementType>(
         .scalar::<i32>("extent");
 
     const SHADER: &'static str = r#"
+#extension GL_EXT_nonuniform_qualifier : enable
 #include <util.glsl>
 #include <vec.glsl>
 #include <size_util.glsl>
@@ -74,7 +75,7 @@ K sample_kernel(int p) {
 
 T sample_brick(uint[N] pos, int brick) {
     uint local_index = to_linear(pos, consts.mem_dim);
-    return sourceData[brick].values[local_index];
+    return sourceData[nonuniformEXT(brick)].values[local_index];
 }
 
 void main() {

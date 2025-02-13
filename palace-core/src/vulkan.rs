@@ -408,6 +408,7 @@ impl DeviceContext {
                 .scalar_block_layout(true)
                 .runtime_descriptor_array(true)
                 .storage_buffer8_bit_access(true)
+                .shader_storage_buffer_array_non_uniform_indexing(true)
                 .shader_int8(true);
             let mut enabled_features_11 =
                 vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true);
