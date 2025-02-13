@@ -356,7 +356,6 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                 .define("ND", nd)
                                 .define("NUM_NEIGHBORS", num_neighbors_max),
                         )
-                        .use_push_descriptor(true)
                         .build(device)
                     },
                 )?;
@@ -427,7 +426,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
 
                                         Ok(())
                                     });
-                                    pipeline.push_descriptor_set(0, descriptor_config);
+                                    pipeline.write_descriptor_set(0, descriptor_config);
                                     pipeline.dispatch(device, chunk_info.mem_elements());
                                 }
                             });
@@ -511,7 +510,6 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                                 .define("ND", nd)
                                 .define("NUM_NEIGHBORS", num_neighbors_max),
                         )
-                        .use_push_descriptor(true)
                         .build(device)
                     },
                 )?;
@@ -605,7 +603,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
 
                                             Ok(())
                                         });
-                                        pipeline.push_descriptor_set(0, descriptor_config);
+                                        pipeline.write_descriptor_set(0, descriptor_config);
                                         pipeline.dispatch(device, chunk_info.mem_elements());
                                     }
                                 }
