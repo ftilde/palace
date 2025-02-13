@@ -26,16 +26,18 @@ def read_seeds(path):
 ram_size = 8 << 30
 vram_size = 8 << 30
 disk_cache_size = 20 << 30
-device = 0
-display_device = device
 
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-fg', '--foreground_seeds', required=False)
 parser.add_argument('-bg', '--background_seeds', required=False)
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('-d', '--device', type=int, default=0)
 
 args = parser.parse_args()
+
+device = args.device
+display_device = device
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=device)
 
