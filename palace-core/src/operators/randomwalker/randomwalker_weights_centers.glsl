@@ -205,7 +205,6 @@ void main() {
         uint[ND] begin2;
         uint[ND] end2;
 
-        //TODO: remove overlap
         init_regions(current_center, begin1, end1);
         init_regions(neighbor_center, begin2, end2);
 
