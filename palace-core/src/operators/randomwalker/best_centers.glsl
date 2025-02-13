@@ -1,5 +1,6 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_nonuniform_qualifier : enable
 //#extension GL_EXT_debug_printf : enable
 
 #include <util.glsl>
@@ -31,7 +32,7 @@ float[3] sample_neighbors(TensorMetaData(ND) md, uint[ND] global_pos) {
     uint[ND] neighbor_chunk_pos = sub(chunk, consts.first_chunk_pos);
     uint neighbor_linear = to_linear(neighbor_chunk_pos, consts.neighbor_chunks);
 
-    return neighbor_buf[neighbor_linear].values[pos_in_chunk_linear];
+    return neighbor_buf[nonuniformEXT(neighbor_linear)].values[pos_in_chunk_linear];
 }
 
 float fit_quality(float value, float[3] mean_mul_add) {
