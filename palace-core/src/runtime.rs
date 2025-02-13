@@ -247,7 +247,7 @@ pub struct RunTime {
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
     frame: FrameNumber,
-    pub preferred_device: DeviceId,
+    pub preferred_device: Option<DeviceId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -284,14 +284,15 @@ impl RunTime {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size)?;
-        let preferred_device = preferred_device.unwrap_or(0);
-        if preferred_device >= vulkan.device_contexts().len() {
-            return Err(format!(
-                "Invalid device index {} (we only have {} devices)",
-                preferred_device,
-                vulkan.device_contexts().len()
-            )
-            .into());
+        if let Some(preferred_device) = preferred_device {
+            if preferred_device >= vulkan.device_contexts().len() {
+                return Err(format!(
+                    "Invalid device index {} (we only have {} devices)",
+                    preferred_device,
+                    vulkan.device_contexts().len()
+                )
+                .into());
+            }
         }
         let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
         let ram = crate::storage::cpu::Storage::new(ram);
@@ -318,6 +319,10 @@ impl RunTime {
             frame,
             preferred_device,
         })
+    }
+
+    pub fn select_preferable_device(&self) -> DeviceId {
+        self.preferred_device.unwrap_or(0)
     }
 
     pub fn resolve<
@@ -353,6 +358,7 @@ impl RunTime {
             predicted_preview_tasks,
         };
         let mut executor = {
+            let preferred_device = self.select_preferable_device();
             Executor {
                 data: &data,
                 task_manager: TaskManager::new(
@@ -369,7 +375,7 @@ impl RunTime {
                 barrier_batcher: BarrierBatcher::new(),
                 deadline: deadline.unwrap_or(Deadline::never()),
                 start: Instant::now(),
-                preferred_device: self.preferred_device,
+                preferred_device,
             }
         };
 

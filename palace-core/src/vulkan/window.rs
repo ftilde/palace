@@ -389,15 +389,22 @@ impl Window {
         ctx: &VulkanContext,
         surface: vk::SurfaceKHR,
         initial_size: WindowSize,
+        on_device: Option<DeviceId>,
     ) -> Result<Self, crate::Error> {
-        let (device, swap_chain_support) = ctx
-            .device_contexts
-            .iter()
-            .enumerate()
-            .find_map(|(i, device)| {
-                swap_chain_support(ctx, i, surface).map(|support| (device, support))
-            })
-            .ok_or_else(|| "Could not find any device with present capabilities")?;
+        let (device, swap_chain_support) = if let Some(device) = on_device {
+            let Some(details) = swap_chain_support(ctx, device, surface) else {
+                return Err("Specified device does not have present capabilities".into());
+            };
+            (&ctx.device_contexts[device], details)
+        } else {
+            ctx.device_contexts
+                .iter()
+                .enumerate()
+                .find_map(|(i, device)| {
+                    swap_chain_support(ctx, i, surface).map(|support| (device, support))
+                })
+                .ok_or_else(|| "Could not find any device with present capabilities")?
+        };
 
         let swap_chain_config = swap_chain_support.default_config();
 

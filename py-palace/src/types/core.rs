@@ -125,18 +125,20 @@ impl RunTime {
         }))
     }
 
-    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false))]
+    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false, display_device=None))]
     fn run_with_window(
         &self,
         gen_frame: &Bound<pyo3::types::PyFunction>,
         timeout_ms: u64,
         record_task_stream: bool,
         bench: bool,
+        display_device: Option<usize>,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
         palace_winit::run_with_window_wrapper(
             &mut rt,
             Duration::from_millis(timeout_ms),
+            display_device,
             |_event_loop, window, rt, events, timeout| {
                 let size = window.size();
                 let size = [size.y().raw, size.x().raw];

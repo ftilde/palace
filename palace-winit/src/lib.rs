@@ -6,6 +6,7 @@ use ash::vk;
 use palace_core::runtime::Deadline;
 use palace_core::storage::DataVersionType;
 use palace_core::vulkan::window::Window as PWindow;
+use palace_core::vulkan::DeviceId;
 use palace_core::{
     event::{EventSource, EventStream},
     runtime::RunTime,
@@ -140,6 +141,7 @@ fn create_surface(
 pub fn create_window(
     ctx: &VulkanContext,
     target: &ActiveEventLoop,
+    on_device: Option<DeviceId>,
 ) -> Result<(WWindow, PWindow), palace_core::Error> {
     let win_attributes = winit::window::Window::default_attributes().with_title("palace");
     let winit_win = target.create_window(win_attributes).unwrap();
@@ -147,7 +149,7 @@ pub fn create_window(
     let size = winit_win.inner_size();
     Ok((
         winit_win,
-        palace_core::vulkan::window::Window::new(ctx, surface, size.into())?,
+        palace_core::vulkan::window::Window::new(ctx, surface, size.into(), on_device)?,
     ))
 }
 
@@ -160,6 +162,7 @@ struct AppState<'a, R, F, E> {
     events: EventSource,
     draw: F,
     run_result: Result<(), E>,
+    display_device: Option<usize>,
 }
 
 pub trait MutWrapper<Inner> {
@@ -193,10 +196,10 @@ impl<
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         //event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        self.window = Some(
-            self.runtime
-                .with_mut(|rt| create_window(&rt.vulkan, &event_loop).unwrap()),
-        );
+        self.window =
+            Some(self.runtime.with_mut(|rt| {
+                create_window(&rt.vulkan, &event_loop, self.display_device).unwrap()
+            }));
     }
 
     fn window_event(
@@ -263,6 +266,7 @@ pub fn run_with_window_wrapper<
 >(
     runtime: &mut R,
     timeout_per_frame: Duration,
+    display_device: Option<DeviceId>,
     draw: F,
 ) -> Result<(), E> {
     let event_loop = EventLoop::new().unwrap();
@@ -274,6 +278,7 @@ pub fn run_with_window_wrapper<
         events: EventSource::default(),
         draw,
         run_result: Ok(()),
+        display_device,
     };
 
     event_loop.run_app(&mut state).unwrap();
@@ -285,6 +290,23 @@ pub fn run_with_window_wrapper<
     }
 
     state.run_result
+}
+
+pub fn run_with_window_on_device<
+    F: FnMut(
+        &ActiveEventLoop,
+        &mut PWindow,
+        &mut &mut RunTime,
+        EventStream,
+        Deadline,
+    ) -> Result<DataVersionType, palace_core::Error>,
+>(
+    mut runtime: &mut RunTime,
+    timeout_per_frame: Duration,
+    display_device: Option<DeviceId>,
+    draw: F,
+) -> Result<(), palace_core::Error> {
+    run_with_window_wrapper(&mut runtime, timeout_per_frame, display_device, draw)
 }
 
 pub fn run_with_window<
@@ -300,5 +322,5 @@ pub fn run_with_window<
     timeout_per_frame: Duration,
     draw: F,
 ) -> Result<(), palace_core::Error> {
-    run_with_window_wrapper(&mut runtime, timeout_per_frame, draw)
+    run_with_window_on_device(&mut runtime, timeout_per_frame, None, draw)
 }

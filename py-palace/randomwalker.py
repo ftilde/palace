@@ -26,6 +26,8 @@ def read_seeds(path):
 ram_size = 8 << 30
 vram_size = 8 << 30
 disk_cache_size = 20 << 30
+device = 0
+display_device = device
 
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
@@ -35,7 +37,7 @@ parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=0)
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=device)
 
 try:
     vol = pc.open_lod(args.volume_file)
@@ -319,4 +321,4 @@ def render(size, events: pc.Events):
 
     return frame
 
-rt.run_with_window(render, timeout_ms=10, record_task_stream=False, bench=False)
+rt.run_with_window(render, timeout_ms=10, record_task_stream=False, bench=False, display_device=display_device)

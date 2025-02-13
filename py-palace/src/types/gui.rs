@@ -20,7 +20,7 @@ impl GuiState {
         Self {
             inner: {
                 let rt = runtime.inner.borrow();
-                c::GuiState::on_device(rt.preferred_device)
+                c::GuiState::on_device(rt.select_preferable_device())
             },
             runtime,
         }
