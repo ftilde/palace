@@ -52,6 +52,14 @@ except:
     #vol = vol.single_level_lod()
 
 nd = vol.nd()
+
+# Reduce the LOD hierarchy and compute root on a larger full volume. This is still manageable in terms of computation time, but increases the "range" of labels in smaller structures quite a bit.
+max_level = len(vol.levels) - 2
+vol.levels = [l if i != max_level else l.rechunk([pc.chunk_size_full] * nd) for i, l in enumerate(vol.levels) if i <= max_level]
+
+for level in vol.levels:
+    print("{} {}".format(level.inner.metadata.dimensions, level.inner.metadata.chunk_size))
+
 dim_t = vol.fine_metadata().dimensions[0]
 
 foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
