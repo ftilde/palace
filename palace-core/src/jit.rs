@@ -7,13 +7,17 @@ use id::{Id, Identify};
 
 use crate::{
     array::TensorMetaData,
-    dim::DynDimension,
-    dtypes::{DType, ElementType, ScalarType},
+    dim::{DDyn, DynDimension},
+    dtypes::{AsDynType, DType, ElementType, ScalarType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor, OperatorParameter},
     operators::tensor::TensorOperator,
-    storage::gpu::{InplaceHandle, InplaceResult, WriteHandle},
+    storage::{
+        gpu::{InplaceHandle, InplaceResult, WriteHandle},
+        Element,
+    },
     task::{Request, RequestStream},
+    vec::Vector,
     vulkan::{
         pipeline::{AsDescriptors, ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::{Config, Shader},
@@ -21,7 +25,7 @@ use crate::{
     },
 };
 
-#[derive(id::Identify, Copy, Clone, Debug)]
+#[derive(id::Identify, Clone, Debug)]
 enum NullaryOp {
     Const(ConstValue),
     Read(InputId),
@@ -312,17 +316,49 @@ impl Display for WriteTernary {
     }
 }
 
-#[derive(id::Identify, Clone, Copy, Debug, From)]
-pub enum ConstValue {
+#[derive(id::Identify, Clone, Debug, From)]
+pub enum ConstValueScalar {
     F32(f32),
     U32(u32),
+}
+
+impl Into<ConstValue> for ConstValueScalar {
+    fn into(self) -> ConstValue {
+        match self {
+            ConstValueScalar::F32(v) => ConstValue::F32(Vector::new(vec![v])),
+            ConstValueScalar::U32(v) => ConstValue::U32(Vector::new(vec![v])),
+        }
+    }
+}
+
+#[derive(id::Identify, Clone, Debug, From)]
+pub enum ConstValue {
+    F32(Vector<DDyn, f32>),
+    U32(Vector<DDyn, u32>),
+}
+
+fn write_vec<T: Display + Element + AsDynType>(
+    f: &mut std::fmt::Formatter<'_>,
+    v: &Vector<DDyn, T>,
+) -> std::fmt::Result {
+    let len = v.len();
+    let mut t: DType = T::D_TYPE;
+    t.size = len as _;
+    write!(f, "{}(", t.glsl_type())?;
+    for i in 0..len {
+        if i != 0 {
+            write!(f, ",")?;
+        }
+        write!(f, "{}", v[i])?;
+    }
+    write!(f, ")")
 }
 
 impl Display for ConstValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConstValue::F32(v) => write!(f, "{}", v),
-            ConstValue::U32(v) => write!(f, "{}", v),
+            ConstValue::F32(v) => write_vec(f, v),
+            ConstValue::U32(v) => write_vec(f, v),
         }
     }
 }
@@ -330,8 +366,8 @@ impl Display for ConstValue {
 impl ConstValue {
     fn dtype(&self) -> DType {
         match self {
-            ConstValue::F32(_) => DType::scalar(ScalarType::F32),
-            ConstValue::U32(_) => DType::scalar(ScalarType::U32),
+            ConstValue::F32(v) => ScalarType::F32.vec(v.len() as _),
+            ConstValue::U32(v) => ScalarType::U32.vec(v.len() as _),
         }
     }
 }
@@ -558,12 +594,13 @@ impl<D: DynDimension> JitTensorOperator<D> {
 
 impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
     fn from(c: ConstValue) -> Self {
+        let dtype = c.dtype();
         let op = Instruction::NullAry(c.dtype(), NullaryOp::Const(c));
         let ops = vec![op];
         Self {
             instructions: ops,
             metadata: None,
-            dtype: c.dtype(),
+            dtype,
             operators: OrderedSet(Vec::new()),
         }
     }
@@ -571,11 +608,17 @@ impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
 
 impl<D: DynDimension> From<f32> for JitTensorOperator<D> {
     fn from(value: f32) -> Self {
-        ConstValue::F32(value).into()
+        ConstValue::F32(Vector::new(vec![value])).into()
     }
 }
 
-pub fn scalar<D: DynDimension, V: Into<ConstValue>>(value: V) -> JitTensorOperator<D> {
+pub fn scalar<D: DynDimension, V: Into<ConstValueScalar>>(value: V) -> JitTensorOperator<D> {
+    let c: ConstValueScalar = value.into();
+    let c: ConstValue = c.into();
+    c.into()
+}
+
+pub fn const_vec<D: DynDimension, V: Into<ConstValue>>(value: V) -> JitTensorOperator<D> {
     let c: ConstValue = value.into();
     c.into()
 }
@@ -868,7 +911,7 @@ fn compile(
                     "{} {} = {};",
                     t.glsl_type(),
                     res_id,
-                    WriteNullary(*c)
+                    WriteNullary(c.clone())
                 )?;
                 *t
             }

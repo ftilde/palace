@@ -3,7 +3,7 @@ use id::Identify;
 
 use crate::{
     chunk_utils::ChunkNeighborhood,
-    data::{ChunkCoordinate, GlobalCoordinate},
+    data::ChunkCoordinate,
     dim::{DynDimension, LargerDim},
     dtypes::{ScalarType, StaticElementType},
     jit::{self, JitTensorOperator},
@@ -28,16 +28,19 @@ pub fn random_walker_weights<D: DynDimension + LargerDim>(
     weight_function: WeightFunction,
     min_edge_weight: f32,
 ) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
+    let nd = tensor.dim().n();
     match weight_function {
         WeightFunction::Grady { beta } => {
             random_walker_weights_grady(tensor, beta, min_edge_weight)
         }
         WeightFunction::BianMean { extent } => {
-            random_walker_weights_bian(tensor, extent, min_edge_weight)
+            random_walker_weights_bian(tensor, Vector::fill_with_len(extent, nd), min_edge_weight)
         }
-        WeightFunction::VarGaussian { extent } => {
-            random_walker_weights_variable_gaussian(tensor, extent, min_edge_weight)
-        }
+        WeightFunction::VarGaussian { extent } => random_walker_weights_variable_gaussian(
+            tensor,
+            Vector::fill_with_len(extent, nd),
+            min_edge_weight,
+        ),
     }
 }
 
@@ -58,14 +61,8 @@ pub fn random_walker_weights_lod<D: DynDimension + LargerDim>(
 #[derive(Copy, Clone, Identify)]
 pub enum WeightFunction {
     Grady { beta: f32 },
-    BianMean { extent: usize },
-    VarGaussian { extent: usize },
-}
-
-#[derive(Copy, Clone, Identify)]
-pub enum WeightParameters {
-    Grady { beta: f32 },
-    BianMean { extent: usize },
+    BianMean { extent: u32 },
+    VarGaussian { extent: u32 },
 }
 
 pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
@@ -200,12 +197,13 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
     )
 }
 
-fn num_filter_elements<D: DynDimension>(dim: D, extent: usize) -> JitTensorOperator<D> {
+fn num_filter_elements<D: DynDimension>(extent: Vector<D, u32>) -> JitTensorOperator<D> {
+    let dim = extent.dim();
     let nd = dim.n();
     let pos = jit::position(dim);
     let one = jit::scalar(1u32).splat(nd as _);
     let end = jit::dimensions(dim).sub(one.clone()).unwrap();
-    let extent = jit::scalar(extent as u32).splat(nd as _);
+    let extent = jit::const_vec(dbg!(extent).into_dyn());
     let filter_size_minus = pos.clone().min(extent.clone()).unwrap();
     let filter_size_plus = end.sub(pos).unwrap().min(extent).unwrap();
     let filter_size = filter_size_minus
@@ -216,13 +214,18 @@ fn num_filter_elements<D: DynDimension>(dim: D, extent: usize) -> JitTensorOpera
 
 fn mean_filter<D: DynDimension>(
     t: TensorOperator<D, StaticElementType<f32>>,
-    extent: usize,
+    extent: Vector<D, u32>,
 ) -> JitTensorOperator<D> {
-    let size = 2 * extent + 1;
-    let kernel = crate::operators::array::from_vec(vec![1.0; size]);
-    let kernels = Vector::fill_with_len(&kernel, t.dim().n());
+    let size = extent.map(|e| 2 * e + 1);
+    let kernels = size
+        .clone()
+        .into_iter()
+        .map(|s| crate::operators::array::from_vec(vec![1.0; s as usize]))
+        .collect::<Vec<_>>();
+    let kernels = Vector::try_from_fn_and_len(size.len(), |i| &kernels[i]).unwrap();
+
     let sum = crate::operators::conv::separable_convolution(t, kernels, BorderHandling::Pad0);
-    let num_elements = num_filter_elements(sum.dim(), extent);
+    let num_elements = num_filter_elements(extent);
     jit::jit(sum.into())
         .div(num_elements.cast(ScalarType::F32.into()).unwrap())
         .unwrap()
@@ -231,12 +234,15 @@ fn mean_filter<D: DynDimension>(
 fn variances<D: DynDimension>(
     t: JitTensorOperator<D>,
     t_mean: JitTensorOperator<D>,
-    extent: usize,
+    extent: Vector<D, u32>,
 ) -> JitTensorOperator<D> {
-    let size = 2 * extent + 1;
-    let nd = t.metadata().unwrap().dim().n();
-    let kernel = crate::operators::array::from_vec(vec![1.0; size]);
-    let kernels = Vector::fill_with_len(&kernel, nd);
+    let size = extent.map(|e| 2 * e + 1);
+    let kernels = size
+        .clone()
+        .into_iter()
+        .map(|s| crate::operators::array::from_vec(vec![1.0; s as usize]))
+        .collect::<Vec<_>>();
+    let kernels = Vector::try_from_fn_and_len(size.len(), |i| &kernels[i]).unwrap();
 
     let diff = t.clone().sub(t_mean.clone()).unwrap();
     let sqrd = diff.clone().mul(diff).unwrap();
@@ -253,7 +259,7 @@ fn variances<D: DynDimension>(
         BorderHandling::Pad0,
     );
 
-    let num_elements = num_filter_elements(diff_sum.dim(), extent);
+    let num_elements = num_filter_elements(extent);
     let diff_sum = jit::jit(diff_sum.into());
     diff_sum
         .div(
@@ -268,10 +274,9 @@ fn variances<D: DynDimension>(
 
 fn variance<D: DynDimension>(
     t: TensorOperator<D, StaticElementType<f32>>,
-    extent: usize,
+    extent: Vector<D, u32>,
 ) -> ScalarOperator<StaticElementType<f32>> {
-    let nd = t.dim().n();
-    let t_mean = mean_filter(t.clone(), extent);
+    let t_mean = mean_filter(t.clone(), extent.clone());
 
     let t = jit::jit(t.into());
 
@@ -288,8 +293,8 @@ fn variance<D: DynDimension>(
         SampleMethod::Subset(10),
     );
 
-    let size = 2 * extent + 1;
-    let num_neighborhood_voxels = size.pow(nd as u32);
+    let size = extent.map(|e| 2 * e + 1);
+    let num_neighborhood_voxels = size.hmul();
     let neighborhood_factor =
         (num_neighborhood_voxels as f32) / (num_neighborhood_voxels - 1) as f32;
 
@@ -300,12 +305,12 @@ fn variance<D: DynDimension>(
 
 pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
-    extent: usize,
+    extent: Vector<D, u32>,
 ) -> TensorOperator<D::Larger, StaticElementType<i8>> {
     //TODO: The border handling is not quite right here.
-    let t_mean = mean_filter(tensor.clone(), extent);
+    let t_mean = mean_filter(tensor.clone(), extent.clone());
     let t = jit::jit(tensor.clone().into());
-    let t_var = variances(t.clone(), t_mean.clone(), extent);
+    let t_var = variances(t.clone(), t_mean.clone(), extent.clone());
 
     let add = t_var.clone().log().unwrap().mul(0.5.into()).unwrap();
     let mul = jit::scalar(0.5).div(t_var).unwrap();
@@ -343,7 +348,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                     .vec::<u32>(nd, "first_chunk_pos")
                     .vec::<u32>(nd, "neighbor_chunks")
                     .vec::<u32>(nd, "center_chunk_offset")
-                    .scalar::<u32>("extent");
+                    .vec::<u32>(nd, "extent");
                 let num_neighbors_max = 3u32.pow(nd as u32);
 
                 let pipeline = device.request_state(
@@ -376,10 +381,8 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                 .submit(tensor.chunks.request_gpu(device.id, pos, read_info))
                                 .await;
 
-                            let extent_vec = Vector::<_, GlobalCoordinate>::fill_with_len(
-                                (extent.0 as u32).into(),
-                                nd,
-                            );
+                            let extent_vec = extent.global();
+
                             let chunk_neighbors =
                                 ChunkNeighborhood::around(&md, pos, extent_vec.clone(), extent_vec);
 
@@ -422,7 +425,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                                         w.vec(&first_chunk_pos)?;
                                         w.vec(&neighbor_chunks.raw())?;
                                         w.vec(&chunk_info.begin().raw())?;
-                                        w.scalar(**extent as u32)?;
+                                        w.vec(&*extent)?;
 
                                         Ok(())
                                     });
@@ -454,10 +457,10 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
 
 pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
-    extent: usize,
+    extent: Vector<D, u32>,
     min_edge_weight: f32,
 ) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
-    let best_centers = best_centers_variable_gaussian(tensor.clone(), extent);
+    let best_centers = best_centers_variable_gaussian(tensor.clone(), extent.clone());
 
     let nd = tensor.metadata.dim().n();
 
@@ -467,7 +470,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
         .push_dim_small((nd as u32).into(), (nd as u32).into());
 
     for d in 0..nd {
-        assert!(tensor.metadata.chunk_size[d].raw as usize > 2 * extent + 1);
+        assert!(tensor.metadata.chunk_size[d].raw > 2 * extent[d] + 1);
     }
 
     TensorOperator::with_state(
@@ -494,7 +497,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                     .vec::<u32>(nd, "first_chunk_pos")
                     .vec::<u32>(nd, "neighbor_chunks")
                     .vec::<u32>(nd, "center_chunk_offset")
-                    .scalar::<u32>("extent")
+                    .vec::<u32>(nd, "extent")
                     .scalar::<u32>("dim")
                     .scalar::<f32>("min_edge_weight");
 
@@ -547,10 +550,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                             let center_neighbors =
                                 ctx.submit(ctx.group(center_neighbor_requests)).await;
 
-                            let extent_vec = Vector::<_, GlobalCoordinate>::fill_with_len(
-                                (extent.0 as u32).into(),
-                                nd,
-                            );
+                            let extent_vec = extent.global();
                             let chunk_neighbors =
                                 ChunkNeighborhood::around(&md, pos, extent_vec.clone(), extent_vec);
 
@@ -597,7 +597,7 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                                             w.vec(&first_chunk_pos)?;
                                             w.vec(&neighbor_chunks.raw())?;
                                             w.vec(&chunk_info.begin().raw())?;
-                                            w.scalar(**extent as u32)?;
+                                            w.vec(&*extent)?;
                                             w.scalar(dim as u32)?;
                                             w.scalar(**min_edge_weight)?;
 
@@ -632,11 +632,13 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
 
 pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
-    extent: usize,
+    extent: Vector<D, u32>,
     min_edge_weight: f32,
 ) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
-    let t_mean = mean_filter(tensor.clone(), extent).compile().unwrap();
-    let variance = variance(tensor.clone(), extent);
+    let t_mean = mean_filter(tensor.clone(), extent.clone())
+        .compile()
+        .unwrap();
+    let variance = variance(tensor.clone(), extent.clone());
 
     let nd = tensor.metadata.dim().n();
 
@@ -703,7 +705,8 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
 
                             let variance = ctx.submit(variance.request_scalar()).await;
 
-                            let kernel_size = 2 * **extent + 1;
+                            let size = extent.map(|e| 2 * e + 1);
+                            let kernel_size = size.hmul();
                             let variance_correction_factor =
                                 2.0 / (kernel_size.pow(nd as u32 + 1) as f32);
                             let diff_variance =

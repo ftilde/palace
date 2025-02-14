@@ -62,7 +62,7 @@ void main() {
     int[ND] best_offset;
 
     if(all(less_than(current, consts.dimensions))) {
-        int[ND] extent = fill(current_i, int(consts.extent));
+        int[ND] extent = to_int(consts.extent);
         uint[ND] region_begin = to_uint(max(sub(current_i, extent), extent));
         uint[ND] region_end = to_uint(min(add(add(current_i, extent), fill(current_i, 1)), sub(to_int(consts.dimensions), extent)));
 

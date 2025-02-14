@@ -93,7 +93,7 @@ bool next_value(in out RegionIter iter, out uint[ND] pos) {
 
 void init_regions(uint[ND] center_uint, out uint[ND] begin, out uint[ND] end) {
     int[ND] center = to_int(center_uint);
-    int[ND] extent = fill(center, int(consts.extent));
+    int[ND] extent = to_int(consts.extent);
     begin = to_uint(max(sub(center, extent), fill(center, 0)));
     end = min(to_uint(add(add(center, extent), fill(center, 1))), consts.dimensions);
 }
