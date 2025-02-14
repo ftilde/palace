@@ -124,7 +124,7 @@ raycaster_config_rw.lod_coarseness().link_to(lod_coarseness_2d)
 view = store.store_primitive("quad")
 timestep = store.store_primitive(0)
 
-#raycaster_config_rw.compositing_mode().write("DVR")
+raycaster_config_rw.compositing_mode().write("DVR")
 
 mode = store.store_primitive("hierarchical")
 #mode = store.store_primitive("normal")
