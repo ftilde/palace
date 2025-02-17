@@ -505,13 +505,17 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
                 .limits
                 .max_compute_work_group_count[2 - i] as usize
         });
-        let num_wgs = Vector::from([
+        let num_wgs = Vector::<_, u32>::from([
             required_workgroups.div_ceil(max_workgroups.x() * max_workgroups.y()) as u32,
             required_workgroups
                 .div_ceil(max_workgroups.x())
                 .min(max_workgroups.y()) as u32,
             required_workgroups.min(max_workgroups.x()) as u32,
         ]);
+
+        if num_wgs.hmul() == 0 {
+            panic!("Zero dispatch");
+        }
 
         let cmd_raw = self.cmd.raw();
         self.cmd
@@ -521,6 +525,10 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
 
     pub unsafe fn dispatch3d(&mut self, global_size: Vector<D3, u32>) {
         let num_wgs = crate::util::div_round_up(global_size, self.pipeline.type_.local_size);
+
+        if num_wgs.hmul() == 0 {
+            panic!("Zero dispatch");
+        }
 
         let cmd_raw = self.cmd.raw();
         self.cmd

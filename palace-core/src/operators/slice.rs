@@ -185,16 +185,17 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
                             let out_info = m_out.chunk_info(pos);
                             let out_begin = out_info.begin().clone() + offset.0.clone();
                             let out_end = out_info.end() + offset.0.clone();
+                            let out_last = out_end.clone() - Vector::fill_with_len(1u32, nd);
 
                             let input_begin_chunk = m_in.chunk_pos(&out_begin);
-                            let input_end_chunk = m_in.chunk_pos(&out_end);
+                            let input_last_chunk = m_in.chunk_pos(&out_last);
                             let input_dim_in_chunks = m_in.dimension_in_chunks();
 
                             let in_brick_positions = (0..nd)
                                 .into_iter()
                                 .map(|i| {
                                     input_begin_chunk[i].raw
-                                        ..(input_end_chunk[i].raw + 1)
+                                        ..(input_last_chunk[i].raw + 1)
                                             .min(input_dim_in_chunks[i].raw)
                                 })
                                 .multi_cartesian_product()
