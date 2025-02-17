@@ -8,7 +8,7 @@ use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::sliceviewer::RenderConfig2D;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::gen_stub_pyfunction;
+use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
 
 //#[gen_stub_pyfunction] TODO: Not working because PyUntypedArray does not impl the required type
 #[pyfunction]
@@ -253,14 +253,31 @@ pub fn randomwalker_weights(
     Ok(res.into())
 }
 
+#[derive(FromPyObject)]
+#[gen_stub_pyclass_enum]
+pub enum MaybeVecUint {
+    Splat(u32),
+    Vec(Vec<u32>),
+}
+
+impl MaybeVecUint {
+    fn into_vec(self, nd: usize) -> Vec<u32> {
+        match self {
+            MaybeVecUint::Splat(s) => vec![s; nd],
+            MaybeVecUint::Vec(vec) => vec,
+        }
+    }
+}
+
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn randomwalker_weights_bian(
     input: MaybeEmbeddedTensorOperatorArg,
     min_edge_weight: f32,
-    extent: usize,
+    extent: MaybeVecUint,
 ) -> PyResult<TensorOperator> {
-    let input = input.unpack().into_inner().try_into()?;
+    let input: CTensorOperator<DDyn, _> = input.unpack().into_inner().try_into()?;
+    let extent = Vector::new(extent.into_vec(input.dim().n()));
     let res: CTensorOperator<DDyn, DType> =
         palace_core::operators::randomwalker::random_walker_weights_bian(
             input,
@@ -277,9 +294,10 @@ pub fn randomwalker_weights_bian(
 pub fn randomwalker_weights_variable_gaussian(
     input: MaybeEmbeddedTensorOperatorArg,
     min_edge_weight: f32,
-    extent: usize,
+    extent: MaybeVecUint,
 ) -> PyResult<TensorOperator> {
-    let input = input.unpack().into_inner().try_into()?;
+    let input: CTensorOperator<DDyn, _> = input.unpack().into_inner().try_into()?;
+    let extent = Vector::new(extent.into_vec(input.dim().n()));
     let res: CTensorOperator<DDyn, DType> =
         palace_core::operators::randomwalker::random_walker_weights_variable_gaussian(
             input,
