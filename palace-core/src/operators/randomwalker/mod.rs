@@ -332,7 +332,7 @@ mod test {
 
         let cfg = Default::default();
 
-        let weights = random_walker_weights_variable_gaussian(vol, 1, 1e-5);
+        let weights = random_walker_weights_variable_gaussian(vol, Vector::<D3, _>::fill(1), 1e-5);
         let weights = crate::operators::rechunk::rechunk(
             weights,
             Vector::fill(crate::operators::rechunk::ChunkSize::Full),
