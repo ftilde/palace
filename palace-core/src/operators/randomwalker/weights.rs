@@ -203,7 +203,7 @@ fn num_filter_elements<D: DynDimension>(extent: Vector<D, u32>) -> JitTensorOper
     let pos = jit::position(dim);
     let one = jit::scalar(1u32).splat(nd as _);
     let end = jit::dimensions(dim).sub(one.clone()).unwrap();
-    let extent = jit::const_vec(dbg!(extent).into_dyn());
+    let extent = jit::const_vec(extent.into_dyn());
     let filter_size_minus = pos.clone().min(extent.clone()).unwrap();
     let filter_size_plus = end.sub(pos).unwrap().min(extent).unwrap();
     let filter_size = filter_size_minus
