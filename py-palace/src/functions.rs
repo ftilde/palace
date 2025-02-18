@@ -291,7 +291,7 @@ pub fn randomwalker_weights_bian(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-pub fn randomwalker_weights_variable_gaussian(
+pub fn randomwalker_weights_bhattacharyya_var_gaussian(
     input: MaybeEmbeddedTensorOperatorArg,
     min_edge_weight: f32,
     extent: MaybeVecUint,
@@ -299,7 +299,27 @@ pub fn randomwalker_weights_variable_gaussian(
     let input: CTensorOperator<DDyn, _> = input.unpack().into_inner().try_into()?;
     let extent = Vector::new(extent.into_vec(input.dim().n()));
     let res: CTensorOperator<DDyn, DType> =
-        palace_core::operators::randomwalker::random_walker_weights_variable_gaussian(
+        palace_core::operators::randomwalker::random_walker_weights_bhattacharyya_var_gaussian(
+            input,
+            extent,
+            min_edge_weight,
+        )
+        .into_dyn()
+        .into();
+    Ok(res.into())
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn randomwalker_weights_ttest(
+    input: MaybeEmbeddedTensorOperatorArg,
+    min_edge_weight: f32,
+    extent: MaybeVecUint,
+) -> PyResult<TensorOperator> {
+    let input: CTensorOperator<DDyn, _> = input.unpack().into_inner().try_into()?;
+    let extent = Vector::new(extent.into_vec(input.dim().n()));
+    let res: CTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::random_walker_weights_ttest(
             input,
             extent,
             min_edge_weight,

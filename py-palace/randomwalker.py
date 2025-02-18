@@ -128,7 +128,7 @@ raycaster_config_rw.compositing_mode().write("DVR")
 
 mode = store.store_primitive("hierarchical")
 #mode = store.store_primitive("normal")
-weight_function = store.store_primitive("var_gaussian")
+weight_function = store.store_primitive("bhatt_var_gaussian")
 min_edge_weight = store.store_primitive(1e-5)
 
 beta = store.store_primitive(128.0)
@@ -177,13 +177,18 @@ def save_seeds():
     np.save("seeds_background", background_seeds)
 
 def apply_weight_function(volume):
+    #ext = [0] + [extent.load()] * (nd-1)
+    ext = [extent.load()] * nd
+
     match weight_function.load():
         case "grady":
             return pc.randomwalker_weights(volume, min_edge_weight.load(), beta.load())
         case "bian_mean":
-            return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), extent.load())
-        case "var_gaussian":
-            return pc.randomwalker_weights_variable_gaussian(volume, min_edge_weight.load(), extent.load())
+            return pc.randomwalker_weights_bian(volume, min_edge_weight.load(), ext)
+        case "bhatt_var_gaussian":
+            return pc.randomwalker_weights_bhattacharyya_var_gaussian(volume, min_edge_weight.load(), ext)
+        case "ttest":
+            return pc.randomwalker_weights_ttest(volume, min_edge_weight.load(), ext)
 
 def apply_rw_mode(input):
     fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
@@ -220,11 +225,11 @@ def render(size, events: pc.Events):
     widgets.append(palace_util.named_slider("LOD coarseness", lod_coarseness_2d, 1.0, 10, logarithmic=True))
 
     widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
-    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "var_gaussian"]))
+    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "bhatt_var_gaussian", "ttest"]))
     match weight_function.load():
         case "grady":
             widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
-        case "bian_mean" | "var_gaussian":
+        case "bian_mean" | "bhatt_var_gaussian" | "ttest":
             widgets.append(palace_util.named_slider("extent", extent, 1, 5))
 
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))

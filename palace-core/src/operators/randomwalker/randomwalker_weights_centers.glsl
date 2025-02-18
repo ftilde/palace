@@ -145,7 +145,11 @@ void mean_and_var(uint[ND] begin, uint[ND] end, uint[ND] overlap_begin, uint[ND]
     var = sum_of_diffs / float(region_size_linear-1);
 }
 
-float bhattacharyya_var_gaussian(float mean1, float mean2, float var1, float var2, uint n) {
+#ifdef WEIGHT_FUNCTION_BHATTACHARYYA_VAR_GAUSSIAN
+float weight_from_mean_and_var(float mean1, float mean2, float var1, float var2, uint n1, uint n2) {
+    // We assure elsewhere that n1==n2
+    uint n = n1;
+
     float nom = sqrt(var1*var2);
     float denom = (var1+var2)*0.5 + square((mean1-mean2)*0.5);
 
@@ -160,6 +164,75 @@ float bhattacharyya_var_gaussian(float mean1, float mean2, float var1, float var
 
     return w;
 }
+#endif
+
+#ifdef WEIGHT_FUNCTION_TTEST
+#define M_PI 3.1415926538
+
+float log_gamma_inner(float x) {
+    // Via lanczos approximation:
+    const float g = 7.0;
+    const int n = 9;
+    const float coefficients[9] = float[9](
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7
+    );
+
+    x -= 1.0;
+    float a = coefficients[0];
+    float t = x + g + 0.5;
+
+    for (int i = 1; i < n; i++) {
+        a += coefficients[i] / (x + float(i));
+    }
+
+    return 0.5 * log(2.0 * M_PI) + (x + 0.5) * log(t) - t + log(a);
+}
+float log_gamma(float x) {
+    if (x < 0.5) {
+        return log(M_PI / (sin(M_PI * x) * exp(log_gamma_inner(1.0 - x))));
+    }
+    return log_gamma_inner(x);
+}
+
+float beta(float x, float y) {
+    // exp(Log of sums) is more numerically stable than product/div of direct
+    // gamma (because the values become too large)
+    return exp(log_gamma(x) + log_gamma(y) - log_gamma(x + y));
+}
+
+float weight_from_mean_and_var(float mean1, float mean2, float var1, float var2, uint n1, uint n2) {
+    float min_variance = 0.000001;
+    var1 = max(min_variance, var1);
+    var2 = max(min_variance, var2);
+
+    float sn1 = var1/n1;
+    float sn2 = var2/n2;
+
+    float T_square = square(mean1 - mean2)/(sn1 + sn2);
+
+    float m_star = square(sn1+sn2)/(square(sn1)/(n1-1.0f) + square(sn2)/(n2-1.0f));
+
+    float m = round(m_star);
+
+    float tpow = pow(1.0f+T_square/m, -0.5f*(m+1.0f));
+
+    //The above sucks if m is too large, so we express the t-distribution pdf using the beta function
+    float beta_term = beta(0.5f, m*0.5f);
+
+    float w = tpow/(sqrt(m)*beta_term);
+
+    return w;
+
+}
+#endif
 
 int[ND] to_int(int8_t[ND] v) {
     int[ND] res;
@@ -222,7 +295,7 @@ void main() {
         mean_and_var(begin1, end1, overlap_begin, overlap_end, current_to_neighbor, current_to_neighbor_center, mean1, var1, n1);
         mean_and_var(begin2, end2, overlap_begin, overlap_end, neighbor_to_current, neighbor_to_current_center, mean2, var2, n2);
 
-        float weight = bhattacharyya_var_gaussian(mean1, mean2, var1, var2, n1);
+        float weight = weight_from_mean_and_var(mean1, mean2, var1, var2, n1, n2);
 
         weight = max(weight, consts.min_edge_weight);
 

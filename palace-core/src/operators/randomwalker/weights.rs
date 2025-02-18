@@ -36,11 +36,16 @@ pub fn random_walker_weights<D: DynDimension + LargerDim>(
         WeightFunction::BianMean { extent } => {
             random_walker_weights_bian(tensor, Vector::fill_with_len(extent, nd), min_edge_weight)
         }
-        WeightFunction::VarGaussian { extent } => random_walker_weights_variable_gaussian(
-            tensor,
-            Vector::fill_with_len(extent, nd),
-            min_edge_weight,
-        ),
+        WeightFunction::BhattacharyyaVarGaussian { extent } => {
+            random_walker_weights_bhattacharyya_var_gaussian(
+                tensor,
+                Vector::fill_with_len(extent, nd),
+                min_edge_weight,
+            )
+        }
+        WeightFunction::TTest { extent } => {
+            random_walker_weights_ttest(tensor, Vector::fill_with_len(extent, nd), min_edge_weight)
+        }
     }
 }
 
@@ -62,7 +67,8 @@ pub fn random_walker_weights_lod<D: DynDimension + LargerDim>(
 pub enum WeightFunction {
     Grady { beta: f32 },
     BianMean { extent: u32 },
-    VarGaussian { extent: u32 },
+    BhattacharyyaVarGaussian { extent: u32 },
+    TTest { extent: u32 },
 }
 
 pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
@@ -303,6 +309,12 @@ fn variance<D: DynDimension>(
     })
 }
 
+#[derive(Copy, Clone, Identify)]
+enum VarGaussianWeightFunction {
+    Bhattacharyya,
+    TTest,
+}
+
 pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
     extent: Vector<D, u32>,
@@ -454,11 +466,37 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
         },
     )
 }
-
-pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
+pub fn random_walker_weights_bhattacharyya_var_gaussian<D: DynDimension + LargerDim>(
     tensor: TensorOperator<D, StaticElementType<f32>>,
     extent: Vector<D, u32>,
     min_edge_weight: f32,
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
+    random_walker_weights_variable_gaussian(
+        tensor,
+        extent,
+        min_edge_weight,
+        VarGaussianWeightFunction::Bhattacharyya,
+    )
+}
+
+pub fn random_walker_weights_ttest<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
+    extent: Vector<D, u32>,
+    min_edge_weight: f32,
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
+    random_walker_weights_variable_gaussian(
+        tensor,
+        extent,
+        min_edge_weight,
+        VarGaussianWeightFunction::TTest,
+    )
+}
+
+fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
+    extent: Vector<D, u32>,
+    min_edge_weight: f32,
+    method: VarGaussianWeightFunction,
 ) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<f32>> {
     let best_centers = best_centers_variable_gaussian(tensor.clone(), extent.clone());
 
@@ -483,8 +521,9 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
             DataParam(out_md),
             DataParam(extent),
             DataParam(min_edge_weight),
+            DataParam(method),
         ),
-        |ctx, mut positions, (tensor, best_centers, out_md, extent, min_edge_weight)| {
+        |ctx, mut positions, (tensor, best_centers, out_md, extent, min_edge_weight, method)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -504,14 +543,27 @@ pub fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                 let num_neighbors_max = 3u32.pow(nd as u32);
 
                 let pipeline = device.request_state(
-                    (md.chunk_size.hmul(), nd, num_neighbors_max, &push_constants),
-                    |device, (mem_size, nd, num_neighbors_max, push_constants)| {
+                    (
+                        md.chunk_size.hmul(),
+                        nd,
+                        num_neighbors_max,
+                        method,
+                        &push_constants,
+                    ),
+                    |device, (mem_size, nd, num_neighbors_max, method, push_constants)| {
+                        let method_string = match **method {
+                            VarGaussianWeightFunction::Bhattacharyya => {
+                                "WEIGHT_FUNCTION_BHATTACHARYYA_VAR_GAUSSIAN"
+                            }
+                            VarGaussianWeightFunction::TTest => "WEIGHT_FUNCTION_TTEST",
+                        };
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weights_centers.glsl"))
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
                                 .define("ND", nd)
-                                .define("NUM_NEIGHBORS", num_neighbors_max),
+                                .define("NUM_NEIGHBORS", num_neighbors_max)
+                                .define(method_string, 1),
                         )
                         .build(device)
                     },

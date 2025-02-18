@@ -164,7 +164,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ball,
                         seeds_fg,
                         seeds_bg,
-                        operators::randomwalker::WeightFunction::VarGaussian { extent: 1 },
+                        operators::randomwalker::WeightFunction::BhattacharyyaVarGaussian {
+                            extent: 1,
+                        },
                         1e-6,
                         Default::default(),
                     );

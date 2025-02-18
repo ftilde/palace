@@ -60,8 +60,10 @@ def apply_weight_function(tensor):
             return pc.randomwalker_weights(tensor, min_edge_weight.load(), beta.load())
         case "bian_mean":
             return pc.randomwalker_weights_bian(tensor, min_edge_weight.load(), extent.load())
-        case "var_gaussian":
-            return pc.randomwalker_weights_variable_gaussian(tensor, min_edge_weight.load(), extent.load())
+        case "bhatt_var_gaussian":
+            return pc.randomwalker_weights_bhattacharyya_var_gaussian(tensor, min_edge_weight.load(), extent.load())
+        case "ttest":
+            return pc.randomwalker_weights_ttest(tensor, min_edge_weight.load(), extent.load())
 
 def apply_rw_mode(input):
 
@@ -101,11 +103,11 @@ def render(size, events: pc.Events):
     widgets = []
 
     widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
-    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "var_gaussian"]))
+    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "bhatt_var_gaussian", "ttest"]))
     match weight_function.load():
         case "grady":
             widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
-        case "bian_mean" | "var_gaussian":
+        case "bian_mean" | "var_gaussian" | "ttest":
             widgets.append(palace_util.named_slider("extent", extent, 1, 5))
 
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))

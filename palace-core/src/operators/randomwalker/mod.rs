@@ -297,8 +297,8 @@ mod test {
         compare_tensor_approx(v, expected, cfg.max_residuum_norm);
     }
 
-    #[test]
-    fn variable_gaussian() {
+    #[track_caller]
+    fn test_weight_function(f: WeightFunction) {
         let size = VoxelPosition::fill(20.into());
         let brick_size_full = size.local();
         let brick_size = LocalVoxelPosition::fill(4.into());
@@ -332,7 +332,7 @@ mod test {
 
         let cfg = Default::default();
 
-        let weights = random_walker_weights_variable_gaussian(vol, Vector::<D3, _>::fill(1), 1e-5);
+        let weights = random_walker_weights(vol, f, 1e-5);
         let weights = crate::operators::rechunk::rechunk(
             weights,
             Vector::fill(crate::operators::rechunk::ChunkSize::Full),
@@ -340,6 +340,16 @@ mod test {
         let v = random_walker_single_chunk(weights, seeds, cfg);
 
         compare_tensor_approx(v, expected, cfg.max_residuum_norm * 10.0);
+    }
+
+    #[test]
+    fn bhattacharyya_variable_gaussian() {
+        test_weight_function(WeightFunction::BhattacharyyaVarGaussian { extent: 1 })
+    }
+
+    #[test]
+    fn ttest() {
+        test_weight_function(WeightFunction::TTest { extent: 1 })
     }
 
     #[test]
