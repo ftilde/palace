@@ -6,5 +6,7 @@ edition = "2021"
 [dependencies]
 palace-core = { path = "../palace-core" }
 id = { path = "../id" }
-hdf5 = { git = "https://github.com/aldanor/hdf5-rust.git" }
+hidefix = "0.12"
+hdf5 = { package = "hdf5-metno", version = "*" } #use the same version as hidefix
 ndarray = "0.15.6"
+memmap = "0.7.0"
