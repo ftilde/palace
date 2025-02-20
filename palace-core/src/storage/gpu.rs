@@ -1595,8 +1595,7 @@ impl Allocator {
                 .unwrap()
         };
 
-        self.num_alloced
-            .set(self.num_alloced.get() + allocation.size());
+        self.num_alloced.set(alloc_size(&allocator));
 
         Ok(Allocation {
             allocation: MaybeUninit::new(allocation),
@@ -1610,12 +1609,10 @@ impl Allocator {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
         let allocation_inner = allocation.allocation.assume_init();
-        let size = allocation_inner.size();
         allocator.free(allocation_inner).unwrap();
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
 
-        self.num_alloced
-            .set(self.num_alloced.get().checked_sub(size).unwrap());
+        self.num_alloced.set(alloc_size(&allocator));
     }
 
     pub fn allocate_image(
@@ -1631,7 +1628,6 @@ impl Allocator {
             unsafe { self.device.destroy_image(image, None) };
             return Err(gpu_allocator::AllocationError::OutOfMemory);
         }
-        self.num_alloced.set(self.num_alloced.get() + size);
 
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
@@ -1657,6 +1653,8 @@ impl Allocator {
                 .unwrap()
         };
 
+        self.num_alloced.set(alloc_size(&allocator));
+
         Ok(ImageAllocation {
             allocation: MaybeUninit::new(allocation),
             size,
@@ -1668,26 +1666,13 @@ impl Allocator {
     pub unsafe fn deallocate_image(&self, allocation: ImageAllocation) {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
-        let size = allocation.allocation.assume_init_ref().size();
         allocator.free(allocation.allocation.assume_init()).unwrap();
         unsafe { self.device.destroy_image(allocation.image, None) };
 
-        self.num_alloced
-            .set(self.num_alloced.get().checked_sub(size).unwrap());
+        self.num_alloced.set(alloc_size(&allocator));
     }
 
     fn allocated(&self) -> u64 {
-        //let mut allocator = self.allocator.borrow_mut();
-        //let allocator = allocator.as_mut().unwrap();
-        //let report = allocator.generate_report();
-        //let a = bytesize::to_string(report.total_allocated_bytes, true);
-        //let b = bytesize::to_string(report.total_reserved_bytes, true);
-        //println!("allocated {}, reserved {}", a, b);
-        //for block in report.blocks {
-        //    dbg!(bytesize::to_string(block.size, true));
-        //    dbg!(block.allocations.len());
-        //}
-
         self.num_alloced.get()
     }
 
@@ -1696,4 +1681,21 @@ impl Allocator {
         let mut tmp = None;
         std::mem::swap(&mut *a, &mut tmp);
     }
+}
+
+fn alloc_size(allocator: &gpu_allocator::vulkan::Allocator) -> u64 {
+    // Note: This is not completely free, since we iterate over all storage blocks, but also
+    // not too expensive, since the size of memory blocks (~256MB) is quite large compared to
+    // the expected device memory (a couple of GB). If device memory is too large and this
+    // becomes a problem, we probably want larger memory blocks anyways.
+    let report = allocator.generate_report();
+    report.total_reserved_bytes
+
+    //let a = bytesize::to_string(report.total_allocated_bytes, true);
+    //let b = bytesize::to_string(report.total_reserved_bytes, true);
+    //println!("allocated {}, reserved {}", a, b);
+    //for block in report.blocks {
+    //    dbg!(bytesize::to_string(block.size, true));
+    //    dbg!(block.allocations.len());
+    //}
 }
