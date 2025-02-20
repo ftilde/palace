@@ -586,7 +586,7 @@ pub struct Storage {
     // Manage (unreferenced) items (brick as well as index) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when bricks in index were requested and possibly remove them from the
-    // corresponding brick index (thus (possibly) adding them to "nromal" lru_manager)
+    // corresponding brick index (thus (possibly) adding them to "normal" lru_manager)
     index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
@@ -861,6 +861,7 @@ impl Storage {
                 );
             }
         }
+        // Unref all bricks that were used in an index deleted above
         for brick_map in indices_to_unref {
             for (_pos, brick_ref) in brick_map {
                 unsafe {
@@ -869,8 +870,13 @@ impl Storage {
             }
         }
 
+        // Potentially unref bricks from indices that are still active
         let mut unindexed = 0;
         if goal_in_bytes > collected {
+            // Pop items one by one from the respective indices. Note that since bricks are
+            // inserted in the lru only when they are first inserted into the index, we effectively
+            // a "least recently added" strategy here. This is probably not what we actually
+            // want... However, we (so far) have no feedback about bricks being used via the index.
             while let Some((op, pos, data_id)) = index_lru.get_next() {
                 let brick_index = index_index.get_mut(&op).unwrap();
 
