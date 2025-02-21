@@ -683,6 +683,33 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         }
     }
 
+    fn gpu_to_cpu(
+        &mut self,
+        id: DataId,
+        source_id: DeviceId,
+        target: CpuDataLocation,
+        req_prio: Priority,
+    ) -> Option<TaskId> {
+        let task_id = self.transfer_manager.next_id();
+        let device = &self.data.device_contexts[source_id];
+        let access = device.storage.register_access(device, self.data.frame, id);
+        let transfer_task = self.transfer_manager.transfer_gpu_to_cpu(
+            self.context(task_id),
+            &self.data.device_contexts[source_id],
+            access,
+            target,
+        );
+        Some(match transfer_task {
+            TransferTaskResult::New(t) => {
+                self.task_manager.add_task(task_id, t);
+                self.task_graph
+                    .add_task(task_id, req_prio.downstream(TaskClass::Transfer));
+                task_id
+            }
+            TransferTaskResult::Existing(task_id) => task_id,
+        })
+    }
+
     fn try_make_available(
         &mut self,
         id: DataId,
@@ -726,11 +753,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     }
                 }
             }
-            (DataLocation::GPU(source), VisibleDataLocation::GPU(target, _)) => {
-                panic!(
-                    "VRam to VRam transfer ({} -> {}) not implemented, yet",
-                    source, target
-                )
+            (DataLocation::GPU(source), VisibleDataLocation::GPU(_, _)) => {
+                // There is no direct way to transfer memory from one gpu to another. Hence we
+                // first transfer it to the cpu. Once it arrives there, the transfer machinery will
+                // be activated again to transfer it to the actual target gpu.
+                // This is similar to how transfers happen first and the results are made visible
+                // afterwards (see: other branch with source == target).
+                self.gpu_to_cpu(id, source, CpuDataLocation::Ram, req_prio)
             }
             (DataLocation::CPU(source), VisibleDataLocation::GPU(target_id, _)) => {
                 let task_id = self.transfer_manager.next_id();
@@ -773,24 +802,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                 })
             }
             (DataLocation::GPU(source_id), VisibleDataLocation::CPU(target)) => {
-                let task_id = self.transfer_manager.next_id();
-                let device = &self.data.device_contexts[source_id];
-                let access = device.storage.register_access(device, self.data.frame, id);
-                let transfer_task = self.transfer_manager.transfer_gpu_to_cpu(
-                    self.context(task_id),
-                    &self.data.device_contexts[source_id],
-                    access,
-                    target,
-                );
-                Some(match transfer_task {
-                    TransferTaskResult::New(t) => {
-                        self.task_manager.add_task(task_id, t);
-                        self.task_graph
-                            .add_task(task_id, req_prio.downstream(TaskClass::Transfer));
-                        task_id
-                    }
-                    TransferTaskResult::Existing(task_id) => task_id,
-                })
+                self.gpu_to_cpu(id, source_id, target, req_prio)
             }
             (DataLocation::CPU(source), VisibleDataLocation::CPU(target)) => {
                 let task_id = self.transfer_manager.next_id();
