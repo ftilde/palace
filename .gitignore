@@ -1,5 +1,6 @@
 /target
 perf.data*
+profile.json.gz
 flamegraph*.svg
 taskgraph.svg
 *taskeventstream.json
