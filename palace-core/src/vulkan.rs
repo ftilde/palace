@@ -403,7 +403,7 @@ impl DeviceContext {
                 .synchronization2(true)
                 .compute_full_subgroups(true);
             let mut enabled_features_12 = vk::PhysicalDeviceVulkan12Features::default()
-                .shader_buffer_int64_atomics(true)
+                //.shader_buffer_int64_atomics(true) //Not actually used currently
                 .buffer_device_address(true)
                 .scalar_block_layout(true)
                 .runtime_descriptor_array(true)
