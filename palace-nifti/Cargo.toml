@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 palace-core = { path = "../palace-core" }
 id = { path = "../id" }
-nifti = { version = "0.15.0", features = ["ndarray_volumes"] }
-ndarray = "0.15.6"
+nifti = "0.16.0"
+ndarray = "0.16"

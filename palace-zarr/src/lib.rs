@@ -30,8 +30,9 @@ use palace_core::{
 };
 use zarrs::{
     array::{codec::ZstdCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
+    filesystem::FilesystemStore,
     node::{Node, NodePath},
-    storage::{store::FilesystemStore, ListableStorageTraits, ReadableStorageTraits},
+    storage::{ListableStorageTraits, ReadableStorageTraits},
 };
 
 const SPACING_KEY: &str = "spacing_us";

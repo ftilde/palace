@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc};
 
 use id::{Id, Identify};
-use nifti::{IntoNdArray, NiftiHeader, NiftiObject};
+use nifti::{NiftiHeader, NiftiObject};
 
 use palace_core::{
     array::{TensorEmbeddingData, VolumeEmbeddingData, VolumeMetaData},
@@ -175,7 +175,12 @@ impl NiftiVolumeSourceState {
                                 // a more "complete" of slices in a single task.
                                 let _ = vol.read_slice();
                             }
-                            let in_chunk = vol.read_slice().unwrap().into_ndarray::<f32>().unwrap();
+                            let chunk_data = vol
+                                .read_slice()
+                                .unwrap()
+                                .into_nifti_typed_data::<f32>()
+                                .unwrap();
+                            let in_chunk = palace_core::data::chunk(chunk_data.as_slice(), &chunk);
                             let s = chunk.logical_dimensions;
                             let s = (s.z().raw as usize, s.y().raw as usize, s.x().raw as usize);
                             let in_chunk = in_chunk.to_shape(s).unwrap();

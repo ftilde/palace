@@ -24,7 +24,7 @@ fn dimension_order_stride<D: DynDimension, T: CoordinateType>(
 pub fn contiguous_shape<D: DynDimension, T: CoordinateType>(
     size: &Vector<D, Coordinate<T>>,
 ) -> ndarray::Shape<D::NDArrayDimDyn> {
-    ndarray::ShapeBuilder::into_shape(size.to_ndarray_dim())
+    size.to_ndarray_dim().into()
 }
 pub fn stride_shape<D: DynDimension, T: CoordinateType>(
     size: &Vector<D, Coordinate<T>>,
@@ -33,7 +33,7 @@ pub fn stride_shape<D: DynDimension, T: CoordinateType>(
     use ndarray::ShapeBuilder;
     let stride = dimension_order_stride(mem_size);
 
-    let size = ndarray::ShapeBuilder::into_shape(size.to_ndarray_dim());
+    let size: ndarray::Shape<D::NDArrayDimDyn> = size.to_ndarray_dim().into();
     size.strides(stride)
 }
 
