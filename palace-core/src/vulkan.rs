@@ -1,6 +1,7 @@
 use crate::storage::gpu::Allocator;
 use crate::storage::gpu::MemoryLocation;
 use crate::task::Request;
+use crate::util::Map;
 use crate::Error;
 use ash::ext::debug_utils;
 use ash::khr::push_descriptor;
@@ -107,11 +108,11 @@ pub struct VulkanContext {
     debug_callback: vk::DebugUtilsMessengerEXT,
     pub functions: GlobalFunctions,
 
-    device_contexts: Vec<DeviceContext>,
+    device_contexts: Map<DeviceId, DeviceContext>,
 }
 
 impl VulkanContext {
-    pub fn new(gpu_mem_capacity: u64) -> Result<Self, Error> {
+    pub fn new(gpu_mem_capacity: u64, devices: Vec<usize>) -> Result<Self, Error> {
         unsafe {
             let entry = ash::Entry::load()?;
 
@@ -162,32 +163,38 @@ impl VulkanContext {
             let physical_devices = instance
                 .enumerate_physical_devices()
                 .expect("Failed to enumerate physical devices.");
-            let device_contexts: Vec<DeviceContext> = physical_devices
+            let device_contexts: Map<DeviceId, DeviceContext> = physical_devices
                 .iter()
                 .enumerate()
                 .filter_map(|(device_num, physical_device)| {
-                    instance
-                        .get_physical_device_queue_family_properties(*physical_device)
-                        .iter()
-                        .enumerate()
-                        .find_map(|(index, info)| {
-                            if info
-                                .queue_flags
-                                .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
-                            {
-                                DeviceContext::new(
-                                    device_num,
-                                    &instance,
-                                    *physical_device,
-                                    index as u32,
-                                    info.queue_count,
-                                    gpu_mem_capacity,
-                                )
-                                .ok()
-                            } else {
-                                None
-                            }
-                        })
+                    let device_id = DeviceId(device_num);
+                    if devices.is_empty() || devices.contains(&device_num) {
+                        instance
+                            .get_physical_device_queue_family_properties(*physical_device)
+                            .iter()
+                            .enumerate()
+                            .find_map(|(index, info)| {
+                                if info
+                                    .queue_flags
+                                    .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
+                                {
+                                    DeviceContext::new(
+                                        device_id,
+                                        &instance,
+                                        *physical_device,
+                                        index as u32,
+                                        info.queue_count,
+                                        gpu_mem_capacity,
+                                    )
+                                    .ok()
+                                    .map(|d| (device_id, d))
+                                } else {
+                                    None
+                                }
+                            })
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             assert!(
@@ -213,15 +220,19 @@ impl VulkanContext {
         }
     }
 
-    pub fn device_contexts(&self) -> &[DeviceContext] {
-        self.device_contexts.as_slice()
+    pub fn device_contexts(&self) -> &Map<DeviceId, DeviceContext> {
+        &self.device_contexts
+    }
+
+    pub fn checked_device_id(&self, raw: usize) -> Option<DeviceId> {
+        self.device_contexts.get(&DeviceId(raw)).map(|d| d.id)
     }
 }
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
-            for device_context in self.device_contexts.drain(..) {
+            for device_context in self.device_contexts.drain() {
                 std::mem::drop(device_context);
             }
 
@@ -300,7 +311,13 @@ impl CommandBuffer {
     }
 }
 
-pub type DeviceId = usize;
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Identify)]
+pub struct DeviceId(usize);
+impl DeviceId {
+    pub fn inner(&self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CmdBufferEpoch(usize);
@@ -729,7 +746,7 @@ impl DeviceContext {
             type_: crate::task::RequestType::CmdBufferSubmission(id),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
-                    if ctx.device_contexts[id.device].current_epoch() > id.epoch {
+                    if ctx.device_contexts[&id.device].current_epoch() > id.epoch {
                         Some(())
                     } else {
                         None
@@ -753,7 +770,7 @@ impl DeviceContext {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
-                    if ctx.device_contexts[id.device].cmd_buffer_completed(id.epoch) {
+                    if ctx.device_contexts[&id.device].cmd_buffer_completed(id.epoch) {
                         Some(())
                     } else {
                         None
@@ -774,7 +791,7 @@ impl DeviceContext {
             type_: crate::task::RequestType::CmdBufferCompletion(id),
             gen_poll: Box::new(move |ctx| {
                 Box::new(move || {
-                    if ctx.device_contexts[id.device].cmd_buffer_completed(id.epoch) {
+                    if ctx.device_contexts[&id.device].cmd_buffer_completed(id.epoch) {
                         Some(())
                     } else {
                         None

@@ -154,9 +154,9 @@ void main() {
         Default::default(),
         input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),
-        move |ctx, positions, _loc, (input, hessian)| {
+        move |ctx, positions, loc, (input, hessian)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let m = input.metadata;
 

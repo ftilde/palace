@@ -153,9 +153,9 @@ fn expand<D: DynDimension>(
         op_descriptor!(),
         Default::default(),
         (input, DataParam(m_out.clone())),
-        |ctx, mut positions, _loc, (input, m_out)| {
+        |ctx, mut positions, loc, (input, m_out)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let nd = input.dim().n();
 
@@ -312,10 +312,10 @@ fn run_rw<D: DynDimension + LargerDim>(
         ),
         |ctx,
          positions,
-         _loc,
+         loc,
          (weights, init_values, upper_result, points_fg, points_bg, current_ed, cfg)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
                 let upper_metadata = &upper_result.metadata;
                 let current_metadata = &init_values.metadata;
                 let num_chunks = upper_metadata.dimension_in_chunks().hmul();
@@ -669,6 +669,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                             };
                             random_walker_on_chunk(
                                 ctx,
+                                device,
                                 &weights.inner,
                                 &*seeds_buf,
                                 Some(&init_values.inner),
@@ -701,9 +702,9 @@ fn shrink<D: DynDimension>(
         Default::default(),
         input.metadata.base.clone(),
         input,
-        |ctx, positions, _loc, input| {
+        |ctx, positions, loc, input| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let m_in = &input.metadata;
                 let m_out = &m_in.base;

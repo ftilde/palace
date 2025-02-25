@@ -418,9 +418,9 @@ void main()
             DataParam(tf),
             DataParam(config),
         ),
-        move |ctx, pos, _, (input, result_metadata, projection_mat, tf, config)| {
+        move |ctx, pos, loc, (input, result_metadata, projection_mat, tf, config)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

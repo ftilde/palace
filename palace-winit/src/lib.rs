@@ -162,7 +162,7 @@ struct AppState<'a, R, F, E> {
     events: EventSource,
     draw: F,
     run_result: Result<(), E>,
-    display_device: Option<usize>,
+    display_device: Option<DeviceId>,
 }
 
 pub trait MutWrapper<Inner> {

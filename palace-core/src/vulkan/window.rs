@@ -344,7 +344,7 @@ fn swap_chain_support(
     device: DeviceId,
     surface: vk::SurfaceKHR,
 ) -> Option<SwapChainSupportDetails> {
-    let device = &ctx.device_contexts[device];
+    let device = &ctx.device_contexts[&device];
 
     let support = SwapChainSupportDetails::query(ctx, device.physical_device, surface);
     let surface_support = unsafe {
@@ -367,7 +367,7 @@ fn swap_chain_support(
 impl Window {
     // TODO: see if we can just impl drop when taking a device reference
     pub unsafe fn deinitialize(&mut self, context: &crate::vulkan::VulkanContext) {
-        let device = &context.device_contexts[self.device_id];
+        let device = &context.device_contexts[&self.device_id];
 
         // Device must be idle before sync objects can be destroyed to make sure they are not in
         // use anymore
@@ -395,13 +395,12 @@ impl Window {
             let Some(details) = swap_chain_support(ctx, device, surface) else {
                 return Err("Specified device does not have present capabilities".into());
             };
-            (&ctx.device_contexts[device], details)
+            (&ctx.device_contexts[&device], details)
         } else {
             ctx.device_contexts
                 .iter()
-                .enumerate()
                 .find_map(|(i, device)| {
-                    swap_chain_support(ctx, i, surface).map(|support| (device, support))
+                    swap_chain_support(ctx, *i, surface).map(|support| (device, support))
                 })
                 .ok_or_else(|| "Could not find any device with present capabilities")?
         };
@@ -497,7 +496,7 @@ impl Window {
         [self.swap_chain.extent.height, self.swap_chain.extent.width].into()
     }
     pub fn resize(&mut self, size: WindowSize, ctx: &VulkanContext) {
-        let device = &ctx.device_contexts[self.device_id];
+        let device = &ctx.device_contexts[&self.device_id];
 
         let swap_chain_support = swap_chain_support(ctx, self.device_id, self.surface).unwrap();
         let swap_chain_config = swap_chain_support.default_config();
@@ -528,7 +527,7 @@ impl Window {
             return Err("Image must consist of a single chunk".into());
         }
 
-        let device = &ctx.device_contexts[self.device_id];
+        let device = &ctx.device_contexts[&self.device_id];
 
         let img = ctx
             .submit(input.chunks.request_gpu(

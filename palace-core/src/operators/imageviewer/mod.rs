@@ -169,9 +169,9 @@ pub fn view_image(
             DataParam(view_state),
             DataParam(config),
         ),
-        move |ctx, pos, _, (input, result_metadata, view_state, config)| {
+        move |ctx, pos, loc, (input, result_metadata, view_state, config)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

@@ -46,9 +46,9 @@ pub fn rasterize_seed_points<D: DynDimension + LargerDim>(
         Default::default(),
         md.clone(),
         (points_fg, points_bg, DataParam(md), DataParam(ed.clone())),
-        |ctx, _pos, _, (points_fg, points_bg, md, ed)| {
+        |ctx, _pos, loc, (points_fg, points_bg, md, ed)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let nd = md.dim().n();
 

@@ -27,6 +27,7 @@ use crate::{
 
 pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     ctx: TaskContext<'req, 'inv, StaticElementType<f32>>,
+    device: &DeviceContext,
     weights: &'inv Operator<StaticElementType<f32>>,
     seeds: &impl AsBufferDescriptor,
     init_values: Option<&'inv Operator<StaticElementType<f32>>>,
@@ -35,7 +36,6 @@ pub async fn random_walker_on_chunk<'req, 'inv, D: DynDimension>(
     tensor_md: TensorMetaData<D>,
 ) -> Result<(), crate::Error> {
     assert!(tensor_md.is_single_chunk());
-    let device = ctx.preferred_device();
 
     if tensor_md.num_chunk_elements() > u32::MAX as usize {
         return Err(format!(
@@ -168,9 +168,9 @@ pub fn random_walker_single_chunk<D: DynDimension + LargerDim>(
         Default::default(),
         seeds.metadata.clone(),
         (weights, seeds, DataParam(cfg)),
-        move |ctx, _pos, _, (weights, seeds, cfg)| {
+        move |ctx, _pos, loc, (weights, seeds, cfg)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
                 let read_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
@@ -182,6 +182,7 @@ pub fn random_walker_single_chunk<D: DynDimension + LargerDim>(
                     .await;
                 random_walker_on_chunk::<D>(
                     ctx,
+                    device,
                     &weights.chunks,
                     &seeds,
                     None,

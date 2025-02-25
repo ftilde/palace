@@ -44,13 +44,13 @@ impl RunTime {
 #[pymethods]
 impl RunTime {
     #[new]
-    #[pyo3(signature = (storage_size, gpu_storage_size, disk_cache_size=None, num_compute_threads=None, device=None))]
+    #[pyo3(signature = (storage_size, gpu_storage_size, disk_cache_size=None, num_compute_threads=None, devices=Vec::new()))]
     pub fn new(
         storage_size: usize,
         gpu_storage_size: u64,
         disk_cache_size: Option<usize>,
         num_compute_threads: Option<usize>,
-        device: Option<usize>,
+        devices: Vec<usize>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: Rc::new(
@@ -60,7 +60,7 @@ impl RunTime {
                     num_compute_threads,
                     disk_cache_size,
                     None,
-                    device,
+                    devices,
                 ))?
                 .into(),
             ),
@@ -135,6 +135,16 @@ impl RunTime {
         display_device: Option<usize>,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
+        let display_device = {
+            let rt = rt.borrow();
+            if let Some(display_device) = display_device {
+                Some(rt.checked_device_id(display_device).ok_or_else(|| {
+                    crate::map_err(format!("Invalid device id: {}", display_device).into())
+                })?)
+            } else {
+                None
+            }
+        };
         palace_winit::run_with_window_wrapper(
             &mut rt,
             Duration::from_millis(timeout_ms),

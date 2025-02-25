@@ -282,9 +282,9 @@ void main() {
             DataParam(element_out_to_in),
             DataParam(push_constants),
         ),
-        move |ctx, mut positions, _loc, (input, output_size, element_out_to_in, push_constants)| {
+        move |ctx, mut positions, loc, (input, output_size, element_out_to_in, push_constants)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dst_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

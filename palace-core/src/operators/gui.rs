@@ -50,16 +50,26 @@ impl GuiState {
             textures_delta: Default::default(),
             textures: Default::default(),
             scale_factor: 1.0,
-            device: device_id,
+            device: Some(device_id),
         })))
     }
-    pub fn new(ctx: &OpaqueTaskContext<'_, '_>) -> Self {
-        Self::on_device(ctx.preferred_device().id)
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(GuiStateInner {
+            egui_ctx: Default::default(),
+            version: Default::default(),
+            latest_size: Cell::new(Vector::fill(0)),
+            textures_delta: Default::default(),
+            textures: Default::default(),
+            scale_factor: 1.0,
+            device: None,
+        })))
     }
 
     pub unsafe fn deinit(&mut self, rt: &RunTime) {
-        let device = self.0.borrow().device;
-        unsafe { self.deinitialize(&rt.vulkan.device_contexts()[device]) };
+        let device = self.0.borrow().device.clone();
+        if let Some(device) = device {
+            unsafe { self.deinitialize(&rt.vulkan.device_contexts()[&device]) };
+        }
     }
     pub fn destroy(mut self, rt: &RunTime) {
         // Safety we are actually taken ownership of the state
@@ -74,12 +84,13 @@ pub struct GuiStateInner {
     textures_delta: TexturesDelta,
     textures: Map<TextureId, (ImageAllocation, vk::ImageView)>,
     scale_factor: f32,
-    device: DeviceId,
+    device: Option<DeviceId>,
 }
 
 impl GuiStateInner {
     async fn update(&mut self, ctx: &OpaqueTaskContext<'_, '_>, size: Vector<D2, u32>) {
-        let device = ctx.device_ctx(self.device);
+        self.device = Some(self.device.unwrap_or(ctx.first_device().id));
+        let device = ctx.device_ctx(self.device.unwrap());
 
         self.latest_size.set(size);
 
@@ -561,9 +572,14 @@ void main() {
                 m
             },
             (input.clone(), DataParam(self)),
-            move |ctx, pos, _, (input, state)| {
+            move |ctx, pos, loc, (input, state)| {
                 async move {
-                    let device = ctx.preferred_device();
+                    let device = {
+                        let mut state_i = state.inner.borrow_mut();
+                        state_i.device =
+                            Some(state_i.device.unwrap_or(ctx.preferred_device(loc).id));
+                        ctx.device_ctx(state_i.device.unwrap())
+                    };
 
                     let m_out = input.metadata;
                     let out_info = m_out.chunk_info(pos);

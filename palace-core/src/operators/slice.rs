@@ -156,9 +156,9 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
         input.chunks.dtype(),
         out_md.clone(),
         (input, DataParam(out_md), DataParam(offset)),
-        |ctx, mut positions, _loc, (input, m_out, offset)| {
+        |ctx, mut positions, loc, (input, m_out, offset)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dtype: DType = input.chunks.dtype().into();
 

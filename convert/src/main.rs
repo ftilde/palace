@@ -50,9 +50,9 @@ struct CliArgs {
     #[arg(long)]
     compute_pool_size: Option<usize>,
 
-    /// Use the vulkan device with the specified id
-    #[arg(long, default_value = "0")]
-    device: usize,
+    /// Use the vulkan devices with the specified ids
+    #[arg(long, value_delimiter = ',', num_args=1..)]
+    devices: Vec<usize>,
 
     /// Use the vulkan device with the specified id
     #[arg(short, long, default_value = "1")]
@@ -76,7 +76,7 @@ fn main() {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        Some(args.device),
+        args.devices,
     )
     .unwrap();
 

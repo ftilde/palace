@@ -253,7 +253,7 @@ impl RawVolumeSourceState {
                 }
             }
             DataLocation::GPU(id) => {
-                let device = &ctx.device_contexts[id];
+                let device = &ctx.device_contexts[&id];
                 let requests = batches.into_iter().map(|positions| {
                     let brick_handles = positions
                         .iter()

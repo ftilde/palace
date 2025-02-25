@@ -66,9 +66,9 @@ struct CliArgs {
     #[arg(short, long)]
     disk_cache_size: Option<bytesize::ByteSize>,
 
-    /// Use the vulkan device with the specified id
-    #[arg(long, default_value = "0")]
-    device: usize,
+    /// Use the vulkan devices with the specified ids
+    #[arg(long, value_delimiter = ',', num_args=1..)]
+    devices: Vec<usize>,
 
     /// Force a specific size for the compute task pool [default: number of cores]
     #[arg(short, long)]
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        Some(args.device),
+        args.devices,
     )?;
 
     let brick_size = LocalVoxelPosition::fill(32.into());
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut offset: f32 = 0.0;
     let mut stddev: f32 = 5.0;
     let mut coarse_lod_factor: f32 = 1.0;
-    let mut gui = GuiState::on_device(args.device);
+    let mut gui = GuiState::new();
 
     let res = palace_winit::run_with_window(
         &mut runtime,

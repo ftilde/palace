@@ -189,9 +189,9 @@ void main() {
             DataParam(dim),
             DataParam(border_handling),
         ),
-        |ctx, mut positions, _loc, (input, kernel, push_constants, dim, border_handling)| {
+        |ctx, mut positions, loc, (input, kernel, push_constants, dim, border_handling)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dtype: DType = input.dtype().into();
                 let kernel_dtype: DType = kernel.dtype().into();

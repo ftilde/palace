@@ -93,9 +93,9 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
             DataParam(min_edge_weight),
             DataParam(out_md),
         ),
-        |ctx, mut positions, _loc, (tensor, beta, min_edge_weight, out_md)| {
+        |ctx, mut positions, loc, (tensor, beta, min_edge_weight, out_md)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
                 let nd = tensor.metadata.dim().n();
 
                 let md = &tensor.metadata;
@@ -347,9 +347,9 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
         Default::default(),
         out_md.clone(),
         (tensor, mean_mul_add, DataParam(out_md), DataParam(extent)),
-        |ctx, mut positions, _loc, (tensor, mean_mul_add, out_md, extent)| {
+        |ctx, mut positions, loc, (tensor, mean_mul_add, out_md, extent)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let md = &tensor.metadata;
                 let nd = md.dim().n();
@@ -525,10 +525,10 @@ fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
         ),
         |ctx,
          mut positions,
-         _loc,
+         loc,
          (tensor, best_centers, out_md, extent, min_edge_weight, method)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let md = &tensor.metadata;
                 let nd = md.dim().n();
@@ -713,9 +713,9 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
             DataParam(extent),
             DataParam(min_edge_weight),
         ),
-        |ctx, mut positions, _loc, (t_mean, variance, out_md, extent, min_edge_weight)| {
+        |ctx, mut positions, loc, (t_mean, variance, out_md, extent, min_edge_weight)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let md = &t_mean.metadata;
                 let nd = md.dim().n();

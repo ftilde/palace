@@ -29,9 +29,9 @@ pub fn transform<D: DynDimension>(
         dtype,
         points.metadata.clone(),
         (points, DataParam(matrix)),
-        |ctx, positions, _loc, (points, matrix)| {
+        |ctx, positions, loc, (points, matrix)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let md = &points.metadata;
                 let dtype = points.dtype();

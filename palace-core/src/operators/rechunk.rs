@@ -56,9 +56,9 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
             m
         },
         (input, DataParam(chunk_size)),
-        |ctx, mut positions, _loc, (input, chunk_size)| {
+        |ctx, mut positions, loc, (input, chunk_size)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let dtype: DType = input.chunks.dtype().into();
 

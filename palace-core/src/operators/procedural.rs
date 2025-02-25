@@ -217,9 +217,9 @@ void main()
             DataParam(shader_parts),
             DataParam(push_constants),
         ),
-        |ctx, positions, _loc, (metadata, shader_parts, push_constants)| {
+        |ctx, positions, loc, (metadata, shader_parts, push_constants)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let m = metadata;
 

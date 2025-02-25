@@ -169,12 +169,12 @@ void main()
             Default::default(),
             self.metadata_out(),
             (input_l, input_r, DataParam(self)),
-            move |ctx, positions, _loc, (input_l, input_r, this)| {
+            move |ctx, positions, loc, (input_l, input_r, this)| {
                 async move {
                     // Shaders assume x = dim 0 and y = dim 1
                     let split_dim = 1 - this.split_dim as u32;
 
-                    let device = ctx.preferred_device();
+                    let device = ctx.preferred_device(loc);
 
                     let access_info = DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

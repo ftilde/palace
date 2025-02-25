@@ -108,16 +108,16 @@ impl AllocationId {
 
 pub enum AllocationRequest {
     Ram(Layout, DataDescriptor, CpuDataLocation),
-    VRam(usize, Layout, DataDescriptor),
+    VRam(DeviceId, Layout, DataDescriptor),
     VRamBufRaw(
-        usize,
+        DeviceId,
         Layout,
         ash::vk::BufferUsageFlags,
         MemoryLocation,
         oneshot::Sender<crate::storage::gpu::Allocation>,
     ),
     VRamImageRaw(
-        usize,
+        DeviceId,
         ash::vk::ImageCreateInfo<'static>,
         oneshot::Sender<crate::storage::gpu::ImageAllocation>,
     ),
@@ -237,7 +237,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
                         }
                     }
                     DataLocation::GPU(id) => {
-                        if ctx.device_contexts[id].storage.next_garbage_collect() > gid {
+                        if ctx.device_contexts[&id].storage.next_garbage_collect() > gid {
                             Some(())
                         } else {
                             None
@@ -254,7 +254,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
 pub struct PollContext<'cref> {
     pub storage: &'cref ram::Storage,
     pub disk_cache: Option<&'cref disk::Storage>,
-    pub device_contexts: &'cref [DeviceContext],
+    pub device_contexts: &'cref Map<DeviceId, DeviceContext>,
     pub current_frame: FrameNumber,
 }
 
@@ -266,14 +266,13 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) completed_requests: &'cref CompletedRequests,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
-    pub(crate) device_contexts: &'cref [DeviceContext],
+    pub(crate) device_contexts: &'cref Map<DeviceId, DeviceContext>,
     pub(crate) predicted_preview_tasks: &'cref RefCell<Set<TaskId>>,
     pub(crate) current_task: TaskId,
     pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
     pub(crate) current_frame: FrameNumber,
     pub(crate) deadline: Deadline,
     pub(crate) start: Instant,
-    pub(crate) preferred_device: usize,
 }
 
 impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
@@ -368,7 +367,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
             .map(|(r, ())| r)
     }
 
-    pub fn submit_unordered_with_data<'req, V: 'req, D: 'inv>(
+    pub fn submit_unordered_with_data<'req, V: 'req, D: 'req>(
         &'req self,
         requests: impl Iterator<Item = (Request<'req, 'inv, V>, D)> + 'req,
     ) -> impl StreamExt<Item = (V, D)> + 'req + WeUseThisLifetime<'inv>
@@ -512,12 +511,20 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &self.storage
     }
 
-    pub fn preferred_device(&self) -> &DeviceContext {
-        &self.device_contexts[self.preferred_device]
+    pub fn preferred_device(&self, loc: DataLocation) -> &DeviceContext {
+        let i = match loc {
+            DataLocation::CPU(_cpu_data_location) => *self.device_contexts.keys().next().unwrap(),
+            DataLocation::GPU(i) => i,
+        };
+        &self.device_contexts[&i]
+    }
+
+    pub fn first_device(&self) -> &DeviceContext {
+        &self.device_contexts.values().next().unwrap()
     }
 
     pub fn device_ctx(&self, id: DeviceId) -> &DeviceContext {
-        &self.device_contexts[id]
+        &self.device_contexts[&id]
     }
 
     pub fn past_deadline(&self, interactive: bool) -> Option<Lateness> {

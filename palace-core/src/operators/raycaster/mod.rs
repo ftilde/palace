@@ -195,9 +195,9 @@ pub fn entry_exit_points(
             DataParam(result_metadata),
             DataParam(projection_mat),
         ),
-        move |ctx, pos, _, (m_in, embedding_data, m_out, transform)| {
+        move |ctx, pos, loc, (m_in, embedding_data, m_out, transform)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let out_info = m_out.chunk_info(pos);
 
@@ -638,9 +638,9 @@ pub fn raycast(
             DataParam(tf),
             DataParam(config),
         ),
-        |ctx, pos, _, (input, entry_exit_points, tf, config)| {
+        |ctx, pos, loc, (input, entry_exit_points, tf, config)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let progress_state = ctx
                     .submit(ctx.access_state_cache::<RawRaycastingState>(pos, "progress_state", 1))

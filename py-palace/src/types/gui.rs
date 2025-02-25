@@ -18,10 +18,7 @@ impl GuiState {
     #[new]
     fn new(runtime: RunTime) -> Self {
         Self {
-            inner: {
-                let rt = runtime.inner.borrow();
-                c::GuiState::on_device(rt.select_preferable_device())
-            },
+            inner: { c::GuiState::new() },
             runtime,
         }
     }

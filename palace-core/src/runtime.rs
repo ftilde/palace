@@ -221,7 +221,7 @@ impl BarrierBatcher {
             let (_, items) = self.pending.remove(&t).unwrap();
             Some(
                 async move {
-                    let device = &ctx.device_contexts[t.device];
+                    let device = &ctx.device_contexts[&t.device];
                     device.with_cmd_buffer(|cmd| {
                         let _ = device.storage.barrier_manager.issue(cmd, t.src, t.dst);
                         //println!("barrier: {:?}, {:?}", t.src, t.dst);
@@ -247,7 +247,6 @@ pub struct RunTime {
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
     frame: FrameNumber,
-    pub preferred_device: Option<DeviceId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -279,21 +278,11 @@ impl RunTime {
         num_compute_threads: Option<usize>,
         disk_cache_size: Option<usize>,
         disk_cache_path: Option<&Path>,
-        preferred_device: Option<usize>,
+        devices: Vec<usize>, //Empty: any
     ) -> Result<Self, Error> {
         let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
         let (async_result_sender, async_result_receiver) = mpsc::channel();
-        let vulkan = VulkanContext::new(gpu_storage_size)?;
-        if let Some(preferred_device) = preferred_device {
-            if preferred_device >= vulkan.device_contexts().len() {
-                return Err(format!(
-                    "Invalid device index {} (we only have {} devices)",
-                    preferred_device,
-                    vulkan.device_contexts().len()
-                )
-                .into());
-            }
-        }
+        let vulkan = VulkanContext::new(gpu_storage_size, devices)?;
         let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
         let ram = crate::storage::cpu::Storage::new(ram);
         let disk = if let Some(size) = disk_cache_size {
@@ -317,12 +306,11 @@ impl RunTime {
             async_result_receiver,
             vulkan,
             frame,
-            preferred_device,
         })
     }
 
-    pub fn select_preferable_device(&self) -> DeviceId {
-        self.preferred_device.unwrap_or(0)
+    pub fn checked_device_id(&self, raw_id: usize) -> Option<DeviceId> {
+        self.vulkan.checked_device_id(raw_id)
     }
 
     pub fn resolve<
@@ -358,7 +346,6 @@ impl RunTime {
             predicted_preview_tasks,
         };
         let mut executor = {
-            let preferred_device = self.select_preferable_device();
             Executor {
                 data: &data,
                 task_manager: TaskManager::new(
@@ -375,7 +362,6 @@ impl RunTime {
                 barrier_batcher: BarrierBatcher::new(),
                 deadline: deadline.unwrap_or(Deadline::never()),
                 start: Instant::now(),
-                preferred_device,
             }
         };
 
@@ -393,7 +379,7 @@ impl Drop for RunTime {
     fn drop(&mut self) {
         // Safety: The runtime (including all references to storage) is dropped now, so no dangling
         // references will be left behind
-        for device in self.vulkan.device_contexts() {
+        for (_, device) in self.vulkan.device_contexts() {
             unsafe { device.storage.free_vram() };
         }
     }
@@ -425,7 +411,7 @@ struct ContextData<'cref, 'inv> {
     thread_spawner: ThreadSpawner,
     pub storage: &'cref ram::Storage,
     pub disk_cache: Option<&'cref disk::Storage>,
-    device_contexts: &'cref [DeviceContext],
+    device_contexts: &'cref Map<DeviceId, DeviceContext>,
     frame: FrameNumber,
     predicted_preview_tasks: RefCell<Set<TaskId>>,
 }
@@ -442,7 +428,6 @@ struct Executor<'cref, 'inv> {
     waker: Waker,
     deadline: Deadline,
     start: Instant,
-    preferred_device: usize,
 }
 
 impl<'cref, 'inv> Executor<'cref, 'inv> {
@@ -464,7 +449,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
             deadline: self.deadline,
             start: self.start,
-            preferred_device: self.preferred_device,
         }
     }
 
@@ -566,7 +550,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     if let Some(stuck_time) = stuck_time {
                         if stuck_time.elapsed() > STUCK_TIMEOUT {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
-                            for d in self.data.device_contexts {
+                            for d in self.data.device_contexts.values() {
                                 let c = d.storage.capacity();
                                 let c = bytesize::to_string(c, true);
                                 let a = bytesize::to_string(d.storage.allocated(), true);
@@ -672,7 +656,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         if let Some(disk) = self.data.disk_cache {
             self.register_produced_data_from(from, disk.newest_data(), false);
         }
-        for device in self.data.device_contexts {
+        for device in self.data.device_contexts.values() {
             self.register_produced_data_from(from, device.storage.newest_data(), and_cache);
         }
         for item in self.data.completed_requests.take() {
@@ -691,11 +675,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         req_prio: Priority,
     ) -> Option<TaskId> {
         let task_id = self.transfer_manager.next_id();
-        let device = &self.data.device_contexts[source_id];
+        let device = &self.data.device_contexts[&source_id];
         let access = device.storage.register_access(device, self.data.frame, id);
         let transfer_task = self.transfer_manager.transfer_gpu_to_cpu(
             self.context(task_id),
-            &self.data.device_contexts[source_id],
+            &self.data.device_contexts[&source_id],
             access,
             target,
         );
@@ -729,7 +713,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             (DataLocation::GPU(source), VisibleDataLocation::GPU(target, dst_info))
                 if target == source =>
             {
-                let device = &self.data.device_contexts[target];
+                let device = &self.data.device_contexts[&target];
                 match device.storage.is_visible(id, dst_info) {
                     Ok(()) => None,
                     Err(src_info) => {
@@ -774,7 +758,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         };
                         self.transfer_manager.transfer_cpu_to_gpu(
                             ctx,
-                            &self.data.device_contexts[target_id],
+                            &self.data.device_contexts[&target_id],
                             source,
                         )
                     }
@@ -786,7 +770,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         };
                         self.transfer_manager.transfer_cpu_to_gpu(
                             ctx,
-                            &self.data.device_contexts[target_id],
+                            &self.data.device_contexts[&target_id],
                             source,
                         )
                     }
@@ -851,7 +835,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     false
                 }
             }
-            DataLocation::GPU(i) => self.data.device_contexts[i].storage.is_readable(datum),
+            DataLocation::GPU(i) => self.data.device_contexts[&i].storage.is_readable(datum),
         }
     }
 
@@ -861,7 +845,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         preferred: DataLocation,
     ) -> Option<DataLocation> {
         let mut locs = vec![preferred, DataLocation::CPU(CpuDataLocation::Ram)];
-        locs.extend((0..self.data.device_contexts.len()).map(|i| DataLocation::GPU(i)));
+        locs.extend(
+            self.data
+                .device_contexts
+                .keys()
+                .cloned()
+                .map(DataLocation::GPU),
+        );
         locs.push(DataLocation::CPU(CpuDataLocation::Disk));
 
         for loc in locs {
@@ -1031,7 +1021,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .into(),
                     crate::task::AllocationRequest::VRam(device_id, layout, data_descriptor) => {
                         async move {
-                            let device = &ctx.device_contexts[device_id];
+                            let device = &ctx.device_contexts[&device_id];
                             loop {
                                 if let Ok(_) = device.storage.alloc_and_register_ssbo(
                                     device,
@@ -1056,7 +1046,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         location,
                         result_sender,
                     ) => async move {
-                        let device = &ctx.device_contexts[device_id];
+                        let device = &ctx.device_contexts[&device_id];
                         let res = loop {
                             if let Ok(res) =
                                 device.storage.allocate_raw(layout, use_flags, location)
@@ -1076,7 +1066,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         create_desc,
                         result_sender,
                     ) => async move {
-                        let device = &ctx.device_contexts[device_id];
+                        let device = &ctx.device_contexts[&device_id];
                         let res = loop {
                             if let Ok(res) = device.storage.allocate_image(create_desc) {
                                 break res;
@@ -1119,7 +1109,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     DataLocation::CPU(CpuDataLocation::Disk) => {
                         TaskId::new(OperatorId::new("builtin::gc_disk"), 0)
                     }
-                    DataLocation::GPU(d) => TaskId::new(OperatorId::new("builtin::gc_vram"), d),
+                    DataLocation::GPU(d) => {
+                        TaskId::new(OperatorId::new("builtin::gc_vram"), d.inner())
+                    }
                 };
                 let already_queued = self.task_graph.has_task(task_id);
                 if !already_queued {
@@ -1162,7 +1154,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         DataLocation::GPU(did) => {
                             let frame = self.data.frame;
                             async move {
-                                let device = &ctx.device_contexts[did];
+                                let device = &ctx.device_contexts[&did];
                                 let garbage_collect_goal = device.storage.bytes_allocated()
                                     / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
@@ -1203,7 +1195,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn cycle_cmd_buffers(&mut self, min_age: Duration) {
-        for device in self.data.device_contexts {
+        for device in self.data.device_contexts.values() {
             if device.cmd_buffer_age() >= min_age {
                 if let Some(submitted) = device.try_submit_and_cycle_command_buffer() {
                     //println!("Cycling command buffer {:?}", submitted);
@@ -1225,7 +1217,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         let mut external_progress = false;
 
         let mut gpu_work_done = false;
-        for device in self.data.device_contexts {
+        for device in self.data.device_contexts.values() {
             let done_cmd_buffers = device.wait_for_cmd_buffers(timeout_gpu);
             external_progress |= !done_cmd_buffers.is_empty();
             for done in done_cmd_buffers {

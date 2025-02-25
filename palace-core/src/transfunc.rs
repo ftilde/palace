@@ -136,9 +136,9 @@ void main()
         Default::default(),
         input.metadata.clone(),
         (input, tf),
-        move |ctx, positions, _loc, (input, tf)| {
+        move |ctx, positions, loc, (input, tf)| {
             async move {
-                let device = ctx.preferred_device();
+                let device = ctx.preferred_device(loc);
 
                 let access_info = DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

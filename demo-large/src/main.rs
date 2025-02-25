@@ -46,9 +46,9 @@ struct CliArgs {
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
 
-    /// Use the vulkan device with the specified id
-    #[arg(long, default_value = "0")]
-    device: usize,
+    /// Use the vulkan devices with the specified ids
+    #[arg(long, value_delimiter = ',', num_args=1..)]
+    devices: Vec<usize>,
 
     /// Transfer function (voreen .tfi file)
     #[arg(short, long)]
@@ -116,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        Some(args.device),
+        args.devices,
     )?;
 
     let hints = palace_io::Hints::new();
@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let voxel_diag = l0.embedding_data.spacing.length();
 
     let mut state = State {
-        gui: GuiState::on_device(args.device),
+        gui: GuiState::new(),
         process: ProcessState::PassThrough,
         rendering: RenderingState::Raycasting,
         vesselness: VesselnessState {
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         sliceview: SliceState {
             inner: SliceviewState::for_volume(l0.metadata, l0.embedding_data, 0),
-            gui: GuiState::on_device(args.device),
+            gui: GuiState::new(),
         },
         tf: if let Some(path) = args.transfunc_path {
             palace_vvd::load_tfi(&path).unwrap()

@@ -74,9 +74,9 @@ struct CliArgs {
     #[arg(short, long)]
     transfunc_path: Option<PathBuf>,
 
-    /// Use the vulkan device with the specified id
-    #[arg(long, default_value = "0")]
-    device: usize,
+    /// Use the vulkan devices with the specified ids
+    #[arg(long, value_delimiter = ',', num_args=1..)]
+    devices: Vec<usize>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        Some(args.device),
+        args.devices,
     )?;
 
     let brick_size = LocalVoxelPosition::fill(128.into());

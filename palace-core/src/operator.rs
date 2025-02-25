@@ -510,7 +510,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
                 item,
             )),
             gen_poll: Box::new(move |ctx| {
-                let device = &ctx.device_contexts[gpu];
+                let device = &ctx.device_contexts[&gpu];
                 let mut access = Some(device.storage.register_access(
                     device,
                     ctx.current_frame,
@@ -551,7 +551,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
                 item,
             )),
             gen_poll: Box::new(move |ctx| {
-                let device = &ctx.device_contexts[gpu];
+                let device = &ctx.device_contexts[&gpu];
                 let mut access = Some(device.storage.register_access(
                     device,
                     ctx.current_frame,

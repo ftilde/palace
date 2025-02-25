@@ -1009,13 +1009,13 @@ impl<D: DynDimension> JitTensorOperator<D> {
             self.dtype,
             metadata.clone(),
             (self, DataParam(metadata), DataParam(push_constants)),
-            |ctx, positions, _loc, (jit_operator, metadata, push_constants)| {
+            |ctx, positions, loc, (jit_operator, metadata, push_constants)| {
                 async move {
                     let inplace_operator_index = jit_operator.operators.0.iter().position(|o| {
                         o.dtype().element_layout() == jit_operator.dtype.element_layout()
                     });
 
-                    let device = ctx.preferred_device();
+                    let device = ctx.preferred_device(loc);
 
                     let access_info = DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
