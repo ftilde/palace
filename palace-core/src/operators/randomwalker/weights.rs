@@ -93,7 +93,7 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
             DataParam(min_edge_weight),
             DataParam(out_md),
         ),
-        |ctx, mut positions, (tensor, beta, min_edge_weight, out_md)| {
+        |ctx, mut positions, _loc, (tensor, beta, min_edge_weight, out_md)| {
             async move {
                 let device = ctx.preferred_device();
                 let nd = tensor.metadata.dim().n();
@@ -127,11 +127,11 @@ pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
                 let push_constants = &push_constants;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         async move {
                             let input = ctx
                                 .submit(tensor.chunks.request_gpu(device.id, pos, read_info))
@@ -347,7 +347,7 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
         Default::default(),
         out_md.clone(),
         (tensor, mean_mul_add, DataParam(out_md), DataParam(extent)),
-        |ctx, mut positions, (tensor, mean_mul_add, out_md, extent)| {
+        |ctx, mut positions, _loc, (tensor, mean_mul_add, out_md, extent)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -382,12 +382,12 @@ pub fn best_centers_variable_gaussian<D: DynDimension + LargerDim>(
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let push_constants = &push_constants;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         async move {
                             let input = ctx
                                 .submit(tensor.chunks.request_gpu(device.id, pos, read_info))
@@ -523,7 +523,10 @@ fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
             DataParam(min_edge_weight),
             DataParam(method),
         ),
-        |ctx, mut positions, (tensor, best_centers, out_md, extent, min_edge_weight, method)| {
+        |ctx,
+         mut positions,
+         _loc,
+         (tensor, best_centers, out_md, extent, min_edge_weight, method)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -574,12 +577,12 @@ fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let push_constants = &push_constants;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         async move {
                             let input_centers = ctx
                                 .submit(best_centers.chunks.request_gpu(device.id, pos, read_info))
@@ -710,7 +713,7 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
             DataParam(extent),
             DataParam(min_edge_weight),
         ),
-        |ctx, mut positions, (t_mean, variance, out_md, extent, min_edge_weight)| {
+        |ctx, mut positions, _loc, (t_mean, variance, out_md, extent, min_edge_weight)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -744,12 +747,12 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
                     access: vk::AccessFlags2::SHADER_READ,
                 };
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let push_constants = &push_constants;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         async move {
                             let input = ctx
                                 .submit(t_mean.chunks.request_gpu(device.id, pos, read_info))

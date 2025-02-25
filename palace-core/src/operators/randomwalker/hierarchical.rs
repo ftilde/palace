@@ -153,7 +153,7 @@ fn expand<D: DynDimension>(
         op_descriptor!(),
         Default::default(),
         (input, DataParam(m_out.clone())),
-        |ctx, mut positions, (input, m_out)| {
+        |ctx, mut positions, _loc, (input, m_out)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -163,14 +163,14 @@ fn expand<D: DynDimension>(
 
                 let out_chunk_size = m_out.mem_size();
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let pipeline = device.request_state(&m_in.chunk_size, |device, chunk_size| {
                     ChunkCopyPipeline::new(device, ScalarType::F32.into(), chunk_size.clone())
                 })?;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         let out_chunk_size = &out_chunk_size;
                         async move {
                             let chunk_pos = m_in.chunk_pos_from_index(pos);
@@ -312,6 +312,7 @@ fn run_rw<D: DynDimension + LargerDim>(
         ),
         |ctx,
          positions,
+         _loc,
          (weights, init_values, upper_result, points_fg, points_bg, current_ed, cfg)| {
             async move {
                 let device = ctx.preferred_device();
@@ -394,7 +395,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                     .map(|v| v as &dyn crate::vulkan::pipeline::AsDescriptors)
                     .unwrap_or(&NullBuf);
 
-                ctx.run_unordered(positions.into_iter().map(|(pos, _)| {
+                ctx.run_unordered(positions.into_iter().map(|pos| {
                     async move {
                         let out_info = current_metadata.chunk_info(pos);
                         let nd = upper_metadata.dim().n();
@@ -700,7 +701,7 @@ fn shrink<D: DynDimension>(
         Default::default(),
         input.metadata.base.clone(),
         input,
-        |ctx, positions, input| {
+        |ctx, positions, _loc, input| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -716,7 +717,7 @@ fn shrink<D: DynDimension>(
                 })?;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         async move {
                             let in_chunk = ctx
                                 .submit(input.inner.request_gpu(

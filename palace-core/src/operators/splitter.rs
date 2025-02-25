@@ -169,7 +169,7 @@ void main()
             Default::default(),
             self.metadata_out(),
             (input_l, input_r, DataParam(self)),
-            move |ctx, positions, (input_l, input_r, this)| {
+            move |ctx, positions, _loc, (input_l, input_r, this)| {
                 async move {
                     // Shaders assume x = dim 0 and y = dim 1
                     let split_dim = 1 - this.split_dim as u32;
@@ -206,7 +206,7 @@ void main()
                         })?;
 
                     assert!(positions.len() == 1);
-                    let pos = positions.first().unwrap().0;
+                    let pos = *positions.first().unwrap();
                     assert_eq!(pos, ChunkIndex(0));
 
                     let out_info = m.chunk_info(pos);

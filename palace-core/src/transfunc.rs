@@ -136,7 +136,7 @@ void main()
         Default::default(),
         input.metadata.clone(),
         (input, tf),
-        move |ctx, positions, (input, tf)| {
+        move |ctx, positions, _loc, (input, tf)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -167,9 +167,11 @@ void main()
                     })?;
 
                 let mut brick_stream = ctx
-                    .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
-                        (input.chunks.request_gpu(device.id, *pos, access_info), *pos)
-                    }))
+                    .submit_unordered_with_data(
+                        positions.iter().map(|pos| {
+                            (input.chunks.request_gpu(device.id, *pos, access_info), *pos)
+                        }),
+                    )
                     .then_req_with_data(*ctx, |(input, pos)| {
                         let output = ctx.alloc_slot_gpu(device, pos, &m.chunk_size);
                         (output, input)

@@ -197,7 +197,8 @@ impl DataDescriptor {
 pub type ComputeFunction<Output> = Rc<
     dyn for<'cref, 'inv> Fn(
         TaskContext<'cref, 'inv, Output>,
-        Vec<(ChunkIndex, DataLocation)>,
+        Vec<ChunkIndex>,
+        DataLocation,
         &'inv dyn Any,
     ) -> Task<'cref>,
 >;
@@ -233,7 +234,8 @@ pub trait OpaqueOperator {
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         context: OpaqueTaskContext<'cref, 'inv>,
-        items: Vec<(ChunkIndex, DataLocation)>,
+        items: Vec<ChunkIndex>,
+        location: DataLocation,
     ) -> Task<'cref>;
 }
 
@@ -403,7 +405,8 @@ impl<OutputType: ElementType> Operator<OutputType> {
         dtype: OutputType,
         compute: for<'cref, 'inv> fn(
             TaskContext<'cref, 'inv, OutputType>,
-            Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
+            Vec<ChunkIndex>,
+            DataLocation, //is only a hint
             &'inv (),
         ) -> Task<'cref>,
     ) -> Self {
@@ -416,7 +419,8 @@ impl<OutputType: ElementType> Operator<OutputType> {
         state: S,
         compute: for<'cref, 'inv> fn(
             TaskContext<'cref, 'inv, OutputType>,
-            Vec<(ChunkIndex, DataLocation)>, //DataLocation is only a hint
+            Vec<ChunkIndex>,
+            DataLocation, //is only a hint
             &'inv S,
         ) -> Task<'cref>,
     ) -> Self {
@@ -427,9 +431,9 @@ impl<OutputType: ElementType> Operator<OutputType> {
             dtype,
             state: Rc::new(state),
             granularity: ItemGranularity::Batched,
-            compute: Rc::new(move |ctx, items, state| {
+            compute: Rc::new(move |ctx, items, loc, state| {
                 let state = state.downcast_ref().unwrap();
-                compute(ctx, items, state)
+                compute(ctx, items, loc, state)
             }),
         }
     }
@@ -452,11 +456,11 @@ impl<OutputType: ElementType> Operator<OutputType> {
             dtype,
             state: Rc::new(state),
             granularity: ItemGranularity::Single,
-            compute: Rc::new(move |ctx, items, state| {
+            compute: Rc::new(move |ctx, items, loc, state| {
                 let state = state.downcast_ref().unwrap();
                 assert_eq!(items.len(), 1);
                 let item = items.into_iter().next().unwrap();
-                compute(ctx, item.0, item.1, state)
+                compute(ctx, item, loc, state)
             }),
         }
     }
@@ -593,8 +597,8 @@ where
             descriptor: value.descriptor,
             state: value.state,
             granularity: value.granularity,
-            compute: Rc::new(move |ctx, items, tr| {
-                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            compute: Rc::new(move |ctx, items, loc, tr| {
+                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, loc, tr)
             }),
             dtype: new_dtype,
         })
@@ -614,8 +618,8 @@ where
             descriptor: value.descriptor,
             state: value.state,
             granularity: value.granularity,
-            compute: Rc::new(move |ctx, items, tr| {
-                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            compute: Rc::new(move |ctx, items, loc, tr| {
+                (value.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, loc, tr)
             }),
             dtype: new_dtype,
         }
@@ -634,8 +638,8 @@ impl Operator<DType> {
             descriptor: self.descriptor,
             state: self.state,
             granularity: self.granularity,
-            compute: Rc::new(move |ctx, items, tr| {
-                (self.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, tr)
+            compute: Rc::new(move |ctx, items, loc, tr| {
+                (self.compute)(unsafe { TaskContext::new(*ctx, old_dtype) }, items, loc, tr)
             }),
             dtype: new_dtype,
         }
@@ -658,10 +662,11 @@ impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
-        items: Vec<(ChunkIndex, DataLocation)>,
+        items: Vec<ChunkIndex>,
+        location: DataLocation,
     ) -> Task<'cref> {
         let ctx = TaskContext::new(ctx, self.dtype.clone());
-        (self.compute)(ctx, items, &*self.state)
+        (self.compute)(ctx, items, location, &*self.state)
     }
 }
 

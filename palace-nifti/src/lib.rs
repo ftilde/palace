@@ -137,14 +137,14 @@ impl NiftiVolumeSourceState {
             Default::default(),
             self.0.metadata,
             DataParam(self.clone()),
-            move |ctx, positions, this| {
+            move |ctx, positions, _loc, this| {
                 let this = &this.0 .0;
                 let md = this.metadata;
                 let mut positions = positions
                     .into_iter()
-                    .map(|(p, h)| (md.chunk_pos_from_index(p), h))
+                    .map(|p| md.chunk_pos_from_index(p))
                     .collect::<Vec<_>>();
-                positions.sort_by_key(|(p, _)| p.z());
+                positions.sort_by_key(|p| p.z());
                 async move {
                     let obj = match &this.type_ {
                         Type::Single(path) => {
@@ -158,7 +158,7 @@ impl NiftiVolumeSourceState {
                         return Err(format!("File has changed").into());
                     }
                     let mut vol = obj.into_volume();
-                    for (pos, _) in positions {
+                    for pos in positions {
                         let z = pos.z().raw as usize;
                         let chunk = this.metadata.chunk_info_vec(&pos);
                         let mut brick_handle = ctx

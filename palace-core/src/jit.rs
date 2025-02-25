@@ -1009,7 +1009,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
             self.dtype,
             metadata.clone(),
             (self, DataParam(metadata), DataParam(push_constants)),
-            |ctx, positions, (jit_operator, metadata, push_constants)| {
+            |ctx, positions, _loc, (jit_operator, metadata, push_constants)| {
                 async move {
                     let inplace_operator_index = jit_operator.operators.0.iter().position(|o| {
                         o.dtype().element_layout() == jit_operator.dtype.element_layout()
@@ -1053,7 +1053,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     )?;
 
                     let mut brick_stream = ctx
-                        .submit_unordered_with_data(positions.iter().map(|(pos, _)| {
+                        .submit_unordered_with_data(positions.iter().map(|pos| {
                             (
                                 ctx.group(
                                     jit_operator

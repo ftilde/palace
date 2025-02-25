@@ -10,7 +10,6 @@ use crate::{
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
-    storage::DataLocation,
     task::{RequestStream, TaskContext},
     Error,
 };
@@ -62,9 +61,9 @@ async fn rasterize<'cref, 'inv, F: 'static + Fn(VoxelPosition) -> f32 + Sync>(
     metadata: &VolumeMetaData,
     function: &F,
     ctx: TaskContext<'cref, 'inv, StaticElementType<f32>>,
-    positions: Vec<(ChunkIndex, DataLocation)>,
+    positions: Vec<ChunkIndex>,
 ) -> Result<(), Error> {
-    let allocs = positions.into_iter().map(|(pos, _)| {
+    let allocs = positions.into_iter().map(|pos| {
         let brick_handle_req = ctx.alloc_slot(pos, &metadata.chunk_size);
         (brick_handle_req, pos)
     });
@@ -110,7 +109,7 @@ impl<F: 'static + Fn(VoxelPosition) -> f32 + Sync + Clone> VoxelPosRasterizer<F>
             Default::default(),
             self.metadata,
             DataParam(self.clone()),
-            move |ctx, positions, this| {
+            move |ctx, positions, _loc, this| {
                 async move { rasterize(&this.metadata, &this.function, ctx, positions).await }
                     .into()
             },

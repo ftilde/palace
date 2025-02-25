@@ -29,7 +29,7 @@ pub fn transform<D: DynDimension>(
         dtype,
         points.metadata.clone(),
         (points, DataParam(matrix)),
-        |ctx, positions, (points, matrix)| {
+        |ctx, positions, _loc, (points, matrix)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -55,7 +55,7 @@ pub fn transform<D: DynDimension>(
                 let push_constants = &push_constants;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(move |(pos, _)| {
+                    .run_unordered(positions.into_iter().map(move |pos| {
                         async move {
                             let read_info = DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

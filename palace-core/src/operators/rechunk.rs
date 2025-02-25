@@ -56,7 +56,7 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
             m
         },
         (input, DataParam(chunk_size)),
-        |ctx, mut positions, (input, chunk_size)| {
+        |ctx, mut positions, _loc, (input, chunk_size)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -71,7 +71,7 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
                     m_out
                 };
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let pipeline = device.request_state(
                     (&dtype, &m_in.chunk_size),
@@ -80,7 +80,7 @@ pub fn rechunk<D: DynDimension, T: ElementType>(
                     },
                 )?;
 
-                let caches = positions.into_iter().map(|(pos, _)| {
+                let caches = positions.into_iter().map(|pos| {
                     let out_info = m_out.chunk_info(pos);
                     let out_begin = out_info.begin();
                     let out_end = out_info.end();

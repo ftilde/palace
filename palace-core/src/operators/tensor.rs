@@ -49,7 +49,8 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
         metadata: TensorMetaData<D>,
         chunks: for<'cref, 'inv> fn(
             TaskContext<'cref, 'inv, E>,
-            Vec<(ChunkIndex, DataLocation)>,
+            Vec<ChunkIndex>,
+            DataLocation,
             &'inv (),
         ) -> Task<'cref>,
     ) -> Self {
@@ -63,7 +64,8 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
         state_chunks: SB,
         chunks: for<'cref, 'inv> fn(
             TaskContext<'cref, 'inv, E>,
-            Vec<(ChunkIndex, DataLocation)>,
+            Vec<ChunkIndex>,
+            DataLocation,
             &'inv SB,
         ) -> Task<'cref>,
     ) -> Self {
@@ -184,7 +186,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             Default::default(),
             m,
             DataParam(values),
-            move |ctx, _, values| {
+            move |ctx, _, _, values| {
                 async move {
                     let mut out = ctx
                         .submit(ctx.alloc_slot_num_elements(ChunkIndex(0), values.len()))
@@ -237,7 +239,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             Default::default(),
             m,
             DataParam(values),
-            move |ctx, _, values| {
+            move |ctx, _, _, values| {
                 async move {
                     let mut out = ctx
                         .submit(ctx.alloc_slot_num_elements(ChunkIndex(0), values.len()))
@@ -509,14 +511,14 @@ pub async fn map_values_inplace<
 >(
     ctx: TaskContext<'cref, 'inv, StaticElementType<E>>,
     input: &'op Operator<StaticElementType<E>>,
-    positions: Vec<(ChunkIndex, DataLocation)>,
+    positions: Vec<ChunkIndex>,
     f: F,
 ) where
     'op: 'inv,
 {
     let requests = positions
         .into_iter()
-        .map(|(pos, _)| input.request_inplace(*ctx, pos, ctx.current_op_desc().unwrap()));
+        .map(|pos| input.request_inplace(*ctx, pos, ctx.current_op_desc().unwrap()));
 
     let stream = ctx
         .submit_unordered(requests)
@@ -562,7 +564,7 @@ pub fn map<D: DynDimension, E: Element>(
         Default::default(),
         input.metadata.clone(),
         (input, DataParam(IdentifyHash(f))),
-        move |ctx, positions, (input, f)| {
+        move |ctx, positions, _loc, (input, f)| {
             async move {
                 map_values_inplace(ctx, &input.chunks, positions, ***f).await;
 
@@ -584,7 +586,7 @@ pub fn linear_rescale<D: DynDimension>(
         Default::default(),
         input.metadata.clone(),
         (input, DataParam(factor), DataParam(offset)),
-        move |ctx, positions, (input, factor, offset)| {
+        move |ctx, positions, _loc, (input, factor, offset)| {
             let factor = **factor;
             let offset = **offset;
             async move {

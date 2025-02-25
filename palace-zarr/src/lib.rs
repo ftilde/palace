@@ -23,9 +23,8 @@ use palace_core::{
     runtime::RunTime,
     storage::DataLocation,
     task::{OpaqueTaskContext, RequestStream},
-    util::Map,
     vec::Vector,
-    vulkan::{vk, DeviceId},
+    vulkan::vk,
     Error,
 };
 use zarrs::{
@@ -229,118 +228,116 @@ impl ZarrSourceState {
             self.inner.dtype,
             self.inner.metadata.clone(),
             DataParam(self.clone()),
-            |ctx, positions, this| {
+            |ctx, positions, loc, this| {
                 async move {
                     let metadata = &this.inner.metadata;
                     let layout = this.inner.dtype.array_layout(metadata.num_chunk_elements());
 
-                    let mut positions_gpus: Map<DeviceId, Vec<_>> = Map::default();
-                    let mut positions_cpu = Vec::new();
-                    for (position, location) in positions.into_iter() {
-                        match location {
-                            DataLocation::CPU(_) => positions_cpu.push(position),
-                            DataLocation::GPU(i) => {
-                                positions_gpus.entry(i).or_default().push(position)
+                    match loc {
+                        DataLocation::CPU(_) => {
+                            let allocations = positions.into_iter().map(|chunk_id| {
+                                let data_id =
+                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
+                                (ctx.alloc_raw(data_id, layout), chunk_id)
+                            });
+                            let stream = ctx.submit_unordered_with_data(allocations).then_req(
+                                *ctx,
+                                |(chunk_handle, chunk_id)| {
+                                    let chunk_handle = chunk_handle.into_thread_handle();
+                                    let array = &this.inner.array;
+                                    ctx.spawn_io(move || {
+                                        let chunk_data = chunk_handle.data();
+                                        let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
+                                        let bytes = array
+                                            .retrieve_chunk(
+                                                to_zarr_pos(&chunk_pos).inner().as_slice(),
+                                            )?
+                                            .into_fixed()?;
+                                        palace_core::data::write_slice_uninit(chunk_data, &bytes);
+                                        Ok::<_, ArrayError>(chunk_handle)
+                                    })
+                                },
+                            );
+
+                            futures::pin_mut!(stream);
+                            while let Some(handle) = stream.next().await {
+                                let handle = handle?.into_main_handle(ctx.storage());
+                                unsafe { handle.initialized(*ctx) };
                             }
                         }
-                    }
+                        DataLocation::GPU(device_id) => {
+                            let device = ctx.device_ctx(device_id);
+                            let allocations = positions.into_iter().map(|chunk_id| {
+                                let data_id =
+                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
+                                (ctx.alloc_raw_gpu(device, data_id, layout), chunk_id)
+                            });
+                            let stream = ctx
+                                .submit_unordered_with_data(allocations)
+                                .then_req_with_data(*ctx, |(brick_handle, chunk_id)| {
+                                    let staging_buf = device.staging_to_gpu.request(device, layout);
 
-                    let allocations = positions_cpu.into_iter().map(|chunk_id| {
-                        let data_id = DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
-                        (ctx.alloc_raw(data_id, layout), chunk_id)
-                    });
-                    let stream = ctx.submit_unordered_with_data(allocations).then_req(
-                        *ctx,
-                        |(chunk_handle, chunk_id)| {
-                            let chunk_handle = chunk_handle.into_thread_handle();
-                            let array = &this.inner.array;
-                            ctx.spawn_io(move || {
-                                let chunk_data = chunk_handle.data();
-                                let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
-                                let bytes = array
-                                    .retrieve_chunk(to_zarr_pos(&chunk_pos).inner().as_slice())?
-                                    .into_fixed()?;
-                                palace_core::data::write_slice_uninit(chunk_data, &bytes);
-                                Ok::<_, ArrayError>(chunk_handle)
-                            })
-                        },
-                    );
-
-                    futures::pin_mut!(stream);
-                    while let Some(handle) = stream.next().await {
-                        let handle = handle?.into_main_handle(ctx.storage());
-                        unsafe { handle.initialized(*ctx) };
-                    }
-
-                    for (device_id, positions_gpu) in positions_gpus {
-                        let device = ctx.device_ctx(device_id);
-                        let allocations = positions_gpu.into_iter().map(|chunk_id| {
-                            let data_id =
-                                DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
-                            (ctx.alloc_raw_gpu(device, data_id, layout), chunk_id)
-                        });
-                        let stream = ctx
-                            .submit_unordered_with_data(allocations)
-                            .then_req_with_data(*ctx, |(brick_handle, chunk_id)| {
-                                let staging_buf = device.staging_to_gpu.request(device, layout);
-
-                                (staging_buf, (brick_handle, chunk_id))
-                            })
-                            .then_req(*ctx, |(staging_buf, (chunk_handle, chunk_id))| {
-                                let chunk_handle = chunk_handle.into_thread_handle();
-                                let array = &this.inner.array;
-
-                                ctx.spawn_io(move || {
-                                    let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
-                                    let bytes = array
-                                        .retrieve_chunk(to_zarr_pos(&chunk_pos).inner().as_slice())?
-                                        .into_fixed()?;
-
-                                    let ptr = staging_buf
-                                        .mapped_ptr()
-                                        .unwrap()
-                                        .cast::<MaybeUninit<u8>>()
-                                        .as_ptr();
-                                    let chunk_data = unsafe {
-                                        std::slice::from_raw_parts_mut(
-                                            ptr,
-                                            staging_buf.size as usize,
-                                        )
-                                    };
-
-                                    palace_core::data::write_slice_uninit(chunk_data, &bytes);
-                                    Ok::<_, ArrayError>((staging_buf, chunk_handle))
+                                    (staging_buf, (brick_handle, chunk_id))
                                 })
-                            });
+                                .then_req(*ctx, |(staging_buf, (chunk_handle, chunk_id))| {
+                                    let chunk_handle = chunk_handle.into_thread_handle();
+                                    let array = &this.inner.array;
 
-                        futures::pin_mut!(stream);
-                        while let Some(res) = stream.next().await {
-                            let (staging_buf, chunk_handle) = res?;
-                            let handle = chunk_handle.into_main_handle(&device);
+                                    ctx.spawn_io(move || {
+                                        let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
+                                        let bytes = array
+                                            .retrieve_chunk(
+                                                to_zarr_pos(&chunk_pos).inner().as_slice(),
+                                            )?
+                                            .into_fixed()?;
 
-                            device.with_cmd_buffer(|cmd| {
-                                let copy_info = vk::BufferCopy::default().size(handle.size as _);
+                                        let ptr = staging_buf
+                                            .mapped_ptr()
+                                            .unwrap()
+                                            .cast::<MaybeUninit<u8>>()
+                                            .as_ptr();
+                                        let chunk_data = unsafe {
+                                            std::slice::from_raw_parts_mut(
+                                                ptr,
+                                                staging_buf.size as usize,
+                                            )
+                                        };
+
+                                        palace_core::data::write_slice_uninit(chunk_data, &bytes);
+                                        Ok::<_, ArrayError>((staging_buf, chunk_handle))
+                                    })
+                                });
+
+                            futures::pin_mut!(stream);
+                            while let Some(res) = stream.next().await {
+                                let (staging_buf, chunk_handle) = res?;
+                                let handle = chunk_handle.into_main_handle(&device);
+
+                                device.with_cmd_buffer(|cmd| {
+                                    let copy_info =
+                                        vk::BufferCopy::default().size(handle.size as _);
+                                    unsafe {
+                                        device.functions().cmd_copy_buffer(
+                                            cmd.raw(),
+                                            staging_buf.buffer,
+                                            handle.buffer,
+                                            &[copy_info],
+                                        );
+                                    }
+                                });
+
                                 unsafe {
-                                    device.functions().cmd_copy_buffer(
-                                        cmd.raw(),
-                                        staging_buf.buffer,
-                                        handle.buffer,
-                                        &[copy_info],
-                                    );
-                                }
-                            });
+                                    handle.initialized(
+                                        *ctx,
+                                        palace_core::vulkan::SrcBarrierInfo {
+                                            stage: vk::PipelineStageFlags2::TRANSFER,
+                                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                                        },
+                                    )
+                                };
 
-                            unsafe {
-                                handle.initialized(
-                                    *ctx,
-                                    palace_core::vulkan::SrcBarrierInfo {
-                                        stage: vk::PipelineStageFlags2::TRANSFER,
-                                        access: vk::AccessFlags2::TRANSFER_WRITE,
-                                    },
-                                )
-                            };
-
-                            unsafe { device.staging_to_gpu.return_buf(device, staging_buf) };
+                                unsafe { device.staging_to_gpu.return_buf(device, staging_buf) };
+                            }
                         }
                     }
 

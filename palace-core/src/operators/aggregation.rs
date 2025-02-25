@@ -220,7 +220,7 @@ fn scalar_aggregation<'op, D: DynDimension>(
     crate::operators::scalar::scalar(
         op_descriptor!(),
         (input, DataParam(method), DataParam(sample_method)),
-        move |ctx, (input, method, sample_method)| {
+        move |ctx, _loc, (input, method, sample_method)| {
             async move {
                 let device = ctx.preferred_device();
 

@@ -8,14 +8,12 @@ use id::{Id, Identify};
 use crate::{
     array::{ChunkIndex, VolumeMetaData},
     data::{BrickPosition, LocalVoxelPosition, VoxelPosition},
-    dim::D3,
     dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataDescriptor, DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     storage::DataLocation,
     task::{RequestStream, TaskContext},
-    util::Map,
     vec::Vector,
     Error,
 };
@@ -116,10 +114,10 @@ pub fn open(
         dtype,
         metadata,
         (DataParam(state), DataParam(metadata), DataParam(dtype)),
-        move |ctx, positions, (state, metadata, dtype)| {
+        move |ctx, positions, loc, (state, metadata, dtype)| {
             async move {
                 state
-                    .load_raw_bricks(**dtype, metadata.chunk_size, ctx, positions)
+                    .load_raw_bricks(**dtype, metadata.chunk_size, ctx, positions, loc)
                     .await
             }
             .into()
@@ -150,7 +148,8 @@ impl RawVolumeSourceState {
         dtype: DType,
         brick_size: LocalVoxelPosition,
         ctx: TaskContext<'cref, 'inv, DType>,
-        mut positions: Vec<(ChunkIndex, DataLocation)>,
+        mut positions: Vec<ChunkIndex>,
+        loc: DataLocation,
     ) -> Result<(), Error> {
         let m = VolumeMetaData {
             dimensions: self.0.size,
@@ -158,19 +157,16 @@ impl RawVolumeSourceState {
         };
         let dim_in_bricks = m.dimension_in_chunks();
 
-        positions.sort_by_key(|(v, _)| v.0);
+        positions.sort();
 
         let max_lin_len = 4096; //expected page size
 
         let chunk_mem_size_x = dtype.array_layout(m.chunk_size.x().raw as usize).size();
 
-        let mut batches_cpu = Vec::new();
-        let mut batches_gpus: Map<usize, Vec<Vec<Vector<D3, crate::coordinate::ChunkCoordinate>>>> =
-            Default::default();
+        let mut batches = Vec::new();
         let mut current_batch: Vec<BrickPosition> = Vec::new();
         let mut current_pos = 0;
-        let mut current_loc = None;
-        for (pos, loc) in positions {
+        for pos in positions {
             let pos = m.chunk_pos_from_index(pos);
             if !(pos.x() < dim_in_bricks.x()
                 && pos.y() < dim_in_bricks.y()
@@ -184,7 +180,7 @@ impl RawVolumeSourceState {
                 if let Some(end) = current_batch.last() {
                     let mut next = *end;
                     next[2] = next[2] + 1u32;
-                    let adjacent = next == pos && current_loc == Some(loc);
+                    let adjacent = next == pos;
 
                     !adjacent
                 } else {
@@ -199,29 +195,14 @@ impl RawVolumeSourceState {
             if start_new_line {
                 let finished_batch = std::mem::take(&mut current_batch);
                 assert!(!finished_batch.is_empty());
-                match loc {
-                    DataLocation::CPU(_) => {
-                        batches_cpu.push(finished_batch);
-                    }
-                    DataLocation::GPU(i) => {
-                        batches_gpus.entry(i).or_default().push(finished_batch);
-                    }
-                }
+                batches.push(finished_batch);
                 current_pos = 0;
             }
 
-            current_loc = Some(loc);
             current_batch.push(pos);
         }
         if !current_batch.is_empty() {
-            match current_loc.unwrap() {
-                DataLocation::CPU(_) => {
-                    batches_cpu.push(current_batch);
-                }
-                DataLocation::GPU(i) => {
-                    batches_gpus.entry(i).or_default().push(current_batch);
-                }
-            }
+            batches.push(current_batch);
         }
 
         let element_layout = dtype.element_layout();
@@ -233,116 +214,120 @@ impl RawVolumeSourceState {
         );
         let in_size = self.size;
 
-        {
-            let requests = batches_cpu.into_iter().map(|positions| {
-                let num_voxels = m.chunk_size.hmul();
-
-                let brick_handles = positions.iter().map(|pos| {
-                    let data_id =
-                        DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(pos));
-                    ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
-                });
-
-                (ctx.group(brick_handles), positions)
-            });
-            let stream = ctx.submit_unordered_with_data(requests).then_req(
-                *ctx,
-                |(brick_handles, positions)| {
-                    let mut brick_handles = brick_handles
-                        .into_iter()
-                        .zip(positions)
-                        .map(|(h, pos)| (pos, h.into_thread_handle()))
-                        .collect::<Vec<_>>();
-
-                    ctx.spawn_io(move || {
-                        copy_chunk_line(dtype, m, in_, in_size, &mut brick_handles);
-
-                        brick_handles
-                    })
-                },
-            );
-
-            futures::pin_mut!(stream);
-            while let Some(handles) = stream.next().await {
-                for (_, handle) in handles {
-                    let handle = handle.into_main_handle(ctx.storage());
-                    unsafe { handle.initialized(*ctx) };
-                }
-            }
-        }
-        for (id, batches) in batches_gpus {
-            let device = &ctx.device_contexts[id];
-            let requests = batches.into_iter().map(|positions| {
-                let brick_handles = positions
-                    .iter()
-                    .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(pos), &m.chunk_size));
-
-                (ctx.group(brick_handles), positions)
-            });
-            let stream = ctx
-                .submit_unordered_with_data(requests)
-                .then_req_with_data(*ctx, |(brick_handles, positions)| {
+        match loc {
+            DataLocation::CPU(_) => {
+                let requests = batches.into_iter().map(|positions| {
                     let num_voxels = m.chunk_size.hmul();
-                    let layout = dtype.array_layout(num_voxels);
 
-                    let staging_bufs =
-                        (0..positions.len()).map(|_| device.staging_to_gpu.request(device, layout));
-
-                    (ctx.group(staging_bufs), (brick_handles, positions))
-                })
-                .then_req(*ctx, |(staging_bufs, (brick_handles, positions))| {
-                    let brick_handles = brick_handles
-                        .into_iter()
-                        .map(|h| h.into_thread_handle())
-                        .collect::<Vec<_>>();
-                    let mut staging_bufs_cpu = staging_bufs
-                        .iter()
-                        .zip(positions.iter())
-                        .map(|(buf, pos)| {
-                            let ptr = buf.mapped_ptr().unwrap().cast::<MaybeUninit<u8>>().as_ptr();
-                            let slice =
-                                unsafe { std::slice::from_raw_parts_mut(ptr, buf.size as usize) };
-                            (*pos, slice)
-                        })
-                        .collect::<Vec<_>>();
-
-                    ctx.spawn_io(move || {
-                        copy_chunk_line(dtype, m, in_, in_size, &mut staging_bufs_cpu);
-
-                        std::mem::drop(staging_bufs_cpu);
-                        (staging_bufs, brick_handles)
-                    })
-                });
-
-            futures::pin_mut!(stream);
-            while let Some((staging_bufs, brick_handles)) = stream.next().await {
-                for (staging_buf, brick_handle) in
-                    staging_bufs.into_iter().zip(brick_handles.into_iter())
-                {
-                    let handle = brick_handle.into_main_handle(device);
-                    device.with_cmd_buffer(|cmd| {
-                        let copy_info = vk::BufferCopy::default().size(handle.size as _);
-                        unsafe {
-                            device.functions().cmd_copy_buffer(
-                                cmd.raw(),
-                                staging_buf.buffer,
-                                handle.buffer,
-                                &[copy_info],
-                            );
-                        }
+                    let brick_handles = positions.iter().map(|pos| {
+                        let data_id =
+                            DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(pos));
+                        ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
                     });
 
-                    unsafe {
-                        handle.initialized(
-                            *ctx,
-                            crate::vulkan::SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_WRITE,
-                            },
-                        )
-                    };
+                    (ctx.group(brick_handles), positions)
+                });
+                let stream = ctx.submit_unordered_with_data(requests).then_req(
+                    *ctx,
+                    |(brick_handles, positions)| {
+                        let mut brick_handles = brick_handles
+                            .into_iter()
+                            .zip(positions)
+                            .map(|(h, pos)| (pos, h.into_thread_handle()))
+                            .collect::<Vec<_>>();
 
-                    unsafe { device.staging_to_gpu.return_buf(device, staging_buf) };
+                        ctx.spawn_io(move || {
+                            copy_chunk_line(dtype, m, in_, in_size, &mut brick_handles);
+
+                            brick_handles
+                        })
+                    },
+                );
+
+                futures::pin_mut!(stream);
+                while let Some(handles) = stream.next().await {
+                    for (_, handle) in handles {
+                        let handle = handle.into_main_handle(ctx.storage());
+                        unsafe { handle.initialized(*ctx) };
+                    }
+                }
+            }
+            DataLocation::GPU(id) => {
+                let device = &ctx.device_contexts[id];
+                let requests = batches.into_iter().map(|positions| {
+                    let brick_handles = positions
+                        .iter()
+                        .map(|pos| ctx.alloc_slot_gpu(device, m.chunk_index(pos), &m.chunk_size));
+
+                    (ctx.group(brick_handles), positions)
+                });
+                let stream = ctx
+                    .submit_unordered_with_data(requests)
+                    .then_req_with_data(*ctx, |(brick_handles, positions)| {
+                        let num_voxels = m.chunk_size.hmul();
+                        let layout = dtype.array_layout(num_voxels);
+
+                        let staging_bufs = (0..positions.len())
+                            .map(|_| device.staging_to_gpu.request(device, layout));
+
+                        (ctx.group(staging_bufs), (brick_handles, positions))
+                    })
+                    .then_req(*ctx, |(staging_bufs, (brick_handles, positions))| {
+                        let brick_handles = brick_handles
+                            .into_iter()
+                            .map(|h| h.into_thread_handle())
+                            .collect::<Vec<_>>();
+                        let mut staging_bufs_cpu = staging_bufs
+                            .iter()
+                            .zip(positions.iter())
+                            .map(|(buf, pos)| {
+                                let ptr =
+                                    buf.mapped_ptr().unwrap().cast::<MaybeUninit<u8>>().as_ptr();
+                                let slice = unsafe {
+                                    std::slice::from_raw_parts_mut(ptr, buf.size as usize)
+                                };
+                                (*pos, slice)
+                            })
+                            .collect::<Vec<_>>();
+
+                        ctx.spawn_io(move || {
+                            copy_chunk_line(dtype, m, in_, in_size, &mut staging_bufs_cpu);
+
+                            std::mem::drop(staging_bufs_cpu);
+                            (staging_bufs, brick_handles)
+                        })
+                    });
+
+                futures::pin_mut!(stream);
+                while let Some((staging_bufs, brick_handles)) = stream.next().await {
+                    for (staging_buf, brick_handle) in
+                        staging_bufs.into_iter().zip(brick_handles.into_iter())
+                    {
+                        let handle = brick_handle.into_main_handle(device);
+                        device.with_cmd_buffer(|cmd| {
+                            let copy_info = vk::BufferCopy::default().size(handle.size as _);
+                            unsafe {
+                                device.functions().cmd_copy_buffer(
+                                    cmd.raw(),
+                                    staging_buf.buffer,
+                                    handle.buffer,
+                                    &[copy_info],
+                                );
+                            }
+                        });
+
+                        unsafe {
+                            handle.initialized(
+                                *ctx,
+                                crate::vulkan::SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                                },
+                            )
+                        };
+
+                        unsafe { device.staging_to_gpu.return_buf(device, staging_buf) };
+                    }
                 }
             }
         }

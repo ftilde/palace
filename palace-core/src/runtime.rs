@@ -34,7 +34,6 @@ const OPERATOR_REQUEST_BATCHING_GRANULARITY: usize = 64;
 struct DataRequestItem {
     id: DataId,
     item: ChunkIndex,
-    location: DataLocation,
 }
 
 impl PartialEq for DataRequestItem {
@@ -66,7 +65,7 @@ struct UnfinishedBatch {
 
 struct OperatorBatches<'inv> {
     unfinished: Map<DataLocation, UnfinishedBatch>,
-    finished: Map<TaskId, Set<DataRequestItem>>,
+    finished: Map<TaskId, (DataLocation, Set<DataRequestItem>)>,
     requestor: Option<TaskId>,
     op: &'inv dyn OpaqueOperator,
     task_counter: crate::util::IdGenerator<u64>,
@@ -108,7 +107,6 @@ impl<'inv> RequestBatcher<'inv> {
         let req_item = DataRequestItem {
             id: request.id,
             item: request.item,
-            location,
         };
 
         let batches = self
@@ -133,7 +131,7 @@ impl<'inv> RequestBatcher<'inv> {
 
         if overly_full {
             let batch = batches.unfinished.remove(&location).unwrap();
-            batches.finished.insert(batch.id, batch.items);
+            batches.finished.insert(batch.id, (location, batch.items));
         }
 
         if new_batch {
@@ -144,23 +142,21 @@ impl<'inv> RequestBatcher<'inv> {
         }
     }
 
-    fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, Vec<(ChunkIndex, DataLocation)>) {
+    fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, DataLocation, Vec<ChunkIndex>) {
         let batches = self.pending_batches.get_mut(&tid.operator()).unwrap();
-        let items = if let Some((loc, _)) = batches.unfinished.iter().find(|v| v.1.id == tid) {
+        let (loc, items) = if let Some((loc, _)) = batches.unfinished.iter().find(|v| v.1.id == tid)
+        {
             let loc = *loc;
             let batch = batches.unfinished.remove(&loc).unwrap();
             assert_eq!(tid, batch.id);
-            batch.items
+            (loc, batch.items)
         } else {
             batches.finished.remove(&tid).unwrap()
         };
 
-        let items = items
-            .into_iter()
-            .map(|i| (i.item, i.location))
-            .collect::<Vec<_>>();
+        let items = items.into_iter().map(|i| i.item).collect::<Vec<_>>();
 
-        (batches.op, items)
+        (batches.op, loc, items)
     }
 }
 
@@ -476,11 +472,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
         if let Some(t) = self.barrier_batcher.get(self.context(id), id) {
             t
         } else {
-            let (op, batch) = self.request_batcher.get(id);
+            let (op, loc, batch) = self.request_batcher.get(id);
             let context = self.context(id);
             //Safety: The argument batch is precisely for the returned operator, and thus of the right
             //type.
-            unsafe { op.compute(context, batch) }
+            unsafe { op.compute(context, batch, loc) }
         }
     }
 

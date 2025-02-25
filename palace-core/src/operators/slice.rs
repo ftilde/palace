@@ -156,7 +156,7 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
         input.chunks.dtype(),
         out_md.clone(),
         (input, DataParam(out_md), DataParam(offset)),
-        |ctx, mut positions, (input, m_out, offset)| {
+        |ctx, mut positions, _loc, (input, m_out, offset)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -168,7 +168,7 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
 
                 let out_chunk_size = &m_out.chunk_size;
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let pipeline = device.request_state(
                     (&dtype, &m_in.chunk_size),
@@ -178,7 +178,7 @@ pub fn slice_and_rechunk<D: DynDimension, T: ElementType>(
                 )?;
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(|(pos, _)| {
+                    .run_unordered(positions.into_iter().map(|pos| {
                         let out_chunk_size = &out_chunk_size;
                         let m_in = &m_in;
                         async move {

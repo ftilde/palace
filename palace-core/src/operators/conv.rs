@@ -189,7 +189,7 @@ void main() {
             DataParam(dim),
             DataParam(border_handling),
         ),
-        |ctx, mut positions, (input, kernel, push_constants, dim, border_handling)| {
+        |ctx, mut positions, _loc, (input, kernel, push_constants, dim, border_handling)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -278,9 +278,9 @@ void main() {
                     ))
                     .await;
 
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
-                let requests = positions.into_iter().map(|(pos, _)| {
+                let requests = positions.into_iter().map(|pos| {
                     let extent_vec = Vector::<_, GlobalCoordinate>::fill_with_len(0.into(), nd)
                         .map_element(dim, |_v| extent.into());
                     let chunk_neighbors =

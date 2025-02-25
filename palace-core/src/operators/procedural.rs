@@ -217,7 +217,7 @@ void main()
             DataParam(shader_parts),
             DataParam(push_constants),
         ),
-        |ctx, positions, (metadata, shader_parts, push_constants)| {
+        |ctx, positions, _loc, (metadata, shader_parts, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -237,7 +237,7 @@ void main()
                     },
                 )?;
 
-                for (pos, _) in positions {
+                for pos in positions {
                     let brick_info = m.chunk_info(pos);
 
                     let gpu_brick_out = ctx

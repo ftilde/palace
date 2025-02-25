@@ -154,13 +154,13 @@ void main() {
         Default::default(),
         input.metadata,
         (input, [xx, xy, xz, yy, yz, zz]),
-        move |ctx, positions, (input, hessian)| {
+        move |ctx, positions, _loc, (input, hessian)| {
             async move {
                 let device = ctx.preferred_device();
 
                 let m = input.metadata;
 
-                let requests = positions.into_iter().map(|(pos, _)| {
+                let requests = positions.into_iter().map(|pos| {
                     let hessian_bricks = ctx.group(hessian.into_iter().map(|entry| {
                         entry.chunks.request_gpu(
                             device.id,

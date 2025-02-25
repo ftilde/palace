@@ -282,7 +282,7 @@ void main() {
             DataParam(element_out_to_in),
             DataParam(push_constants),
         ),
-        move |ctx, mut positions, (input, output_size, element_out_to_in, push_constants)| {
+        move |ctx, mut positions, _loc, (input, output_size, element_out_to_in, push_constants)| {
             async move {
                 let device = ctx.preferred_device();
 
@@ -338,10 +338,10 @@ void main() {
                         .build(device)
                     },
                 )?;
-                positions.sort_by_key(|(v, _)| v.0);
+                positions.sort();
 
                 let _ = ctx
-                    .run_unordered(positions.into_iter().map(move |(pos, _)| {
+                    .run_unordered(positions.into_iter().map(move |pos| {
                         async move {
                             let out_info = m_out.chunk_info(pos);
                             let pos_vec = m_out.chunk_pos_from_index(pos);
