@@ -59,9 +59,13 @@ impl std::hash::Hash for DataRequestItem {
     }
 }
 
+struct UnfinishedBatch {
+    items: Set<DataRequestItem>,
+    id: TaskId,
+}
+
 struct OperatorBatches<'inv> {
-    unfinished: Set<DataRequestItem>,
-    unfinished_batch_id: TaskId,
+    unfinished: Map<DataLocation, UnfinishedBatch>,
     finished: Map<TaskId, Set<DataRequestItem>>,
     requestor: Option<TaskId>,
     op: &'inv dyn OpaqueOperator,
@@ -71,25 +75,13 @@ struct OperatorBatches<'inv> {
 impl<'inv> OperatorBatches<'inv> {
     fn new(source: &'inv dyn OpaqueOperator) -> Self {
         let task_counter: crate::util::IdGenerator<u64> = Default::default();
-        let first_batch_id = TaskId::new(source.op_id(), task_counter.next() as _);
         OperatorBatches {
-            unfinished: Set::new(),
-            unfinished_batch_id: first_batch_id,
+            unfinished: Map::new(),
             finished: Map::new(),
             requestor: None,
             op: source,
             task_counter,
         }
-    }
-    fn finish_current(&mut self) -> (TaskId, Set<DataRequestItem>) {
-        let items = Set::new();
-        let old_batch = std::mem::replace(&mut self.unfinished, items);
-        let ret = (self.unfinished_batch_id, old_batch);
-
-        let new_batch_id = TaskId::new(self.op.op_id(), self.task_counter.next() as _);
-        self.unfinished_batch_id = new_batch_id;
-
-        ret
     }
 }
 
@@ -112,41 +104,53 @@ impl<'inv> RequestBatcher<'inv> {
     ) -> BatchAddResult {
         let source = &*request.source;
         let op_id = source.op_id();
+        let location = request.location.into();
         let req_item = DataRequestItem {
             id: request.id,
             item: request.item,
-            location: request.location.into(),
+            location,
         };
 
         let batches = self
             .pending_batches
             .entry(op_id)
             .or_insert_with(|| OperatorBatches::new(source));
-        let overly_full = batches.unfinished.len() >= max_batch_size
+
+        let mut new_batch = false;
+        let unfinished = batches.unfinished.entry(location).or_insert_with(|| {
+            new_batch = true;
+            UnfinishedBatch {
+                id: TaskId::new(batches.op.op_id(), batches.task_counter.next() as _),
+                items: Default::default(),
+            }
+        });
+
+        unfinished.items.insert(req_item);
+        let current_id = unfinished.id;
+
+        let overly_full = unfinished.items.len() >= max_batch_size
             || batches.requestor.map(|t| t != from).unwrap_or(false);
 
         if overly_full {
-            let (finished_tid, finished_batch) = batches.finish_current();
-            batches.finished.insert(finished_tid, finished_batch);
+            let batch = batches.unfinished.remove(&location).unwrap();
+            batches.finished.insert(batch.id, batch.items);
         }
-
-        let new_batch = batches.unfinished.is_empty();
-        batches.unfinished.insert(req_item);
 
         if new_batch {
             batches.requestor = Some(from); //TODO: why the hell would we need this?
-            BatchAddResult::New(batches.unfinished_batch_id)
+            BatchAddResult::New(current_id)
         } else {
-            BatchAddResult::Existing(batches.unfinished_batch_id)
+            BatchAddResult::Existing(current_id)
         }
     }
 
     fn get(&mut self, tid: TaskId) -> (&'inv dyn OpaqueOperator, Vec<(ChunkIndex, DataLocation)>) {
         let batches = self.pending_batches.get_mut(&tid.operator()).unwrap();
-        let items = if batches.unfinished_batch_id == tid {
-            let (n_tid, finished_batch) = batches.finish_current();
-            assert_eq!(tid, n_tid);
-            finished_batch
+        let items = if let Some((loc, _)) = batches.unfinished.iter().find(|v| v.1.id == tid) {
+            let loc = *loc;
+            let batch = batches.unfinished.remove(&loc).unwrap();
+            assert_eq!(tid, batch.id);
+            batch.items
         } else {
             batches.finished.remove(&tid).unwrap()
         };
