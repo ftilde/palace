@@ -228,10 +228,10 @@ def render(size, events):
     tile_size = 64
 
     # Actual composition of the rendering
-    slice0 = render_slice(v, slice_state0, tf, tile_size=64, devices=devices)
-    slice1 = render_slice(v, slice_state1, tf, tile_size=64, devices=devices)
-    slice2 = render_slice(v, slice_state2, tf, tile_size=64, devices=devices)
-    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=64, devices=devices)
+    slice0 = render_slice(v, slice_state0, tf, tile_size=tile_size, devices=devices)
+    slice1 = render_slice(v, slice_state1, tf, tile_size=tile_size, devices=devices)
+    slice2 = render_slice(v, slice_state2, tf, tile_size=tile_size, devices=devices)
+    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices)
 
     match view.load():
         case "quad":
