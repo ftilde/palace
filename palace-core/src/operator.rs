@@ -399,6 +399,21 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
     //}
 }
 
+impl<OutputType: 'static> Operator<OutputType> {
+    pub fn move_device(self, how: impl Fn(&[ChunkIndex]) -> DataLocation + 'static) -> Self {
+        Self {
+            descriptor: self.descriptor,
+            state: self.state,
+            granularity: self.granularity,
+            dtype: self.dtype,
+            compute: Rc::new(move |ctx, items, _loc, state| {
+                let loc = how(&items);
+                (self.compute)(ctx, items, loc, state)
+            }),
+        }
+    }
+}
+
 impl<OutputType: ElementType> Operator<OutputType> {
     pub fn new(
         descriptor: OperatorDescriptor,

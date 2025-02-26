@@ -2,6 +2,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 
 use futures::StreamExt;
+use itertools::Itertools as _;
 
 use crate::{
     array::{ChunkIndex, TensorEmbeddingData, TensorMetaData},
@@ -15,6 +16,7 @@ use crate::{
         DataLocation, Element,
     },
     task::{RequestStream, Task, TaskContext},
+    vulkan::DeviceId,
 };
 use id::{Identify, IdentifyHash};
 
@@ -92,12 +94,13 @@ impl<D: DynDimension, E: ElementType> TensorOperator<D, E> {
             chunks: Operator::unbatched(descriptor, dtype, state_chunks, chunks),
         }
     }
+
     pub fn dtype(&self) -> E {
         self.chunks.dtype()
     }
 }
 
-impl<D: DynDimension, E> TensorOperator<D, E> {
+impl<D: DynDimension, E: 'static> TensorOperator<D, E> {
     pub fn embedded(self, data: TensorEmbeddingData<D>) -> EmbeddedTensorOperator<D, E> {
         EmbeddedTensorOperator {
             inner: self,
@@ -114,6 +117,22 @@ impl<D: DynDimension, E> TensorOperator<D, E> {
 
     pub fn dim(&self) -> D {
         self.metadata.dim()
+    }
+
+    pub fn distribute_on_gpus(self, onto: Vec<DeviceId>) -> Self {
+        assert!(onto.len() > 0);
+        let dim_in_chunks = self.metadata.dimension_in_chunks();
+        let biggest_dim = dim_in_chunks.iter().position_max().unwrap();
+        let dim_div = dim_in_chunks[biggest_dim].raw.div_ceil(onto.len() as u32);
+        let md = self.metadata.clone();
+        Self {
+            metadata: self.metadata,
+            chunks: self.chunks.move_device(move |items| {
+                let first = md.chunk_pos_from_index(items[0]);
+                let device = first[biggest_dim].raw / dim_div;
+                DataLocation::GPU(onto[device as usize])
+            }),
+        }
     }
 }
 
@@ -367,7 +386,7 @@ where
     }
 }
 
-impl<D: DynDimension, E> EmbeddedTensorOperator<D, E> {
+impl<D: DynDimension, E: 'static> EmbeddedTensorOperator<D, E> {
     pub fn single_level_lod(self) -> LODTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
@@ -384,6 +403,13 @@ impl<D: DynDimension, E> EmbeddedTensorOperator<D, E> {
 
     pub fn cache(self) -> Self {
         self.map_inner(|t| t.cache())
+    }
+
+    pub fn distribute_on_gpus(self, onto: Vec<DeviceId>) -> Self {
+        Self {
+            inner: self.inner.distribute_on_gpus(onto),
+            embedding_data: self.embedding_data,
+        }
     }
 }
 
@@ -479,7 +505,7 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
     }
 }
 
-impl<D: DynDimension, E> LODTensorOperator<D, E> {
+impl<D: DynDimension, E: 'static> LODTensorOperator<D, E> {
     pub fn map<DO: DynDimension, EO>(
         self,
         f: impl FnMut(EmbeddedTensorOperator<D, E>) -> EmbeddedTensorOperator<DO, EO>,
@@ -496,6 +522,16 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
                 .into_iter()
                 .enumerate()
                 .map(|(i, level)| if i != 0 { level.cache() } else { level })
+                .collect(),
+        }
+    }
+
+    pub fn distribute_on_gpus(self, onto: Vec<DeviceId>) -> Self {
+        LODTensorOperator {
+            levels: self
+                .levels
+                .into_iter()
+                .map(|t| t.distribute_on_gpus(onto.clone()))
                 .collect(),
         }
     }

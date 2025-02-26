@@ -443,6 +443,8 @@ fn eval_network(
     let mut fit_tf = false;
     let mut save_task_stream = false;
 
+    let all_devices = runtime.all_devices();
+
     let gui = app_state.gui.setup(&mut events, |ctx| {
         egui::Window::new("Settings").show(ctx, |ui| {
             ui.vertical(|ui| {
@@ -616,7 +618,8 @@ fn eval_network(
             &mut app_state.raycasting,
             &app_state.tf,
             events,
-        ),
+        )
+        .distribute_on_gpus(all_devices),
     };
 
     let frame = operators::rechunk::rechunk(frame, Vector::fill(ChunkSize::Full));

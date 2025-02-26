@@ -18,6 +18,7 @@ use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
 use crate::jit::{jit_binary, jit_ternary, jit_unary, JitArgument};
+use crate::types::DeviceId;
 
 use super::ChunkSize;
 
@@ -604,6 +605,16 @@ impl LODTensorOperator {
             levels: self.levels.iter().map(|l| l.cache()).collect(),
         }
     }
+
+    fn distribute_on_gpus(&self, devices: Vec<DeviceId>) -> Self {
+        Self {
+            levels: self
+                .levels
+                .iter()
+                .map(|l| l.distribute_on_gpus(devices.clone()))
+                .collect(),
+        }
+    }
 }
 
 #[pyclass]
@@ -667,6 +678,12 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
             fn cache(&self) -> EmbeddedTensorOperator {
                 EmbeddedTensorOperator {
                     inner: self.inner.cache(),
+                    embedding_data: self.embedding_data.clone(),
+                }
+            }
+            fn distribute_on_gpus(&self, devices: Vec<DeviceId>) -> Self {
+                EmbeddedTensorOperator {
+                    inner: self.inner.distribute_on_gpus(devices),
                     embedding_data: self.embedding_data.clone(),
                 }
             }
@@ -847,6 +864,16 @@ impl TensorOperator {
                 Ok(palace_core::operators::rechunk::rechunk(vol, size).into_dyn())
             },
         )
+    }
+    fn distribute_on_gpus(&self, devices: Vec<DeviceId>) -> Self {
+        let t = match &self.inner {
+            MaybeJitTensorOperator::Jit(j) => j.clone().compile().unwrap(),
+            MaybeJitTensorOperator::Tensor(t) => t.clone(),
+        }
+        .distribute_on_gpus(devices.into_iter().map(|v| v.0).collect());
+        TensorOperator {
+            inner: MaybeJitTensorOperator::Tensor(t),
+        }
     }
 
     #[pyo3(signature = (kernels, border_handling="repeat"))]

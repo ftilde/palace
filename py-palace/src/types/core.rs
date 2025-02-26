@@ -41,6 +41,11 @@ impl RunTime {
     }
 }
 
+#[gen_stub_pyclass]
+#[pyclass(unsendable)]
+#[derive(Copy, Clone)]
+pub struct DeviceId(pub palace_core::vulkan::DeviceId);
+
 #[pymethods]
 impl RunTime {
     #[new]
@@ -123,6 +128,16 @@ impl RunTime {
         map_result(rt.resolve(None, false, |ctx, _| {
             async move { Ok(ctx.submit(op_ref.request_scalar()).await) }.into()
         }))
+    }
+
+    fn all_devices(&self) -> Vec<DeviceId> {
+        let rt = self.inner.borrow();
+        rt.all_devices().into_iter().map(DeviceId).collect()
+    }
+
+    fn checked_device_id(&self, raw_id: usize) -> Option<DeviceId> {
+        let rt = self.inner.borrow();
+        rt.checked_device_id(raw_id).map(DeviceId)
     }
 
     #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false, display_device=None))]

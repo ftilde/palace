@@ -313,6 +313,14 @@ impl RunTime {
         self.vulkan.checked_device_id(raw_id)
     }
 
+    pub fn all_devices(&self) -> Vec<DeviceId> {
+        self.vulkan
+            .device_contexts()
+            .values()
+            .map(|v| v.id)
+            .collect()
+    }
+
     pub fn resolve<
         'call,
         R: 'static,
