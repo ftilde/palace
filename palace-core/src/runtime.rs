@@ -1,6 +1,7 @@
 use ahash::{HashMapExt, HashSetExt};
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
     num::NonZeroU64,
     path::Path,
     sync::mpsc,
@@ -419,7 +420,7 @@ struct ContextData<'cref, 'inv> {
     thread_spawner: ThreadSpawner,
     pub storage: &'cref ram::Storage,
     pub disk_cache: Option<&'cref disk::Storage>,
-    device_contexts: &'cref Map<DeviceId, DeviceContext>,
+    device_contexts: &'cref BTreeMap<DeviceId, DeviceContext>,
     frame: FrameNumber,
     predicted_preview_tasks: RefCell<Set<TaskId>>,
 }

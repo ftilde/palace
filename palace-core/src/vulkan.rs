@@ -1,7 +1,6 @@
 use crate::storage::gpu::Allocator;
 use crate::storage::gpu::MemoryLocation;
 use crate::task::Request;
-use crate::util::Map;
 use crate::Error;
 use ash::ext::debug_utils;
 use ash::khr::push_descriptor;
@@ -108,7 +107,7 @@ pub struct VulkanContext {
     debug_callback: vk::DebugUtilsMessengerEXT,
     pub functions: GlobalFunctions,
 
-    device_contexts: Map<DeviceId, DeviceContext>,
+    device_contexts: BTreeMap<DeviceId, DeviceContext>,
 }
 
 impl VulkanContext {
@@ -163,7 +162,7 @@ impl VulkanContext {
             let physical_devices = instance
                 .enumerate_physical_devices()
                 .expect("Failed to enumerate physical devices.");
-            let device_contexts: Map<DeviceId, DeviceContext> = physical_devices
+            let device_contexts: BTreeMap<DeviceId, DeviceContext> = physical_devices
                 .iter()
                 .enumerate()
                 .filter_map(|(device_num, physical_device)| {
@@ -220,7 +219,7 @@ impl VulkanContext {
         }
     }
 
-    pub fn device_contexts(&self) -> &Map<DeviceId, DeviceContext> {
+    pub fn device_contexts(&self) -> &BTreeMap<DeviceId, DeviceContext> {
         &self.device_contexts
     }
 
@@ -232,7 +231,7 @@ impl VulkanContext {
 impl Drop for VulkanContext {
     fn drop(&mut self) {
         unsafe {
-            for device_context in self.device_contexts.drain() {
+            for device_context in std::mem::take(&mut self.device_contexts).into_iter() {
                 std::mem::drop(device_context);
             }
 

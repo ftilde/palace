@@ -1,7 +1,7 @@
 use ahash::HashMapExt;
 use std::alloc::Layout;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -254,7 +254,7 @@ impl<'req, 'inv> Request<'req, 'inv, ()> {
 pub struct PollContext<'cref> {
     pub storage: &'cref ram::Storage,
     pub disk_cache: Option<&'cref disk::Storage>,
-    pub device_contexts: &'cref Map<DeviceId, DeviceContext>,
+    pub device_contexts: &'cref BTreeMap<DeviceId, DeviceContext>,
     pub current_frame: FrameNumber,
 }
 
@@ -266,7 +266,7 @@ pub struct OpaqueTaskContext<'cref, 'inv> {
     pub(crate) completed_requests: &'cref CompletedRequests,
     pub(crate) hints: &'cref TaskHints,
     pub(crate) thread_pool: &'cref ThreadSpawner,
-    pub(crate) device_contexts: &'cref Map<DeviceId, DeviceContext>,
+    pub(crate) device_contexts: &'cref BTreeMap<DeviceId, DeviceContext>,
     pub(crate) predicted_preview_tasks: &'cref RefCell<Set<TaskId>>,
     pub(crate) current_task: TaskId,
     pub(crate) current_op: Option<OperatorDescriptor>, //Only present if task originated from an operator
