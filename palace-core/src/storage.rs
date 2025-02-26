@@ -9,7 +9,7 @@ use crate::{
     dtypes::AsDynType,
     operator::DataId,
     runtime::FrameNumber,
-    util::Map,
+    util::Set,
     vulkan::{DeviceId, DstBarrierInfo},
 };
 
@@ -227,17 +227,17 @@ impl<T: Clone> LRUManagerInner<T> {
 
 #[derive(Default)]
 pub struct NewDataManager {
-    inner: RefCell<Map<DataId, DataVersionType>>,
+    inner: RefCell<Set<DataId>>,
 }
 
 impl NewDataManager {
-    fn add(&self, key: DataId, version: DataVersionType) {
-        self.inner.borrow_mut().insert(key, version);
+    fn add(&self, key: DataId) {
+        self.inner.borrow_mut().insert(key);
     }
     fn remove(&self, key: DataId) {
         self.inner.borrow_mut().remove(&key);
     }
-    fn drain(&self) -> impl Iterator<Item = (DataId, DataVersionType)> {
+    fn drain(&self) -> impl Iterator<Item = DataId> {
         let mut m = self.inner.borrow_mut();
         let ret = std::mem::take(&mut *m);
         ret.into_iter()

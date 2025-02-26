@@ -12,10 +12,7 @@ use std::{
 use crate::{
     array::ChunkIndex,
     operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId},
-    storage::{
-        disk, gpu::BarrierEpoch, ram, CpuDataLocation, DataLocation, DataVersionType,
-        VisibleDataLocation,
-    },
+    storage::{disk, gpu::BarrierEpoch, ram, CpuDataLocation, DataLocation, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
     task_manager::{TaskManager, ThreadSpawner},
@@ -596,10 +593,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     fn register_produced_data_from(
         &mut self,
         task_id: TaskId,
-        items: impl Iterator<Item = (DataId, DataLocation, DataVersionType)>,
+        items: impl Iterator<Item = (DataId, DataLocation)>,
         and_cache: bool,
     ) {
-        for (id, produced_loc, produced_ver) in items {
+        for (id, produced_loc) in items {
             self.task_graph.has_produced_data(task_id, id);
 
             let mut requested_locations = self.task_graph.data_requests(id);

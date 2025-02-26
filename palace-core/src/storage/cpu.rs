@@ -265,10 +265,7 @@ impl<Allocator> Drop for DropMarkInitialized<'_, Allocator> {
             let mut binding = self.access.storage.index.borrow_mut();
             let state = &mut binding.get_mut(&self.access.id).unwrap().state;
 
-            self.access
-                .storage
-                .new_data
-                .add(self.access.id, version_type);
+            self.access.storage.new_data.add(self.access.id);
 
             *state = match state {
                 StorageEntryState::Registered => {
@@ -940,12 +937,10 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         }
     }
 
-    pub(crate) fn newest_data(
-        &self,
-    ) -> impl Iterator<Item = (DataId, DataLocation, DataVersionType)> {
+    pub(crate) fn newest_data(&self) -> impl Iterator<Item = (DataId, DataLocation)> {
         self.new_data
             .drain()
-            .map(|(d, v)| (d, DataLocation::CPU(Allocator::LOCATION), v))
+            .map(|d| (d, DataLocation::CPU(Allocator::LOCATION)))
     }
 
     fn ensure_presence<'a>(

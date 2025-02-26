@@ -282,7 +282,7 @@ impl<'a> WriteHandle<'a> {
                     panic!("Entry should be in state Initializing, but is in Initialized");
                 }
                 StorageEntryState::Initializing(info) => {
-                    access.storage.new_data.add(access.id, version.type_());
+                    access.storage.new_data.add(access.id);
 
                     StorageEntryState::Initialized(
                         info,
@@ -949,13 +949,11 @@ impl Storage {
             .unwrap_or(false)
     }
 
-    pub(crate) fn newest_data(
-        &self,
-    ) -> impl Iterator<Item = (DataId, DataLocation, DataVersionType)> {
+    pub(crate) fn newest_data(&self) -> impl Iterator<Item = (DataId, DataLocation)> {
         let id = self.id;
         self.new_data
             .drain()
-            .map(move |(d, v)| (d, DataLocation::GPU(id), v))
+            .map(move |d| (d, DataLocation::GPU(id)))
     }
 
     fn ensure_presence<'a>(
