@@ -286,12 +286,13 @@ impl TransferManager {
             unsafe { copy_to_gpu(ctx, device, source.info.data, layout, gpu_buf_out.buffer).await };
 
             unsafe {
-                gpu_buf_out.initialized(
+                gpu_buf_out.initialized_version(
                     ctx,
                     super::SrcBarrierInfo {
                         stage: vk::PipelineStageFlags2::TRANSFER,
                         access: vk::AccessFlags2::TRANSFER_WRITE,
                     },
+                    source.version,
                 )
             };
         })
@@ -317,6 +318,7 @@ impl TransferManager {
             let Ok(gpu_buf_in) = device.storage.read(access, dst_info) else {
                 panic!("Data should already be in vram and visible");
             };
+            let version = gpu_buf_in.version;
             let layout = gpu_buf_in.layout;
 
             let desc = DataDescriptor {
@@ -334,7 +336,7 @@ impl TransferManager {
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {
-                        out_buf.initialized(ctx);
+                        out_buf.initialized_version(ctx, version);
                     }
                 }
                 CpuDataLocation::Disk => {
@@ -347,7 +349,7 @@ impl TransferManager {
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {
-                        out_buf.initialized(ctx);
+                        out_buf.initialized_version(ctx, version);
                     }
                 }
             };
@@ -365,6 +367,7 @@ impl TransferManager {
         self.supply_transfer_task(ctx, transfer_task_key, async move {
             let key = source.id();
             let layout = source.info.layout;
+            let version = source.version;
             let desc = DataDescriptor {
                 id: key,
                 longevity: source.info.data_longevity,
@@ -381,7 +384,7 @@ impl TransferManager {
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {
-                        out_buf.initialized(ctx);
+                        out_buf.initialized_version(ctx, version);
                     }
                 }
                 CpuDataLocation::Disk => {
@@ -395,7 +398,7 @@ impl TransferManager {
 
                     // Safety: We have just written the complete buffer using a memcpy
                     unsafe {
-                        out_buf.initialized(ctx);
+                        out_buf.initialized_version(ctx, version);
                     }
                 }
             };

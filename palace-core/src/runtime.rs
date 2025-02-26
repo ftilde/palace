@@ -621,12 +621,6 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         location: requested.0,
                     }
                     .into();
-                    if let DataVersionType::Preview = produced_ver {
-                        let mut m = self.data.predicted_preview_tasks.borrow_mut();
-                        for dependent in self.task_graph.dependents(r_id) {
-                            m.insert(*dependent);
-                        }
-                    }
                     let req_prio = requested
                         .1
                         .iter()
@@ -835,16 +829,21 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
     }
 
     fn is_available_in(&self, datum: DataId, loc: DataLocation) -> bool {
+        let version = crate::storage::DataVersion::Preview(self.data.frame);
         match loc {
-            DataLocation::CPU(CpuDataLocation::Ram) => self.data.storage.is_readable(datum),
+            DataLocation::CPU(CpuDataLocation::Ram) => {
+                self.data.storage.is_readable(datum, version)
+            }
             DataLocation::CPU(CpuDataLocation::Disk) => {
                 if let Some(disk) = self.data.disk_cache {
-                    disk.is_readable(datum)
+                    disk.is_readable(datum, version)
                 } else {
                     false
                 }
             }
-            DataLocation::GPU(i) => self.data.device_contexts[&i].storage.is_readable(datum),
+            DataLocation::GPU(i) => self.data.device_contexts[&i]
+                .storage
+                .is_readable(datum, version),
         }
     }
 

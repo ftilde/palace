@@ -283,6 +283,7 @@ impl<'a> WriteHandle<'a> {
                 }
                 StorageEntryState::Initializing(info) => {
                     access.storage.new_data.add(access.id, version.type_());
+
                     StorageEntryState::Initialized(
                         info,
                         Visibility {
@@ -402,6 +403,13 @@ impl<'a, 'inv> InplaceResult<'a, 'inv> {
         match self {
             InplaceResult::Inplace(a, b) => Request::ready(InplaceHandle::Inplace(a, b)),
             InplaceResult::New(r, w) => w.map(move |w| InplaceHandle::New(r, w)),
+        }
+    }
+
+    pub fn version(&self) -> DataVersionType {
+        match self {
+            InplaceResult::Inplace(_, data_version_type) => *data_version_type,
+            InplaceResult::New(read_handle, _) => read_handle.version,
         }
     }
 }
@@ -687,6 +695,14 @@ impl Storage {
         d: DataId,
         current_frame: FrameNumber,
     ) -> Result<WriteHandle<'b>, ()> {
+        // Ensure there is already an entry for the current frame in the index. This may
+        // (otherwise) not be the case if the datum was requested from another device/datalocation.
+        {
+            let mut index = self.data_index.borrow_mut();
+            let entry = index.entry(d);
+            self.ensure_presence(current_frame, entry);
+        }
+
         let mut old_preview_data_index = self.old_preview_data_index.borrow_mut();
         if let Some(entries) = old_preview_data_index.get_mut(&d) {
             {
@@ -919,11 +935,17 @@ impl Storage {
             .unwrap_or(false)
     }
 
-    pub fn is_readable(&self, id: DataId) -> bool {
+    pub fn is_readable(&self, id: DataId, requested_version: DataVersion) -> bool {
         self.data_index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, StorageEntryState::Initialized(_, _, _)))
+            .map(|e| {
+                if let StorageEntryState::Initialized(_, _, version) = e.state {
+                    version >= requested_version
+                } else {
+                    false
+                }
+            })
             .unwrap_or(false)
     }
 

@@ -279,12 +279,11 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
             gen_poll: Box::new(move |ctx| {
                 let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
                 Box::new(move || unsafe {
-                    access = match ctx
-                        .storage
-                        .read(access.take().unwrap())
-                        .map(|v| *v.map(|a| &a[0]))
-                    {
-                        Ok(v) => return Some(v),
+                    access = match ctx.storage.read(access.take().unwrap()) {
+                        Ok(v) => {
+                            ctx.register_dependency_dataversion(v.version);
+                            return Some(v[0]);
+                        }
                         Err(access) => Some(access),
                     };
                     None
@@ -323,7 +322,10 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
                 let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
                 Box::new(move || unsafe {
                     access = match ctx.storage.read(access.take().unwrap()) {
-                        Ok(v) => return Some(v),
+                        Ok(v) => {
+                            ctx.register_dependency_dataversion(v.version);
+                            return Some(v);
+                        }
                         Err(access) => Some(access),
                     };
                     None
@@ -358,7 +360,10 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
                         access.take().unwrap(),
                         write_desc,
                     ) {
-                        Ok(v) => return Some(v),
+                        Ok(v) => {
+                            ctx.register_dependency_dataversion(v.version());
+                            return Some(v);
+                        }
                         Err(access) => Some(access),
                     };
                     None
@@ -388,7 +393,10 @@ impl<Output: Element> Operator<StaticElementType<Output>> {
     //            let mut access = Some(ctx.disk_cache.unwrap().register_access(id));
     //            Box::new(move || unsafe {
     //                access = match ctx.disk_cache.unwrap().read(access.take().unwrap()) {
-    //                    Ok(v) => return Some(v),
+    //                    Ok(v) => {
+    //                        ctx.register_depency_dataversion(v.version);
+    //                        return Some(v)
+    //                    },
     //                    Err(access) => Some(access),
     //                };
     //                None
@@ -498,7 +506,10 @@ impl<OutputType: ElementType> Operator<OutputType> {
                 let mut access = Some(ctx.storage.register_access(ctx.current_frame, id));
                 Box::new(move || {
                     access = match ctx.storage.read_raw(access.take().unwrap()) {
-                        Ok(v) => return Some(v),
+                        Ok(v) => {
+                            ctx.register_dependency_dataversion(v.version);
+                            return Some(v);
+                        }
                         Err(access) => Some(access),
                     };
                     None
@@ -533,7 +544,10 @@ impl<OutputType: ElementType> Operator<OutputType> {
                 ));
                 Box::new(
                     move || match device.storage.read(access.take().unwrap(), dst_info) {
-                        Ok(r) => Some(r),
+                        Ok(r) => {
+                            ctx.register_dependency_dataversion(r.version);
+                            Some(r)
+                        }
                         Err(t) => {
                             access = Some(t);
                             None
@@ -582,7 +596,10 @@ impl<OutputType: ElementType> Operator<OutputType> {
                         dst_info,
                         write_dtype,
                     ) {
-                        Ok(r) => Some(r),
+                        Ok(r) => {
+                            ctx.register_dependency_dataversion(r.version());
+                            Some(r)
+                        }
                         Err(t) => {
                             access = Some(t);
                             None

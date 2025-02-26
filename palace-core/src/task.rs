@@ -17,7 +17,7 @@ use crate::operator::{DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor
 use crate::runtime::{CompletedRequests, Deadline, FrameNumber, RequestQueue, TaskHints};
 use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
 use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
-use crate::storage::{disk, CpuDataLocation, Element};
+use crate::storage::{disk, CpuDataLocation, DataVersionType, Element};
 use crate::storage::{DataLocation, GarbageCollectId, VisibleDataLocation};
 use crate::task_graph::{GroupId, ProgressIndicator, RequestId, TaskId, VisibleDataId};
 use crate::task_manager::ThreadSpawner;
@@ -255,7 +255,19 @@ pub struct PollContext<'cref> {
     pub storage: &'cref ram::Storage,
     pub disk_cache: Option<&'cref disk::Storage>,
     pub device_contexts: &'cref BTreeMap<DeviceId, DeviceContext>,
+    pub(crate) predicted_preview_tasks: &'cref RefCell<Set<TaskId>>,
+    pub(crate) current_task: TaskId,
     pub current_frame: FrameNumber,
+}
+
+impl PollContext<'_> {
+    pub fn register_dependency_dataversion(&self, version: DataVersionType) {
+        if version == DataVersionType::Preview {
+            self.predicted_preview_tasks
+                .borrow_mut()
+                .insert(self.current_task);
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -287,6 +299,8 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 disk_cache: self.disk_cache,
                 device_contexts: self.device_contexts,
                 current_frame: self.current_frame,
+                predicted_preview_tasks: self.predicted_preview_tasks,
+                current_task: self.current_task,
             });
             match request.type_ {
                 RequestType::Data(_)
@@ -447,6 +461,8 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
                 disk_cache: self.disk_cache,
                 device_contexts: self.device_contexts,
                 current_frame: self.current_frame,
+                predicted_preview_tasks: self.predicted_preview_tasks,
+                current_task: self.current_task,
             });
             match r.type_ {
                 RequestType::Data(_)
@@ -815,6 +831,8 @@ impl<'req, 'inv, V, D> RequestStreamSource<'req, 'inv, V, D> {
             disk_cache: self.task_context.disk_cache,
             device_contexts: self.task_context.device_contexts,
             current_frame: self.task_context.current_frame,
+            predicted_preview_tasks: self.task_context.predicted_preview_tasks,
+            current_task: self.task_context.current_task,
         });
         match req.type_ {
             RequestType::Data(_)

@@ -133,6 +133,7 @@ impl<Allocator> Drop for AccessToken<'_, Allocator> {
 pub struct ReadHandle<'a, T: ?Sized, Allocator> {
     access: AccessToken<'a, Allocator>,
     data_longevity: DataLongevity,
+    pub version: DataVersionType,
     data: &'a T,
 }
 impl<'a, T: ?Sized, Allocator> ReadHandle<'a, T, Allocator> {
@@ -140,6 +141,7 @@ impl<'a, T: ?Sized, Allocator> ReadHandle<'a, T, Allocator> {
         let ret = ReadHandle {
             access: self.access,
             data_longevity: self.data_longevity,
+            version: self.version,
             data: f(&self.data),
         };
         ret
@@ -156,6 +158,7 @@ impl<'a, T: ?Sized> ReadHandle<'a, T, super::ram::RamAllocator> {
             data: self.data,
             panic_handle: Default::default(),
             data_longevity: self.data_longevity,
+            version: self.version,
         };
         //Avoid running destructor
         std::mem::forget(self.access);
@@ -176,6 +179,7 @@ pub struct ThreadReadHandle<'a, T: ?Sized + Send> {
     data: &'a T,
     panic_handle: ThreadHandleDropPanic,
     data_longevity: DataLongevity,
+    version: DataVersionType,
 }
 impl<T: ?Sized + Send> std::ops::Deref for ThreadReadHandle<'_, T> {
     type Target = T;
@@ -195,6 +199,7 @@ impl<'a, T: ?Sized + Send> ThreadReadHandle<'a, T> {
                 storage,
                 id: self.id,
             },
+            version: self.version,
             data: self.data,
             data_longevity: self.data_longevity,
         }
@@ -287,6 +292,7 @@ pub struct RawReadHandle<'a, Allocator> {
     pub info: StorageInfo,
     #[allow(unused)]
     access: AccessToken<'a, Allocator>,
+    pub version: DataVersionType,
 }
 
 impl<'a, Allocator> RawReadHandle<'a, Allocator> {
@@ -306,6 +312,7 @@ impl<'a, Allocator> RawReadHandle<'a, Allocator> {
             info: self.info,
             panic_handle: Default::default(),
             _marker: Default::default(),
+            version: self.version,
         };
         //Avoid running destructor
         std::mem::forget(self.access);
@@ -318,6 +325,7 @@ pub struct RawThreadReadHandle<'a> {
     id: DataId,
     info: StorageInfo,
     panic_handle: ThreadHandleDropPanic,
+    version: DataVersionType,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -341,6 +349,7 @@ impl<'a> RawThreadReadHandle<'a> {
                 storage,
                 id: self.id,
             },
+            version: self.version,
         }
     }
 }
@@ -623,6 +632,20 @@ impl<'a, Allocator> RawWriteHandleUninit<'a, Allocator> {
             layout: self.layout,
         }
     }
+
+    pub unsafe fn initialized_version<'inv>(
+        self,
+        ctx: OpaqueTaskContext<'a, 'inv>,
+        data_version: DataVersionType,
+    ) -> RawWriteHandleInit<'a, Allocator> {
+        RawWriteHandle {
+            drop_handler: self
+                .drop_handler
+                .into_mark_initialized(ctx, Some(data_version)),
+            data: self.data,
+            layout: self.layout,
+        }
+    }
 }
 
 pub type WriteHandleInit<'a, T, Allocator> = WriteHandle<'a, T, DropMarkInitialized<'a, Allocator>>;
@@ -646,7 +669,7 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T, super::ram::RamAllocator> {
     }
 }
 pub enum InplaceResult<'a, 'inv, T, Allocator> {
-    Inplace(WriteHandleInit<'a, [T], Allocator>),
+    Inplace(WriteHandleInit<'a, [T], Allocator>, DataVersionType),
     New(
         ReadHandle<'a, [T], Allocator>,
         Request<'a, 'inv, WriteHandleUninit<'a, [MaybeUninit<T>], Allocator>>,
@@ -656,8 +679,15 @@ pub enum InplaceResult<'a, 'inv, T, Allocator> {
 impl<'a, 'inv, T, Allocator> InplaceResult<'a, 'inv, T, Allocator> {
     pub fn alloc(self) -> Request<'a, 'inv, InplaceHandle<'a, T, Allocator>> {
         match self {
-            InplaceResult::Inplace(a) => Request::ready(InplaceHandle::Inplace(a)),
+            InplaceResult::Inplace(a, _) => Request::ready(InplaceHandle::Inplace(a)),
             InplaceResult::New(r, w) => w.map(move |w| InplaceHandle::New(r, w)),
+        }
+    }
+
+    pub fn version(&self) -> DataVersionType {
+        match self {
+            InplaceResult::Inplace(_, data_version_type) => *data_version_type,
+            InplaceResult::New(read_handle, _) => read_handle.version,
         }
     }
 }
@@ -870,11 +900,17 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         collected_total
     }
 
-    pub fn is_readable(&self, id: DataId) -> bool {
+    pub fn is_readable(&self, id: DataId, requested_version: DataVersion) -> bool {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| matches!(e.state, StorageEntryState::Initialized(..)))
+            .map(|e| {
+                if let StorageEntryState::Initialized(_, version) = e.state {
+                    version >= requested_version
+                } else {
+                    false
+                }
+            })
             .unwrap_or(false)
     }
 
@@ -1067,18 +1103,22 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &'b self,
         access: AccessToken<'t, Allocator>,
     ) -> Result<RawReadHandle<'b, Allocator>, AccessToken<'t, Allocator>> {
-        let info = {
+        let (info, version) = {
             let index = self.index.borrow();
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
             };
-            let StorageEntryState::Initialized(info, _) = entry.state else {
+            let StorageEntryState::Initialized(info, version) = entry.state else {
                 return Err(access);
             };
 
-            info
+            (info, version.type_())
         };
-        Ok(RawReadHandle { access, info })
+        Ok(RawReadHandle {
+            access,
+            info,
+            version,
+        })
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
@@ -1086,24 +1126,29 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &'b self,
         access: AccessToken<'t, Allocator>,
     ) -> Result<ReadHandle<'b, [T], Allocator>, AccessToken<'t, Allocator>> {
-        let (t_ref, data_longevity) = {
+        let (t_ref, data_longevity, version) = {
             let index = self.index.borrow();
             let Some(entry) = index.get(&access.id) else {
                 return Err(access);
             };
 
-            let StorageEntryState::Initialized(info, _) = entry.state else {
+            let StorageEntryState::Initialized(info, version) = entry.state else {
                 return Err(access);
             };
 
             // Safety: Type matches as per contract upheld by caller. There are also no mutable
             // references to the slot since it has already been initialized.
-            (info.as_slice_of::<T>(), info.data_longevity)
+            (
+                info.as_slice_of::<T>(),
+                info.data_longevity,
+                version.type_(),
+            )
         };
         Ok(ReadHandle {
             access,
             data: t_ref,
             data_longevity,
+            version,
         })
     }
 
@@ -1209,9 +1254,10 @@ impl Storage<super::ram::RamAllocator> {
             return Err(old_access);
         };
 
-        let StorageEntryState::Initialized(info, _) = entry.state else {
+        let StorageEntryState::Initialized(info, version) = entry.state else {
             return Err(old_access);
         };
+        let version = version.type_();
 
         let num_elements = num_elms_in_array::<T>(info.layout.size());
 
@@ -1244,16 +1290,19 @@ impl Storage<super::ram::RamAllocator> {
             // no readers. In other words: safe_to_delete also implies no other references.
             let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, num_elements) };
 
-            InplaceResult::Inplace(WriteHandleInit {
-                data: t_ref,
-                drop_handler: DropMarkInitialized {
-                    access: new_access,
-                    version: None,
-                    predicted_preview_tasks: ctx.predicted_preview_tasks,
-                    current_frame: ctx.current_frame,
-                    current_task: ctx.current_task,
+            InplaceResult::Inplace(
+                WriteHandleInit {
+                    data: t_ref,
+                    drop_handler: DropMarkInitialized {
+                        access: new_access,
+                        version: None,
+                        predicted_preview_tasks: ctx.predicted_preview_tasks,
+                        current_frame: ctx.current_frame,
+                        current_task: ctx.current_task,
+                    },
                 },
-            })
+                version,
+            )
         } else {
             std::mem::drop(index); // Release borrow for alloc
 
@@ -1267,6 +1316,7 @@ impl Storage<super::ram::RamAllocator> {
                 data: t_ref,
                 access: AccessToken::new(self, old_key),
                 data_longevity: info.data_longevity,
+                version,
             };
             InplaceResult::New(r, w)
         })
