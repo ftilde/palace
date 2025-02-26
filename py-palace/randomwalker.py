@@ -27,19 +27,22 @@ ram_size = 8 << 30
 vram_size = 8 << 30
 disk_cache_size = 20 << 30
 
+def list_of_ints(arg):
+    return list(map(int, arg.split(',')))
+
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-fg', '--foreground_seeds', required=False)
 parser.add_argument('-bg', '--background_seeds', required=False)
 parser.add_argument('-t', '--transfunc', type=str)
-parser.add_argument('-d', '--device', type=int, default=0)
+parser.add_argument('-d', '--devices', type=list_of_ints)
 
 args = parser.parse_args()
 
-device = args.device
-display_device = device
+devices = args.devices
+display_device = devices[0]
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, device=device)
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
 try:
     vol = pc.open_lod(args.volume_file)
