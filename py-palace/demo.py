@@ -212,8 +212,8 @@ def render(size, events):
         widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
         mouse_pos_and_value = None
 
-    def render_slice(v, state, tf):
-        out = palace_util.render_slice(v, state, tf, 1.0)
+    def render_slice(v, state, tf, tile_size=None, devices=None):
+        out = palace_util.render_slice(v, state, tf, 1.0, tile_size=tile_size, devices=devices)
 
         def inspect(size, events):
             global mouse_pos_and_value
@@ -224,11 +224,14 @@ def render(size, events):
 
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
+    devices = rt.all_devices()
+    tile_size = 64
+
     # Actual composition of the rendering
-    slice0 = render_slice(v, slice_state0, tf)
-    slice1 = render_slice(v, slice_state1, tf)
-    slice2 = render_slice(v, slice_state2, tf)
-    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf)
+    slice0 = render_slice(v, slice_state0, tf, tile_size=64, devices=devices)
+    slice1 = render_slice(v, slice_state1, tf, tile_size=64, devices=devices)
+    slice2 = render_slice(v, slice_state2, tf, tile_size=64, devices=devices)
+    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=64, devices=devices)
 
     match view.load():
         case "quad":

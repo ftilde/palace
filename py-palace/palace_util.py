@@ -24,25 +24,30 @@ def quad(tl, tr, bl, br):
     return split(pc.SplitDirection.Vertical, 0.5, upper, lower)
 
 # Raycasting render component
-def render_raycast(vol, camera_state, config, tf):
+def render_raycast(vol, camera_state, config, tf, tile_size=None, devices=None):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: camera_state.trackball().mutate(lambda tb: tb.pan_around(delta))),
             pc.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
         ]);
 
-        md = pc.TensorMetaData(size, size)
+        actual_tile_size = [tile_size]*len(size) or size
+
+        md = pc.TensorMetaData(size, actual_tile_size)
         proj = camera_state.load().projection_mat(size)
 
         eep = pc.entry_exit_points(vol.fine_metadata(), vol.fine_embedding_data(), md, proj)
         frame = pc.raycast(vol, eep, config.load(), tf)
         frame = frame.rechunk([pc.chunk_size_full]*2)
 
+        if devices:
+            frame = frame.distribute_on_gpus(devices)
+
         return frame
     return inner
 
 # Slice render component
-def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0):
+def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=None, devices=None):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -50,12 +55,17 @@ def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0):
             pc.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
         ]);
 
+        actual_tile_size = [tile_size]*len(size) or size
+
         md = pc.TensorMetaData(size, size)
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
         frame = pc.render_slice(vol, md, proj, tf, coarse_lod_factor)
         frame = frame.rechunk([pc.chunk_size_full]*2)
+
+        if devices:
+            frame = frame.distribute_on_gpus(devices)
 
         return frame
     return inner
