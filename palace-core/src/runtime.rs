@@ -1207,11 +1207,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
 
     fn cycle_cmd_buffers(&mut self, min_age: Duration) {
         for device in self.data.device_contexts.values() {
-            if device.cmd_buffer_age() >= min_age {
-                if let Some(submitted) = device.try_submit_and_cycle_command_buffer() {
-                    //println!("Cycling command buffer {:?}", submitted);
+            match device.try_submit_and_cycle_command_buffer(min_age) {
+                crate::vulkan::CmdBufferCycleResult::Submitted(id) => {
                     self.task_graph
-                        .resolved_implied(RequestId::CmdBufferSubmission(submitted));
+                        .resolved_implied(RequestId::CmdBufferSubmission(id));
+                }
+                crate::vulkan::CmdBufferCycleResult::TooYoung => {}
+                crate::vulkan::CmdBufferCycleResult::EmptyFinished(id) => {
+                    self.task_graph
+                        .resolved_implied(RequestId::CmdBufferSubmission(id));
+                    self.task_graph
+                        .resolved_implied(RequestId::CmdBufferCompletion(id));
                 }
             }
         }

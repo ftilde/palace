@@ -1,6 +1,7 @@
 use crate::storage::gpu::Allocator;
 use crate::storage::gpu::MemoryLocation;
 use crate::task::Request;
+use crate::util::IdGenerator;
 use crate::Error;
 use ash::ext::debug_utils;
 use ash::khr::push_descriptor;
@@ -319,7 +320,7 @@ impl DeviceId {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CmdBufferEpoch(usize);
+pub struct CmdBufferEpoch(u64);
 
 impl CmdBufferEpoch {
     /// An epoch that definitely lies in the past
@@ -354,6 +355,12 @@ pub struct BarrierInfo {
     pub device: DeviceId,
 }
 
+pub enum CmdBufferCycleResult {
+    Submitted(CmdBufferSubmissionId),
+    TooYoung,
+    EmptyFinished(CmdBufferSubmissionId),
+}
+
 #[allow(unused)]
 pub struct DeviceContext {
     physical_device: vk::PhysicalDevice,
@@ -373,7 +380,7 @@ pub struct DeviceContext {
     oldest_finished: Cell<CmdBufferEpoch>,
 
     pub id: DeviceId,
-    submission_count: Cell<usize>,
+    submission_count: IdGenerator<u64>,
 
     vulkan_states: state::Cache,
     pub storage: crate::storage::gpu::Storage,
@@ -496,7 +503,8 @@ impl DeviceContext {
             // We start epochs at one so that oldest_finished (with value 0) means that none are
             // finished, yet.
             let oldest_finished = Cell::new(CmdBufferEpoch::ancient());
-            let submission_count = Cell::new(1);
+            let submission_count = IdGenerator::default();
+            submission_count.next(); //Throw away id 0;
 
             let functions = DeviceFunctions {
                 device,
@@ -638,11 +646,10 @@ impl DeviceContext {
         functions: DeviceFunctions,
         RawCommandBuffer { buffer, fence }: RawCommandBuffer,
         id: DeviceId,
-        submission_count: &Cell<usize>,
+        submission_count: &IdGenerator<u64>,
         oldest_finished_epoch: CmdBufferEpoch,
     ) -> CommandBuffer {
-        let submission_id = submission_count.get();
-        submission_count.set(submission_id + 1);
+        let submission_id = submission_count.next();
 
         let id = CmdBufferSubmissionId {
             device: id,
@@ -661,10 +668,27 @@ impl DeviceContext {
         }
     }
 
-    pub(crate) fn try_submit_and_cycle_command_buffer(&self) -> Option<CmdBufferSubmissionId> {
+    pub(crate) fn try_submit_and_cycle_command_buffer(
+        &self,
+        min_age: Duration,
+    ) -> CmdBufferCycleResult {
         let mut current = self.current_command_buffer.borrow_mut();
-        if current.used_since.get().is_none() {
-            return None;
+        if current.age() < min_age {
+            if current.used_since.get().is_none() {
+                let prev_epoch = CmdBufferSubmissionId {
+                    device: self.id,
+                    epoch: current.id.epoch,
+                };
+                current.id.epoch.0 = self.submission_count.next();
+                //println!(
+                //    "{:?} Incrementing unused epoch from {} to {}",
+                //    self.id, prev_epoch.epoch.0, current.id.epoch.0
+                //);
+                return CmdBufferCycleResult::EmptyFinished(prev_epoch);
+                //return CmdBufferCycleResult::TooYoung;
+            } else {
+                return CmdBufferCycleResult::TooYoung;
+            }
         }
 
         // Create new
@@ -732,7 +756,8 @@ impl DeviceContext {
         self.waiting_command_buffers
             .borrow_mut()
             .insert(epoch, RawCommandBuffer { buffer, fence });
-        Some(id)
+
+        CmdBufferCycleResult::Submitted(id)
     }
 
     #[must_use]
@@ -923,7 +948,7 @@ impl DeviceContext {
 impl Drop for DeviceContext {
     fn drop(&mut self) {
         // Try hard to release tmp_states
-        self.try_submit_and_cycle_command_buffer();
+        self.try_submit_and_cycle_command_buffer(Duration::from_millis(0));
         let mut tries_left = 1000;
         while !self.waiting_command_buffers.borrow().is_empty() {
             self.wait_for_cmd_buffers(Duration::from_millis(10));
