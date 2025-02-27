@@ -579,7 +579,7 @@ impl<'a> Drop for IndexHandle<'a> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum LRUItem {
     Data(DataId, DataVersion),
     Index(OperatorId),
@@ -622,6 +622,18 @@ impl Storage {
     }
 
     pub fn print_usage(&self) {
+        #[derive(Debug)]
+        #[allow(unused)] //For some reason the Debug does not silence unused warnings
+        enum AccessStatePrint {
+            Some(usize),
+            None(Option<LRUIndex>, CmdBufferEpoch),
+        }
+
+        let lru = self.lru_manager.borrow();
+        for inner in &lru.inner {
+            println!("{:?}", inner);
+        }
+
         let index = self.data_index.borrow();
         let mut entries: Vec<_> = index
             .iter()
@@ -635,7 +647,13 @@ impl Storage {
                         ("initialized", storage_info.layout.size())
                     }
                 };
-                (k, state, size)
+                let access = match v.access {
+                    AccessState::Some(n) => AccessStatePrint::Some(n),
+                    AccessState::None(lruindex, cmd_buffer_epoch) => {
+                        AccessStatePrint::None(lruindex, cmd_buffer_epoch)
+                    }
+                };
+                (k, state, size, access)
             })
             .collect();
 
@@ -643,12 +661,16 @@ impl Storage {
 
         for entry in entries {
             println!(
-                "{:?} {} {}",
+                "{:?} {} {:?} {}",
                 entry.0,
                 entry.1,
+                entry.3,
                 bytesize::to_string(entry.2 as _, true)
             );
         }
+
+        let old_preview_index = self.old_preview_data_index.borrow();
+        println!("opv len {}", old_preview_index.len());
     }
 
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling

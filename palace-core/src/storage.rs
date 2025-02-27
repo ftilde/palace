@@ -179,6 +179,7 @@ impl<T: Clone> LRUManager<T> {
     }
 }
 
+#[derive(Debug)]
 struct LRUManagerInner<T> {
     list: BTreeMap<LRUIndexInner, T>,
     current: LRUIndexInner,

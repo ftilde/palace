@@ -560,7 +560,13 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 let c = d.storage.capacity();
                                 let c = bytesize::to_string(c, true);
                                 let a = bytesize::to_string(d.storage.allocated(), true);
-                                eprintln!("VRam utilization: {}/{}", a, c);
+                                eprintln!(
+                                    "VRam utilization {:?}: {}/{}, epoch {:?}",
+                                    d.id,
+                                    a,
+                                    c,
+                                    d.current_epoch()
+                                );
                                 d.storage.print_usage();
                             }
                             crate::task_graph::export(&self.task_graph);
