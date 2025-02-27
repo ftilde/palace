@@ -12,7 +12,7 @@ use super::{
 };
 
 use ash::vk;
-use gpu_allocator::vulkan::AllocationScheme;
+use gpu_allocator::{vulkan::AllocationScheme, AllocatorReport};
 
 use crate::{
     dtypes::ElementType,
@@ -627,6 +627,15 @@ impl Storage {
         enum AccessStatePrint {
             Some(usize),
             None(Option<LRUIndex>, CmdBufferEpoch),
+        }
+
+        let report = self.allocator.generate_report();
+        let a = bytesize::to_string(report.total_allocated_bytes, true);
+        let b = bytesize::to_string(report.total_capacity_bytes, true);
+        println!("allocated {}, capacity {}", a, b);
+        for block in report.blocks {
+            dbg!(bytesize::to_string(block.size, true));
+            dbg!(block.allocations.len());
         }
 
         let lru = self.lru_manager.borrow();
@@ -1718,6 +1727,12 @@ impl Allocator {
         self.num_alloced.get()
     }
 
+    fn generate_report(&self) -> AllocatorReport {
+        let borrow = self.allocator.borrow();
+        let a = borrow.as_ref().unwrap();
+        a.generate_report()
+    }
+
     pub fn deinitialize(&mut self) {
         let mut a = self.allocator.borrow_mut();
         let mut tmp = None;
@@ -1731,12 +1746,4 @@ fn alloc_size(allocator: &gpu_allocator::vulkan::Allocator) -> u64 {
     // the expected device memory (a couple of GB). If device memory is too large and this
     // becomes a problem, we probably want larger memory blocks anyways.
     allocator.capacity()
-
-    //let a = bytesize::to_string(report.total_allocated_bytes, true);
-    //let b = bytesize::to_string(report.total_reserved_bytes, true);
-    //println!("allocated {}, reserved {}", a, b);
-    //for block in report.blocks {
-    //    dbg!(bytesize::to_string(block.size, true));
-    //    dbg!(block.allocations.len());
-    //}
 }
