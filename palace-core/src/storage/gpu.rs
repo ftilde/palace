@@ -1708,8 +1708,7 @@ fn alloc_size(allocator: &gpu_allocator::vulkan::Allocator) -> u64 {
     // not too expensive, since the size of memory blocks (~256MB) is quite large compared to
     // the expected device memory (a couple of GB). If device memory is too large and this
     // becomes a problem, we probably want larger memory blocks anyways.
-    let report = allocator.generate_report();
-    report.total_reserved_bytes
+    allocator.capacity()
 
     //let a = bytesize::to_string(report.total_allocated_bytes, true);
     //let b = bytesize::to_string(report.total_reserved_bytes, true);
