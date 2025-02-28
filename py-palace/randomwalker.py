@@ -46,6 +46,7 @@ rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
 try:
     vol = pc.open_lod(args.volume_file)
+    #vol = vol.map(lambda vol: vol.rechunk([16]*vol.nd()))
 except:
     vol = pc.open(args.volume_file)
     #vol = vol.rechunk([32]*vol.nd())

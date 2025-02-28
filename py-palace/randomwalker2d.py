@@ -20,7 +20,8 @@ ndim = len(md.dimensions)
 img = img.rechunk([128]*ndim)
 img = img.create_lod([2.0]*2)
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size)
+devices = []
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
 ed = img.levels[0].embedding_data
 

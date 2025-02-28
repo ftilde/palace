@@ -12,7 +12,8 @@ parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size)
+devices = []
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=[])
 
 if args.img_file == "mandelbrot":
     b = 1024*2

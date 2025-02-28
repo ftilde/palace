@@ -14,7 +14,8 @@ parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size)
+devices = []
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
 if args.volume_file == "fill":
     b = 32
