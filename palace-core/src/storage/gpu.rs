@@ -899,7 +899,8 @@ impl Storage {
             }
             if collected_local > 0 {
                 println!(
-                    "Garbage collect GPU ({:?}): {}",
+                    "Garbage collect GPU{}: ({:?}) {}",
+                    self.id.inner(),
                     longevity,
                     bytesize::to_string(collected_local as _, true)
                 );
@@ -944,7 +945,8 @@ impl Storage {
         }
 
         println!(
-            "Garbage collect GPU: {} | Unindexed: {}",
+            "Garbage collect GPU{}: {} | Unindexed: {}",
+            self.id.inner(),
             bytesize::to_string(collected as _, true),
             bytesize::to_string(unindexed as _, true),
         );
