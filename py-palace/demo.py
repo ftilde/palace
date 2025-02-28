@@ -225,7 +225,7 @@ def render(size, events):
     gui = gui_state.setup(events, pc.Vertical(widgets))
 
     devices = rt.all_devices()
-    tile_size = 64
+    tile_size = 512
 
     # Actual composition of the rendering
     slice0 = render_slice(v, slice_state0, tf, tile_size=tile_size, devices=devices)
