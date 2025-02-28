@@ -123,13 +123,16 @@ impl<D: DynDimension, E: 'static> TensorOperator<D, E> {
         assert!(onto.len() > 0);
         let dim_in_chunks = self.metadata.dimension_in_chunks();
         let biggest_dim = dim_in_chunks.iter().position_max().unwrap();
-        let dim_div = dim_in_chunks[biggest_dim].raw.div_ceil(onto.len() as u32);
+        let dim_in_chunks = dim_in_chunks[biggest_dim].raw;
         let md = self.metadata.clone();
         Self {
             metadata: self.metadata,
             chunks: self.chunks.move_device(move |items| {
                 let first = md.chunk_pos_from_index(items[0]);
-                let device = first[biggest_dim].raw / dim_div;
+                let device = (((first[biggest_dim].raw * onto.len() as u32) as f32
+                    / (dim_in_chunks as f32))
+                    .round() as usize)
+                    .min(onto.len() - 1);
                 DataLocation::GPU(onto[device as usize])
             }),
         }
