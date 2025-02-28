@@ -1166,14 +1166,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let frame = self.data.frame;
                             async move {
                                 let device = &ctx.device_contexts[&did];
-                                let garbage_collect_goal = device.storage.bytes_allocated()
+                                let c = device.storage.capacity();
+                                let garbage_collect_goal = c as usize
                                     / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
                                 loop {
-                                    let c = device.storage.capacity();
-                                    let c = bytesize::to_string(c, true);
-                                    let a = bytesize::to_string(device.storage.allocated(), true);
-                                    eprintln!("VRam utilization: {}/{}", a, c);
                                     if device.storage.try_garbage_collect(
                                         device,
                                         garbage_collect_goal,

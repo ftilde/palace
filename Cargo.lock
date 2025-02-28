@@ -1232,7 +1232,7 @@ dependencies = [
 [[package]]
 name = "gpu-allocator"
 version = "0.27.0"
-source = "git+https://github.com/Traverse-Research/gpu-allocator?rev=642dc9135846b54512136af0508a2f4b54844fc1#642dc9135846b54512136af0508a2f4b54844fc1"
+source = "git+https://github.com/ftilde/gpu-allocator?rev=562b463643385dcd851c117fd34bf61e30882090#562b463643385dcd851c117fd34bf61e30882090"
 dependencies = [
  "ash",
  "log",

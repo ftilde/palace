@@ -780,9 +780,6 @@ impl Storage {
         }
     }
 
-    pub fn bytes_allocated(&self) -> usize {
-        self.allocator.allocated() as _
-    }
     pub fn try_garbage_collect(
         &self,
         device: &DeviceContext,
@@ -1146,7 +1143,7 @@ impl Storage {
     }
 
     pub fn capacity(&self) -> u64 {
-        self.allocator.capacity
+        self.allocator.max_capacity
     }
 
     pub(crate) fn allocate_image(
@@ -1567,8 +1564,8 @@ impl VulkanState for ImageAllocation {
 pub struct Allocator {
     allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
     device: ash::Device,
-    num_alloced: Cell<u64>,
-    capacity: u64,
+    allocator_capacity: Cell<u64>,
+    max_capacity: u64,
 }
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
@@ -1592,12 +1589,12 @@ impl Allocator {
             })
             .unwrap(),
         ));
-        let num_alloced = Cell::new(0);
+        let allocator_capacity = Cell::new(0);
         Self {
             allocator,
             device,
-            num_alloced,
-            capacity,
+            allocator_capacity,
+            max_capacity: capacity,
         }
     }
     pub fn allocate(
@@ -1607,9 +1604,6 @@ impl Allocator {
         location: MemoryLocation,
     ) -> gpu_allocator::Result<Allocation> {
         assert_ne!(layout.size(), 0);
-        if self.num_alloced.get() + layout.size() as u64 > self.capacity {
-            return Err(gpu_allocator::AllocationError::OutOfMemory);
-        }
 
         let size = layout.size() as u64;
 
@@ -1630,6 +1624,7 @@ impl Allocator {
             location,
             linear: true, // Buffers are always linear
             allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            allow_capacity_increase: self.allocator_capacity.get() < self.max_capacity,
         });
         let allocation = match allocation {
             Ok(a) => a,
@@ -1646,7 +1641,7 @@ impl Allocator {
                 .unwrap()
         };
 
-        self.num_alloced.set(alloc_size(&allocator));
+        self.allocator_capacity.set(allocator_capacity(&allocator));
 
         Ok(Allocation {
             allocation: MaybeUninit::new(allocation),
@@ -1663,7 +1658,7 @@ impl Allocator {
         allocator.free(allocation_inner).unwrap();
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
 
-        self.num_alloced.set(alloc_size(&allocator));
+        self.allocator_capacity.set(allocator_capacity(&allocator));
     }
 
     pub fn allocate_image(
@@ -1675,11 +1670,6 @@ impl Allocator {
 
         let size = requirements.size;
 
-        if self.num_alloced.get() + size > self.capacity {
-            unsafe { self.device.destroy_image(image, None) };
-            return Err(gpu_allocator::AllocationError::OutOfMemory);
-        }
-
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
         let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
@@ -1688,6 +1678,7 @@ impl Allocator {
             location: gpu_allocator::MemoryLocation::GpuOnly,
             linear: true, // TODO: maybe not linear?
             allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            allow_capacity_increase: self.allocator_capacity.get() < self.max_capacity,
         });
         let allocation = match allocation {
             Ok(a) => a,
@@ -1704,7 +1695,7 @@ impl Allocator {
                 .unwrap()
         };
 
-        self.num_alloced.set(alloc_size(&allocator));
+        self.allocator_capacity.set(allocator_capacity(&allocator));
 
         Ok(ImageAllocation {
             allocation: MaybeUninit::new(allocation),
@@ -1720,11 +1711,11 @@ impl Allocator {
         allocator.free(allocation.allocation.assume_init()).unwrap();
         unsafe { self.device.destroy_image(allocation.image, None) };
 
-        self.num_alloced.set(alloc_size(&allocator));
+        self.allocator_capacity.set(allocator_capacity(&allocator));
     }
 
     fn allocated(&self) -> u64 {
-        self.num_alloced.get()
+        self.allocator_capacity.get()
     }
 
     fn generate_report(&self) -> AllocatorReport {
@@ -1740,7 +1731,7 @@ impl Allocator {
     }
 }
 
-fn alloc_size(allocator: &gpu_allocator::vulkan::Allocator) -> u64 {
+fn allocator_capacity(allocator: &gpu_allocator::vulkan::Allocator) -> u64 {
     // Note: This is not completely free, since we iterate over all storage blocks, but also
     // not too expensive, since the size of memory blocks (~256MB) is quite large compared to
     // the expected device memory (a couple of GB). If device memory is too large and this
