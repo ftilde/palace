@@ -262,7 +262,6 @@ void main() {
                                 BorderHandling::Pad0 => s.define("BORDER_HANDLE_PAD0", 1),
                             }
                         })
-                        .use_push_descriptor(true)
                         .build(device)
                     },
                 )?;
@@ -369,7 +368,7 @@ void main() {
 
                                 Ok(())
                             });
-                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.write_descriptor_set(0, descriptor_config);
                             pipeline.dispatch(device, global_size);
                         }
                     });
