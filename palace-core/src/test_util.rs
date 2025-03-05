@@ -17,7 +17,7 @@ pub fn compare_tensor_fn<D: Dimension, T: PartialEq + Element + Default + std::f
     StaticElementType<T>: Into<DType>,
 {
     let mut runtime =
-        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
+        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, vec![]).unwrap();
 
     let full_vol = rechunk(vol, Vector::fill(ChunkSize::Full));
     let full_vol = &full_vol;
@@ -55,7 +55,7 @@ pub fn compare_tensor_approx<D: Dimension>(
     max_diff: f32,
 ) {
     let mut runtime =
-        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
+        crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, vec![]).unwrap();
 
     runtime
         .resolve(None, false, |ctx, _| {

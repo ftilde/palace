@@ -340,7 +340,7 @@ mod test {
         let output = mean(input, SampleMethod::All);
 
         let mut runtime =
-            crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, None).unwrap();
+            crate::runtime::RunTime::new(1 << 30, 1 << 30, None, None, None, vec![]).unwrap();
 
         let output = &output;
         let mean = runtime
