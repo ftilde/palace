@@ -10,7 +10,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkRequestTable,
+    chunk_utils::ChunkFeedbackTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -20,7 +20,6 @@ use crate::{
     storage::DataVersionType,
     transfunc::TransFuncOperator,
     vulkan::{
-        memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
@@ -520,11 +519,15 @@ void main()
                     .await
                     .unpack();
 
-                let request_table = TempRessource::new(
-                    device,
-                    ctx.submit(ChunkRequestTable::new(request_table_size, device))
-                        .await,
-                );
+                let raw_request_table = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        &format!("request_table"),
+                        Layout::array::<Vector<D4, u8>>(request_table_size).unwrap(),
+                    ))
+                    .await;
+                let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);
 
                 let tf_data = tf.data();
                 let consts = PushConstants {
@@ -546,6 +549,48 @@ void main()
                 let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                 let timed_out = loop {
+                    // Make requests visible
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_READ,
+                        },
+                    ))
+                    .await;
+
+                    if !request_table.newly_initialized {
+                        let mut to_request_linear =
+                            request_table.download_inserted(*ctx, device).await;
+
+                        if to_request_linear.is_empty() {
+                            break false;
+                        }
+
+                        if let Err(crate::chunk_utils::Timeout) =
+                            crate::chunk_utils::request_to_index_with_timeout(
+                                &*ctx,
+                                device,
+                                &mut to_request_linear,
+                                level,
+                                &brick_index,
+                                request_batch_size,
+                                true,
+                            )
+                            .await
+                        {
+                            break true;
+                        }
+
+                        // Clear request table for the next iteration
+                        device.with_cmd_buffer(|cmd| request_table.clear(cmd));
+                    } else {
+                        request_table.newly_initialized = false;
+                    }
+
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -565,7 +610,7 @@ void main()
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
                             &brick_index,
-                            request_table.buffer(),
+                            request_table.inner(),
                             &state_initialized,
                             &state_values,
                             &tf_data_gpu,
@@ -579,44 +624,6 @@ void main()
                             pipeline.dispatch3d(global_size);
                         }
                     });
-
-                    // Make requests visible
-                    ctx.submit(device.barrier(
-                        SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                            access: vk::AccessFlags2::SHADER_WRITE,
-                        },
-                        DstBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_READ,
-                        },
-                    ))
-                    .await;
-
-                    let mut to_request_linear =
-                        request_table.download_requested(*ctx, device).await;
-
-                    if to_request_linear.is_empty() {
-                        break false;
-                    }
-
-                    if let Err(crate::chunk_utils::Timeout) =
-                        crate::chunk_utils::request_to_index_with_timeout(
-                            &*ctx,
-                            device,
-                            &mut to_request_linear,
-                            level,
-                            &brick_index,
-                            request_batch_size,
-                            true,
-                        )
-                        .await
-                    {
-                        break true;
-                    }
-
-                    // Clear request table for the next iteration
-                    device.with_cmd_buffer(|cmd| request_table.clear(cmd));
                 };
 
                 let src_info = SrcBarrierInfo {

@@ -7,7 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkRequestTable2,
+    chunk_utils::ChunkFeedbackTable,
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -729,7 +729,7 @@ pub fn raycast(
                     .await;
                 let request_tables = raw_request_tables
                     .into_iter()
-                    .map(|raw| ChunkRequestTable2::new(device, raw))
+                    .map(|raw| ChunkFeedbackTable::new(device, raw))
                     .collect::<Vec<_>>();
 
                 let raw_use_tables = ctx
@@ -744,7 +744,7 @@ pub fn raycast(
                     .await;
                 let use_tables = raw_use_tables
                     .into_iter()
-                    .map(|raw| ChunkRequestTable2::new(device, raw))
+                    .map(|raw| ChunkFeedbackTable::new(device, raw))
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
@@ -930,7 +930,7 @@ pub fn raycast(
                         {
                             if !data.1.newly_initialized && !reset_state {
                                 let mut to_request_linear =
-                                    data.1.download_requested(*ctx, device).await;
+                                    data.1.download_inserted(*ctx, device).await;
 
                                 if !to_request_linear.is_empty() {
                                     done = false;
@@ -959,7 +959,7 @@ pub fn raycast(
                             }
 
                             if !data.2.newly_initialized && !reset_state {
-                                let used_linear = data.2.download_requested(*ctx, device).await;
+                                let used_linear = data.2.download_inserted(*ctx, device).await;
 
                                 if !used_linear.is_empty() {
                                     for used in used_linear {
