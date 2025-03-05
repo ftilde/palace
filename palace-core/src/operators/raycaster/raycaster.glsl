@@ -21,9 +21,14 @@ layout(buffer_reference, std430) buffer QueryTableType {
     uint values[REQUEST_TABLE_SIZE];
 };
 
+layout(buffer_reference, std430) buffer UseTableType {
+    uint values[USE_TABLE_SIZE];
+};
+
 struct LOD {
     IndexType index;
-    QueryTableType queryTable;
+    QueryTableType query_table;
+    UseTableType use_table;
     UVec3 dimensions;
     UVec3 chunk_size;
     Vec3 spacing;
@@ -221,6 +226,7 @@ void main()
                 float oversampling_factor = consts.oversampling_factor;
 
                 uint level_num = 0;
+                uint prev_sample_brick_pos = 0xffffffff;
                 while(t <= t_end) {
                     float alpha = t/t_end;
                     float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
@@ -276,8 +282,12 @@ void main()
                         float norm_step = step / diag;
                         update_state(t, state_color, sample_col, norm_step);
 
+                        if(sample_brick_pos_linear != prev_sample_brick_pos) {
+                            try_insert_into_hash_table(level.use_table.values, USE_TABLE_SIZE, sample_brick_pos_linear);
+                            prev_sample_brick_pos = sample_brick_pos_linear;
+                        }
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                        try_insert_into_hash_table(level.queryTable.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                        try_insert_into_hash_table(level.query_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;
                     } else /*res == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors

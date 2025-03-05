@@ -621,7 +621,8 @@ pub fn raycast(
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
     struct LOD {
         index: u64,
-        query_table: u64,
+        request_table: u64,
+        use_table: u64,
         dim: Vector<D3, u32>,
         chunk_dim: Vector<D3, u32>,
         spacing: Vector<D3, f32>,
@@ -715,6 +716,7 @@ pub fn raycast(
                 let out_info = m_out.chunk_info(pos);
 
                 let request_table_size = 256;
+                let use_table_size = 2048;
                 let raw_request_tables = ctx
                     .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
                         ctx.access_state_cache_gpu(
@@ -730,13 +732,34 @@ pub fn raycast(
                     .map(|raw| ChunkRequestTable2::new(device, raw))
                     .collect::<Vec<_>>();
 
+                let raw_use_tables = ctx
+                    .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
+                        ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            &format!("use_table{}", i),
+                            Layout::array::<Vector<D4, u8>>(use_table_size).unwrap(),
+                        )
+                    })))
+                    .await;
+                let use_tables = raw_use_tables
+                    .into_iter()
+                    .map(|raw| ChunkRequestTable2::new(device, raw))
+                    .collect::<Vec<_>>();
+
                 let pipeline = device.request_state(
-                    (input.levels.len(), request_table_size, config),
-                    |device, (num_levels, request_table_size, config)| {
+                    (
+                        input.levels.len(),
+                        request_table_size,
+                        use_table_size,
+                        config,
+                    ),
+                    |device, (num_levels, request_table_size, use_table_size, config)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("raycaster.glsl"))
                                 .push_const_block::<PushConstants>()
                                 .define("NUM_LEVELS", num_levels)
+                                .define("USE_TABLE_SIZE", use_table_size)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
                                 .define(config.compositing_mode.define_name(), 1)
                                 .define(config.shading.define_name(), 1),
@@ -802,8 +825,11 @@ pub fn raycast(
 
                     let mut lods = Vec::new();
                     let mut lod_data = Vec::new();
-                    for (level, request_table) in
-                        input.levels.iter().zip(request_tables.into_iter())
+                    for ((level, request_table), use_table) in input
+                        .levels
+                        .iter()
+                        .zip(request_tables.into_iter())
+                        .zip(use_tables.into_iter())
                     {
                         let m_in = level.metadata;
                         let emd = level.embedding_data;
@@ -831,11 +857,17 @@ pub fn raycast(
                         let req_table_addr =
                             unsafe { device.functions().get_buffer_device_address(&info) };
 
-                        lod_data.push((brick_index, request_table, m_in));
+                        let info =
+                            ash::vk::BufferDeviceAddressInfo::default().buffer(use_table.buffer());
+                        let use_table_addr =
+                            unsafe { device.functions().get_buffer_device_address(&info) };
+
+                        lod_data.push((brick_index, request_table, use_table, m_in));
 
                         lods.push(LOD {
                             index: index_addr,
-                            query_table: req_table_addr,
+                            request_table: req_table_addr,
+                            use_table: use_table_addr,
                             dim: m_in.dimensions.raw().into(),
                             chunk_dim: m_in.chunk_size.raw().into(),
                             spacing: emd.spacing.into(),
@@ -900,32 +932,44 @@ pub fn raycast(
                                 let mut to_request_linear =
                                     data.1.download_requested(*ctx, device).await;
 
-                                if to_request_linear.is_empty() {
-                                    continue;
+                                if !to_request_linear.is_empty() {
+                                    done = false;
+
+                                    if let Err(crate::chunk_utils::Timeout) =
+                                        crate::chunk_utils::request_to_index_with_timeout(
+                                            &*ctx,
+                                            device,
+                                            &mut to_request_linear,
+                                            level,
+                                            &data.0,
+                                            request_batch_size,
+                                            in_preview,
+                                        )
+                                        .await
+                                    {
+                                        timeout = true;
+                                    }
+
+                                    // Clear request table for the next iteration
+                                    device.with_cmd_buffer(|cmd| data.1.clear(cmd));
                                 }
-
-                                done = false;
-
-                                if let Err(crate::chunk_utils::Timeout) =
-                                    crate::chunk_utils::request_to_index_with_timeout(
-                                        &*ctx,
-                                        device,
-                                        &mut to_request_linear,
-                                        level,
-                                        &data.0,
-                                        request_batch_size,
-                                        in_preview,
-                                    )
-                                    .await
-                                {
-                                    timeout = true;
-                                }
-
-                                // Clear request table for the next iteration
-                                device.with_cmd_buffer(|cmd| data.1.clear(cmd));
                             } else {
                                 data.1.newly_initialized = false;
                                 done = false;
+                            }
+
+                            if !data.2.newly_initialized && !reset_state {
+                                let used_linear = data.2.download_requested(*ctx, device).await;
+
+                                if !used_linear.is_empty() {
+                                    for used in used_linear {
+                                        data.0.note_use(used as u64);
+                                    }
+
+                                    device.with_cmd_buffer(|cmd| data.1.clear(cmd));
+                                }
+                            } else {
+                                data.2.newly_initialized = false;
                             }
                         }
 

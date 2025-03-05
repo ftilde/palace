@@ -480,6 +480,13 @@ impl IndexEntry {
         }
     }
 
+    fn note_use(&mut self, brick: u64, index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>) {
+        // Brick may not be present anymore due to intermittent garbage collection
+        if let Some(brick_ref) = self.present.get_mut(&brick) {
+            brick_ref.acquire_lru_index = index_lru.note_use(brick_ref.acquire_lru_index);
+        }
+    }
+
     fn release(
         &mut self,
         device: &DeviceContext,
@@ -559,6 +566,15 @@ impl<'a> IndexHandle<'a> {
                 acquire_lru_index: lru_index,
             },
         );
+    }
+
+    pub fn note_use<'h>(&self, pos: u64) {
+        let mut index_index = self.device.storage.index_index.borrow_mut();
+        let index_entry = index_index.get_mut(&self.op).unwrap();
+
+        let mut index_lru = self.device.storage.index_lru.borrow_mut();
+
+        index_entry.note_use(pos, &mut index_lru);
     }
 }
 impl<'a> Drop for IndexHandle<'a> {

@@ -212,6 +212,12 @@ impl<T: Clone> LRUManagerInner<T> {
         new
     }
 
+    #[must_use]
+    fn note_use(&mut self, old: LRUIndexInner) -> LRUIndexInner {
+        let old = self.list.remove(&old).unwrap();
+        self.add(old)
+    }
+
     fn get_next(&self) -> Option<T> {
         self.list.first_key_value().map(|(_, d)| d.clone())
     }
