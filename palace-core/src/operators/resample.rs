@@ -255,8 +255,12 @@ void main() {
 
     int res;
     uint64_t sample_brick_pos_linear;
+
+    Chunk chunk;
+    try_find_chunk(bricks.values, sample_brick_pos_linear, UseTableType(0UL), 12, chunk);\
+
     T sampled_intensity;
-    try_sample(N, sample_pos_clamp, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+    try_sample(N, sample_pos_clamp, m_in, bricks.values, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
 
     if(res == SAMPLE_RES_FOUND) {
         // Nothing to do!
@@ -332,7 +336,8 @@ void main() {
                                 .ext(dtype_dyn.glsl_ext())
                                 .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
                                 .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
-                                .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
+                                .ext(Some(crate::vulkan::shader::ext::INT64_TYPES))
+                                .ext(Some(crate::vulkan::shader::ext::INT64_ATOMICS)),
                         )
                         .use_push_descriptor(true)
                         .build(device)
@@ -417,7 +422,8 @@ void main() {
                                     &m_in.dimension_in_chunks(),
                                 );
                                 chunk_index
-                                    .insert(ChunkIndex(brick_pos_linear as u64), gpu_brick_in);
+                                    .insert(*ctx, ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
+                                    .await;
                             }
 
                             // Make writes to the index visible

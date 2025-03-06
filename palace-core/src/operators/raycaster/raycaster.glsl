@@ -12,21 +12,12 @@
 #include <vec.glsl>
 #include <color.glsl>
 
-
-layout(buffer_reference, std430) buffer PageTableType {
-    Chunk values[];
-};
-
 layout(buffer_reference, std430) buffer QueryTableType {
     uint64_t values[REQUEST_TABLE_SIZE];
 };
 
-layout(buffer_reference, std430) buffer UseTableType {
-    uint64_t values[USE_TABLE_SIZE];
-};
-
 struct LOD {
-    PageTableType page_table;
+    PageTablePage page_table_root;
     QueryTableType query_table;
     UseTableType use_table;
     UVec3 dimensions;
@@ -258,10 +249,10 @@ void main()
                     float sampled_intensity;
 
                     #ifdef SHADING_NONE
-                    try_sample(3, pos_voxel, m_in, level.page_table.values, res, sample_brick_pos_linear, sampled_intensity);
+                    try_sample(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity);
                     #else
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table.values, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
                     #endif
 
 
@@ -281,11 +272,6 @@ void main()
 
                         float norm_step = step / diag;
                         update_state(t, state_color, sample_col, norm_step);
-
-                        if(sample_brick_pos_linear != prev_sample_brick_pos) {
-                            try_insert_into_hash_table(level.use_table.values, USE_TABLE_SIZE, sample_brick_pos_linear);
-                            prev_sample_brick_pos = sample_brick_pos_linear;
-                        }
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
                         try_insert_into_hash_table(level.query_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                         break;

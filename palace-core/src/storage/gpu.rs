@@ -1,5 +1,6 @@
 use ahash::HashMapExt;
 use bytemuck::{Pod, Zeroable};
+use id::Identify;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
@@ -9,7 +10,7 @@ use std::{
 
 use super::{
     DataLocation, DataLongevity, DataVersion, DataVersionType, GarbageCollectId, LRUIndex,
-    LRUIndexInner, LRUManager, LRUManagerInner,
+    LRUIndexInner, LRUManager,
 };
 
 use ash::vk;
@@ -23,12 +24,29 @@ use crate::{
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::{IdGenerator, Map},
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig},
-        shader::Shader,
-        state::VulkanState,
-        CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
+        memory::TempRessource, pipeline::ComputePipelineBuilder, shader::Shader,
+        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
+        SrcBarrierInfo,
     },
 };
+
+mod page_table {
+    use std::alloc::Layout;
+
+    pub const LEVELS: u64 = 3;
+
+    pub const BITS_PER_LEVEL: u64 = 15;
+    pub const LEVEL_TABLE_SIZE: u64 = (2 << BITS_PER_LEVEL) + 1; //One extra entry for PageTableIndex
+
+    pub const PAGE_LAYOUT: Layout = match Layout::array::<u64>(LEVEL_TABLE_SIZE as usize) {
+        Ok(l) => l,
+        Err(_) => panic!(),
+    };
+
+    pub const LEVEL_IDENTIFIER_BITS: u64 = 2;
+    pub const LEVEL_IDENTIFIER_SIZE: u64 = 2 << LEVEL_IDENTIFIER_BITS;
+    pub const LEVEL_IDENTIFIER_MASK: u64 = LEVEL_IDENTIFIER_SIZE - 1;
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BarrierEpoch(usize);
@@ -433,15 +451,19 @@ impl<'a> InplaceHandle<'a> {
     }
 }
 
-struct PageTableEntry {
-    id: DataId,
+enum PageTableChildType {
+    Inner(Allocation),
+    Leaf(DataId, ChunkIndex),
+}
+struct PageTableChild {
     page_table_lru_index: LRUIndexInner,
+    type_: PageTableChildType,
 }
 
 pub struct PageTableState {
-    storage: StorageInfo,
+    root_storage: StorageInfo,
     visibility: Visibility,
-    present: Map<ChunkIndex, PageTableEntry>,
+    children: Map<BufferAddress, PageTableChild>,
     access: AccessState,
 }
 
@@ -450,84 +472,116 @@ pub struct PageTableState {
 unsafe fn unref_in_page_table(
     device: &DeviceContext,
     data_index: &mut Map<DataId, Entry>,
-    page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
+    page_table_lru: &mut PageTableLRU,
     chunk_lru: &mut LRUManager<LRUItem>,
-    page_table_entry: PageTableEntry,
+    page_table_entry: &PageTableChild,
 ) {
     page_table_lru.remove(page_table_entry.page_table_lru_index);
 
-    let d_entry = data_index.get_mut(&page_table_entry.id).unwrap();
-    let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
+    match page_table_entry.type_ {
+        PageTableChildType::Inner(_) => {}
+        PageTableChildType::Leaf(data_id, _) => {
+            let d_entry = data_index.get_mut(&data_id).unwrap();
+            let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
 
-    let version = if let StorageEntryState::Initialized(_, _, v) = d_entry.state {
-        v
-    } else {
-        DataVersion::Final
-    };
+            let version = if let StorageEntryState::Initialized(_, _, v) = d_entry.state {
+                v
+            } else {
+                DataVersion::Final
+            };
 
-    dec_access(
-        &mut d_entry.access,
-        chunk_lru,
-        device,
-        LRUItem::Data(page_table_entry.id, version),
-        longevity,
-    );
+            dec_access(
+                &mut d_entry.access,
+                chunk_lru,
+                device,
+                LRUItem::Data(data_id, version),
+                longevity,
+            );
+        }
+    }
+}
+
+#[derive(Copy, Clone, Identify)]
+enum DispatchDeleteTarget {
+    Inner(BufferAddress),
+    Leaf(ChunkIndex),
 }
 
 fn dispatch_page_table_release(
     device: &DeviceContext,
-    root: &dyn crate::vulkan::pipeline::AsDescriptors,
-    chunk_id: ChunkIndex,
+    root: vk::Buffer,
+    to_delete: DispatchDeleteTarget,
 ) {
     #[repr(C)]
     #[derive(Copy, Clone, Pod, Zeroable)]
     struct PushConstants {
-        chunk_id: u64,
+        to_delete: u64,
+        page_table_root: BufferAddress,
     }
-    let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_delete.glsl")))
-            .use_push_descriptor(true)
-            .build(device)
+    let pipeline = device.request_state(to_delete, |device, to_delete| {
+        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_delete.glsl")).define(
+            match to_delete {
+                DispatchDeleteTarget::Inner(_) => "MODE_INNER",
+                DispatchDeleteTarget::Leaf(_) => "MODE_LEAF",
+            },
+            1,
+        ))
+        .use_push_descriptor(true)
+        .build(device)
     });
     let pipeline = match pipeline {
         Ok(o) => o,
         Err(e) => {
             println!("{}", e);
-            panic!("");
+            panic!("Shader compilation failed");
         }
     };
 
     device.with_cmd_buffer(|cmd| {
-        let descriptor_config = DescriptorConfig::new([root]);
-
         let consts = PushConstants {
-            chunk_id: chunk_id.0,
+            to_delete: match to_delete {
+                DispatchDeleteTarget::Inner(buffer_address) => buffer_address.0,
+                DispatchDeleteTarget::Leaf(chunk_index) => chunk_index.0,
+            },
+            page_table_root: buffer_address(device, root),
         };
         unsafe {
             let mut pipeline = pipeline.bind(cmd);
 
             pipeline.push_constant_pod(consts);
-            pipeline.push_descriptor_set(0, descriptor_config);
             pipeline.dispatch3d(crate::vec::Vector::fill(1));
         }
     });
 }
 
+#[repr(transparent)]
+#[derive(Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
+pub struct BufferAddress(pub u64);
+
+fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
+    let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
+    BufferAddress(unsafe { device.functions().get_buffer_device_address(&info) })
+}
+
 fn dispatch_page_table_insert(
     device: &DeviceContext,
-    root: &dyn crate::vulkan::pipeline::AsDescriptors,
+    root: BufferAddress,
+    table_buf1: BufferAddress,
+    table_buf2: BufferAddress,
     chunk_id: ChunkIndex,
-    buffer: ash::vk::Buffer,
+    chunk_buffer_addr: BufferAddress,
 ) {
     #[repr(C)]
     #[derive(Copy, Clone, Pod, Zeroable)]
     struct PushConstants {
+        root: BufferAddress,
         chunk_id: u64,
-        buffer_addr: u64,
+        chunk_buffer_addr: BufferAddress,
+        table_buf1: BufferAddress,
+        table_buf2: BufferAddress,
     }
     let pipeline = device.request_state((), |device, ()| {
         ComputePipelineBuilder::new(Shader::new(include_str!("page_table_insert.glsl")))
-            .use_push_descriptor(true)
             .build(device)
     });
     let pipeline = match pipeline {
@@ -537,43 +591,67 @@ fn dispatch_page_table_insert(
             panic!("");
         }
     };
-    let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
-    let buffer_addr = unsafe { device.functions().get_buffer_device_address(&info) };
-
     device.with_cmd_buffer(|cmd| {
-        let descriptor_config = DescriptorConfig::new([root]);
-
         let consts = PushConstants {
+            root,
             chunk_id: chunk_id.0,
-            buffer_addr,
+            chunk_buffer_addr,
+            table_buf1,
+            table_buf2,
         };
         unsafe {
             let mut pipeline = pipeline.bind(cmd);
 
             pipeline.push_constant_pod(consts);
-            pipeline.push_descriptor_set(0, descriptor_config);
             pipeline.dispatch3d(crate::vec::Vector::fill(1));
         }
     });
+}
+
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PageTableIndex(pub(crate) u64);
+
+impl PageTableIndex {
+    fn level(&self) -> usize {
+        (self.0 >> (page_table::LEVELS * page_table::BITS_PER_LEVEL)
+            & page_table::LEVEL_IDENTIFIER_MASK) as usize
+    }
+}
+
+impl From<ChunkIndex> for PageTableIndex {
+    fn from(value: ChunkIndex) -> Self {
+        let ret = Self(value.0);
+        assert_eq!(ret.level(), 0);
+        ret
+    }
+}
+
+impl TryInto<ChunkIndex> for PageTableIndex {
+    type Error = ();
+
+    fn try_into(self) -> Result<ChunkIndex, Self::Error> {
+        if self.level() == 0 {
+            Ok(ChunkIndex(self.0))
+        } else {
+            Err(())
+        }
+    }
 }
 
 impl PageTableState {
     fn new(storage: StorageInfo, visibility: Visibility) -> Self {
         Self {
-            storage,
+            root_storage: storage,
             visibility,
-            present: Default::default(),
+            children: Default::default(),
             access: AccessState::Some(0),
         }
     }
 
-    fn note_use(
-        &mut self,
-        chunk: ChunkIndex,
-        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
-    ) {
+    fn note_use(&mut self, buffer_addr: BufferAddress, page_table_lru: &mut PageTableLRU) {
         // Chunk may not be present anymore due to intermittent garbage collection
-        if let Some(pt_entry) = self.present.get_mut(&chunk) {
+        if let Some(pt_entry) = self.children.get_mut(&buffer_addr) {
             pt_entry.page_table_lru_index = page_table_lru.note_use(pt_entry.page_table_lru_index);
         }
     }
@@ -582,36 +660,96 @@ impl PageTableState {
         &mut self,
         device: &DeviceContext,
         data_index: &mut Map<DataId, Entry>,
-        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
+        page_table_lru: &mut PageTableLRU,
         chunk_lru: &mut LRUManager<LRUItem>,
-        pos: ChunkIndex,
-    ) {
-        dispatch_page_table_release(device, &self.storage.allocation, pos);
+        addr: BufferAddress,
+    ) -> PageTableChildType {
+        let pt_entry = self.children.remove(&addr).unwrap();
 
-        let pt_entry = self.present.remove(&pos).unwrap();
+        let to_delete = match &pt_entry.type_ {
+            PageTableChildType::Inner(_) => DispatchDeleteTarget::Inner(addr),
+            PageTableChildType::Leaf(_, chunk_index) => DispatchDeleteTarget::Leaf(*chunk_index),
+        };
+        dispatch_page_table_release(device, self.root_storage.allocation.buffer, to_delete);
 
         // Safety: We have also just removed the reference from the index
-        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, pt_entry) };
+        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, &pt_entry) };
+        pt_entry.type_
     }
 }
 
 pub struct PageTableHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
-    pub(crate) num_chunks: usize,
+    pub(crate) num_chunks: usize, //NO_PUSH_main remove
     op: OperatorId,
     device: &'a DeviceContext,
 }
 
 impl<'a> PageTableHandle<'a> {
-    pub fn insert<'h>(&self, pos: ChunkIndex, chunk: ReadHandle<'h>) {
+    pub async fn insert<'h, 'inv>(
+        &self,
+        ctx: OpaqueTaskContext<'h, 'inv>,
+        pos: ChunkIndex,
+        chunk: ReadHandle<'h>,
+    ) {
         let mut index = self.device.storage.page_table_index.borrow_mut();
         let entry = index.get_mut(&self.op).unwrap();
 
-        if entry.present.contains_key(&pos) {
+        let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
+
+        if entry.children.contains_key(&chunk_buffer_addr) {
             return;
         }
 
-        dispatch_page_table_insert(self.device, self, pos, chunk.buffer);
+        std::mem::drop(index);
+
+        let buf1 = ctx
+            .submit(
+                self.device
+                    .storage
+                    .request_allocate_page_table_page(&self.device),
+            )
+            .await;
+        let buf2 = ctx
+            .submit(
+                self.device
+                    .storage
+                    .request_allocate_page_table_page(&self.device),
+            )
+            .await;
+
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            for buf in [buf1.buffer, buf2.buffer] {
+                self.device
+                    .functions()
+                    .cmd_fill_buffer(cmd.raw(), buf, 0, vk::WHOLE_SIZE, 0);
+            }
+
+            self.device.storage.barrier_manager.issue(
+                cmd,
+                SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::TRANSFER,
+                    access: vk::AccessFlags2::TRANSFER_WRITE,
+                },
+                DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                },
+            );
+        });
+
+        let buf1_addr = buffer_address(&self.device, buf1.buffer);
+        let buf2_addr = buffer_address(&self.device, buf2.buffer);
+        let root_buffer_addr = buffer_address(&self.device, self.buffer);
+
+        dispatch_page_table_insert(
+            self.device,
+            root_buffer_addr,
+            buf1_addr,
+            buf2_addr,
+            pos,
+            chunk_buffer_addr,
+        );
 
         let data_id = chunk.access.id;
         assert_eq!(data_id, DataId::new(self.op, pos));
@@ -621,27 +759,47 @@ impl<'a> PageTableHandle<'a> {
             .storage
             .page_table_lru
             .borrow_mut()
-            .add((self.op, pos));
+            .add((self.op, chunk_buffer_addr));
 
         // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
         std::mem::forget(chunk);
 
-        entry.present.insert(
-            pos,
-            PageTableEntry {
-                id: data_id,
+        let mut index = self.device.storage.page_table_index.borrow_mut();
+        let entry = index.get_mut(&self.op).unwrap();
+
+        entry.children.insert(
+            chunk_buffer_addr,
+            PageTableChild {
                 page_table_lru_index: lru_index,
+                type_: PageTableChildType::Leaf(data_id, pos),
             },
         );
+
+        for (buf, buf_addr) in [(buf1, buf1_addr), (buf2, buf2_addr)] {
+            let lru_index = self
+                .device
+                .storage
+                .page_table_lru
+                .borrow_mut()
+                .add((self.op, buf_addr));
+
+            entry.children.insert(
+                buf_addr,
+                PageTableChild {
+                    page_table_lru_index: lru_index,
+                    type_: PageTableChildType::Inner(buf),
+                },
+            );
+        }
     }
 
-    pub fn note_use<'h>(&self, pos: ChunkIndex) {
+    pub fn note_use<'h>(&self, buffer_addr: BufferAddress) {
         let mut page_table_index = self.device.storage.page_table_index.borrow_mut();
         let index_entry = page_table_index.get_mut(&self.op).unwrap();
 
         let mut page_table_lru = self.device.storage.page_table_lru.borrow_mut();
 
-        index_entry.note_use(pos, &mut page_table_lru);
+        index_entry.note_use(buffer_addr, &mut page_table_lru);
     }
 }
 impl<'a> Drop for PageTableHandle<'a> {
@@ -649,7 +807,7 @@ impl<'a> Drop for PageTableHandle<'a> {
         let mut index = self.device.storage.page_table_index.borrow_mut();
         let vram_entry = index.get_mut(&self.op).unwrap();
 
-        let longevity = vram_entry.storage.data_longevity;
+        let longevity = vram_entry.root_storage.data_longevity;
 
         let mut lru_manager = self.device.storage.lru_manager.borrow_mut();
         dec_access(
@@ -668,6 +826,8 @@ enum LRUItem {
     PageTableRoot(OperatorId),
 }
 
+type PageTableLRU = super::LRUManagerInner<(OperatorId, BufferAddress)>;
+
 pub struct Storage {
     data_index: RefCell<Map<DataId, Entry>>,
     old_preview_data_index: RefCell<
@@ -678,7 +838,7 @@ pub struct Storage {
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
     // corresponding table (thus (possibly) adding them to "normal" lru_manager)
-    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, ChunkIndex)>>,
+    page_table_lru: RefCell<PageTableLRU>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -769,7 +929,7 @@ impl Storage {
     /// references is done!
     pub unsafe fn free_vram(&self) {
         for (_, entry) in std::mem::take(&mut *self.page_table_index.borrow_mut()) {
-            self.allocator.deallocate(entry.storage.allocation);
+            self.allocator.deallocate(entry.root_storage.allocation);
         }
 
         for (_, entry) in std::mem::take(&mut *self.data_index.borrow_mut()) {
@@ -959,9 +1119,9 @@ impl Storage {
 
                         let entry = page_table_index.remove(&key).unwrap();
 
-                        page_tables_to_unref.push(entry.present);
+                        page_tables_to_unref.push(entry.children);
 
-                        entry.storage
+                        entry.root_storage
                     }
                 };
 
@@ -993,7 +1153,17 @@ impl Storage {
         for pt_entries in page_tables_to_unref {
             for (_pos, pt_entry) in pt_entries {
                 unsafe {
-                    unref_in_page_table(device, &mut index, &mut page_table_lru, &mut lru, pt_entry)
+                    unref_in_page_table(
+                        device,
+                        &mut index,
+                        &mut page_table_lru,
+                        &mut lru,
+                        &pt_entry,
+                    );
+
+                    if let PageTableChildType::Inner(allocation) = pt_entry.type_ {
+                        std::mem::drop(TempRessource::new(device, allocation));
+                    }
                 };
             }
         }
@@ -1005,21 +1175,38 @@ impl Storage {
             // inserted in the lru only when they are first inserted into the index, we effectively
             // a "least recently added" strategy here. This is probably not what we actually
             // want... However, we (so far) have no feedback about chunks being used via the index.
-            while let Some((op, pos)) = page_table_lru.get_next() {
+            while let Some((op, buf_addr)) = page_table_lru.get_next() {
                 let page_table = page_table_index.get_mut(&op).unwrap();
 
                 // Releasing the chunk also removes it from the page table queue
-                page_table.release(device, &mut index, &mut *page_table_lru, &mut lru, pos);
+                let child = page_table.release(
+                    device,
+                    &mut index,
+                    &mut *page_table_lru,
+                    &mut lru,
+                    buf_addr,
+                );
 
-                let data_id = DataId::new(op, pos);
-                let chunk_entry = index.get(&data_id).unwrap();
-                let chunk_info = match &chunk_entry.state {
-                    StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
-                        panic!("Indexed chunk should be initialized")
+                let size = match child {
+                    PageTableChildType::Leaf(data_id, _) => {
+                        let chunk_entry = index.get(&data_id).unwrap();
+                        let chunk_info = match &chunk_entry.state {
+                            StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
+                                panic!("Indexed chunk should be initialized")
+                            }
+                            StorageEntryState::Initialized(info, _, _) => info,
+                        };
+                        chunk_info.layout.size()
                     }
-                    StorageEntryState::Initialized(info, _, _) => info,
+                    PageTableChildType::Inner(allocation) => {
+                        let size = allocation.size;
+
+                        // Free page once epoch is over and no one can be referencing it anymore
+                        std::mem::drop(TempRessource::new(device, allocation));
+
+                        size as usize
+                    }
                 };
-                let size = chunk_info.layout.size();
 
                 unindexed += size;
                 if goal_in_bytes <= collected + unindexed {
@@ -1224,6 +1411,17 @@ impl Storage {
         }
     }
 
+    fn request_allocate_page_table_page<'req, 'inv>(
+        &'req self,
+        device: &'req DeviceContext,
+    ) -> Request<'req, 'inv, Allocation> {
+        let layout = page_table::PAGE_LAYOUT;
+        let use_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let location = MemoryLocation::GpuOnly;
+
+        self.request_allocate_raw(device, layout, use_flags, location)
+    }
+
     pub fn allocated(&self) -> u64 {
         self.allocator.allocated()
     }
@@ -1399,18 +1597,13 @@ impl Storage {
                 (
                     entry.visibility.src,
                     entry.visibility.created,
-                    entry.storage.allocation.buffer,
+                    entry.root_storage.allocation.buffer,
                 )
             } else {
                 std::mem::drop(index);
 
-                let layout = Layout::array::<ash::vk::DeviceAddress>(size).unwrap();
-                let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
-                    | ash::vk::BufferUsageFlags::TRANSFER_DST
-                    | ash::vk::BufferUsageFlags::TRANSFER_SRC;
-                let location = MemoryLocation::GpuOnly;
                 let allocation = ctx
-                    .submit(self.request_allocate_raw(device, layout, flags, location))
+                    .submit(self.request_allocate_page_table_page(device))
                     .await;
 
                 let mut index = self.page_table_index.borrow_mut();
@@ -1427,7 +1620,7 @@ impl Storage {
                     std::collections::hash_map::Entry::Vacant(slot) => {
                         let info = StorageInfo {
                             allocation,
-                            layout,
+                            layout: page_table::PAGE_LAYOUT,
                             data_longevity: op.data_longevity,
                         };
                         let buffer = info.allocation.buffer;
@@ -1459,7 +1652,7 @@ impl Storage {
                 (
                     entry.visibility.src,
                     entry.visibility.created,
-                    entry.storage.allocation.buffer,
+                    entry.root_storage.allocation.buffer,
                 )
             }
         };

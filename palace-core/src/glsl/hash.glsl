@@ -1,4 +1,6 @@
-// Extracted from murmur3 (public domain)
+#ifndef GLSL_HASH
+#define GLSL_HASH
+// Extracted from murmur3 (public domain) (not used)
 //uint hash(uint h) {
 //  h ^= h >> 16;
 //  h *= 0x85ebca6b;
@@ -8,7 +10,7 @@
 //
 //  return h;
 //}
-// 64 bit version (not used)
+// 64 bit version
 uint hash(uint64_t k) {
     k ^= k >> 33;
     k *= 0xff51afd7ed558ccdUL;
@@ -18,7 +20,6 @@ uint hash(uint64_t k) {
 
     return uint(k);
 }
-
 
 #define MAX_TRIES 5
 #define EMPTY 0xffffffffffffffffL
@@ -36,3 +37,4 @@ uint hash(uint64_t k) {
         }\
     }\
 }
+#endif //GLSL_HASH

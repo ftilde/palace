@@ -5,8 +5,7 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{
-        ChunkIndex, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData,
-        VolumeMetaData,
+        ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
     chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
     data::{GlobalCoordinate, Matrix, Vector},
@@ -15,7 +14,7 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{gpu::BufferAddress, DataVersionType},
     transfunc::TransFuncOperator,
     vulkan::{
         memory::TempRessource,
@@ -967,7 +966,7 @@ pub fn raycast(
 
                                 if !used_linear.is_empty() {
                                     for used in used_linear {
-                                        data.0.note_use(ChunkIndex(used));
+                                        data.0.note_use(BufferAddress(used));
                                     }
 
                                     device.with_cmd_buffer(|cmd| data.1.clear(cmd));

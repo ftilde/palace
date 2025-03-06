@@ -53,6 +53,7 @@ pub mod ext {
     pub const SCALAR_BLOCK_LAYOUT: &str = "GL_EXT_scalar_block_layout";
     pub const BUFFER_REFERENCE: &str = "GL_EXT_buffer_reference";
     pub const INT64_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int64";
+    pub const INT64_ATOMICS: &str = "GL_EXT_shader_atomic_int64";
     pub const INT8_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int8";
     pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
 
@@ -116,7 +117,8 @@ impl<'a> Shader<'a> {
         let mut compiler = CompilerBuilder::new()
             .with_source_language(SourceLanguage::GLSL)
             .generate_debug_info()
-            .with_opt_level(OptimizationLevel::Performance)
+            .with_opt_level(OptimizationLevel::Zero)
+            .generate_debug_info()
             .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3)
             .with_target_spirv(SpirvVersion::V1_6)
             .with_include_dir(env!("GLSL_INCLUDE_DIR"));
@@ -125,21 +127,24 @@ impl<'a> Shader<'a> {
             compiler = compiler.with_macro(&k, Some(&v));
         }
         let mut compiler = compiler.build().unwrap();
-        compiler
+        let res = compiler
             .compile_from_string(&source, kind)
             .map_err(|e| match e {
                 CompilerError::Log(e) => format!(
                     "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
                     e.file, e.description, source,
-                )
-                .into(),
+                ),
                 CompilerError::LoadError(e) => {
                     format!("Load error while compiling shader: {}", e).into()
                 }
                 CompilerError::WriteError(e) => {
                     format!("Write error while compiling shader: {}", e).into()
                 }
-            })
+            })?;
+
+        //std::fs::write("./kernel.spv", bytemuck::cast_slice(&res)).unwrap();
+
+        Ok(res)
     }
 }
 

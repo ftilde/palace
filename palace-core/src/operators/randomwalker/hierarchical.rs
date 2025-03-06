@@ -516,7 +516,9 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 &in_brick_pos,
                                 &upper_metadata.dimension_in_chunks(),
                             );
-                            chunk_index.insert(ChunkIndex(brick_pos_linear as u64), gpu_brick_in);
+                            chunk_index
+                                .insert(*ctx, ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
+                                .await;
                         }
 
                         // Make writes to the index visible

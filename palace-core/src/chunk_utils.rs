@@ -148,7 +148,9 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
         for (brick, brick_linear_pos) in requested_bricks.into_iter().zip(batch.into_iter()) {
-            page_table_handle.insert(ChunkIndex(*brick_linear_pos), brick);
+            page_table_handle
+                .insert(*ctx, ChunkIndex(*brick_linear_pos), brick)
+                .await;
         }
 
         if let Some(lateness) = ctx.past_deadline(interactive) {
