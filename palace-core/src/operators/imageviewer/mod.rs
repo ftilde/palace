@@ -11,7 +11,7 @@ use super::{
 
 use crate::{
     array::{ImageEmbeddingData, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData},
-    chunk_utils::ChunkFeedbackTable,
+    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
     coordinate::GlobalCoordinate,
     data::Vector,
     dim::*,
@@ -278,7 +278,7 @@ pub fn view_image(
                         device,
                         pos,
                         &format!("request_table"),
-                        Layout::array::<Vector<D4, u8>>(request_table_size).unwrap(),
+                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                     ))
                     .await;
                 let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);

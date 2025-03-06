@@ -10,7 +10,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::ChunkFeedbackTable,
+    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -326,7 +326,7 @@ layout(std430, binding = 1) buffer RefBuffer {
 } bricks;
 
 layout(std430, binding = 2) buffer QueryTable {
-    uint values[REQUEST_TABLE_SIZE];
+    uint64_t values[REQUEST_TABLE_SIZE];
 } request_table;
 
 layout(std430, binding = 3) buffer StateBuffer {
@@ -382,7 +382,7 @@ void main()
             ivec3 vol_dim = ivec3(consts.vol_dim);
 
             int res;
-            uint sample_brick_pos_linear;
+            uint64_t sample_brick_pos_linear;
             float sampled_intensity;
             try_sample(3, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
@@ -524,7 +524,7 @@ void main()
                         device,
                         pos,
                         &format!("request_table"),
-                        Layout::array::<Vector<D4, u8>>(request_table_size).unwrap(),
+                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                     ))
                     .await;
                 let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);

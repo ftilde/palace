@@ -18,11 +18,11 @@ layout(buffer_reference, std430) buffer PageTableType {
 };
 
 layout(buffer_reference, std430) buffer QueryTableType {
-    uint values[REQUEST_TABLE_SIZE];
+    uint64_t values[REQUEST_TABLE_SIZE];
 };
 
 layout(buffer_reference, std430) buffer UseTableType {
-    uint values[USE_TABLE_SIZE];
+    uint64_t values[USE_TABLE_SIZE];
 };
 
 struct LOD {
@@ -226,7 +226,7 @@ void main()
                 float oversampling_factor = consts.oversampling_factor;
 
                 uint level_num = 0;
-                uint prev_sample_brick_pos = 0xffffffff;
+                uint64_t prev_sample_brick_pos = 0xffffffffffffffffL;
                 while(t <= t_end) {
                     float alpha = t/t_end;
                     float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
@@ -254,7 +254,7 @@ void main()
                     float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
 
                     int res;
-                    uint sample_brick_pos_linear;
+                    uint64_t sample_brick_pos_linear;
                     float sampled_intensity;
 
                     #ifdef SHADING_NONE

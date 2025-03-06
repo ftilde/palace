@@ -89,7 +89,7 @@ void main() {
                 m_in.chunk_size = consts.in_chunk_size;
 
                 int res;
-                uint sample_chunk_pos_linear;
+                uint64_t sample_chunk_pos_linear;
                 try_sample(N, sample_pos, m_in, chunks.values, res, sample_chunk_pos_linear, seed_value);
 
                 if(res == SAMPLE_RES_FOUND) {

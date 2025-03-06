@@ -55,6 +55,8 @@ pub mod ext {
     pub const INT64_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int64";
     pub const INT8_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int8";
     pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
+
+    pub const DEFAULT_EXTENSIONS: &[&str] = &[INT64_TYPES];
 }
 
 pub struct Shader<'a> {
@@ -153,9 +155,13 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Self {
+        let mut extensions = Set::default();
+        for ext in ext::DEFAULT_EXTENSIONS {
+            extensions.insert(*ext);
+        }
         Self {
             version: "450",
-            extensions: Set::default(),
+            extensions,
         }
     }
 

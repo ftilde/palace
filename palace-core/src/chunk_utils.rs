@@ -24,7 +24,7 @@ use crate::{
     },
 };
 
-type RTElement = u32;
+pub type FeedbackTableElement = u64;
 
 pub struct ChunkFeedbackTable<'a> {
     inner: StateCacheHandle<'a>,
@@ -42,7 +42,7 @@ impl<'a> ChunkFeedbackTable<'a> {
                     v.buffer,
                     0,
                     vk::WHOLE_SIZE,
-                    RTElement::max_value(),
+                    0xffff_ffff,
                 );
             });
             newly_initialized = true;
@@ -60,13 +60,13 @@ impl<'a> ChunkFeedbackTable<'a> {
                 self.inner.buffer,
                 0,
                 vk::WHOLE_SIZE,
-                RTElement::max_value(),
+                0xffff_ffff,
             )
         };
     }
 
     fn num_elements(&self) -> usize {
-        crate::util::num_elms_in_array::<RTElement>(self.inner.size as usize)
+        crate::util::num_elms_in_array::<FeedbackTableElement>(self.inner.size as usize)
     }
 
     pub fn buffer(&self) -> vk::Buffer {
@@ -82,10 +82,10 @@ impl<'a> ChunkFeedbackTable<'a> {
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-    ) -> Vec<RTElement> {
+    ) -> Vec<FeedbackTableElement> {
         let num_elements = self.num_elements();
-        let layout = std::alloc::Layout::array::<RTElement>(num_elements).unwrap();
-        let mut request_table_cpu = vec![0u32; num_elements];
+        let layout = std::alloc::Layout::array::<FeedbackTableElement>(num_elements).unwrap();
+        let mut request_table_cpu = vec![0u64; num_elements];
         let request_table_cpu_bytes: &mut [u8] =
             bytemuck::cast_slice_mut(request_table_cpu.as_mut_slice());
         unsafe {
@@ -101,8 +101,8 @@ impl<'a> ChunkFeedbackTable<'a> {
 
         let to_request_linear = request_table_cpu
             .into_iter()
-            .filter(|v| *v != RTElement::max_value())
-            .collect::<Vec<RTElement>>();
+            .filter(|v| *v != FeedbackTableElement::max_value())
+            .collect::<Vec<FeedbackTableElement>>();
 
         to_request_linear
     }
@@ -113,7 +113,7 @@ pub struct Timeout;
 pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
-    to_request_linear: &mut [RTElement],
+    to_request_linear: &mut [FeedbackTableElement],
     vol: &'inv TensorOperator<D, StaticElementType<E>>,
     page_table_handle: &PageTableHandle<'_>,
     batch_size: &mut usize,
@@ -148,7 +148,7 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
         for (brick, brick_linear_pos) in requested_bricks.into_iter().zip(batch.into_iter()) {
-            page_table_handle.insert(ChunkIndex(*brick_linear_pos as u64), brick);
+            page_table_handle.insert(ChunkIndex(*brick_linear_pos), brick);
         }
 
         if let Some(lateness) = ctx.past_deadline(interactive) {

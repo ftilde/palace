@@ -63,7 +63,7 @@ void main()
             ivec2 input_dim = ivec2(consts.input_dim);
 
             int res;
-            uint sample_brick_pos_linear;
+            uint64_t sample_brick_pos_linear;
             try_sample(2, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, val);
 
             if(res == SAMPLE_RES_FOUND) {

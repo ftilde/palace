@@ -8,7 +8,7 @@ use crate::{
         ChunkIndex, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData,
         VolumeMetaData,
     },
-    chunk_utils::ChunkFeedbackTable,
+    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -724,7 +724,7 @@ pub fn raycast(
                             device,
                             pos,
                             &format!("lod_table{}", i),
-                            Layout::array::<Vector<D4, u8>>(request_table_size).unwrap(),
+                            Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                         )
                     })))
                     .await;
@@ -739,7 +739,7 @@ pub fn raycast(
                             device,
                             pos,
                             &format!("use_table{}", i),
-                            Layout::array::<Vector<D4, u8>>(use_table_size).unwrap(),
+                            Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
                         )
                     })))
                     .await;
@@ -964,7 +964,7 @@ pub fn raycast(
 
                                 if !used_linear.is_empty() {
                                     for used in used_linear {
-                                        data.0.note_use(ChunkIndex(used as u64));
+                                        data.0.note_use(ChunkIndex(used));
                                     }
 
                                     device.with_cmd_buffer(|cmd| data.1.clear(cmd));

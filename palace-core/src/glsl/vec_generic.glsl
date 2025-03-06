@@ -233,6 +233,14 @@ uint to_linear(uint[_N] pos, uint[_N] dim) {
     return res;
 }
 
+uint64_t to_linear64(uint[_N] pos, uint[_N] dim) {
+    uint64_t res = uint64_t(pos[0]);
+    for(int i=1; i<_N; i+=1) {
+        res = res * uint64_t(dim[i]) + uint64_t(pos[i]);
+    }
+    return res;
+}
+
 bool[_N] less_than(int[_N] l, int[_N] r) {
     bool[_N] res;
     for(int i=0; i<_N; i+=1) {

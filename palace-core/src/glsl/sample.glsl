@@ -44,9 +44,9 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
         uint[N] sample_brick = div(sample_pos, (vm).chunk_size);\
         uint[N] dim_in_bricks = dim_in_bricks((vm));\
 \
-        (sample_brick_pos_linear) = to_linear(sample_brick, dim_in_bricks);\
+        (sample_brick_pos_linear) = to_linear64(sample_brick, dim_in_bricks);\
 \
-        Chunk brick = (bricks)[(sample_brick_pos_linear)];\
+        Chunk brick = (bricks)[uint(sample_brick_pos_linear)];\
         if(uint64_t(brick) == 0) {\
             (found) = SAMPLE_RES_NOT_PRESENT;\
         } else {\
@@ -82,9 +82,9 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
         uint[N] sample_brick = div(sample_pos, (vm).chunk_size);\
         uint[N] dim_in_bricks = dim_in_bricks((vm));\
 \
-        (sample_brick_pos_linear) = to_linear(sample_brick, dim_in_bricks);\
+        (sample_brick_pos_linear) = to_linear64(sample_brick, dim_in_bricks);\
 \
-        Chunk brick = (bricks)[(sample_brick_pos_linear)];\
+        Chunk brick = (bricks)[uint(sample_brick_pos_linear)];\
         if(uint64_t(brick) == 0) {\
             (found) = SAMPLE_RES_NOT_PRESENT;\
         } else {\

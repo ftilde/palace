@@ -254,7 +254,7 @@ void main() {
     m_in.chunk_size = consts.chunk_dim_in;
 
     int res;
-    uint sample_brick_pos_linear;
+    uint64_t sample_brick_pos_linear;
     T sampled_intensity;
     try_sample(N, sample_pos_clamp, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
 
