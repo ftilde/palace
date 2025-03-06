@@ -15,6 +15,7 @@ use ash::vk;
 use gpu_allocator::{vulkan::AllocationScheme, AllocatorReport};
 
 use crate::{
+    array::ChunkIndex,
     dtypes::ElementType,
     operator::{DataDescriptor, DataId, OperatorDescriptor, OperatorId},
     runtime::FrameNumber,
@@ -437,7 +438,7 @@ struct PageTableEntry {
 pub struct PageTableState {
     storage: StorageInfo,
     visibility: Visibility,
-    present: Map<u64, PageTableEntry>,
+    present: Map<ChunkIndex, PageTableEntry>,
     access: AccessState,
 }
 
@@ -446,13 +447,13 @@ pub struct PageTableState {
 unsafe fn unref_brick_in_page_table(
     device: &DeviceContext,
     brick_index: &mut Map<DataId, Entry>,
-    index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>,
-    brick_lru: &mut LRUManager<LRUItem>,
-    brick_ref: PageTableEntry,
+    page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+    chunk_lru: &mut LRUManager<LRUItem>,
+    page_table_entry: PageTableEntry,
 ) {
-    index_lru.remove(brick_ref.acquire_lru_index);
+    page_table_lru.remove(page_table_entry.acquire_lru_index);
 
-    let d_entry = brick_index.get_mut(&brick_ref.id).unwrap();
+    let d_entry = brick_index.get_mut(&page_table_entry.id).unwrap();
     let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
 
     let version = if let StorageEntryState::Initialized(_, _, v) = d_entry.state {
@@ -463,9 +464,9 @@ unsafe fn unref_brick_in_page_table(
 
     dec_access(
         &mut d_entry.access,
-        brick_lru,
+        chunk_lru,
         device,
-        LRUItem::Data(brick_ref.id, version),
+        LRUItem::Data(page_table_entry.id, version),
         longevity,
     );
 }
@@ -480,24 +481,28 @@ impl PageTableState {
         }
     }
 
-    fn note_use(&mut self, brick: u64, index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>) {
-        // Brick may not be present anymore due to intermittent garbage collection
-        if let Some(brick_ref) = self.present.get_mut(&brick) {
-            brick_ref.acquire_lru_index = index_lru.note_use(brick_ref.acquire_lru_index);
+    fn note_use(
+        &mut self,
+        chunk: ChunkIndex,
+        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+    ) {
+        // Chunk may not be present anymore due to intermittent garbage collection
+        if let Some(pt_entry) = self.present.get_mut(&chunk) {
+            pt_entry.acquire_lru_index = page_table_lru.note_use(pt_entry.acquire_lru_index);
         }
     }
 
     fn release(
         &mut self,
         device: &DeviceContext,
-        brick_index: &mut Map<DataId, Entry>,
-        index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>,
-        brick_lru: &mut LRUManager<LRUItem>,
-        pos: u64,
+        data_index: &mut Map<DataId, Entry>,
+        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+        chunk_lru: &mut LRUManager<LRUItem>,
+        pos: ChunkIndex,
     ) {
         device.with_cmd_buffer(|cmd| unsafe {
             let addr: ash::vk::DeviceAddress = 0u64;
-            let offset = pos * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
+            let offset = pos.0 * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
 
             device.functions().cmd_update_buffer(
                 cmd.raw(),
@@ -510,7 +515,9 @@ impl PageTableState {
         let brick_ref = self.present.remove(&pos).unwrap();
 
         // Safety: We have also just removed the reference from the index
-        unsafe { unref_brick_in_page_table(device, brick_index, index_lru, brick_lru, brick_ref) };
+        unsafe {
+            unref_brick_in_page_table(device, data_index, page_table_lru, chunk_lru, brick_ref)
+        };
     }
 }
 
@@ -522,7 +529,7 @@ pub struct PageTableHandle<'a> {
 }
 
 impl<'a> PageTableHandle<'a> {
-    pub fn insert<'h>(&self, pos: u64, brick: ReadHandle<'h>) {
+    pub fn insert<'h>(&self, pos: ChunkIndex, brick: ReadHandle<'h>) {
         let mut index = self.device.storage.page_table_index.borrow_mut();
         let entry = index.get_mut(&self.op).unwrap();
 
@@ -537,7 +544,7 @@ impl<'a> PageTableHandle<'a> {
         self.device.with_cmd_buffer(|cmd| unsafe {
             let info = ash::vk::BufferDeviceAddressInfo::default().buffer(brick_buffer);
             let addr = self.device.functions().get_buffer_device_address(&info);
-            let offset = pos * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
+            let offset = pos.0 * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
 
             assert!(offset < entry.storage.layout.size() as u64);
             self.device.functions().cmd_update_buffer(
@@ -568,13 +575,13 @@ impl<'a> PageTableHandle<'a> {
         );
     }
 
-    pub fn note_use<'h>(&self, pos: u64) {
+    pub fn note_use<'h>(&self, pos: ChunkIndex) {
         let mut page_table_index = self.device.storage.page_table_index.borrow_mut();
         let index_entry = page_table_index.get_mut(&self.op).unwrap();
 
-        let mut index_lru = self.device.storage.page_table_lru.borrow_mut();
+        let mut page_table_lru = self.device.storage.page_table_lru.borrow_mut();
 
-        index_entry.note_use(pos, &mut index_lru);
+        index_entry.note_use(pos, &mut page_table_lru);
     }
 }
 impl<'a> Drop for PageTableHandle<'a> {
@@ -611,7 +618,7 @@ pub struct Storage {
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
     // corresponding table (thus (possibly) adding them to "normal" lru_manager)
-    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
+    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, ChunkIndex, DataId)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -806,7 +813,7 @@ impl Storage {
         self.manual_garbage_returns.set(0);
 
         let mut lru = self.lru_manager.borrow_mut();
-        let mut index_lru = self.page_table_lru.borrow_mut();
+        let mut page_table_lru = self.page_table_lru.borrow_mut();
         let mut index = self.data_index.borrow_mut();
         let mut old_preview_index = self.old_preview_data_index.borrow_mut();
         let mut page_table_index = self.page_table_index.borrow_mut();
@@ -929,7 +936,7 @@ impl Storage {
                     unref_brick_in_page_table(
                         device,
                         &mut index,
-                        &mut index_lru,
+                        &mut page_table_lru,
                         &mut lru,
                         brick_ref,
                     )
@@ -944,11 +951,11 @@ impl Storage {
             // inserted in the lru only when they are first inserted into the index, we effectively
             // a "least recently added" strategy here. This is probably not what we actually
             // want... However, we (so far) have no feedback about bricks being used via the index.
-            while let Some((op, pos, data_id)) = index_lru.get_next() {
+            while let Some((op, pos, data_id)) = page_table_lru.get_next() {
                 let brick_index = page_table_index.get_mut(&op).unwrap();
 
-                // Releasing the brick also removes it from the index_lru queue
-                brick_index.release(device, &mut index, &mut *index_lru, &mut lru, pos);
+                // Releasing the brick also removes it from the page table queue
+                brick_index.release(device, &mut index, &mut *page_table_lru, &mut lru, pos);
 
                 let brick_entry = index.get(&data_id).unwrap();
                 let brick_info = match &brick_entry.state {

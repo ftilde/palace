@@ -5,7 +5,8 @@ use crevice::{glsl::GlslStruct, std140::AsStd140};
 
 use crate::{
     array::{
-        ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
+        ChunkIndex, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData,
+        VolumeMetaData,
     },
     chunk_utils::ChunkFeedbackTable,
     data::{GlobalCoordinate, Matrix, Vector},
@@ -963,7 +964,7 @@ pub fn raycast(
 
                                 if !used_linear.is_empty() {
                                     for used in used_linear {
-                                        data.0.note_use(used as u64);
+                                        data.0.note_use(ChunkIndex(used as u64));
                                     }
 
                                     device.with_cmd_buffer(|cmd| data.1.clear(cmd));

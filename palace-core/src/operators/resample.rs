@@ -2,7 +2,7 @@ use ash::vk;
 use itertools::Itertools;
 
 use crate::{
-    array::TensorMetaData,
+    array::{ChunkIndex, TensorMetaData},
     coordinate::ChunkCoordinate,
     data::{Matrix, Vector, AABB},
     dim::*,
@@ -416,7 +416,8 @@ void main() {
                                     &in_brick_pos,
                                     &m_in.dimension_in_chunks(),
                                 );
-                                chunk_index.insert(brick_pos_linear as u64, gpu_brick_in);
+                                chunk_index
+                                    .insert(ChunkIndex(brick_pos_linear as u64), gpu_brick_in);
                             }
 
                             // Make writes to the index visible
