@@ -432,7 +432,7 @@ impl<'a> InplaceHandle<'a> {
 
 struct PageTableEntry {
     id: DataId,
-    acquire_lru_index: LRUIndexInner,
+    page_table_lru_index: LRUIndexInner,
 }
 
 pub struct PageTableState {
@@ -444,16 +444,16 @@ pub struct PageTableState {
 
 // Safety: The caller is responsible for removing the reference from the index in gpu memory
 // (i.e. self.storage.allocation.buffer)
-unsafe fn unref_brick_in_page_table(
+unsafe fn unref_in_page_table(
     device: &DeviceContext,
-    brick_index: &mut Map<DataId, Entry>,
+    data_index: &mut Map<DataId, Entry>,
     page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
     chunk_lru: &mut LRUManager<LRUItem>,
     page_table_entry: PageTableEntry,
 ) {
-    page_table_lru.remove(page_table_entry.acquire_lru_index);
+    page_table_lru.remove(page_table_entry.page_table_lru_index);
 
-    let d_entry = brick_index.get_mut(&page_table_entry.id).unwrap();
+    let d_entry = data_index.get_mut(&page_table_entry.id).unwrap();
     let longevity = d_entry.state.storage_info().map(|i| i.data_longevity);
 
     let version = if let StorageEntryState::Initialized(_, _, v) = d_entry.state {
@@ -488,7 +488,7 @@ impl PageTableState {
     ) {
         // Chunk may not be present anymore due to intermittent garbage collection
         if let Some(pt_entry) = self.present.get_mut(&chunk) {
-            pt_entry.acquire_lru_index = page_table_lru.note_use(pt_entry.acquire_lru_index);
+            pt_entry.page_table_lru_index = page_table_lru.note_use(pt_entry.page_table_lru_index);
         }
     }
 
@@ -512,12 +512,10 @@ impl PageTableState {
             );
         });
 
-        let brick_ref = self.present.remove(&pos).unwrap();
+        let pt_entry = self.present.remove(&pos).unwrap();
 
         // Safety: We have also just removed the reference from the index
-        unsafe {
-            unref_brick_in_page_table(device, data_index, page_table_lru, chunk_lru, brick_ref)
-        };
+        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, pt_entry) };
     }
 }
 
@@ -529,7 +527,7 @@ pub struct PageTableHandle<'a> {
 }
 
 impl<'a> PageTableHandle<'a> {
-    pub fn insert<'h>(&self, pos: ChunkIndex, brick: ReadHandle<'h>) {
+    pub fn insert<'h>(&self, pos: ChunkIndex, chunk: ReadHandle<'h>) {
         let mut index = self.device.storage.page_table_index.borrow_mut();
         let entry = index.get_mut(&self.op).unwrap();
 
@@ -537,12 +535,12 @@ impl<'a> PageTableHandle<'a> {
             return;
         }
 
-        let brick_buffer = brick.buffer;
+        let chunk_buffer = chunk.buffer;
 
         // We are somewhat fine with racing here, but not sure how to convince the validation
         // layers of this...
         self.device.with_cmd_buffer(|cmd| unsafe {
-            let info = ash::vk::BufferDeviceAddressInfo::default().buffer(brick_buffer);
+            let info = ash::vk::BufferDeviceAddressInfo::default().buffer(chunk_buffer);
             let addr = self.device.functions().get_buffer_device_address(&info);
             let offset = pos.0 * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
 
@@ -554,7 +552,7 @@ impl<'a> PageTableHandle<'a> {
                 bytemuck::bytes_of(&addr),
             );
         });
-        let data_id = brick.access.id;
+        let data_id = chunk.access.id;
         assert_eq!(data_id, DataId::new(self.op, pos));
 
         let lru_index = self
@@ -565,13 +563,13 @@ impl<'a> PageTableHandle<'a> {
             .add((self.op, pos));
 
         // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
-        std::mem::forget(brick);
+        std::mem::forget(chunk);
 
         entry.present.insert(
             pos,
             PageTableEntry {
                 id: data_id,
-                acquire_lru_index: lru_index,
+                page_table_lru_index: lru_index,
             },
         );
     }
@@ -615,7 +613,7 @@ pub struct Storage {
         Map<DataId, BTreeMap<FrameNumber, (StorageEntryState, Option<LRUIndex>, CmdBufferEpoch)>>,
     >,
     page_table_index: RefCell<Map<OperatorId, PageTableState>>,
-    // Manage (unreferenced) items (brick as well as index) and free them once we are able
+    // Manage (unreferenced) items (chunks as well as page tables) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
     // corresponding table (thus (possibly) adding them to "normal" lru_manager)
@@ -819,7 +817,7 @@ impl Storage {
         let mut old_preview_index = self.old_preview_data_index.borrow_mut();
         let mut page_table_index = self.page_table_index.borrow_mut();
 
-        let mut indices_to_unref = Vec::new();
+        let mut page_tables_to_unref = Vec::new();
         for (longevity, inner_lru) in lru.inner_mut() {
             let mut collected_local = 0;
 
@@ -900,7 +898,7 @@ impl Storage {
 
                         let entry = page_table_index.remove(&key).unwrap();
 
-                        indices_to_unref.push(entry.present);
+                        page_tables_to_unref.push(entry.present);
 
                         entry.storage
                     }
@@ -930,43 +928,37 @@ impl Storage {
                 );
             }
         }
-        // Unref all bricks that were used in an index deleted above
-        for brick_map in indices_to_unref {
-            for (_pos, brick_ref) in brick_map {
+        // Unref all chunks that were used in a page table deleted above
+        for pt_entries in page_tables_to_unref {
+            for (_pos, pt_entry) in pt_entries {
                 unsafe {
-                    unref_brick_in_page_table(
-                        device,
-                        &mut index,
-                        &mut page_table_lru,
-                        &mut lru,
-                        brick_ref,
-                    )
+                    unref_in_page_table(device, &mut index, &mut page_table_lru, &mut lru, pt_entry)
                 };
             }
         }
 
-        // Potentially unref bricks from indices that are still active
+        // Potentially unref chunks from indices that are still active
         let mut unindexed = 0;
         if goal_in_bytes > collected {
-            // Pop items one by one from the respective indices. Note that since bricks are
+            // Pop items one by one from the respective indices. Note that since chunks are
             // inserted in the lru only when they are first inserted into the index, we effectively
             // a "least recently added" strategy here. This is probably not what we actually
-            // want... However, we (so far) have no feedback about bricks being used via the index.
+            // want... However, we (so far) have no feedback about chunks being used via the index.
             while let Some((op, pos)) = page_table_lru.get_next() {
-                let brick_index = page_table_index.get_mut(&op).unwrap();
+                let page_table = page_table_index.get_mut(&op).unwrap();
 
-                // Releasing the brick also removes it from the page table queue
-                brick_index.release(device, &mut index, &mut *page_table_lru, &mut lru, pos);
+                // Releasing the chunk also removes it from the page table queue
+                page_table.release(device, &mut index, &mut *page_table_lru, &mut lru, pos);
 
                 let data_id = DataId::new(op, pos);
-                let brick_entry = index.get(&data_id).unwrap();
-                let brick_info = match &brick_entry.state {
+                let chunk_entry = index.get(&data_id).unwrap();
+                let chunk_info = match &chunk_entry.state {
                     StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
-                        panic!("Indexed brick should be initialized")
+                        panic!("Indexed chunk should be initialized")
                     }
                     StorageEntryState::Initialized(info, _, _) => info,
                 };
-                let size = brick_info.layout.size();
+                let size = chunk_info.layout.size();
 
                 unindexed += size;
                 if goal_in_bytes <= collected + unindexed {
