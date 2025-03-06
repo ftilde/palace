@@ -447,7 +447,7 @@ pub struct PageTableState {
 unsafe fn unref_brick_in_page_table(
     device: &DeviceContext,
     brick_index: &mut Map<DataId, Entry>,
-    page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+    page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
     chunk_lru: &mut LRUManager<LRUItem>,
     page_table_entry: PageTableEntry,
 ) {
@@ -484,7 +484,7 @@ impl PageTableState {
     fn note_use(
         &mut self,
         chunk: ChunkIndex,
-        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
     ) {
         // Chunk may not be present anymore due to intermittent garbage collection
         if let Some(pt_entry) = self.present.get_mut(&chunk) {
@@ -496,7 +496,7 @@ impl PageTableState {
         &mut self,
         device: &DeviceContext,
         data_index: &mut Map<DataId, Entry>,
-        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex, DataId)>,
+        page_table_lru: &mut LRUManagerInner<(OperatorId, ChunkIndex)>,
         chunk_lru: &mut LRUManager<LRUItem>,
         pos: ChunkIndex,
     ) {
@@ -555,13 +555,14 @@ impl<'a> PageTableHandle<'a> {
             );
         });
         let data_id = brick.access.id;
+        assert_eq!(data_id, DataId::new(self.op, pos));
 
         let lru_index = self
             .device
             .storage
             .page_table_lru
             .borrow_mut()
-            .add((self.op, pos, data_id));
+            .add((self.op, pos));
 
         // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
         std::mem::forget(brick);
@@ -618,7 +619,7 @@ pub struct Storage {
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
     // corresponding table (thus (possibly) adding them to "normal" lru_manager)
-    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, ChunkIndex, DataId)>>,
+    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, ChunkIndex)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -951,12 +952,13 @@ impl Storage {
             // inserted in the lru only when they are first inserted into the index, we effectively
             // a "least recently added" strategy here. This is probably not what we actually
             // want... However, we (so far) have no feedback about bricks being used via the index.
-            while let Some((op, pos, data_id)) = page_table_lru.get_next() {
+            while let Some((op, pos)) = page_table_lru.get_next() {
                 let brick_index = page_table_index.get_mut(&op).unwrap();
 
                 // Releasing the brick also removes it from the page table queue
                 brick_index.release(device, &mut index, &mut *page_table_lru, &mut lru, pos);
 
+                let data_id = DataId::new(op, pos);
                 let brick_entry = index.get(&data_id).unwrap();
                 let brick_info = match &brick_entry.state {
                     StorageEntryState::Registered | StorageEntryState::Initializing(_) => {
