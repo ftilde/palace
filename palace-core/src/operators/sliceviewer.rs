@@ -452,9 +452,9 @@ void main()
 
                 let num_bricks = m_in.dimension_in_chunks().hmul();
 
-                let brick_index = device
+                let page_table = device
                     .storage
-                    .get_index(
+                    .get_page_table(
                         *ctx,
                         device,
                         level.chunks.operator_descriptor(),
@@ -571,12 +571,12 @@ void main()
                         }
 
                         if let Err(crate::chunk_utils::Timeout) =
-                            crate::chunk_utils::request_to_index_with_timeout(
+                            crate::chunk_utils::request_to_page_table_with_timeout(
                                 &*ctx,
                                 device,
                                 &mut to_request_linear,
                                 level,
-                                &brick_index,
+                                &page_table,
                                 request_batch_size,
                                 true,
                             )
@@ -609,7 +609,7 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            &brick_index,
+                            &page_table,
                             request_table.inner(),
                             &state_initialized,
                             &state_values,

@@ -483,7 +483,7 @@ fn run_rw<D: DynDimension + LargerDim>(
 
                         let chunk_index = device
                             .storage
-                            .get_index(
+                            .get_page_table(
                                 *ctx,
                                 device,
                                 upper_result.chunks.operator_descriptor(),

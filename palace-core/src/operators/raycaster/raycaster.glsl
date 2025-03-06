@@ -13,7 +13,7 @@
 #include <color.glsl>
 
 
-layout(buffer_reference, std430) buffer IndexType {
+layout(buffer_reference, std430) buffer PageTableType {
     Chunk values[];
 };
 
@@ -26,7 +26,7 @@ layout(buffer_reference, std430) buffer UseTableType {
 };
 
 struct LOD {
-    IndexType index;
+    PageTableType page_table;
     QueryTableType query_table;
     UseTableType use_table;
     UVec3 dimensions;
@@ -258,10 +258,10 @@ void main()
                     float sampled_intensity;
 
                     #ifdef SHADING_NONE
-                    try_sample(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity);
+                    try_sample(3, pos_voxel, m_in, level.page_table.values, res, sample_brick_pos_linear, sampled_intensity);
                     #else
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.index.values, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table.values, res, sample_brick_pos_linear, sampled_intensity, grad_f);
                     #endif
 
 

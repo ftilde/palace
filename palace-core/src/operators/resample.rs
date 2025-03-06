@@ -397,7 +397,7 @@ void main() {
                             // better approach for indices this can be revisited.
                             let chunk_index = device
                                 .storage
-                                .get_index(
+                                .get_page_table(
                                     *ctx,
                                     device,
                                     input.chunks.operator_descriptor(),

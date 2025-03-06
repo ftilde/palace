@@ -620,7 +620,7 @@ pub fn raycast(
     #[repr(C)]
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
     struct LOD {
-        index: u64,
+        page_table_root: u64,
         request_table: u64,
         use_table: u64,
         dim: Vector<D3, u32>,
@@ -838,7 +838,7 @@ pub fn raycast(
 
                         let brick_index = device
                             .storage
-                            .get_index(
+                            .get_page_table(
                                 *ctx,
                                 device,
                                 level.chunks.descriptor(),
@@ -865,7 +865,7 @@ pub fn raycast(
                         lod_data.push((brick_index, request_table, use_table, m_in));
 
                         lods.push(LOD {
-                            index: index_addr,
+                            page_table_root: index_addr,
                             request_table: req_table_addr,
                             use_table: use_table_addr,
                             dim: m_in.dimensions.raw().into(),
@@ -936,7 +936,7 @@ pub fn raycast(
                                     done = false;
 
                                     if let Err(crate::chunk_utils::Timeout) =
-                                        crate::chunk_utils::request_to_index_with_timeout(
+                                        crate::chunk_utils::request_to_page_table_with_timeout(
                                             &*ctx,
                                             device,
                                             &mut to_request_linear,

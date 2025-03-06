@@ -429,26 +429,26 @@ impl<'a> InplaceHandle<'a> {
     }
 }
 
-struct IndexBrickRef {
+struct PageTableEntry {
     id: DataId,
     acquire_lru_index: LRUIndexInner,
 }
 
-pub struct IndexEntry {
+pub struct PageTableState {
     storage: StorageInfo,
     visibility: Visibility,
-    present: Map<u64, IndexBrickRef>,
+    present: Map<u64, PageTableEntry>,
     access: AccessState,
 }
 
 // Safety: The caller is responsible for removing the reference from the index in gpu memory
 // (i.e. self.storage.allocation.buffer)
-unsafe fn unref_brick_in_index(
+unsafe fn unref_brick_in_page_table(
     device: &DeviceContext,
     brick_index: &mut Map<DataId, Entry>,
     index_lru: &mut LRUManagerInner<(OperatorId, u64, DataId)>,
     brick_lru: &mut LRUManager<LRUItem>,
-    brick_ref: IndexBrickRef,
+    brick_ref: PageTableEntry,
 ) {
     index_lru.remove(brick_ref.acquire_lru_index);
 
@@ -470,7 +470,7 @@ unsafe fn unref_brick_in_index(
     );
 }
 
-impl IndexEntry {
+impl PageTableState {
     fn new(storage: StorageInfo, visibility: Visibility) -> Self {
         Self {
             storage,
@@ -510,20 +510,20 @@ impl IndexEntry {
         let brick_ref = self.present.remove(&pos).unwrap();
 
         // Safety: We have also just removed the reference from the index
-        unsafe { unref_brick_in_index(device, brick_index, index_lru, brick_lru, brick_ref) };
+        unsafe { unref_brick_in_page_table(device, brick_index, index_lru, brick_lru, brick_ref) };
     }
 }
 
-pub struct IndexHandle<'a> {
+pub struct PageTableHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
     pub(crate) num_chunks: usize,
     op: OperatorId,
     device: &'a DeviceContext,
 }
 
-impl<'a> IndexHandle<'a> {
+impl<'a> PageTableHandle<'a> {
     pub fn insert<'h>(&self, pos: u64, brick: ReadHandle<'h>) {
-        let mut index = self.device.storage.index_index.borrow_mut();
+        let mut index = self.device.storage.page_table_index.borrow_mut();
         let entry = index.get_mut(&self.op).unwrap();
 
         if entry.present.contains_key(&pos) {
@@ -552,7 +552,7 @@ impl<'a> IndexHandle<'a> {
         let lru_index = self
             .device
             .storage
-            .index_lru
+            .page_table_lru
             .borrow_mut()
             .add((self.op, pos, data_id));
 
@@ -561,7 +561,7 @@ impl<'a> IndexHandle<'a> {
 
         entry.present.insert(
             pos,
-            IndexBrickRef {
+            PageTableEntry {
                 id: data_id,
                 acquire_lru_index: lru_index,
             },
@@ -569,17 +569,17 @@ impl<'a> IndexHandle<'a> {
     }
 
     pub fn note_use<'h>(&self, pos: u64) {
-        let mut index_index = self.device.storage.index_index.borrow_mut();
-        let index_entry = index_index.get_mut(&self.op).unwrap();
+        let mut page_table_index = self.device.storage.page_table_index.borrow_mut();
+        let index_entry = page_table_index.get_mut(&self.op).unwrap();
 
-        let mut index_lru = self.device.storage.index_lru.borrow_mut();
+        let mut index_lru = self.device.storage.page_table_lru.borrow_mut();
 
         index_entry.note_use(pos, &mut index_lru);
     }
 }
-impl<'a> Drop for IndexHandle<'a> {
+impl<'a> Drop for PageTableHandle<'a> {
     fn drop(&mut self) {
-        let mut index = self.device.storage.index_index.borrow_mut();
+        let mut index = self.device.storage.page_table_index.borrow_mut();
         let vram_entry = index.get_mut(&self.op).unwrap();
 
         let longevity = vram_entry.storage.data_longevity;
@@ -589,7 +589,7 @@ impl<'a> Drop for IndexHandle<'a> {
             &mut vram_entry.access,
             &mut lru_manager,
             self.device,
-            LRUItem::Index(self.op),
+            LRUItem::PageTableRoot(self.op),
             Some(longevity),
         );
     }
@@ -598,7 +598,7 @@ impl<'a> Drop for IndexHandle<'a> {
 #[derive(Copy, Clone, Debug)]
 enum LRUItem {
     Data(DataId, DataVersion),
-    Index(OperatorId),
+    PageTableRoot(OperatorId),
 }
 
 pub struct Storage {
@@ -606,12 +606,12 @@ pub struct Storage {
     old_preview_data_index: RefCell<
         Map<DataId, BTreeMap<FrameNumber, (StorageEntryState, Option<LRUIndex>, CmdBufferEpoch)>>,
     >,
-    index_index: RefCell<Map<OperatorId, IndexEntry>>,
+    page_table_index: RefCell<Map<OperatorId, PageTableState>>,
     // Manage (unreferenced) items (brick as well as index) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
-    // Purpose: Keep track of when bricks in index were requested and possibly remove them from the
-    // corresponding brick index (thus (possibly) adding them to "normal" lru_manager)
-    index_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
+    // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
+    // corresponding table (thus (possibly) adding them to "normal" lru_manager)
+    page_table_lru: RefCell<super::LRUManagerInner<(OperatorId, u64, DataId)>>,
     pub(crate) barrier_manager: BarrierManager,
     allocator: Allocator,
     new_data: super::NewDataManager,
@@ -625,9 +625,9 @@ impl Storage {
         Self {
             data_index: Default::default(),
             old_preview_data_index: Default::default(),
-            index_index: Default::default(),
+            page_table_index: Default::default(),
             lru_manager: Default::default(),
-            index_lru: Default::default(),
+            page_table_lru: Default::default(),
             barrier_manager: BarrierManager::new(),
             allocator,
             new_data: Default::default(),
@@ -701,7 +701,7 @@ impl Storage {
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
     /// references is done!
     pub unsafe fn free_vram(&self) {
-        for (_, entry) in std::mem::take(&mut *self.index_index.borrow_mut()) {
+        for (_, entry) in std::mem::take(&mut *self.page_table_index.borrow_mut()) {
             self.allocator.deallocate(entry.storage.allocation);
         }
 
@@ -806,10 +806,10 @@ impl Storage {
         self.manual_garbage_returns.set(0);
 
         let mut lru = self.lru_manager.borrow_mut();
-        let mut index_lru = self.index_lru.borrow_mut();
+        let mut index_lru = self.page_table_lru.borrow_mut();
         let mut index = self.data_index.borrow_mut();
         let mut old_preview_index = self.old_preview_data_index.borrow_mut();
-        let mut index_index = self.index_index.borrow_mut();
+        let mut page_table_index = self.page_table_index.borrow_mut();
 
         let mut indices_to_unref = Vec::new();
         for (longevity, inner_lru) in lru.inner_mut() {
@@ -878,8 +878,8 @@ impl Storage {
                             | StorageEntryState::Initialized(info, _, _) => info,
                         }
                     }
-                    LRUItem::Index(key) => {
-                        let entry = index_index.get_mut(&key).unwrap();
+                    LRUItem::PageTableRoot(key) => {
+                        let entry = page_table_index.get_mut(&key).unwrap();
                         let AccessState::None(_, f) = entry.access else {
                             panic!("Should not be in LRU list");
                         };
@@ -890,7 +890,7 @@ impl Storage {
                             break;
                         }
 
-                        let entry = index_index.remove(&key).unwrap();
+                        let entry = page_table_index.remove(&key).unwrap();
 
                         indices_to_unref.push(entry.present);
 
@@ -926,7 +926,13 @@ impl Storage {
         for brick_map in indices_to_unref {
             for (_pos, brick_ref) in brick_map {
                 unsafe {
-                    unref_brick_in_index(device, &mut index, &mut index_lru, &mut lru, brick_ref)
+                    unref_brick_in_page_table(
+                        device,
+                        &mut index,
+                        &mut index_lru,
+                        &mut lru,
+                        brick_ref,
+                    )
                 };
             }
         }
@@ -939,7 +945,7 @@ impl Storage {
             // a "least recently added" strategy here. This is probably not what we actually
             // want... However, we (so far) have no feedback about bricks being used via the index.
             while let Some((op, pos, data_id)) = index_lru.get_next() {
-                let brick_index = index_index.get_mut(&op).unwrap();
+                let brick_index = page_table_index.get_mut(&op).unwrap();
 
                 // Releasing the brick also removes it from the index_lru queue
                 brick_index.release(device, &mut index, &mut *index_lru, &mut lru, pos);
@@ -1315,16 +1321,16 @@ impl Storage {
 
     // TODO taking the ctx here and this being a async fn instead of returning a request is not
     // particularly pretty. We should try to disentangle this.
-    pub async fn get_index<'b, 'inv>(
+    pub async fn get_page_table<'b, 'inv>(
         &'b self,
         ctx: OpaqueTaskContext<'b, 'inv>,
         device: &'b DeviceContext,
         op: OperatorDescriptor,
         size: usize,
         dst: DstBarrierInfo,
-    ) -> IndexHandle<'b> {
+    ) -> PageTableHandle<'b> {
         let (src, created, buffer) = {
-            let mut index = self.index_index.borrow_mut();
+            let mut index = self.page_table_index.borrow_mut();
 
             if let Some(entry) = index.get_mut(&op.id) {
                 inc_access(&mut entry.access, self);
@@ -1345,7 +1351,7 @@ impl Storage {
                     .submit(self.request_allocate_raw(device, layout, flags, location))
                     .await;
 
-                let mut index = self.index_index.borrow_mut();
+                let mut index = self.page_table_index.borrow_mut();
 
                 let entry = match index.entry(op.id) {
                     std::collections::hash_map::Entry::Occupied(o) => {
@@ -1383,7 +1389,7 @@ impl Storage {
                             src,
                             created: self.barrier_manager.current_epoch(),
                         };
-                        slot.insert(IndexEntry::new(info, visibility))
+                        slot.insert(PageTableState::new(info, visibility))
                     }
                 };
 
@@ -1401,7 +1407,7 @@ impl Storage {
         }
         assert!(self.barrier_manager.is_visible(src, dst, created));
 
-        IndexHandle {
+        PageTableHandle {
             buffer,
             op: op.id,
             device,

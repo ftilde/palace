@@ -8,7 +8,7 @@ use crate::{
     dtypes::{DType, StaticElementType},
     operators::tensor::TensorOperator,
     storage::{
-        gpu::{IndexHandle, StateCacheHandle, StateCacheResult},
+        gpu::{PageTableHandle, StateCacheHandle, StateCacheResult},
         Element,
     },
     task::OpaqueTaskContext,
@@ -110,12 +110,12 @@ impl<'a> ChunkFeedbackTable<'a> {
 
 pub struct Timeout;
 
-pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
+pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
     to_request_linear: &mut [RTElement],
     vol: &'inv TensorOperator<D, StaticElementType<E>>,
-    index: &IndexHandle<'_>,
+    page_table_handle: &PageTableHandle<'_>,
     batch_size: &mut usize,
     interactive: bool,
 ) -> Result<(), Timeout> {
@@ -148,7 +148,7 @@ pub async fn request_to_index_with_timeout<'cref, 'inv, D: Dimension, E: Element
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
         for (brick, brick_linear_pos) in requested_bricks.into_iter().zip(batch.into_iter()) {
-            index.insert(*brick_linear_pos as u64, brick);
+            page_table_handle.insert(*brick_linear_pos as u64, brick);
         }
 
         if let Some(lateness) = ctx.past_deadline(interactive) {
