@@ -911,11 +911,14 @@ pub fn raycast(
                         ctx.submit(device.barrier(
                             SrcBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE,
+                                access: vk::AccessFlags2::SHADER_WRITE
+                                    | vk::AccessFlags2::SHADER_READ,
                             },
                             DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_READ,
+                                stage: vk::PipelineStageFlags2::TRANSFER
+                                    | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::TRANSFER_READ
+                                    | vk::AccessFlags2::SHADER_WRITE,
                             },
                         ))
                         .await;
@@ -977,8 +980,10 @@ pub fn raycast(
                         // Make writes to the request table visible (including initialization)
                         ctx.submit(device.barrier(
                             SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER,
-                                access: vk::AccessFlags2::TRANSFER_WRITE,
+                                stage: vk::PipelineStageFlags2::TRANSFER
+                                    | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::TRANSFER_WRITE
+                                    | vk::AccessFlags2::SHADER_WRITE,
                             },
                             DstBarrierInfo {
                                 stage: vk::PipelineStageFlags2::COMPUTE_SHADER,

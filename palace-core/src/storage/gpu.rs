@@ -1,4 +1,5 @@
 use ahash::HashMapExt;
+use bytemuck::{Pod, Zeroable};
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
@@ -22,8 +23,10 @@ use crate::{
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::{IdGenerator, Map},
     vulkan::{
-        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
-        SrcBarrierInfo,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig},
+        shader::Shader,
+        state::VulkanState,
+        CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -471,6 +474,89 @@ unsafe fn unref_in_page_table(
     );
 }
 
+fn dispatch_page_table_release(
+    device: &DeviceContext,
+    root: &dyn crate::vulkan::pipeline::AsDescriptors,
+    chunk_id: ChunkIndex,
+) {
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable)]
+    struct PushConstants {
+        chunk_id: u64,
+    }
+    let pipeline = device.request_state((), |device, ()| {
+        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_delete.glsl")))
+            .use_push_descriptor(true)
+            .build(device)
+    });
+    let pipeline = match pipeline {
+        Ok(o) => o,
+        Err(e) => {
+            println!("{}", e);
+            panic!("");
+        }
+    };
+
+    device.with_cmd_buffer(|cmd| {
+        let descriptor_config = DescriptorConfig::new([root]);
+
+        let consts = PushConstants {
+            chunk_id: chunk_id.0,
+        };
+        unsafe {
+            let mut pipeline = pipeline.bind(cmd);
+
+            pipeline.push_constant_pod(consts);
+            pipeline.push_descriptor_set(0, descriptor_config);
+            pipeline.dispatch3d(crate::vec::Vector::fill(1));
+        }
+    });
+}
+
+fn dispatch_page_table_insert(
+    device: &DeviceContext,
+    root: &dyn crate::vulkan::pipeline::AsDescriptors,
+    chunk_id: ChunkIndex,
+    buffer: ash::vk::Buffer,
+) {
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable)]
+    struct PushConstants {
+        chunk_id: u64,
+        buffer_addr: u64,
+    }
+    let pipeline = device.request_state((), |device, ()| {
+        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_insert.glsl")))
+            .use_push_descriptor(true)
+            .build(device)
+    });
+    let pipeline = match pipeline {
+        Ok(o) => o,
+        Err(e) => {
+            println!("{}", e);
+            panic!("");
+        }
+    };
+    let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
+    let buffer_addr = unsafe { device.functions().get_buffer_device_address(&info) };
+
+    device.with_cmd_buffer(|cmd| {
+        let descriptor_config = DescriptorConfig::new([root]);
+
+        let consts = PushConstants {
+            chunk_id: chunk_id.0,
+            buffer_addr,
+        };
+        unsafe {
+            let mut pipeline = pipeline.bind(cmd);
+
+            pipeline.push_constant_pod(consts);
+            pipeline.push_descriptor_set(0, descriptor_config);
+            pipeline.dispatch3d(crate::vec::Vector::fill(1));
+        }
+    });
+}
+
 impl PageTableState {
     fn new(storage: StorageInfo, visibility: Visibility) -> Self {
         Self {
@@ -500,17 +586,7 @@ impl PageTableState {
         chunk_lru: &mut LRUManager<LRUItem>,
         pos: ChunkIndex,
     ) {
-        device.with_cmd_buffer(|cmd| unsafe {
-            let addr: ash::vk::DeviceAddress = 0u64;
-            let offset = pos.0 * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
-
-            device.functions().cmd_update_buffer(
-                cmd.raw(),
-                self.storage.allocation.buffer,
-                offset,
-                bytemuck::bytes_of(&addr),
-            );
-        });
+        dispatch_page_table_release(device, &self.storage.allocation, pos);
 
         let pt_entry = self.present.remove(&pos).unwrap();
 
@@ -535,23 +611,8 @@ impl<'a> PageTableHandle<'a> {
             return;
         }
 
-        let chunk_buffer = chunk.buffer;
+        dispatch_page_table_insert(self.device, self, pos, chunk.buffer);
 
-        // We are somewhat fine with racing here, but not sure how to convince the validation
-        // layers of this...
-        self.device.with_cmd_buffer(|cmd| unsafe {
-            let info = ash::vk::BufferDeviceAddressInfo::default().buffer(chunk_buffer);
-            let addr = self.device.functions().get_buffer_device_address(&info);
-            let offset = pos.0 * std::mem::size_of::<ash::vk::DeviceAddress>() as u64;
-
-            assert!(offset < entry.storage.layout.size() as u64);
-            self.device.functions().cmd_update_buffer(
-                cmd.raw(),
-                self.buffer,
-                offset,
-                bytemuck::bytes_of(&addr),
-            );
-        });
         let data_id = chunk.access.id;
         assert_eq!(data_id, DataId::new(self.op, pos));
 
