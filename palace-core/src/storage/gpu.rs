@@ -519,14 +519,15 @@ fn dispatch_page_table_release(
         to_delete: u64,
         page_table_root: BufferAddress,
     }
-    let pipeline = device.request_state(to_delete, |device, to_delete| {
-        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_delete.glsl")).define(
-            match to_delete {
-                DispatchDeleteTarget::Inner(_) => "MODE_INNER",
-                DispatchDeleteTarget::Leaf(_) => "MODE_LEAF",
-            },
-            1,
-        ))
+
+    let delete_mode = match to_delete {
+        DispatchDeleteTarget::Inner(_) => "MODE_INNER",
+        DispatchDeleteTarget::Leaf(_) => "MODE_LEAF",
+    };
+    let pipeline = device.request_state(delete_mode, |device, delete_mode| {
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("page_table_delete.glsl")).define(delete_mode, 1),
+        )
         .use_push_descriptor(true)
         .build(device)
     });
