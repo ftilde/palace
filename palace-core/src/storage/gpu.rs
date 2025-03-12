@@ -686,6 +686,10 @@ pub struct PageTableHandle<'a> {
 }
 
 impl<'a> PageTableHandle<'a> {
+    pub fn root(&self) -> BufferAddress {
+        buffer_address(&self.device, self.buffer)
+    }
+
     pub async fn insert<'h, 'inv>(
         &self,
         ctx: OpaqueTaskContext<'h, 'inv>,

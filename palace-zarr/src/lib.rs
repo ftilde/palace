@@ -41,9 +41,11 @@ fn dtype_zarr_to_palace(d: &DataType) -> Result<DType, Error> {
         DataType::Int8 => ScalarType::I8,
         DataType::Int16 => ScalarType::I16,
         DataType::Int32 => ScalarType::I32,
+        DataType::Int64 => ScalarType::I64,
         DataType::UInt8 => ScalarType::U8,
         DataType::UInt16 => ScalarType::U16,
         DataType::UInt32 => ScalarType::U32,
+        DataType::UInt64 => ScalarType::U64,
         DataType::Float32 => ScalarType::F32,
         _ => Err(format!("No palace correspondence for {:?}", d))?,
     }))
@@ -62,6 +64,8 @@ fn dtype_palace_to_zarr(d: DType) -> Result<DataType, Error> {
         ScalarType::F32 => DataType::Float32,
         ScalarType::U32 => DataType::UInt32,
         ScalarType::I32 => DataType::Int32,
+        ScalarType::U64 => DataType::UInt64,
+        ScalarType::I64 => DataType::Int64,
     })
 }
 

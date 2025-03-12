@@ -117,6 +117,8 @@ impl RunTime {
             ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_id),
             ScalarType::U32 => self.resolve_static::<u32>(py, &op.try_into().unwrap(), chunk_id),
             ScalarType::I32 => self.resolve_static::<i32>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::U64 => self.resolve_static::<u64>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::I64 => self.resolve_static::<i64>(py, &op.try_into().unwrap(), chunk_id),
         }
     }
 

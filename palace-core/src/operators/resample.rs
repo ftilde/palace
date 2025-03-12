@@ -207,7 +207,8 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
         .vec::<u32>(nd, "chunk_dim_in")
         .vec::<u32>(nd, "vol_dim_in")
         .vec::<u32>(nd, "mem_size_out")
-        .vec::<u32>(nd, "out_begin");
+        .vec::<u32>(nd, "out_begin")
+        .scalar::<u64>("page_table_root");
 
     const SHADER: &'static str = r#"
 #include <util.glsl>
@@ -222,11 +223,7 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
 
-layout(std430, binding = 0) buffer RefBuffer {
-    Chunk values[NUM_CHUNKS];
-} bricks;
-
-layout(std430, binding = 1) buffer OutputBuffer{
+layout(std430, binding = 0) buffer OutputBuffer{
     T values[];
 } outputData;
 
@@ -249,6 +246,8 @@ void main() {
     T default_val;
     DEFAULT_VAL_INIT
 
+    PageTablePage page_table_root = PageTablePage(consts.page_table_root);
+
     TensorMetaData(N) m_in;
     m_in.dimensions = consts.vol_dim_in;
     m_in.chunk_size = consts.chunk_dim_in;
@@ -257,10 +256,12 @@ void main() {
     uint64_t sample_brick_pos_linear;
 
     Chunk chunk;
-    try_find_chunk(bricks.values, sample_brick_pos_linear, UseTableType(0UL), 12, chunk);\
+    UseTableType t = UseTableType(0UL);
+    uint len = 0;
+    try_find_chunk(page_table_root, sample_brick_pos_linear, t, len, chunk);\
 
     T sampled_intensity;
-    try_sample(N, sample_pos_clamp, m_in, bricks.values, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
+    try_sample(N, sample_pos_clamp, m_in, page_table_root, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
 
     if(res == SAMPLE_RES_FOUND) {
         // Nothing to do!
@@ -400,7 +401,7 @@ void main() {
                             // TODO: It would be nice to share the chunk_index between requests, but then
                             // we never free any chunks and run out of memory. Maybe when/if we have a
                             // better approach for indices this can be revisited.
-                            let chunk_index = device
+                            let page_table = device
                                 .storage
                                 .get_page_table(
                                     *ctx,
@@ -421,10 +422,12 @@ void main() {
                                     &in_brick_pos,
                                     &m_in.dimension_in_chunks(),
                                 );
-                                chunk_index
+                                page_table
                                     .insert(*ctx, ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
                                     .await;
                             }
+
+                            let page_table_root = page_table.root();
 
                             // Make writes to the index visible
                             ctx.submit(device.barrier(
@@ -439,8 +442,7 @@ void main() {
                             ))
                             .await;
 
-                            let descriptor_config =
-                                DescriptorConfig::new([&chunk_index, &gpu_brick_out]);
+                            let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
                             let size = m_out.chunk_size.raw();
 
@@ -453,6 +455,7 @@ void main() {
                                     consts.vec(&m_in.dimensions.raw())?;
                                     consts.vec(&m_out.chunk_size.raw())?;
                                     consts.vec(&out_info.begin().raw())?;
+                                    consts.scalar(page_table_root.0)?;
                                     Ok(())
                                 });
 

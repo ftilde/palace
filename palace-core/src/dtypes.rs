@@ -144,6 +144,8 @@ impl_conversion!(u16, U16);
 impl_conversion!(i16, I16);
 impl_conversion!(u32, U32);
 impl_conversion!(i32, I32);
+impl_conversion!(u64, U64);
+impl_conversion!(i64, I64);
 impl_conversion!(f32, F32);
 //impl_conversion!(Vector<D4, u8>, U8Vec4, 1);
 //impl_conversion!([Vector<D4, f32>; 2], F32Vec4A2, 1);
@@ -224,6 +226,7 @@ impl DType {
             ScalarType::U16 | ScalarType::I16 => Some(crate::vulkan::shader::ext::INT16_TYPES),
             ScalarType::F32 => None,
             ScalarType::U32 | ScalarType::I32 => None,
+            ScalarType::U64 | ScalarType::I64 => Some(crate::vulkan::shader::ext::INT64_TYPES),
         }
     }
     pub fn vec_size(&self) -> usize {
@@ -261,6 +264,8 @@ impl ElementType for DType {
             ScalarType::I16 => Layout::array::<i16>(size).unwrap(),
             ScalarType::U32 => Layout::array::<u32>(size).unwrap(),
             ScalarType::I32 => Layout::array::<i32>(size).unwrap(),
+            ScalarType::U64 => Layout::array::<u64>(size).unwrap(),
+            ScalarType::I64 => Layout::array::<i64>(size).unwrap(),
             ScalarType::F32 => Layout::array::<f32>(size).unwrap(),
         }
     }
@@ -278,6 +283,8 @@ pub enum ScalarType {
     F32,
     U32,
     I32,
+    U64,
+    I64,
 }
 
 impl ScalarType {
@@ -289,6 +296,8 @@ impl ScalarType {
             ScalarType::I16 => "int16_t",
             ScalarType::U32 => "uint",
             ScalarType::I32 => "int",
+            ScalarType::U64 => "uint64_t",
+            ScalarType::I64 => "int64_t",
             ScalarType::F32 => "float",
         }
     }
@@ -301,6 +310,8 @@ impl ScalarType {
             ScalarType::I16 => "i16",
             ScalarType::U32 => "u32",
             ScalarType::I32 => "i32",
+            ScalarType::U64 => "u64",
+            ScalarType::I64 => "i64",
             ScalarType::F32 => "f32",
         }
     }

@@ -93,10 +93,14 @@ impl UnaryOp {
                 }
             }
             UnaryOp::Neg => match input.scalar {
-                ScalarType::U8 | ScalarType::U16 | ScalarType::U32 => {
+                ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
                     return Err(format!("Value of type {:?} cannot be negated", input).into())
                 }
-                ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::F32 => input,
+                ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::F32 => input,
             },
             UnaryOp::Index(i) => {
                 if *i < input.size {

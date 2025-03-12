@@ -68,6 +68,10 @@ fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
         ScalarType::I32
     } else if d.is::<u32>() {
         ScalarType::U32
+    } else if d.is::<i64>() {
+        ScalarType::I64
+    } else if d.is::<u64>() {
+        ScalarType::U64
     } else if d.is::<f32>() {
         ScalarType::F32
     } else {
