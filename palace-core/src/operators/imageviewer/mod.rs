@@ -208,13 +208,7 @@ pub fn view_image(
 
                 let page_table = device
                     .storage
-                    .get_page_table(
-                        *ctx,
-                        device,
-                        level.chunks.operator_descriptor(),
-                        num_bricks,
-                        dst_info,
-                    )
+                    .get_page_table(*ctx, device, level.chunks.operator_descriptor(), dst_info)
                     .await;
 
                 let request_table_size = 256;
@@ -359,7 +353,6 @@ pub fn view_image(
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            &page_table,
                             request_table.inner(),
                             &state_initialized,
                             &state_values,

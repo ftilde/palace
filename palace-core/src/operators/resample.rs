@@ -402,7 +402,6 @@ void main() {
                                     *ctx,
                                     device,
                                     input.chunks.operator_descriptor(),
-                                    num_chunks,
                                     dst_info,
                                 )
                                 .await;

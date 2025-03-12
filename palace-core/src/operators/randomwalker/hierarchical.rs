@@ -487,7 +487,6 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 *ctx,
                                 device,
                                 upper_result.chunks.operator_descriptor(),
-                                num_chunks,
                                 DstBarrierInfo {
                                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                                     access: vk::AccessFlags2::SHADER_READ,
@@ -535,7 +534,6 @@ fn run_rw<D: DynDimension + LargerDim>(
                         .await;
 
                         let descriptor_config = DescriptorConfig::new([
-                            &chunk_index,
                             points_fg_chunk,
                             points_bg_chunk,
                             &*seeds_buf,

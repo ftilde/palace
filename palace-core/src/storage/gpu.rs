@@ -684,7 +684,6 @@ impl PageTableState {
 
 pub struct PageTableHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
-    pub(crate) num_chunks: usize, //NO_PUSH_main remove
     op: OperatorId,
     device: &'a DeviceContext,
 }
@@ -1604,7 +1603,6 @@ impl Storage {
         ctx: OpaqueTaskContext<'b, 'inv>,
         device: &'b DeviceContext,
         op: OperatorDescriptor,
-        size: usize,
         dst: DstBarrierInfo,
     ) -> PageTableHandle<'b> {
         let (src, created, buffer) = {
@@ -1684,7 +1682,6 @@ impl Storage {
             buffer,
             op: op.id,
             device,
-            num_chunks: size,
         }
     }
 

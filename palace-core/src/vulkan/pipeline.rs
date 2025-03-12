@@ -11,7 +11,7 @@ use crate::mat::Matrix;
 use crate::{
     data::Vector,
     dim::*,
-    storage::gpu::{Allocation, PageTableHandle, ReadHandle, StateCacheHandle, WriteHandle},
+    storage::gpu::{Allocation, ReadHandle, StateCacheHandle, WriteHandle},
     util::Map,
     vulkan::shader::ShaderModule,
 };
@@ -605,14 +605,6 @@ impl<'a> AsBufferDescriptor for WriteHandle<'a> {
         vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.size as _)
-    }
-}
-
-impl<'a> AsBufferDescriptor for PageTableHandle<'a> {
-    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
-        vk::DescriptorBufferInfo::default()
-            .buffer(self.buffer)
-            .range((self.num_chunks * std::mem::size_of::<vk::DeviceAddress>()) as _)
     }
 }
 

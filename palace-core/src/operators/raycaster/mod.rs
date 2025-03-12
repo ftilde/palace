@@ -836,18 +836,11 @@ pub fn raycast(
                     {
                         let m_in = level.metadata;
                         let emd = level.embedding_data;
-                        let num_bricks = m_in.dimension_in_chunks().hmul();
                         //let dim_in_bricks = m_in.dimension_in_chunks();
 
                         let brick_index = device
                             .storage
-                            .get_page_table(
-                                *ctx,
-                                device,
-                                level.chunks.descriptor(),
-                                num_bricks,
-                                dst_info,
-                            )
+                            .get_page_table(*ctx, device, level.chunks.descriptor(), dst_info)
                             .await;
 
                         let page_table_root = buffer_address(device, brick_index.buffer);

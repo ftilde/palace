@@ -454,17 +454,9 @@ void main()
 
                 let out_info = m_out.chunk_info(pos);
 
-                let num_bricks = m_in.dimension_in_chunks().hmul();
-
                 let page_table = device
                     .storage
-                    .get_page_table(
-                        *ctx,
-                        device,
-                        level.chunks.operator_descriptor(),
-                        num_bricks,
-                        dst_info,
-                    )
+                    .get_page_table(*ctx, device, level.chunks.operator_descriptor(), dst_info)
                     .await;
 
                 let page_table_addr = page_table.root();
