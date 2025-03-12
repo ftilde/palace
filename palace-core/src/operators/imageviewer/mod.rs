@@ -306,12 +306,15 @@ pub fn view_image(
                     ))
                     .await;
 
+                    let mut done = false;
+                    let mut timeout = false;
+
                     if !request_table.newly_initialized {
                         let mut to_request_linear =
                             request_table.download_inserted(*ctx, device).await;
 
                         if to_request_linear.is_empty() {
-                            break false;
+                            done = true;
                         }
 
                         if let Err(crate::chunk_utils::Timeout) =
@@ -326,7 +329,7 @@ pub fn view_image(
                             )
                             .await
                         {
-                            break true;
+                            timeout = true;
                         }
 
                         // Clear request table for the next iteration
@@ -366,6 +369,13 @@ pub fn view_image(
                             pipeline.dispatch3d(global_size);
                         }
                     });
+
+                    if done {
+                        break false;
+                    }
+                    if timeout {
+                        break true;
+                    }
                 };
 
                 let src_info = SrcBarrierInfo {
