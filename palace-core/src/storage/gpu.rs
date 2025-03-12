@@ -456,7 +456,7 @@ enum PageTableChildType {
     Leaf(DataId, ChunkIndex),
 }
 struct PageTableChild {
-    page_table_lru_index: LRUIndexInner,
+    page_table_lru_index: Option<LRUIndexInner>,
     type_: PageTableChildType,
 }
 
@@ -476,7 +476,8 @@ unsafe fn unref_in_page_table(
     chunk_lru: &mut LRUManager<LRUItem>,
     page_table_entry: &PageTableChild,
 ) {
-    page_table_lru.remove(page_table_entry.page_table_lru_index);
+    // unwrap: page_table_entry should always be some if page is managed in the LRU.
+    page_table_lru.remove(page_table_entry.page_table_lru_index.unwrap());
 
     match page_table_entry.type_ {
         PageTableChildType::Inner(_) => {}
@@ -555,7 +556,7 @@ fn dispatch_page_table_release(
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
 pub struct BufferAddress(pub u64);
 
 fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
@@ -652,7 +653,8 @@ impl PageTableState {
     fn note_use(&mut self, buffer_addr: BufferAddress, page_table_lru: &mut PageTableLRU) {
         // Chunk may not be present anymore due to intermittent garbage collection
         if let Some(pt_entry) = self.children.get_mut(&buffer_addr) {
-            pt_entry.page_table_lru_index = page_table_lru.note_use(pt_entry.page_table_lru_index);
+            pt_entry.page_table_lru_index =
+                Some(page_table_lru.note_use(pt_entry.page_table_lru_index.unwrap()));
         }
     }
 
@@ -664,6 +666,7 @@ impl PageTableState {
         chunk_lru: &mut LRUManager<LRUItem>,
         addr: BufferAddress,
     ) -> PageTableChildType {
+        //println!("Remove {:?}", addr);
         let pt_entry = self.children.remove(&addr).unwrap();
 
         let to_delete = match &pt_entry.type_ {
@@ -705,6 +708,19 @@ impl<'a> PageTableHandle<'a> {
             return;
         }
 
+        let data_id = chunk.access.id;
+        assert_eq!(data_id, DataId::new(self.op, pos));
+
+        // Insert page in index so that following calls return in the `contains_key` guard above.
+        // => no double insertions, but postpone adding to LRU index, so that the page is not freed
+        // if the task is preempted during the inner page alloctations below.
+        entry.children.insert(
+            chunk_buffer_addr,
+            PageTableChild {
+                page_table_lru_index: None,
+                type_: PageTableChildType::Leaf(data_id, pos),
+            },
+        );
         std::mem::drop(index);
 
         let buf1 = ctx
@@ -755,9 +771,13 @@ impl<'a> PageTableHandle<'a> {
             chunk_buffer_addr,
         );
 
-        let data_id = chunk.access.id;
-        assert_eq!(data_id, DataId::new(self.op, pos));
+        // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
+        std::mem::forget(chunk);
 
+        let mut index = self.device.storage.page_table_index.borrow_mut();
+        let entry = index.get_mut(&self.op).unwrap();
+
+        // After allocations (potential preemptions): Give management to LRU
         let lru_index = self
             .device
             .storage
@@ -765,19 +785,11 @@ impl<'a> PageTableHandle<'a> {
             .borrow_mut()
             .add((self.op, chunk_buffer_addr));
 
-        // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
-        std::mem::forget(chunk);
-
-        let mut index = self.device.storage.page_table_index.borrow_mut();
-        let entry = index.get_mut(&self.op).unwrap();
-
-        entry.children.insert(
-            chunk_buffer_addr,
-            PageTableChild {
-                page_table_lru_index: lru_index,
-                type_: PageTableChildType::Leaf(data_id, pos),
-            },
-        );
+        entry
+            .children
+            .get_mut(&chunk_buffer_addr)
+            .unwrap()
+            .page_table_lru_index = Some(lru_index);
 
         for (buf, buf_addr) in [(buf1, buf1_addr), (buf2, buf2_addr)] {
             let lru_index = self
@@ -790,10 +802,11 @@ impl<'a> PageTableHandle<'a> {
             entry.children.insert(
                 buf_addr,
                 PageTableChild {
-                    page_table_lru_index: lru_index,
+                    page_table_lru_index: Some(lru_index),
                     type_: PageTableChildType::Inner(buf),
                 },
             );
+            //println!("Inner insert {:?}", buf_addr);
         }
     }
 
