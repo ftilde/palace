@@ -1,7 +1,6 @@
 use std::alloc::Layout;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
 use id::Identify;
 
 use super::tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator, LODVolumeOperator};
@@ -17,10 +16,13 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{
+        gpu::{buffer_address, BufferAddress},
+        DataVersionType,
+    },
     transfunc::TransFuncOperator,
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -291,17 +293,17 @@ pub fn render_slice(
     tf: TransFuncOperator,
     config: RenderConfig2D,
 ) -> FrameOperator {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        transform: cgmath::Matrix4<f32>,
-        vol_dim: cgmath::Vector3<u32>,
-        tf_min: f32,
-        chunk_dim: cgmath::Vector3<u32>,
-        tf_max: f32,
-        out_begin: cgmath::Vector2<u32>,
-        out_mem_dim: cgmath::Vector2<u32>,
-        tf_len: u32,
-    }
+    let push_constants = DynPushConstants::new()
+        .scalar::<u64>("page_table_root")
+        .scalar::<u64>("use_table")
+        .mat::<f32>(4, "transform")
+        .vec::<u32>(3, "vol_dim")
+        .scalar::<f32>("tf_min")
+        .vec::<u32>(3, "chunk_dim")
+        .scalar::<f32>("tf_max")
+        .vec::<u32>(2, "out_begin")
+        .vec::<u32>(2, "out_mem_dim")
+        .scalar::<u32>("tf_len");
 
     const SHADER: &'static str = r#"
 #extension GL_EXT_buffer_reference : require
@@ -316,28 +318,26 @@ pub fn render_slice(
 #include <color.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
+#include <mat.glsl>
+#include <vec.glsl>
 
 layout(scalar, binding = 0) buffer OutputBuffer{
     u8vec4 values[];
 } output_data;
 
-layout(std430, binding = 1) buffer RefBuffer {
-    Chunk values[NUM_BRICKS];
-} bricks;
-
-layout(std430, binding = 2) buffer QueryTable {
+layout(std430, binding = 1) buffer QueryTable {
     uint64_t values[REQUEST_TABLE_SIZE];
 } request_table;
 
-layout(std430, binding = 3) buffer StateBuffer {
+layout(std430, binding = 2) buffer StateBuffer {
     uint values[];
 } state;
 
-layout(std430, binding = 4) buffer ValueBuffer{
+layout(std430, binding = 3) buffer ValueBuffer{
     float values[];
 } brick_values;
 
-layout(std430, binding = 5) buffer TFTableBuffer {
+layout(std430, binding = 4) buffer TFTableBuffer {
     u8vec4 values[];
 } tf_table;
 
@@ -354,8 +354,8 @@ void classify(in float val, out u8vec4 result) {
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
-    uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
-    if(out_pos.x < consts.out_mem_dim.x && out_pos.y < consts.out_mem_dim.y) {
+    uint gID = out_pos.x + out_pos.y * consts.out_mem_dim[1];
+    if(out_pos.x < consts.out_mem_dim[1] && out_pos.y < consts.out_mem_dim[0]) {
         uint s = state.values[gID];
 
         u8vec4 val;
@@ -365,13 +365,13 @@ void main()
         } else if(s == INIT_EMPTY) {
             val = u8vec4(0, 0, 255, 255);
         } else {
-            vec3 pos = vec3(vec2(out_pos + consts.out_begin), 0);
+            vec3 pos = vec3(vec2(out_pos + to_glsl(consts.out_begin)), 0);
             //vec3 sample_pos_f = mulh_mat4(transform.value, pos);
-            vec3 sample_pos_f = (consts.transform * vec4(pos, 1)).xyz;
+            vec3 sample_pos_f = (to_glsl(consts.transform) * vec4(pos, 1)).xyz;
 
             TensorMetaData(3) m_in;
-            m_in.dimensions = from_glsl(consts.vol_dim);
-            m_in.chunk_size = from_glsl(consts.chunk_dim);
+            m_in.dimensions = consts.vol_dim;
+            m_in.chunk_size = consts.chunk_dim;
 
             // Round to nearest neighbor
             // Floor+0.5 is chosen instead of round to ensure compatibility with f32::round() (see
@@ -379,12 +379,12 @@ void main()
             vec3 sample_pos_g = floor(sample_pos_f + vec3(0.5));
             float[3] sample_pos = from_glsl(sample_pos_g);
 
-            ivec3 vol_dim = ivec3(consts.vol_dim);
+            ivec3 vol_dim = ivec3(to_glsl(consts.vol_dim));
 
             int res;
             uint64_t sample_brick_pos_linear;
             float sampled_intensity;
-            try_sample(3, sample_pos, m_in, bricks.values, res, sample_brick_pos_linear, sampled_intensity);
+            try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity);
 
             if(res == SAMPLE_RES_FOUND) {
                 classify(sampled_intensity, val);
@@ -416,8 +416,12 @@ void main()
             DataParam(projection_mat),
             DataParam(tf),
             DataParam(config),
+            DataParam(push_constants),
         ),
-        move |ctx, pos, loc, (input, result_metadata, projection_mat, tf, config)| {
+        move |ctx,
+              pos,
+              loc,
+              (input, result_metadata, projection_mat, tf, config, push_constants)| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -463,17 +467,25 @@ void main()
                     )
                     .await;
 
+                let page_table_addr = page_table.root();
+
                 let request_table_size = 256;
+                let use_table_size = 2048;
 
                 let pipeline = device.request_state(
-                    (m_in.chunk_size.hmul(), num_bricks, request_table_size),
-                    |device, (mem_size, num_bricks, request_table_size)| {
+                    (
+                        m_in.chunk_size.hmul(),
+                        request_table_size,
+                        use_table_size,
+                        push_constants,
+                    ),
+                    |device, (mem_size, request_table_size, use_table_size, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
-                                .push_const_block::<PushConstants>()
+                                .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
-                                .define("NUM_BRICKS", num_bricks)
-                                .define("REQUEST_TABLE_SIZE", request_table_size),
+                                .define("REQUEST_TABLE_SIZE", request_table_size)
+                                .define("USE_TABLE_SIZE", use_table_size),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
@@ -529,17 +541,18 @@ void main()
                     .await;
                 let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);
 
+                let raw_use_table = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        &format!("use_table"),
+                        Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
+                    ))
+                    .await;
+                let mut use_table = ChunkFeedbackTable::new(device, raw_use_table);
+                let use_table_addr = buffer_address(device, use_table.buffer());
+
                 let tf_data = tf.data();
-                let consts = PushConstants {
-                    tf_min: tf_data.min,
-                    tf_max: tf_data.max,
-                    tf_len: tf_data.len,
-                    vol_dim: m_in.dimensions.raw().into(),
-                    chunk_dim: m_in.chunk_size.raw().into(),
-                    out_begin: out_info.begin.raw().into(),
-                    out_mem_dim: out_info.mem_dimensions.raw().into(),
-                    transform: transform.into(),
-                };
 
                 let gpu_brick_out = ctx
                     .submit(ctx.alloc_slot_gpu(device, pos, &out_info.mem_dimensions))
@@ -591,6 +604,20 @@ void main()
                         request_table.newly_initialized = false;
                     }
 
+                    if !use_table.newly_initialized {
+                        let used_linear = use_table.download_inserted(*ctx, device).await;
+
+                        if !used_linear.is_empty() {
+                            for used in used_linear {
+                                page_table.note_use(BufferAddress(used));
+                            }
+
+                            device.with_cmd_buffer(|cmd| use_table.clear(cmd));
+                        }
+                    } else {
+                        use_table.newly_initialized = false;
+                    }
+
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
@@ -609,7 +636,6 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            &page_table,
                             request_table.inner(),
                             &state_initialized,
                             &state_values,
@@ -619,7 +645,19 @@ void main()
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant(consts);
+                            pipeline.push_constant_dyn(&push_constants, |consts| {
+                                consts.scalar(page_table_addr.0)?;
+                                consts.scalar(use_table_addr.0)?;
+                                consts.mat(&transform)?;
+                                consts.vec(&m_in.dimensions.raw().into())?;
+                                consts.scalar(tf_data.min)?;
+                                consts.vec(&m_in.chunk_size.raw().into())?;
+                                consts.scalar(tf_data.max)?;
+                                consts.vec(&out_info.begin.raw().into())?;
+                                consts.vec(&out_info.mem_dimensions.raw().into())?;
+                                consts.scalar(tf_data.len)?;
+                                Ok(())
+                            });
                             pipeline.write_descriptor_set(0, descriptor_config);
                             pipeline.dispatch3d(global_size);
                         }

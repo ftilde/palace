@@ -14,7 +14,10 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
-    storage::{gpu::BufferAddress, DataVersionType},
+    storage::{
+        gpu::{buffer_address, BufferAddress},
+        DataVersionType,
+    },
     transfunc::TransFuncOperator,
     vulkan::{
         memory::TempRessource,
@@ -620,9 +623,9 @@ pub fn raycast(
     #[repr(C)]
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
     struct LOD {
-        page_table_root: u64,
-        request_table: u64,
-        use_table: u64,
+        page_table_root: BufferAddress,
+        request_table: BufferAddress,
+        use_table: BufferAddress,
         dim: Vector<D3, u32>,
         chunk_dim: Vector<D3, u32>,
         spacing: Vector<D3, f32>,
@@ -847,25 +850,14 @@ pub fn raycast(
                             )
                             .await;
 
-                        let info =
-                            ash::vk::BufferDeviceAddressInfo::default().buffer(brick_index.buffer);
-                        let index_addr =
-                            unsafe { device.functions().get_buffer_device_address(&info) };
-
-                        let info = ash::vk::BufferDeviceAddressInfo::default()
-                            .buffer(request_table.buffer());
-                        let req_table_addr =
-                            unsafe { device.functions().get_buffer_device_address(&info) };
-
-                        let info =
-                            ash::vk::BufferDeviceAddressInfo::default().buffer(use_table.buffer());
-                        let use_table_addr =
-                            unsafe { device.functions().get_buffer_device_address(&info) };
+                        let page_table_root = buffer_address(device, brick_index.buffer);
+                        let req_table_addr = buffer_address(device, request_table.buffer());
+                        let use_table_addr = buffer_address(device, use_table.buffer());
 
                         lod_data.push((brick_index, request_table, use_table, m_in));
 
                         lods.push(LOD {
-                            page_table_root: index_addr,
+                            page_table_root,
                             request_table: req_table_addr,
                             use_table: use_table_addr,
                             dim: m_in.dimensions.raw().into(),

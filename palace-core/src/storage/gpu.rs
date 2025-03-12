@@ -560,7 +560,7 @@ fn dispatch_page_table_release(
 #[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
 pub struct BufferAddress(pub u64);
 
-fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
+pub fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
     let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
     BufferAddress(unsafe { device.functions().get_buffer_device_address(&info) })
 }
