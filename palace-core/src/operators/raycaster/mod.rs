@@ -969,7 +969,7 @@ pub fn raycast(
                                         data.0.note_use(BufferAddress(used));
                                     }
 
-                                    device.with_cmd_buffer(|cmd| data.1.clear(cmd));
+                                    device.with_cmd_buffer(|cmd| data.2.clear(cmd));
                                 }
                             } else {
                                 data.2.newly_initialized = false;
