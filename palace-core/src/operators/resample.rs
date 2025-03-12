@@ -255,11 +255,6 @@ void main() {
     int res;
     uint64_t sample_brick_pos_linear;
 
-    Chunk chunk;
-    UseTableType t = UseTableType(0UL);
-    uint len = 0;
-    try_find_chunk(page_table_root, sample_brick_pos_linear, t, len, chunk);\
-
     T sampled_intensity;
     try_sample(N, sample_pos_clamp, m_in, page_table_root, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
 
