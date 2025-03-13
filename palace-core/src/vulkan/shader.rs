@@ -249,8 +249,16 @@ impl DescriptorBindings {
                     *type_counts.entry(b.descriptor_type).or_default() += b.descriptor_count;
                 }
                 let binding_array = bindings.binding_array();
-                let mut dsl_info =
-                    vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding_array);
+
+                // TODO: Not sure if we want to add the PARTIALLY_BOUND flag to _ALL_ of the
+                // bindings, and in how far it hurts, but it seems really annoying to pass that
+                // info through to here...
+                let flags = vec![vk::DescriptorBindingFlags::PARTIALLY_BOUND; binding_array.len()];
+                let mut binding_flags =
+                    vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
+                let mut dsl_info = vk::DescriptorSetLayoutCreateInfo::default()
+                    .bindings(&binding_array)
+                    .push_next(&mut binding_flags);
                 if use_push_descriptor {
                     dsl_info =
                         dsl_info.flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);

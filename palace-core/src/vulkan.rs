@@ -430,6 +430,7 @@ impl DeviceContext {
                 .buffer_device_address(true)
                 .scalar_block_layout(true)
                 .runtime_descriptor_array(true)
+                .descriptor_binding_partially_bound(true)
                 .storage_buffer8_bit_access(true)
                 .shader_storage_buffer_array_non_uniform_indexing(true)
                 .shader_int8(true);
