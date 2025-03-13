@@ -7,9 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{
-        ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult, UseTable,
-    },
+    chunk_utils::{FeedbackTableElement, RequestTable, RequestTableResult, UseTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -734,7 +732,7 @@ pub fn raycast(
                     .await;
                 let request_tables = raw_request_tables
                     .into_iter()
-                    .map(|raw| RequestTable(ChunkFeedbackTable::new(device, raw)))
+                    .map(|raw| RequestTable::new(device, raw))
                     .collect::<Vec<_>>();
 
                 let raw_use_tables = ctx
@@ -749,7 +747,7 @@ pub fn raycast(
                     .await;
                 let use_tables = raw_use_tables
                     .into_iter()
-                    .map(|raw| UseTable(ChunkFeedbackTable::new(device, raw)))
+                    .map(|raw| UseTable::new(device, raw))
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
@@ -846,8 +844,8 @@ pub fn raycast(
                             .await;
 
                         let page_table_root = buffer_address(device, brick_index.buffer);
-                        let req_table_addr = buffer_address(device, request_table.0.buffer());
-                        let use_table_addr = buffer_address(device, use_table.0.buffer());
+                        let req_table_addr = request_table.buffer_address();
+                        let use_table_addr = use_table.buffer_address();
 
                         lod_data.push((brick_index, request_table, use_table, m_in));
 

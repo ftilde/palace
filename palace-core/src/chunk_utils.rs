@@ -15,8 +15,8 @@ use crate::{
     vec::Vector,
     vulkan::{
         pipeline::{
-            AsDescriptors, ComputePipeline, ComputePipelineBuilder, DescriptorConfig,
-            DynPushConstants,
+            AsBufferDescriptor, AsDescriptors, ComputePipeline, ComputePipelineBuilder,
+            DescriptorConfig, DynPushConstants,
         },
         shader::Shader,
         state::VulkanState,
@@ -123,9 +123,13 @@ impl RequestTableResult {
     }
 }
 
-pub struct RequestTable<'a>(pub ChunkFeedbackTable<'a>);
+pub struct RequestTable<'a>(ChunkFeedbackTable<'a>);
 
 impl<'a> RequestTable<'a> {
+    pub fn new(device: &DeviceContext, inner: StateCacheResult<'a>) -> Self {
+        Self(ChunkFeedbackTable::new(device, inner))
+    }
+
     /// Download the table results, try to insert the requested chunks into page table, respect
     /// timeout
     pub async fn download_and_insert<'cref, 'inv, D: Dimension, E: Element>(
@@ -166,11 +170,29 @@ impl<'a> RequestTable<'a> {
         }
         RequestTableResult::Continue
     }
+
+    pub fn buffer_address(&self) -> BufferAddress {
+        self.0.inner.buffer_address()
+    }
 }
 
-pub struct UseTable<'a>(pub ChunkFeedbackTable<'a>);
+impl<'a> AsBufferDescriptor for RequestTable<'a> {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        AsBufferDescriptor::gen_buffer_info(self.0.inner())
+    }
+}
+
+pub struct UseTable<'a>(ChunkFeedbackTable<'a>);
 
 impl<'a> UseTable<'a> {
+    pub fn new(device: &DeviceContext, inner: StateCacheResult<'a>) -> Self {
+        Self(ChunkFeedbackTable::new(device, inner))
+    }
+
+    pub fn buffer_address(&self) -> BufferAddress {
+        self.0.inner.buffer_address()
+    }
+
     /// Download the table results, note the buffers uses in the page table lru.
     pub async fn download_and_note_use<'cref, 'inv>(
         &mut self,

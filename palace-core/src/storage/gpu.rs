@@ -374,6 +374,12 @@ pub struct StateCacheHandle<'a> {
     frame: FrameNumber,
 }
 
+impl<'a> StateCacheHandle<'a> {
+    pub fn buffer_address(&self) -> BufferAddress {
+        buffer_address(self.device, self.buffer)
+    }
+}
+
 pub enum StateCacheResult<'a> {
     New(StateCacheHandle<'a>),
     Existing(StateCacheHandle<'a>),

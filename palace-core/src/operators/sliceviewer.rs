@@ -9,16 +9,14 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{
-        ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult, UseTable,
-    },
+    chunk_utils::{FeedbackTableElement, RequestTable, RequestTableResult, UseTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::{gpu::buffer_address, DataVersionType},
+    storage::DataVersionType,
     transfunc::TransFuncOperator,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
@@ -530,8 +528,7 @@ void main()
                         Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                     ))
                     .await;
-                let mut request_table =
-                    RequestTable(ChunkFeedbackTable::new(device, raw_request_table));
+                let mut request_table = RequestTable::new(device, raw_request_table);
 
                 let raw_use_table = ctx
                     .submit(ctx.access_state_cache_gpu(
@@ -541,8 +538,8 @@ void main()
                         Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
                     ))
                     .await;
-                let mut use_table = UseTable(ChunkFeedbackTable::new(device, raw_use_table));
-                let use_table_addr = buffer_address(device, use_table.0.buffer());
+                let mut use_table = UseTable::new(device, raw_use_table);
+                let use_table_addr = use_table.buffer_address();
 
                 let tf_data = tf.data();
 
@@ -601,7 +598,7 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            request_table.0.inner(),
+                            &request_table,
                             &state_initialized,
                             &state_values,
                             &tf_data_gpu,
