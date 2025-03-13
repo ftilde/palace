@@ -34,20 +34,20 @@ mat4 to_mat4(Mat4 v) {
     return o;
 }
 
-mat4 to_glsl(Mat(4) v) {
-    mat4 o;
-    for(int j=0; j<4; ++j) {
-        for(int i=0; i<4; ++i) {
-            o[j][i] = v[3-j][3-i];
-        }
-    }
-    //vec4 foo = to_glsl(v[3]);
-    //o[0] = to_glsl(v[3]);
-    //o[1] = to_glsl(v[2]);
-    //o[2] = to_glsl(v[1]);
-    //o[3] = to_glsl(v[0]);
-    return o;
+#define _impl_to_glsl_mat(N)\
+mat ## N to_glsl(Mat(N) v) {\
+    mat ## N o;\
+    for(int j=0; j<N; ++j) {\
+        for(int i=0; i<N; ++i) {\
+            o[j][i] = v[(N-1)-j][(N-1)-i];\
+        }\
+    }\
+    return o;\
 }
+
+_impl_to_glsl_mat(2)
+_impl_to_glsl_mat(3)
+_impl_to_glsl_mat(4)
 
 vec4 mul_mat4(Mat4 m, vec4 v) {
     return (m.inner * v.wzyx).wzyx;

@@ -1,7 +1,6 @@
 use std::alloc::Layout;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
 use id::Identify;
 
 use super::{
@@ -11,7 +10,7 @@ use super::{
 
 use crate::{
     array::{ImageEmbeddingData, ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData},
-    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
+    chunk_utils::{FeedbackTableElement, RequestTable, RequestTableResult, UseTable},
     coordinate::GlobalCoordinate,
     data::Vector,
     dim::*,
@@ -22,7 +21,7 @@ use crate::{
     operators::tensor::TensorOperator,
     storage::DataVersionType,
     vulkan::{
-        pipeline::{ComputePipelineBuilder, DescriptorConfig, LocalSizeConfig},
+        pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
     },
@@ -149,14 +148,14 @@ pub fn view_image(
     view_state: ImageViewerState,
     config: RenderConfig2D,
 ) -> FrameOperator {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
-    struct PushConstants {
-        transform: cgmath::Matrix3<f32>,
-        input_dim: cgmath::Vector2<u32>,
-        chunk_dim: cgmath::Vector2<u32>,
-        out_begin: cgmath::Vector2<u32>,
-        out_mem_dim: cgmath::Vector2<u32>,
-    }
+    let push_constants = DynPushConstants::new()
+        .scalar::<u64>("page_table_root")
+        .scalar::<u64>("use_table")
+        .mat::<f32>(3, "transform")
+        .vec::<u32>(2, "input_dim")
+        .vec::<u32>(2, "chunk_dim")
+        .vec::<u32>(2, "out_begin")
+        .vec::<u32>(2, "out_mem_dim");
 
     TensorOperator::unbatched(
         op_descriptor!().unstable(),
@@ -167,8 +166,9 @@ pub fn view_image(
             DataParam(result_metadata),
             DataParam(view_state),
             DataParam(config),
+            DataParam(push_constants),
         ),
-        move |ctx, pos, loc, (input, result_metadata, view_state, config)| {
+        move |ctx, pos, loc, (input, result_metadata, view_state, config, push_constants)| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -204,24 +204,29 @@ pub fn view_image(
 
                 let out_info = m_out.chunk_info(pos);
 
-                let num_bricks = m_in.dimension_in_chunks().hmul();
-
                 let page_table = device
                     .storage
                     .get_page_table(*ctx, device, level.chunks.operator_descriptor(), dst_info)
                     .await;
+                let page_table_addr = page_table.root();
 
                 let request_table_size = 256;
+                let use_table_size = 2048;
 
                 let pipeline = device.request_state(
-                    (m_in.chunk_size.hmul(), num_bricks, request_table_size),
-                    |device, (mem_size, num_bricks, request_table_size)| {
+                    (
+                        m_in.chunk_size.hmul(),
+                        request_table_size,
+                        use_table_size,
+                        push_constants,
+                    ),
+                    |device, (mem_size, request_table_size, use_table_size, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("imageviewer.glsl"))
-                                .push_const_block::<PushConstants>()
+                                .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
-                                .define("NUM_BRICKS", num_bricks)
-                                .define("REQUEST_TABLE_SIZE", request_table_size),
+                                .define("REQUEST_TABLE_SIZE", request_table_size)
+                                .define("USE_TABLE_SIZE", use_table_size),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
@@ -275,15 +280,18 @@ pub fn view_image(
                         Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                     ))
                     .await;
-                let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);
+                let mut request_table = RequestTable::new(device, raw_request_table);
 
-                let consts = PushConstants {
-                    input_dim: m_in.dimensions.raw().into(),
-                    chunk_dim: m_in.chunk_size.raw().into(),
-                    out_begin: out_info.begin.raw().into(),
-                    out_mem_dim: out_info.mem_dimensions.raw().into(),
-                    transform: transform.into(),
-                };
+                let raw_use_table = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        &format!("use_table"),
+                        Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
+                    ))
+                    .await;
+                let mut use_table = UseTable::new(device, raw_use_table);
+                let use_table_addr = use_table.buffer_address();
 
                 let gpu_brick_out = ctx
                     .submit(ctx.alloc_slot_gpu(device, pos, &out_info.mem_dimensions))
@@ -306,37 +314,21 @@ pub fn view_image(
                     ))
                     .await;
 
-                    let mut done = false;
-                    let mut timeout = false;
+                    let request_result = request_table
+                        .download_and_insert(
+                            *ctx,
+                            device,
+                            level,
+                            &page_table,
+                            request_batch_size,
+                            true,
+                            false,
+                        )
+                        .await;
 
-                    if !request_table.newly_initialized {
-                        let mut to_request_linear =
-                            request_table.download_inserted(*ctx, device).await;
-
-                        if to_request_linear.is_empty() {
-                            done = true;
-                        }
-
-                        if let Err(crate::chunk_utils::Timeout) =
-                            crate::chunk_utils::request_to_page_table_with_timeout(
-                                &*ctx,
-                                device,
-                                &mut to_request_linear,
-                                level,
-                                &page_table,
-                                request_batch_size,
-                                true,
-                            )
-                            .await
-                        {
-                            timeout = true;
-                        }
-
-                        // Clear request table for the next iteration
-                        device.with_cmd_buffer(|cmd| request_table.clear(cmd));
-                    } else {
-                        request_table.newly_initialized = false;
-                    }
+                    use_table
+                        .download_and_note_use(*ctx, device, &page_table)
+                        .await;
 
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
@@ -356,7 +348,7 @@ pub fn view_image(
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            request_table.inner(),
+                            &request_table,
                             &state_initialized,
                             &state_values,
                         ]);
@@ -364,17 +356,26 @@ pub fn view_image(
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
-                            pipeline.push_constant(consts);
+                            pipeline.push_constant_dyn(&push_constants, |consts| {
+                                consts.scalar(page_table_addr.0)?;
+                                consts.scalar(use_table_addr.0)?;
+                                consts.mat(&transform)?;
+                                consts.vec(&m_in.dimensions.raw().into())?;
+                                consts.vec(&m_in.chunk_size.raw().into())?;
+                                consts.vec(&out_info.begin.raw().into())?;
+                                consts.vec(&out_info.mem_dimensions.raw().into())?;
+                                Ok(())
+                            });
+
                             pipeline.write_descriptor_set(0, descriptor_config);
                             pipeline.dispatch3d(global_size);
                         }
                     });
 
-                    if done {
-                        break false;
-                    }
-                    if timeout {
-                        break true;
+                    match request_result {
+                        RequestTableResult::Done => break false,
+                        RequestTableResult::Timeout => break true,
+                        RequestTableResult::Continue => {}
                     }
                 };
 
