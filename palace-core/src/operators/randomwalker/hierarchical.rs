@@ -322,6 +322,7 @@ fn run_rw<D: DynDimension + LargerDim>(
 
                 let nd = upper_result.dim().n();
                 let push_constants = DynPushConstants::new()
+                    .scalar::<u64>("page_table_root")
                     .vec::<f32>(nd, "grid_to_grid_scale")
                     .vec::<u32>(nd, "out_tensor_size")
                     .vec::<u32>(nd, "out_chunk_size_memory")
@@ -350,7 +351,6 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
                                 .ext(Some(crate::vulkan::shader::ext::INT64_TYPES)),
                         )
-                        .use_push_descriptor(true)
                         .build(device)
                     },
                 )?;
@@ -481,7 +481,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                             };
                         });
 
-                        let chunk_index = device
+                        let page_table = device
                             .storage
                             .get_page_table(
                                 *ctx,
@@ -493,8 +493,9 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 },
                             )
                             .await;
+                        let page_table_addr = page_table.root();
 
-                        // Make index initialization visible
+                        // Make page_table initialization visible
                         ctx.submit(device.barrier(
                             SrcBarrierInfo {
                                 stage: vk::PipelineStageFlags2::TRANSFER,
@@ -515,7 +516,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 &in_brick_pos,
                                 &upper_metadata.dimension_in_chunks(),
                             );
-                            chunk_index
+                            page_table
                                 .insert(*ctx, ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
                                 .await;
                         }
@@ -534,10 +535,10 @@ fn run_rw<D: DynDimension + LargerDim>(
                         .await;
 
                         let descriptor_config = DescriptorConfig::new([
-                            points_fg_chunk,
-                            points_bg_chunk,
                             &*seeds_buf,
                             &*min_max_buf,
+                            points_fg_chunk,
+                            points_bg_chunk,
                         ]);
 
                         let grid_to_grid_scale =
@@ -555,6 +556,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant_dyn(push_constants, |consts| {
+                                consts.scalar(page_table_addr.0)?;
                                 consts.vec(&grid_to_grid_scale)?;
                                 consts.vec(&out_tensor_size)?;
                                 consts.vec(&out_chunk_size_memory)?;
@@ -567,7 +569,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                                 Ok(())
                             });
 
-                            pipeline.push_descriptor_set(0, descriptor_config);
+                            pipeline.write_descriptor_set(0, descriptor_config);
                             pipeline.dispatch_dyn(device, out_chunk_size_memory);
                         });
 

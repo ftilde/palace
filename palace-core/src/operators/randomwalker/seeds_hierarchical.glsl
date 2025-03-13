@@ -1,4 +1,6 @@
 //#extension GL_EXT_debug_printf : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_EXT_scalar_block_layout : require
 
@@ -16,26 +18,22 @@
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
 
-layout(std430, binding = 0) buffer RefBuffer {
-    Chunk values[NUM_CHUNKS];
-} chunks;
-
-layout(std430, binding = 1) readonly buffer FG {
-    float values[][N];
-} points_foreground;
-
-layout(std430, binding = 2) readonly buffer BG {
-    float values[][N];
-} points_background;
-
-layout(std430, binding = 3) buffer OutputBuffer{
+layout(std430, binding = 0) buffer OutputBuffer{
     float values[];
 } outputData;
 
-layout(std430, binding = 4) buffer MinMaxBuffer{
+layout(std430, binding = 1) buffer MinMaxBuffer{
     uint min;
     uint max;
 } min_max;
+
+layout(std430, binding = 2) readonly buffer FG {
+    float values[][N];
+} points_foreground;
+
+layout(std430, binding = 3) readonly buffer BG {
+    float values[][N];
+} points_background;
 
 declare_push_consts(consts);
 
@@ -88,9 +86,11 @@ void main() {
                 m_in.dimensions = consts.in_dimensions;
                 m_in.chunk_size = consts.in_chunk_size;
 
+                PageTablePage page_table_root = PageTablePage(consts.page_table_root);
+
                 int res;
                 uint64_t sample_chunk_pos_linear;
-                try_sample(N, sample_pos, m_in, chunks.values, res, sample_chunk_pos_linear, seed_value);
+                try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, res, sample_chunk_pos_linear, seed_value);
 
                 if(res == SAMPLE_RES_FOUND) {
                     min_val = min(min_val, seed_value);
