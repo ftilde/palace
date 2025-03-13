@@ -7,7 +7,9 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult},
+    chunk_utils::{
+        ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult, UseTable,
+    },
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -747,7 +749,7 @@ pub fn raycast(
                     .await;
                 let use_tables = raw_use_tables
                     .into_iter()
-                    .map(|raw| ChunkFeedbackTable::new(device, raw))
+                    .map(|raw| UseTable(ChunkFeedbackTable::new(device, raw)))
                     .collect::<Vec<_>>();
 
                 let pipeline = device.request_state(
@@ -845,7 +847,7 @@ pub fn raycast(
 
                         let page_table_root = buffer_address(device, brick_index.buffer);
                         let req_table_addr = buffer_address(device, request_table.0.buffer());
-                        let use_table_addr = buffer_address(device, use_table.buffer());
+                        let use_table_addr = buffer_address(device, use_table.0.buffer());
 
                         lod_data.push((brick_index, request_table, use_table, m_in));
 
@@ -928,20 +930,7 @@ pub fn raycast(
                                     )
                                     .await,
                             );
-
-                            if !data.2.newly_initialized && !reset_state {
-                                let used_linear = data.2.download_inserted(*ctx, device).await;
-
-                                if !used_linear.is_empty() {
-                                    for used in used_linear {
-                                        data.0.note_use(BufferAddress(used));
-                                    }
-
-                                    device.with_cmd_buffer(|cmd| data.2.clear(cmd));
-                                }
-                            } else {
-                                data.2.newly_initialized = false;
-                            }
+                            data.2.download_and_note_use(*ctx, device, &data.0).await;
                         }
 
                         // Make writes to the request table visible (including initialization)

@@ -8,7 +8,7 @@ use crate::{
     dtypes::{DType, StaticElementType},
     operators::tensor::TensorOperator,
     storage::{
-        gpu::{PageTableHandle, StateCacheHandle, StateCacheResult},
+        gpu::{BufferAddress, PageTableHandle, StateCacheHandle, StateCacheResult},
         Element,
     },
     task::OpaqueTaskContext,
@@ -165,6 +165,32 @@ impl<'a> RequestTable<'a> {
             self.0.newly_initialized = false;
         }
         RequestTableResult::Continue
+    }
+}
+
+pub struct UseTable<'a>(pub ChunkFeedbackTable<'a>);
+
+impl<'a> UseTable<'a> {
+    /// Download the table results, note the buffers uses in the page table lru.
+    pub async fn download_and_note_use<'cref, 'inv>(
+        &mut self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        device: &'cref DeviceContext,
+        page_table_handle: &PageTableHandle<'_>,
+    ) {
+        if !self.0.newly_initialized {
+            let used_linear = self.0.download_inserted(ctx, device).await;
+
+            if !used_linear.is_empty() {
+                for used in used_linear {
+                    page_table_handle.note_use(BufferAddress(used));
+                }
+
+                device.with_cmd_buffer(|cmd| self.0.clear(cmd));
+            }
+        } else {
+            self.0.newly_initialized = false;
+        }
     }
 }
 

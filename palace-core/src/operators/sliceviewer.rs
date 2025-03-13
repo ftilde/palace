@@ -9,17 +9,16 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult},
+    chunk_utils::{
+        ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult, UseTable,
+    },
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::{
-        gpu::{buffer_address, BufferAddress},
-        DataVersionType,
-    },
+    storage::{gpu::buffer_address, DataVersionType},
     transfunc::TransFuncOperator,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
@@ -542,8 +541,8 @@ void main()
                         Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
                     ))
                     .await;
-                let mut use_table = ChunkFeedbackTable::new(device, raw_use_table);
-                let use_table_addr = buffer_address(device, use_table.buffer());
+                let mut use_table = UseTable(ChunkFeedbackTable::new(device, raw_use_table));
+                let use_table_addr = buffer_address(device, use_table.0.buffer());
 
                 let tf_data = tf.data();
 
@@ -580,19 +579,9 @@ void main()
                         )
                         .await;
 
-                    if !use_table.newly_initialized {
-                        let used_linear = use_table.download_inserted(*ctx, device).await;
-
-                        if !used_linear.is_empty() {
-                            for used in used_linear {
-                                page_table.note_use(BufferAddress(used));
-                            }
-
-                            device.with_cmd_buffer(|cmd| use_table.clear(cmd));
-                        }
-                    } else {
-                        use_table.newly_initialized = false;
-                    }
+                    use_table
+                        .download_and_note_use(*ctx, device, &page_table)
+                        .await;
 
                     // Make writes to the request table visible (including initialization)
                     ctx.submit(device.barrier(
