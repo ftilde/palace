@@ -7,7 +7,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
+    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -732,7 +732,7 @@ pub fn raycast(
                     .await;
                 let request_tables = raw_request_tables
                     .into_iter()
-                    .map(|raw| ChunkFeedbackTable::new(device, raw))
+                    .map(|raw| RequestTable(ChunkFeedbackTable::new(device, raw)))
                     .collect::<Vec<_>>();
 
                 let raw_use_tables = ctx
@@ -844,7 +844,7 @@ pub fn raycast(
                             .await;
 
                         let page_table_root = buffer_address(device, brick_index.buffer);
-                        let req_table_addr = buffer_address(device, request_table.buffer());
+                        let req_table_addr = buffer_address(device, request_table.0.buffer());
                         let use_table_addr = buffer_address(device, use_table.buffer());
 
                         lod_data.push((brick_index, request_table, use_table, m_in));
@@ -907,8 +907,7 @@ pub fn raycast(
                         ))
                         .await;
 
-                        let mut done = true;
-                        let mut timeout = false;
+                        let mut request_result = RequestTableResult::default();
                         for ((level, request_batch_size), data) in (input
                             .levels
                             .iter()
@@ -916,35 +915,19 @@ pub fn raycast(
                             .zip(lod_data.iter_mut()))
                         .rev()
                         {
-                            if !data.1.newly_initialized && !reset_state {
-                                let mut to_request_linear =
-                                    data.1.download_inserted(*ctx, device).await;
-
-                                if !to_request_linear.is_empty() {
-                                    done = false;
-
-                                    if let Err(crate::chunk_utils::Timeout) =
-                                        crate::chunk_utils::request_to_page_table_with_timeout(
-                                            &*ctx,
-                                            device,
-                                            &mut to_request_linear,
-                                            level,
-                                            &data.0,
-                                            request_batch_size,
-                                            in_preview,
-                                        )
-                                        .await
-                                    {
-                                        timeout = true;
-                                    }
-
-                                    // Clear request table for the next iteration
-                                    device.with_cmd_buffer(|cmd| data.1.clear(cmd));
-                                }
-                            } else {
-                                data.1.newly_initialized = false;
-                                done = false;
-                            }
+                            request_result.combine(
+                                data.1
+                                    .download_and_insert(
+                                        *ctx,
+                                        device,
+                                        level,
+                                        &data.0,
+                                        request_batch_size,
+                                        true,
+                                        reset_state,
+                                    )
+                                    .await,
+                            );
 
                             if !data.2.newly_initialized && !reset_state {
                                 let used_linear = data.2.download_inserted(*ctx, device).await;
@@ -1009,12 +992,10 @@ pub fn raycast(
                             }
                         });
 
-                        if done {
-                            break 'outer false;
-                        }
-
-                        if timeout {
-                            break 'outer true;
+                        match request_result {
+                            RequestTableResult::Done => break 'outer false,
+                            RequestTableResult::Timeout => break 'outer true,
+                            RequestTableResult::Continue => {}
                         }
                     };
 

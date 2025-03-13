@@ -9,7 +9,7 @@ use crate::{
     array::{
         ImageMetaData, PyTensorEmbeddingData, PyTensorMetaData, VolumeEmbeddingData, VolumeMetaData,
     },
-    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement},
+    chunk_utils::{ChunkFeedbackTable, FeedbackTableElement, RequestTable, RequestTableResult},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
     dtypes::StaticElementType,
@@ -531,7 +531,8 @@ void main()
                         Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
                     ))
                     .await;
-                let mut request_table = ChunkFeedbackTable::new(device, raw_request_table);
+                let mut request_table =
+                    RequestTable(ChunkFeedbackTable::new(device, raw_request_table));
 
                 let raw_use_table = ctx
                     .submit(ctx.access_state_cache_gpu(
@@ -567,37 +568,17 @@ void main()
                     ))
                     .await;
 
-                    let mut done = false;
-                    let mut timeout = false;
-
-                    if !request_table.newly_initialized {
-                        let mut to_request_linear =
-                            request_table.download_inserted(*ctx, device).await;
-
-                        if to_request_linear.is_empty() {
-                            done = true;
-                        }
-
-                        if let Err(crate::chunk_utils::Timeout) =
-                            crate::chunk_utils::request_to_page_table_with_timeout(
-                                &*ctx,
-                                device,
-                                &mut to_request_linear,
-                                level,
-                                &page_table,
-                                request_batch_size,
-                                true,
-                            )
-                            .await
-                        {
-                            timeout = true;
-                        }
-
-                        // Clear request table for the next iteration
-                        device.with_cmd_buffer(|cmd| request_table.clear(cmd));
-                    } else {
-                        request_table.newly_initialized = false;
-                    }
+                    let request_result = request_table
+                        .download_and_insert(
+                            *ctx,
+                            device,
+                            level,
+                            &page_table,
+                            request_batch_size,
+                            true,
+                            false,
+                        )
+                        .await;
 
                     if !use_table.newly_initialized {
                         let used_linear = use_table.download_inserted(*ctx, device).await;
@@ -631,7 +612,7 @@ void main()
                     device.with_cmd_buffer(|cmd| {
                         let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
-                            request_table.inner(),
+                            request_table.0.inner(),
                             &state_initialized,
                             &state_values,
                             &tf_data_gpu,
@@ -658,11 +639,10 @@ void main()
                         }
                     });
 
-                    if done {
-                        break false;
-                    }
-                    if timeout {
-                        break true;
+                    match request_result {
+                        RequestTableResult::Done => break false,
+                        RequestTableResult::Timeout => break true,
+                        RequestTableResult::Continue => {}
                     }
                 };
 

@@ -108,6 +108,66 @@ impl<'a> ChunkFeedbackTable<'a> {
     }
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum RequestTableResult {
+    #[default]
+    Done = 0,
+    Continue = 1,
+    Timeout = 2,
+}
+
+impl RequestTableResult {
+    pub fn combine(&mut self, other: RequestTableResult) {
+        *self = (*self).max(other);
+    }
+}
+
+pub struct RequestTable<'a>(pub ChunkFeedbackTable<'a>);
+
+impl<'a> RequestTable<'a> {
+    /// Download the table results, try to insert the requested chunks into page table, respect
+    /// timeout
+    pub async fn download_and_insert<'cref, 'inv, D: Dimension, E: Element>(
+        &mut self,
+        ctx: OpaqueTaskContext<'cref, 'inv>,
+        device: &'cref DeviceContext,
+        tensor: &'inv TensorOperator<D, StaticElementType<E>>,
+        page_table_handle: &PageTableHandle<'_>,
+        batch_size: &mut usize,
+        interactive: bool,
+        force_reset: bool,
+    ) -> RequestTableResult {
+        if !self.0.newly_initialized && !force_reset {
+            let mut to_request_linear = self.0.download_inserted(ctx, device).await;
+
+            if to_request_linear.is_empty() {
+                return RequestTableResult::Done;
+            }
+
+            if let Err(crate::chunk_utils::Timeout) = request_to_page_table_with_timeout(
+                &ctx,
+                device,
+                &mut to_request_linear,
+                tensor,
+                page_table_handle,
+                batch_size,
+                interactive,
+            )
+            .await
+            {
+                return RequestTableResult::Timeout;
+            }
+
+            // Clear request table for the next iteration
+            device.with_cmd_buffer(|cmd| self.0.clear(cmd));
+        } else {
+            self.0.newly_initialized = false;
+        }
+        RequestTableResult::Continue
+    }
+}
+
 pub struct Timeout;
 
 pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
