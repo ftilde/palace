@@ -330,11 +330,14 @@ pub fn view_image(
                         .download_and_note_use(*ctx, device, &page_table)
                         .await;
 
-                    // Make writes to the request table visible (including initialization)
+                    // Make writes to the request table, use table and page table visible
+                    // (including initialization)
                     ctx.submit(device.barrier(
                         SrcBarrierInfo {
-                            stage: vk::PipelineStageFlags2::TRANSFER,
-                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER
+                                | vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::SHADER_WRITE
+                                | vk::AccessFlags2::TRANSFER_WRITE,
                         },
                         DstBarrierInfo {
                             stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
