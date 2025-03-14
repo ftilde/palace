@@ -923,7 +923,7 @@ pub fn raycast(
                                         level,
                                         &data.0,
                                         request_batch_size,
-                                        true,
+                                        in_preview,
                                         reset_state,
                                     )
                                     .await,
