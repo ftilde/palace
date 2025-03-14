@@ -149,7 +149,7 @@ impl<'a> RequestTable<'a> {
                 return RequestTableResult::Done;
             }
 
-            if let Err(crate::chunk_utils::Timeout) = request_to_page_table_with_timeout(
+            let res = request_to_page_table_with_timeout(
                 &ctx,
                 device,
                 &mut to_request_linear,
@@ -158,13 +158,14 @@ impl<'a> RequestTable<'a> {
                 batch_size,
                 interactive,
             )
-            .await
-            {
-                return RequestTableResult::Timeout;
-            }
+            .await;
 
             // Clear request table for the next iteration
             device.with_cmd_buffer(|cmd| self.0.clear(cmd));
+
+            if let Err(crate::chunk_utils::Timeout) = res {
+                return RequestTableResult::Timeout;
+            }
         } else {
             self.0.newly_initialized = false;
         }
