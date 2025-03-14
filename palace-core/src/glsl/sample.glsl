@@ -25,7 +25,7 @@ const int SAMPLE_RES_OUTSIDE = 1;
 const int SAMPLE_RES_NOT_PRESENT = 2;
 
 int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_table, uint use_table_size, out Chunk chunk) {
-    //TODO NO_PUSH_main: Avoid thrashing the hash table by saving the last position and do not insert then.
+    //TODO: Avoid thrashing the hash table by saving the last position and do not insert then.
     uvec3 level_indices = page_table_index_to_level_indices(chunk_index);
 
     PageTablePage l1 = PageTablePage(root.values[level_indices[0]]);
