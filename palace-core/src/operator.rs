@@ -45,6 +45,28 @@ impl<N: OperatorNetworkNode + Identify + 'static> OperatorParameter for N {
     }
 }
 
+pub struct DataParamWithExternalId<I>(pub I, pub Id);
+
+impl<I: 'static> OperatorParameter for DataParamWithExternalId<I> {
+    fn data_longevity(&self) -> DataLongevity {
+        DataLongevity::Stable
+    }
+}
+
+impl<I> Identify for DataParamWithExternalId<I> {
+    fn id(&self) -> Id {
+        self.1
+    }
+}
+
+impl<I> std::ops::Deref for DataParamWithExternalId<I> {
+    type Target = I;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Identify)]
 pub struct DataParam<I: Identify>(pub I);
 

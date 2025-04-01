@@ -10,7 +10,10 @@ use crate::{
     dim::*,
     dtypes::{ConversionError, DType, ElementType, StaticElementType},
     op_descriptor,
-    operator::{DataParam, Operator, OperatorDescriptor, OperatorNetworkNode, OperatorParameter},
+    operator::{
+        DataParam, DataParamWithExternalId, Operator, OperatorDescriptor, OperatorNetworkNode,
+        OperatorParameter,
+    },
     storage::{
         cpu::{InplaceHandle, ThreadInplaceHandle},
         DataLocation, Element,
@@ -18,7 +21,7 @@ use crate::{
     task::{RequestStream, Task, TaskContext},
     vulkan::DeviceId,
 };
-use id::{Identify, IdentifyHash};
+use id::{Id, Identify, IdentifyHash};
 
 #[derive(Clone, Identify)]
 pub struct TensorOperator<D: DynDimension, E> {
@@ -241,6 +244,15 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
         size: Vector<D, GlobalCoordinate>,
         values: Rc<[E]>,
     ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
+        let id = values.id();
+        Self::from_rc_with_id(size, values, id)
+    }
+
+    pub fn from_rc_with_id(
+        size: Vector<D, GlobalCoordinate>,
+        values: Rc<[E]>,
+        id: Id,
+    ) -> Result<TensorOperator<D, StaticElementType<E>>, crate::Error> {
         let m = TensorMetaData {
             dimensions: size.clone(),
             chunk_size: size
@@ -260,7 +272,7 @@ impl<D: DynDimension, E: Element + Identify> TensorOperator<D, StaticElementType
             op_descriptor!(),
             Default::default(),
             m,
-            DataParam(values),
+            DataParamWithExternalId(values, id),
             move |ctx, _, _, values| {
                 async move {
                     let mut out = ctx

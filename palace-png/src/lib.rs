@@ -1,6 +1,8 @@
 use std::rc::Rc;
 use std::{io::BufReader, path::PathBuf};
 
+use id::Id;
+
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -55,6 +57,8 @@ pub async fn write<'cref, 'inv: 'cref, 'op: 'inv>(
 pub fn read<'cref, 'inv: 'cref, 'op: 'inv>(
     path: PathBuf,
 ) -> Result<FrameOperator, palace_core::Error> {
+    let id = Id::from_data(path.to_string_lossy().as_bytes());
+
     let file = File::open(path)?;
     let r = BufReader::new(file);
 
@@ -80,11 +84,11 @@ pub fn read<'cref, 'inv: 'cref, 'op: 'inv>(
                 .map(|v| Vector::<D4, u8>::from([v[0], v[1], v[2], 255]))
                 .collect::<Rc<[Vector<D4, u8>]>>();
 
-            FrameOperator::from_rc(dimensions, pixels)
+            FrameOperator::from_rc_with_id(dimensions, pixels, id)
         }
         png::ColorType::Rgba => {
             let pixels = bytemuck::cast_slice::<_, Vector<D4, u8>>(bytes);
-            FrameOperator::from_rc(dimensions, pixels.into())
+            FrameOperator::from_rc_with_id(dimensions, pixels.into(), id)
         }
     }
 }
