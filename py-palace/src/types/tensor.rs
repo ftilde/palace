@@ -3,6 +3,7 @@ use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, ScalarType, StaticElementType};
 use palace_core::jit::{self, BinOp, JitTensorOperator, TernaryOp, UnaryOp};
+use palace_core::mat::Matrix;
 use palace_core::operators::conv::BorderHandling;
 use palace_core::vec::Vector;
 use palace_core::{dim::*, storage::Element};
@@ -930,6 +931,39 @@ impl TensorOperator {
                 vol,
                 kernel_refs,
                 border_handling,
+            )
+            .into_dyn()
+            .into())
+        })
+    }
+
+    //#[pyo3(signature = (kernels, border_handling="repeat"))]
+    fn resample_transform(
+        &self,
+        output_size: PyTensorMetaData,
+        transform: Matrix<DDyn, f32>,
+    ) -> PyResult<Self> {
+        if self.nd()? + 1 != transform.dim().n() {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "Expected {} transform for tensor, but got {}",
+                self.nd()? + 1,
+                transform.dim().n()
+            )));
+        }
+
+        if self.nd()? != output_size.dimensions.len() {
+            return Err(PyErr::new::<PyValueError, _>(format!(
+                "Expected output size of dim {}, but got {}",
+                self.nd()?,
+                output_size.dimensions.len()
+            )));
+        }
+
+        self.clone().map_core(|vol: CTensorOperator<DDyn, DType>| {
+            Ok(palace_core::operators::resample::resample_transform(
+                vol,
+                output_size.into(),
+                transform,
             )
             .into_dyn()
             .into())

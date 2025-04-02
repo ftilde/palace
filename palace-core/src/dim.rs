@@ -90,6 +90,9 @@ pub trait DynDimension: 'static + Debug + Clone + PartialEq + Copy {
     type NDArrayDimDyn: ndarray::Dimension;
     fn to_ndarray_dim_dyn(i: Self::DynArray<usize>) -> Self::NDArrayDimDyn;
 
+    const FIXED_N: Option<usize>;
+
+    fn try_from_n(n: usize) -> Option<Self>;
     fn n(&self) -> usize;
     fn dim_of_array<T: Copy>(v: &Self::DynArray<T>) -> Self;
     fn try_into_dim<D: Dimension, T: Copy>(v: Self::DynArray<T>) -> Option<D::Array<T>>;
@@ -122,6 +125,12 @@ impl<D: Dimension> DynDimension for D {
     fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T> {
         v.into_iter().collect()
     }
+
+    const FIXED_N: Option<usize> = Some(D::N);
+
+    fn try_from_n(n: usize) -> Option<Self> {
+        (n == D::N).then(|| Self::new())
+    }
 }
 
 impl DynDimension for DDyn {
@@ -149,6 +158,12 @@ impl DynDimension for DDyn {
 
     fn into_dyn<T: Copy>(v: Self::DynArray<T>) -> Vec<T> {
         v
+    }
+
+    const FIXED_N: Option<usize> = None;
+
+    fn try_from_n(n: usize) -> Option<Self> {
+        Some(DDyn(n))
     }
 }
 impl SmallerDim for DDyn {

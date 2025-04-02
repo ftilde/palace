@@ -253,20 +253,30 @@ mod py {
     use super::*;
     use pyo3::{prelude::*, IntoPyObjectExt};
 
-    impl<'source, D: Dimension, T: Copy + numpy::Element> FromPyObject<'source> for Matrix<D, T> {
+    impl<'source, D: DynDimension, T: Copy + numpy::Element> FromPyObject<'source> for Matrix<D, T> {
         fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
             let np = ob.extract::<numpy::borrow::PyReadonlyArray2<T>>()?;
             let arr = np.as_array();
             let shape = arr.shape();
-            let n = D::N;
-            if shape != [n, n] {
-                let s0 = shape[0];
-                let s1 = shape[1];
+            let rows = shape[0];
+            let cols = shape[1];
+
+            if rows != cols {
                 return Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
-                    "Expected a matrix of shape ({n},{n}), but got one of shape ({s0},{s1})"
+                    "Expected a square matrix but got one of shape ({rows},{cols})"
                 )));
             }
-            Ok(Matrix::from_fn(|i, j| np.get((i, j)).unwrap().clone()))
+
+            let Some(dim) = D::try_from_n(rows) else {
+                let n = D::FIXED_N.unwrap();
+                return Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                    "Expected a matrix of shape ({n},{n}), but got one of shape ({rows},{cols})"
+                )));
+            };
+
+            Ok(Matrix::from_fn_and_dim(dim, |i, j| {
+                np.get((i, j)).unwrap().clone()
+            }))
         }
     }
 
