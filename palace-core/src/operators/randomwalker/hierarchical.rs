@@ -797,6 +797,7 @@ fn level_step<D: DynDimension + LargerDim>(
         upper_result.inner.clone(),
         level_md.clone(),
         current_to_upper,
+        crate::operators::conv::BorderHandling::Repeat,
     );
     let upper_expanded = expand(upper_resampled, expansion_by.clone());
 

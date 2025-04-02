@@ -937,11 +937,12 @@ impl TensorOperator {
         })
     }
 
-    //#[pyo3(signature = (kernels, border_handling="repeat"))]
+    #[pyo3(signature = (output_size, transform, border_handling="repeat"))]
     fn resample_transform(
         &self,
         output_size: PyTensorMetaData,
         transform: Matrix<DDyn, f32>,
+        border_handling: &str,
     ) -> PyResult<Self> {
         if self.nd()? + 1 != transform.dim().n() {
             return Err(PyErr::new::<PyValueError, _>(format!(
@@ -958,12 +959,23 @@ impl TensorOperator {
                 output_size.dimensions.len()
             )));
         }
+        let border_handling = match border_handling {
+            "repeat" => BorderHandling::Repeat,
+            "pad0" => BorderHandling::Pad0,
+            o => {
+                return Err(PyErr::new::<PyValueError, _>(format!(
+                    "Invalid border handling strategy {}",
+                    o
+                )))
+            }
+        };
 
         self.clone().map_core(|vol: CTensorOperator<DDyn, DType>| {
             Ok(palace_core::operators::resample::resample_transform(
                 vol,
                 output_size.into(),
                 transform,
+                border_handling,
             )
             .into_dyn()
             .into())

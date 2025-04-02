@@ -9,6 +9,7 @@ use crate::{
     dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
+    operators::conv::BorderHandling,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants},
         shader::Shader,
@@ -40,7 +41,12 @@ pub fn resample<'op, D: LargerDim, T: ElementType>(
     output_size: TensorMetaData<D>,
 ) -> EmbeddedTensorOperator<D, T> {
     let mat = resample_rescale_mat(input.metadata.clone(), output_size.clone());
-    let inner = resample_transform(input.inner, output_size.clone(), mat.clone());
+    let inner = resample_transform(
+        input.inner,
+        output_size.clone(),
+        mat.clone(),
+        crate::operators::conv::BorderHandling::Repeat,
+    );
     let mut embedding_data = input.embedding_data;
 
     // We know that mat is only an affine transformation, so we can extract the scaling
@@ -199,6 +205,7 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
     input: TensorOperator<D, T>,
     output_size: TensorMetaData<D>,
     element_out_to_in: Matrix<D::Larger, f32>,
+    border_handling: BorderHandling,
 ) -> TensorOperator<D, T> {
     let nd = input.dim().n();
 
@@ -241,7 +248,9 @@ void main() {
     uint[N] global_pos = add(out_brick_pos, consts.out_begin);
     float[N] sample_pos = from_homogeneous(mul(consts.transform, to_homogeneous(to_float(global_pos))));
     map(N, sample_pos, sample_pos, round);
-    float[N] sample_pos_clamp = clamp(sample_pos, fill(sample_pos, 0.0), sub(to_float(consts.vol_dim_in), fill(sample_pos, 1)));
+#ifdef BORDER_HANDLE_REPEAT
+    sample_pos = clamp(sample_pos, fill(sample_pos, 0.0), sub(to_float(consts.vol_dim_in), fill(sample_pos, 1)));
+#endif
 
     T default_val;
     DEFAULT_VAL_INIT
@@ -256,7 +265,7 @@ void main() {
     uint64_t sample_brick_pos_linear;
 
     T sampled_intensity;
-    try_sample(N, sample_pos_clamp, m_in, page_table_root, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
+    try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
 
     if(res == SAMPLE_RES_FOUND) {
         // Nothing to do!
@@ -280,9 +289,13 @@ void main() {
             input,
             DataParam(output_size),
             DataParam(element_out_to_in),
+            DataParam(border_handling),
             DataParam(push_constants),
         ),
-        move |ctx, mut positions, loc, (input, output_size, element_out_to_in, push_constants)| {
+        move |ctx,
+              mut positions,
+              loc,
+              (input, output_size, element_out_to_in, border_handling, push_constants)| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -306,8 +319,9 @@ void main() {
                         m_in.chunk_size.hmul(),
                         nd,
                         dtype_dyn,
+                        border_handling,
                     ),
-                    |device, (push_constants, num_chunks, mem_size, nd, dtype_dyn)| {
+                    |device, (push_constants, num_chunks, mem_size, nd, dtype_dyn, border_handling)| {
                         let default_val_init = if dtype_dyn.vec_size() == 1 {
                             "default_val = T(0);".to_owned()
                         } else {
@@ -321,8 +335,8 @@ void main() {
                             }
                             s
                         };
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER)
+                        ComputePipelineBuilder::new( {
+                            let s = Shader::new(SHADER)
                                 .define("NUM_CHUNKS", num_chunks)
                                 .define("BRICK_MEM_SIZE_IN", mem_size)
                                 .define("N", nd)
@@ -333,8 +347,13 @@ void main() {
                                 .ext(Some(crate::vulkan::shader::ext::SCALAR_BLOCK_LAYOUT))
                                 .ext(Some(crate::vulkan::shader::ext::BUFFER_REFERENCE))
                                 .ext(Some(crate::vulkan::shader::ext::INT64_TYPES))
-                                .ext(Some(crate::vulkan::shader::ext::INT64_ATOMICS)),
-                        )
+                                .ext(Some(crate::vulkan::shader::ext::INT64_ATOMICS));
+
+                            match **border_handling {
+                                BorderHandling::Repeat => s.define("BORDER_HANDLE_REPEAT", 1),
+                                BorderHandling::Pad0 => s.define("BORDER_HANDLE_PAD0", 1),
+                            }
+                        })
                         .use_push_descriptor(true)
                         .build(device)
                     },
