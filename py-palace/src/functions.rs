@@ -236,6 +236,19 @@ pub fn mandelbrot(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+pub fn mandelbulb(
+    md: PyTensorMetaData,
+    embedding_data: PyTensorEmbeddingData,
+) -> PyResult<LODTensorOperator> {
+    palace_core::operators::procedural::mandelbulb(
+        md.try_into_dim()?,
+        embedding_data.try_into_dim()?,
+    )
+    .try_into()
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 pub fn randomwalker_weights(
     input: MaybeEmbeddedTensorOperatorArg,
     min_edge_weight: f32,

@@ -35,6 +35,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(view_image, m)?)?;
     m.add_function(wrap_pyfunction!(apply_tf, m)?)?;
     m.add_function(wrap_pyfunction!(mandelbrot, m)?)?;
+    m.add_function(wrap_pyfunction!(mandelbulb, m)?)?;
     m.add_function(wrap_pyfunction!(procedural, m)?)?;
     m.add_function(wrap_pyfunction!(from_numpy, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;

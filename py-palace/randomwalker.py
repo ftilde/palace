@@ -39,8 +39,8 @@ parser.add_argument('-d', '--devices', type=list_of_ints)
 
 args = parser.parse_args()
 
-devices = args.devices
-display_device = devices[0]
+devices = args.devices or []
+display_device = None
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
