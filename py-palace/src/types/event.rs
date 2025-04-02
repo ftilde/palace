@@ -1,5 +1,10 @@
 use derive_more::{From, Into};
-use palace_core::event as c;
+use palace_core::{
+    dim::{D2, D3},
+    event as c,
+    mat::Matrix,
+    vec::Vector,
+};
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
@@ -31,6 +36,23 @@ impl Events {
         } else {
             Ok(())
         }
+    }
+
+    fn transform(&mut self, t: Matrix<D3, f32>) -> Self {
+        let transform = |pos: Vector<D2, i32>| {
+            t.transform(&pos.map(|v| v as f32))
+                .map(|v| v.round() as i32)
+        };
+        let mut inner = palace_core::event::EventStream::with_state(
+            self.0.latest_state().clone().transform(transform),
+        );
+
+        self.0.act(|e| {
+            inner.add(e.clone().transform(transform));
+            c::EventChain::Available(e)
+        });
+
+        Self(inner)
     }
 
     fn latest_state(&self) -> EventState {
