@@ -747,39 +747,12 @@ impl<'a> PageTableHandle<'a> {
         pos: ChunkIndex,
         chunk: ReadHandle<'h>,
     ) {
-        let mut index = self.device.storage.page_table_index.borrow_mut();
-        let entry = index.get_mut(&self.op).unwrap();
-
-        let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
-
-        if entry.children.contains_key(&chunk_buffer_addr) {
-            //Problem: We (can) remove page tables which results in orphan leaves (to be removed via lru at some point), but which will not be inserted again until that is done. maybe we.
-            //    This can happen due to incomplete use reporting (leaf is reported as used, pt page not)
-            //    We could just always try to insert. not sure if that's a good idea... Potential precondition: on-gpu page table stash.
-            println!("{:?} should already be present", pos);
-            return;
-        }
-
-        let data_id = chunk.access.id;
-        assert_eq!(data_id, DataId::new(self.op, pos));
-
-        // Insert page in index so that following calls return in the `contains_key` guard above.
-        // => no double insertions, but postpone adding to LRU index, so that the page is not freed
-        // if the task is preempted during the inner page alloctations below.
-        entry.children.insert(
-            chunk_buffer_addr,
-            PageTableChild {
-                page_table_lru_index: None,
-                type_: PageTableChildType::Leaf(data_id, pos),
-            },
-        );
-        std::mem::drop(index);
-
         let page_table_page_cache = &self.device.storage.page_table_page_cache;
         let buf1 = ctx.submit(page_table_page_cache.get(&self.device)).await;
         let buf2 = ctx.submit(page_table_page_cache.get(&self.device)).await;
 
         self.device.with_cmd_buffer(|cmd| unsafe {
+            //TODO: Why do we always have to zero them, even if we never use them?
             for buf in [buf1.buffer, buf2.buffer] {
                 self.device
                     .functions()
@@ -803,6 +776,11 @@ impl<'a> PageTableHandle<'a> {
         let buf2_addr = buffer_address(&self.device, buf2.buffer);
         let root_buffer_addr = buffer_address(&self.device, self.buffer);
 
+        let mut index = self.device.storage.page_table_index.borrow_mut();
+        let entry = index.get_mut(&self.op).unwrap();
+
+        let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
+
         dispatch_page_table_insert(
             self.device,
             root_buffer_addr,
@@ -812,25 +790,35 @@ impl<'a> PageTableHandle<'a> {
             chunk_buffer_addr,
         );
 
-        // Leak ReadHandle: For now we don't ever remove chunks once they are in the index.
-        std::mem::forget(chunk);
+        if !entry.children.contains_key(&chunk_buffer_addr) {
+            let data_id = chunk.access.id;
+            assert_eq!(data_id, DataId::new(self.op, pos));
 
-        let mut index = self.device.storage.page_table_index.borrow_mut();
-        let entry = index.get_mut(&self.op).unwrap();
+            // After allocations (potential preemptions): Give management to LRU
+            let lru_index = self
+                .device
+                .storage
+                .page_table_lru
+                .borrow_mut()
+                .add((self.op, chunk_buffer_addr));
 
-        // After allocations (potential preemptions): Give management to LRU
-        let lru_index = self
-            .device
-            .storage
-            .page_table_lru
-            .borrow_mut()
-            .add((self.op, chunk_buffer_addr));
+            // Insert page in index so that following calls return in the `contains_key` guard above.
+            entry.children.insert(
+                chunk_buffer_addr,
+                PageTableChild {
+                    page_table_lru_index: Some(lru_index),
+                    type_: PageTableChildType::Leaf(data_id, pos),
+                },
+            );
 
-        entry
-            .children
-            .get_mut(&chunk_buffer_addr)
-            .unwrap()
-            .page_table_lru_index = Some(lru_index);
+            // Leak ReadHandle: This handle is now "owned" by the index
+            std::mem::forget(chunk);
+        } else {
+            // Nothing. We already have a child entry for the chunk, but either way we have added
+            // it to the page table.
+
+            //println!("{:?} should already be present", pos);
+        }
 
         for (buf, buf_addr) in [(buf1, buf1_addr), (buf2, buf2_addr)] {
             let lru_index = self
