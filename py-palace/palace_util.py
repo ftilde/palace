@@ -31,7 +31,7 @@ def render_raycast(vol, camera_state, config, tf, tile_size=None, devices=None):
             pc.OnWheelMove(lambda delta, pos: camera_state.trackball().mutate(lambda tb: tb.move_inout(delta))),
         ]);
 
-        actual_tile_size = [tile_size]*len(size) or size
+        actual_tile_size = [tile_size or s for s in size]
 
         md = pc.TensorMetaData(size, actual_tile_size)
         proj = camera_state.load().projection_mat(size)
@@ -54,7 +54,7 @@ def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=Non
             pc.OnWheelMove(lambda delta, pos: slice_state.mutate(lambda s: s.zoom(delta, pos))),
         ]);
 
-        actual_tile_size = [tile_size]*len(size) or size
+        actual_tile_size = [tile_size or s for s in size]
 
         md = pc.TensorMetaData(size, size)
 
