@@ -24,9 +24,8 @@ use crate::{
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::{IdGenerator, Map},
     vulkan::{
-        memory::TempRessource, pipeline::ComputePipelineBuilder, shader::Shader,
-        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
-        SrcBarrierInfo,
+        pipeline::ComputePipelineBuilder, shader::Shader, state::VulkanState, CmdBufferEpoch,
+        CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -688,6 +687,49 @@ impl PageTableState {
     }
 }
 
+#[derive(Default)]
+struct PageTablePageCache {
+    available: RefCell<Vec<Allocation>>,
+    returned: RefCell<BTreeMap<CmdBufferEpoch, Vec<Allocation>>>,
+}
+
+impl PageTablePageCache {
+    pub fn insert(&self, device: &DeviceContext, alloc: Allocation) {
+        {
+            let mut returned = self.returned.borrow_mut();
+            returned
+                .entry(device.current_epoch())
+                .or_default()
+                .push(alloc);
+        }
+
+        self.try_reclaim_returned(device);
+    }
+
+    pub fn try_reclaim_returned(&self, device: &DeviceContext) {
+        let current_epoch = device.current_epoch();
+        let mut returned = self.returned.borrow_mut();
+        let mut available = self.available.borrow_mut();
+        while returned
+            .first_key_value()
+            .map(|(k, _)| k < &current_epoch)
+            .unwrap_or(false)
+        {
+            available.extend(returned.pop_first().unwrap().1);
+            println!("Available: {}", available.len());
+        }
+    }
+
+    pub fn get<'a, 'inv>(&self, device: &'a DeviceContext) -> Request<'a, 'inv, Allocation> {
+        let mut available = self.available.borrow_mut();
+        if let Some(alloc) = available.pop() {
+            Request::ready(alloc)
+        } else {
+            device.storage.request_allocate_page_table_page(&device)
+        }
+    }
+}
+
 pub struct PageTableHandle<'a> {
     pub(crate) buffer: ash::vk::Buffer,
     op: OperatorId,
@@ -711,6 +753,10 @@ impl<'a> PageTableHandle<'a> {
         let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
 
         if entry.children.contains_key(&chunk_buffer_addr) {
+            //Problem: We (can) remove page tables which results in orphan leaves (to be removed via lru at some point), but which will not be inserted again until that is done. maybe we.
+            //    This can happen due to incomplete use reporting (leaf is reported as used, pt page not)
+            //    We could just always try to insert. not sure if that's a good idea... Potential precondition: on-gpu page table stash.
+            println!("{:?} should already be present", pos);
             return;
         }
 
@@ -729,20 +775,9 @@ impl<'a> PageTableHandle<'a> {
         );
         std::mem::drop(index);
 
-        let buf1 = ctx
-            .submit(
-                self.device
-                    .storage
-                    .request_allocate_page_table_page(&self.device),
-            )
-            .await;
-        let buf2 = ctx
-            .submit(
-                self.device
-                    .storage
-                    .request_allocate_page_table_page(&self.device),
-            )
-            .await;
+        let page_table_page_cache = &self.device.storage.page_table_page_cache;
+        let buf1 = ctx.submit(page_table_page_cache.get(&self.device)).await;
+        let buf2 = ctx.submit(page_table_page_cache.get(&self.device)).await;
 
         self.device.with_cmd_buffer(|cmd| unsafe {
             for buf in [buf1.buffer, buf2.buffer] {
@@ -868,6 +903,7 @@ pub struct Storage {
     id: DeviceId,
     garbage_collect_id_gen: IdGenerator<GarbageCollectId>,
     manual_garbage_returns: Cell<u64>,
+    page_table_page_cache: PageTablePageCache,
 }
 
 impl Storage {
@@ -884,6 +920,7 @@ impl Storage {
             id: device,
             garbage_collect_id_gen: Default::default(),
             manual_garbage_returns: 0.into(),
+            page_table_page_cache: Default::default(),
         }
     }
 
@@ -1185,7 +1222,8 @@ impl Storage {
                     );
 
                     if let PageTableChildType::Inner(allocation) = pt_entry.type_ {
-                        std::mem::drop(TempRessource::new(device, allocation));
+                        self.page_table_page_cache.insert(device, allocation);
+                        //std::mem::drop(TempRessource::new(device, allocation));
                     }
                 };
             }
@@ -1225,7 +1263,8 @@ impl Storage {
                         let size = allocation.size;
 
                         // Free page once epoch is over and no one can be referencing it anymore
-                        std::mem::drop(TempRessource::new(device, allocation));
+                        //std::mem::drop(TempRessource::new(device, allocation));
+                        self.page_table_page_cache.insert(device, allocation);
 
                         size as usize
                     }
