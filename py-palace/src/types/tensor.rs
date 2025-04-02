@@ -1037,6 +1037,9 @@ impl TensorOperator {
     fn max(&self, a: JitArgument) -> PyResult<Self> {
         jit_binary(BinOp::Max, self, a)
     }
+    fn concat(&self, a: JitArgument) -> PyResult<Self> {
+        jit_binary(BinOp::Concat, self, a)
+    }
     fn __lt__(&self, a: JitArgument) -> PyResult<Self> {
         jit_binary(BinOp::LessThan, self, a)
     }
