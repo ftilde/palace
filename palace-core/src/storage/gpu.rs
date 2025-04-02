@@ -24,8 +24,9 @@ use crate::{
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::{IdGenerator, Map},
     vulkan::{
-        pipeline::ComputePipelineBuilder, shader::Shader, state::VulkanState, CmdBufferEpoch,
-        CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
+        memory::TempRessource, pipeline::ComputePipelineBuilder, shader::Shader,
+        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
+        SrcBarrierInfo,
     },
 };
 
@@ -747,9 +748,20 @@ impl<'a> PageTableHandle<'a> {
         pos: ChunkIndex,
         chunk: ReadHandle<'h>,
     ) {
-        let page_table_page_cache = &self.device.storage.page_table_page_cache;
-        let buf1 = ctx.submit(page_table_page_cache.get(&self.device)).await;
-        let buf2 = ctx.submit(page_table_page_cache.get(&self.device)).await;
+        let buf1 = ctx
+            .submit(
+                self.device
+                    .storage
+                    .request_allocate_page_table_page(&self.device),
+            )
+            .await;
+        let buf2 = ctx
+            .submit(
+                self.device
+                    .storage
+                    .request_allocate_page_table_page(&self.device),
+            )
+            .await;
 
         self.device.with_cmd_buffer(|cmd| unsafe {
             //TODO: Why do we always have to zero them, even if we never use them?
@@ -1210,8 +1222,8 @@ impl Storage {
                     );
 
                     if let PageTableChildType::Inner(allocation) = pt_entry.type_ {
-                        self.page_table_page_cache.insert(device, allocation);
-                        //std::mem::drop(TempRessource::new(device, allocation));
+                        //self.page_table_page_cache.insert(device, allocation);
+                        std::mem::drop(TempRessource::new(device, allocation));
                     }
                 };
             }
@@ -1251,8 +1263,8 @@ impl Storage {
                         let size = allocation.size;
 
                         // Free page once epoch is over and no one can be referencing it anymore
-                        //std::mem::drop(TempRessource::new(device, allocation));
-                        self.page_table_page_cache.insert(device, allocation);
+                        std::mem::drop(TempRessource::new(device, allocation));
+                        //self.page_table_page_cache.insert(device, allocation);
 
                         size as usize
                     }
