@@ -919,20 +919,19 @@ pub fn raycast(
                             .zip(lod_data.iter_mut()))
                         .rev()
                         {
-                            request_result.combine(
-                                data.1
-                                    .download_and_insert(
-                                        *ctx,
-                                        device,
-                                        level,
-                                        &data.0,
-                                        request_batch_size,
-                                        in_preview,
-                                        reset_state,
-                                    )
-                                    .await,
+                            let (req_res, ()) = futures::join!(
+                                data.1.download_and_insert(
+                                    *ctx,
+                                    device,
+                                    level,
+                                    &data.0,
+                                    request_batch_size,
+                                    in_preview,
+                                    reset_state,
+                                ),
+                                data.2.download_and_note_use(*ctx, device, &data.0)
                             );
-                            data.2.download_and_note_use(*ctx, device, &data.0).await;
+                            request_result.combine(req_res);
                         }
 
                         // Make writes to the request table visible (including initialization)
