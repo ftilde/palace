@@ -3479,6 +3479,7 @@ version = "0.1.0"
 dependencies = [
  "derive_more 0.99.19",
  "pyo3",
+ "pyo3-stub-gen",
  "state-link-derive",
 ]
 

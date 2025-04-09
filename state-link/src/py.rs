@@ -1,14 +1,17 @@
 use std::any::TypeId;
 
 use pyo3::{prelude::*, IntoPyObjectExt};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
 #[derive(Default)]
 #[pyclass]
+#[gen_stub_pyclass]
 pub struct Store {
     pub inner: super::Store,
 }
 
 #[derive(FromPyObject)]
+#[gen_stub_pyclass_enum]
 enum StorePrimitive {
     U32(u32),
     F32(f32),
@@ -16,6 +19,7 @@ enum StorePrimitive {
 }
 
 #[pymethods]
+#[gen_stub_pymethods]
 impl Store {
     #[new]
     fn new() -> Self {

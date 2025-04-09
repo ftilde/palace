@@ -38,6 +38,7 @@ use pyo3_stub_gen::derive::*;
 use super::tensor::{FrameOperator, ImageOperator, LODVolumeOperator};
 
 #[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", gen_stub_pyclass)]
 #[derive(state_link::State, Clone)]
 pub struct TrackballState {
     #[pyo3(get, set)]
@@ -49,6 +50,7 @@ pub struct TrackballState {
 }
 
 #[cfg_attr(feature = "python", pymethods)]
+#[cfg_attr(feature = "python", gen_stub_pymethods)]
 impl TrackballState {
     #[new]
     pub fn new(eye: Vector<D3, f32>, center: Vector<D3, f32>, up: Vector<D3, f32>) -> Self {
@@ -91,6 +93,7 @@ impl TrackballState {
 
 #[derive(Clone, state_link::State)]
 #[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", gen_stub_pyclass)]
 pub struct CameraState {
     #[pyo3(get, set)]
     pub fov: f32,
@@ -128,6 +131,7 @@ impl CameraState {
 }
 
 #[cfg_attr(feature = "python", pymethods)]
+#[cfg_attr(feature = "python", gen_stub_pymethods)]
 impl CameraState {
     #[new]
     pub fn new(trackball: TrackballState, fov: f32, near_plane: f32, far_plane: f32) -> Self {

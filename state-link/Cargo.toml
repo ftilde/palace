@@ -9,7 +9,8 @@ edition = "2021"
 derive_more = "0.99.17"
 state-link-derive = { path = "../state-link-derive" }
 pyo3 = { version = "0.23.0", features = ["py-clone"], optional = true }
+pyo3-stub-gen = { version = "0.6.0", features = ["numpy"], optional = true }
 
 [features]
 default = []
-python = ["dep:pyo3", "state-link-derive/python"]
+python = ["dep:pyo3", "state-link-derive/python", "dep:pyo3-stub-gen"]
