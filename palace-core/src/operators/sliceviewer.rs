@@ -564,8 +564,8 @@ void main()
                     ))
                     .await;
 
-                    let request_result = request_table
-                        .download_and_insert(
+                    let (request_result, ()) = futures::join!(
+                        request_table.download_and_insert(
                             *ctx,
                             device,
                             level,
@@ -573,12 +573,9 @@ void main()
                             request_batch_size,
                             true,
                             false,
-                        )
-                        .await;
-
-                    use_table
-                        .download_and_note_use(*ctx, device, &page_table)
-                        .await;
+                        ),
+                        use_table.download_and_note_use(*ctx, device, &page_table)
+                    );
 
                     // Make writes to the request table, use table and page table visible
                     // (including initialization)
