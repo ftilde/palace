@@ -988,6 +988,28 @@ impl Storage {
     /// Safety: Danger zone: The entries cannot be in use anymore! No checking for dangling
     /// references is done!
     pub unsafe fn free_vram(&self) {
+        {
+            let mut pti = self.page_table_index.borrow_mut();
+            for (operator, buf_addr) in
+                std::mem::take(&mut *self.page_table_lru.borrow_mut()).drain_lru()
+            {
+                let child = pti
+                    .get_mut(&operator)
+                    .unwrap()
+                    .children
+                    .remove(&buf_addr)
+                    .unwrap();
+                match child.type_ {
+                    PageTableChildType::Inner(allocation) => {
+                        self.allocator.deallocate(allocation);
+                    }
+                    PageTableChildType::Leaf(_, _) => {
+                        // Will be deallocated below from data_index
+                    }
+                }
+            }
+        }
+
         for (_, entry) in std::mem::take(&mut *self.page_table_index.borrow_mut()) {
             self.allocator.deallocate(entry.root_storage.allocation);
         }
