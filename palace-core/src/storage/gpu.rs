@@ -476,7 +476,7 @@ pub struct PageTableState {
 }
 
 // Safety: The caller is responsible for removing the reference from the index in gpu memory
-// (i.e. self.storage.allocation.buffer)
+// (i.e. self.storage.allocation.buffer) in _this_ epoch
 unsafe fn unref_in_page_table(
     device: &DeviceContext,
     data_index: &mut Map<DataId, Entry>,
@@ -666,7 +666,8 @@ impl PageTableState {
         }
     }
 
-    fn release(
+    // Safety: Caller needs to remove page from page table in this cmdbuffer epoch
+    unsafe fn release(
         &mut self,
         device: &DeviceContext,
         data_index: &mut Map<DataId, Entry>,
@@ -677,15 +678,35 @@ impl PageTableState {
         //println!("Remove {:?}", addr);
         let pt_entry = self.children.remove(&addr).unwrap();
 
-        let to_delete = match &pt_entry.type_ {
+        // Safety: Caller must uphold
+        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, &pt_entry) };
+        pt_entry.type_
+    }
+}
+
+#[derive(Default)]
+struct PageTableReleaseBatcher {
+    entries: Vec<(vk::Buffer, DispatchDeleteTarget)>,
+}
+
+impl PageTableReleaseBatcher {
+    fn add(&mut self, pt: &PageTableState, addr: BufferAddress, type_: &PageTableChildType) {
+        let to_delete = match type_ {
             PageTableChildType::Inner(_) => DispatchDeleteTarget::Inner(addr),
             PageTableChildType::Leaf(_, chunk_index) => DispatchDeleteTarget::Leaf(*chunk_index),
         };
-        dispatch_page_table_release(device, self.root_storage.allocation.buffer, to_delete);
+        self.entries
+            .push((pt.root_storage.allocation.buffer, to_delete));
+    }
 
-        // Safety: We have also just removed the reference from the index
-        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, &pt_entry) };
-        pt_entry.type_
+    fn run(self, device: &DeviceContext) {
+        //TODO Actually batch these. This is difficult though, since we cannot really allocate
+        //(since we are being in try_garbage_collect)
+
+        //println!("Dispatching delete for {} pages", self.entries.len());
+        for (root_buffer, target) in self.entries {
+            dispatch_page_table_release(device, root_buffer, target);
+        }
     }
 }
 
@@ -717,23 +738,55 @@ impl PageTablePageCache {
         let current_epoch = device.current_epoch();
         let mut returned = self.returned.borrow_mut();
         let mut available = self.available.borrow_mut();
-        while returned
-            .first_key_value()
-            .map(|(k, _)| k < &current_epoch)
-            .unwrap_or(false)
-        {
-            available.extend(returned.pop_first().unwrap().1);
-            //println!("!!!!!!!!!!!!! Available: {}", available.len());
-        }
+        device.with_cmd_buffer(|cmd| {
+            while returned
+                .first_key_value()
+                .map(|(k, _)| k < &current_epoch)
+                .unwrap_or(false)
+            {
+                let pages = returned.pop_first().unwrap().1;
+                // Note: cmd_fill_buffer will be made visible by barrier after get()
+                for page in &pages {
+                    unsafe {
+                        device.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            page.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0,
+                        );
+                    }
+                }
+                available.extend(pages);
+                //println!("!!!!!!!!!!!!! Available: {}", available.len());
+            }
+        })
     }
 
+    // Needs a barrier to make cmd_fill_buffer visible
     pub fn get<'a, 'inv>(&self, device: &'a DeviceContext) -> Request<'a, 'inv, Allocation> {
         let mut available = self.available.borrow_mut();
         if let Some(alloc) = available.pop() {
             Request::ready(alloc)
         } else {
             //println!(">>>>>> Alloc!");
-            device.storage.request_allocate_page_table_page(&device)
+            device
+                .storage
+                .request_allocate_page_table_page(&device)
+                .map(|page| {
+                    device.with_cmd_buffer(|cmd| {
+                        unsafe {
+                            device.functions().cmd_fill_buffer(
+                                cmd.raw(),
+                                page.buffer,
+                                0,
+                                vk::WHOLE_SIZE,
+                                0,
+                            );
+                        }
+                        page
+                    })
+                })
         }
     }
 
@@ -859,17 +912,6 @@ impl<'a> PageTableHandle<'a> {
                 vk::WHOLE_SIZE,
                 0u32,
             );
-
-            //TODO: Do this on free, not here (where it sometimes/often is superfluous
-            for buf in &page_pool_bufs {
-                self.device.functions().cmd_fill_buffer(
-                    cmd.raw(),
-                    buf.buffer,
-                    0,
-                    vk::WHOLE_SIZE,
-                    0,
-                );
-            }
         });
 
         ctx.submit(self.device.barrier(
@@ -1396,6 +1438,8 @@ impl Storage {
 
         // Potentially unref chunks from indices that are still active
         let mut unindexed = 0;
+
+        let mut pt_release_batcher = PageTableReleaseBatcher::default();
         if goal_in_bytes > collected {
             // Pop items one by one from the respective indices. Note that since chunks are
             // inserted in the lru only when they are first inserted into the index, we effectively
@@ -1405,13 +1449,11 @@ impl Storage {
                 let page_table = page_table_index.get_mut(&op).unwrap();
 
                 // Releasing the chunk also removes it from the page table queue
-                let child = page_table.release(
-                    device,
-                    &mut index,
-                    &mut *page_table_lru,
-                    &mut lru,
-                    buf_addr,
-                );
+                let child = unsafe {
+                    page_table.release(device, &mut index, &mut *page_table_lru, &mut lru, buf_addr)
+                };
+
+                pt_release_batcher.add(page_table, buf_addr, &child);
 
                 let size = match child {
                     PageTableChildType::Leaf(data_id, _) => {
@@ -1441,6 +1483,7 @@ impl Storage {
                 };
             }
         }
+        pt_release_batcher.run(device);
 
         println!(
             "Garbage collect GPU{}: {} | Unindexed: {}",
