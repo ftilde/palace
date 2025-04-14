@@ -183,6 +183,7 @@ pub fn physical_to_voxel<D: LargerDim>(
 //TODO: Revisit this. This is definitely fine as long as we don't add other members
 //unsafe impl<D: Dimension + bytemuck::Zeroable> bytemuck::Pod for TensorEmbeddingData<D> {}
 
+use bytemuck::{Pod, Zeroable};
 use id::Identify;
 #[cfg(feature = "python")]
 pub use py::TensorEmbeddingData as PyTensorEmbeddingData;
@@ -471,7 +472,8 @@ impl<D: SmallerDim> TensorMetaData<D> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Identify)]
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Identify, Pod, Zeroable)]
 pub struct ChunkIndex(pub(crate) u64);
 
 pub type VolumeMetaData = TensorMetaData<D3>;

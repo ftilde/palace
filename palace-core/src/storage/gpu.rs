@@ -24,9 +24,11 @@ use crate::{
     task::{AllocationId, AllocationRequest, OpaqueTaskContext, Request, RequestType},
     util::{IdGenerator, Map},
     vulkan::{
-        memory::TempRessource, pipeline::ComputePipelineBuilder, shader::Shader,
-        state::VulkanState, CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo,
-        SrcBarrierInfo,
+        memory::TempRessource,
+        pipeline::{ComputePipelineBuilder, DescriptorConfig},
+        shader::Shader,
+        state::VulkanState,
+        CmdBufferEpoch, CommandBuffer, DeviceContext, DeviceId, DstBarrierInfo, SrcBarrierInfo,
     },
 };
 
@@ -574,22 +576,21 @@ pub fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddre
 fn dispatch_page_table_insert(
     device: &DeviceContext,
     root: BufferAddress,
-    table_buf1: BufferAddress,
-    table_buf2: BufferAddress,
-    chunk_id: ChunkIndex,
-    chunk_buffer_addr: BufferAddress,
+    pos_and_chunk: &Allocation,
+    num_elements: u32,
+    pt_pool: &Allocation,
+    pt_pool_pos: &Allocation,
 ) {
     #[repr(C)]
     #[derive(Copy, Clone, Pod, Zeroable)]
     struct PushConstants {
         root: BufferAddress,
-        chunk_id: u64,
-        chunk_buffer_addr: BufferAddress,
-        table_buf1: BufferAddress,
-        table_buf2: BufferAddress,
+        num_elements: u32,
+        _padding: u32,
     }
     let pipeline = device.request_state((), |device, ()| {
         ComputePipelineBuilder::new(Shader::new(include_str!("page_table_insert.glsl")))
+            .use_push_descriptor(true)
             .build(device)
     });
     let pipeline = match pipeline {
@@ -599,19 +600,19 @@ fn dispatch_page_table_insert(
             panic!("");
         }
     };
+    let descriptor_config = DescriptorConfig::new([pos_and_chunk, pt_pool, pt_pool_pos]);
     device.with_cmd_buffer(|cmd| {
         let consts = PushConstants {
             root,
-            chunk_id: chunk_id.0,
-            chunk_buffer_addr,
-            table_buf1,
-            table_buf2,
+            num_elements,
+            _padding: 0,
         };
         unsafe {
             let mut pipeline = pipeline.bind(cmd);
 
+            pipeline.push_descriptor_set(0, descriptor_config);
             pipeline.push_constant_pod(consts);
-            pipeline.dispatch3d(crate::vec::Vector::fill(1));
+            pipeline.dispatch(device, num_elements as usize);
         }
     });
 }
@@ -745,94 +746,216 @@ impl<'a> PageTableHandle<'a> {
     pub async fn insert<'h, 'inv>(
         &self,
         ctx: OpaqueTaskContext<'h, 'inv>,
-        pos: ChunkIndex,
-        chunk: ReadHandle<'h>,
+        pos_and_chunk: Vec<(ChunkIndex, ReadHandle<'h>)>,
     ) {
-        let buf1 = ctx
-            .submit(
-                self.device
-                    .storage
-                    .request_allocate_page_table_page(&self.device),
-            )
-            .await;
-        let buf2 = ctx
-            .submit(
-                self.device
-                    .storage
-                    .request_allocate_page_table_page(&self.device),
-            )
-            .await;
+        let num_items_to_insert = pos_and_chunk.len();
+        //println!("Inserting {} items", num_items_to_insert);
+
+        let bufs_to_allocate = num_items_to_insert * 2;
+        let buf_requests = (0..bufs_to_allocate).map(|_| {
+            self.device
+                .storage
+                .request_allocate_page_table_page(&self.device)
+        });
+        let page_pool_bufs = ctx.submit(ctx.group(buf_requests)).await;
+
+        #[repr(C)]
+        #[derive(Copy, Clone, Pod, Zeroable)]
+        struct PosAndChunkAddr {
+            pos: ChunkIndex,
+            chunk_addr: BufferAddress,
+        }
+
+        let pos_and_chunk_addr = pos_and_chunk
+            .iter()
+            .map(|(pos, chunk)| PosAndChunkAddr {
+                pos: *pos,
+                chunk_addr: buffer_address(self.device, chunk.buffer),
+            })
+            .collect::<Vec<_>>();
+
+        let page_pool_buf_addrs = page_pool_bufs
+            .iter()
+            .map(|buf| buffer_address(&self.device, buf.buffer))
+            .collect::<Vec<_>>();
+        let pos_and_chunk_addr_layout =
+            Layout::array::<PosAndChunkAddr>(num_items_to_insert).unwrap();
+        let use_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let location = MemoryLocation::GpuOnly;
+        let pos_and_chunk_addr_buf = TempRessource::new(
+            self.device,
+            ctx.submit(self.device.storage.request_allocate_raw(
+                self.device,
+                pos_and_chunk_addr_layout,
+                use_flags,
+                location,
+            ))
+            .await,
+        );
+
+        let page_pool_buf_layout =
+            Layout::array::<BufferAddress>(page_pool_buf_addrs.len()).unwrap();
+        let use_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let location = MemoryLocation::GpuOnly;
+        let page_pool_buf = TempRessource::new(
+            self.device,
+            ctx.submit(self.device.storage.request_allocate_raw(
+                self.device,
+                page_pool_buf_layout,
+                use_flags,
+                location,
+            ))
+            .await,
+        );
+
+        type UsePosType = u32;
+        let use_flags = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::TRANSFER_SRC;
+        let location = MemoryLocation::GpuOnly;
+        let page_pool_use_pos_layout = Layout::new::<UsePosType>();
+        let page_pool_use_pos_buf = TempRessource::new(
+            self.device,
+            ctx.submit(self.device.storage.request_allocate_raw(
+                self.device,
+                page_pool_use_pos_layout,
+                use_flags,
+                location,
+            ))
+            .await,
+        );
 
         self.device.with_cmd_buffer(|cmd| unsafe {
-            //TODO: Why do we always have to zero them, even if we never use them?
-            for buf in [buf1.buffer, buf2.buffer] {
-                self.device
-                    .functions()
-                    .cmd_fill_buffer(cmd.raw(), buf, 0, vk::WHOLE_SIZE, 0);
-            }
-
-            self.device.storage.barrier_manager.issue(
-                cmd,
-                SrcBarrierInfo {
-                    stage: vk::PipelineStageFlags2::TRANSFER,
-                    access: vk::AccessFlags2::TRANSFER_WRITE,
-                },
-                DstBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                },
+            self.device.functions().cmd_update_buffer(
+                cmd.raw(),
+                pos_and_chunk_addr_buf.buffer,
+                0,
+                bytemuck::cast_slice(pos_and_chunk_addr.as_slice()),
             );
+            self.device.functions().cmd_update_buffer(
+                cmd.raw(),
+                page_pool_buf.buffer,
+                0,
+                bytemuck::cast_slice(page_pool_buf_addrs.as_slice()),
+            );
+            self.device.functions().cmd_fill_buffer(
+                cmd.raw(),
+                page_pool_use_pos_buf.buffer,
+                0,
+                vk::WHOLE_SIZE,
+                0u32,
+            );
+
+            //TODO: Do this on free, not here (where it sometimes/often is superfluous
+            for buf in &page_pool_bufs {
+                self.device.functions().cmd_fill_buffer(
+                    cmd.raw(),
+                    buf.buffer,
+                    0,
+                    vk::WHOLE_SIZE,
+                    0,
+                );
+            }
         });
 
-        let buf1_addr = buffer_address(&self.device, buf1.buffer);
-        let buf2_addr = buffer_address(&self.device, buf2.buffer);
+        ctx.submit(self.device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::TRANSFER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+        ))
+        .await;
+
         let root_buffer_addr = buffer_address(&self.device, self.buffer);
-
-        let mut index = self.device.storage.page_table_index.borrow_mut();
-        let entry = index.get_mut(&self.op).unwrap();
-
-        let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
-
         dispatch_page_table_insert(
             self.device,
             root_buffer_addr,
-            buf1_addr,
-            buf2_addr,
-            pos,
-            chunk_buffer_addr,
+            &pos_and_chunk_addr_buf,
+            num_items_to_insert as u32,
+            &page_pool_buf,
+            &page_pool_use_pos_buf,
         );
 
-        if !entry.children.contains_key(&chunk_buffer_addr) {
-            let data_id = chunk.access.id;
-            assert_eq!(data_id, DataId::new(self.op, pos));
+        for (pos, chunk) in pos_and_chunk {
+            let mut index = self.device.storage.page_table_index.borrow_mut();
+            let entry = index.get_mut(&self.op).unwrap();
 
-            // After allocations (potential preemptions): Give management to LRU
-            let lru_index = self
-                .device
-                .storage
-                .page_table_lru
-                .borrow_mut()
-                .add((self.op, chunk_buffer_addr));
+            let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
 
-            // Insert page in index so that following calls return in the `contains_key` guard above.
-            entry.children.insert(
-                chunk_buffer_addr,
-                PageTableChild {
-                    page_table_lru_index: Some(lru_index),
-                    type_: PageTableChildType::Leaf(data_id, pos),
-                },
-            );
+            if !entry.children.contains_key(&chunk_buffer_addr) {
+                let data_id = chunk.access.id;
+                assert_eq!(data_id, DataId::new(self.op, pos));
 
-            // Leak ReadHandle: This handle is now "owned" by the index
-            std::mem::forget(chunk);
-        } else {
-            // Nothing. We already have a child entry for the chunk, but either way we have added
-            // it to the page table.
+                // After allocations (potential preemptions): Give management to LRU
+                let lru_index = self
+                    .device
+                    .storage
+                    .page_table_lru
+                    .borrow_mut()
+                    .add((self.op, chunk_buffer_addr));
 
-            //println!("{:?} should already be present", pos);
+                // Insert page in index so that following calls return in the `contains_key` guard above.
+                entry.children.insert(
+                    chunk_buffer_addr,
+                    PageTableChild {
+                        page_table_lru_index: Some(lru_index),
+                        type_: PageTableChildType::Leaf(data_id, pos),
+                    },
+                );
+
+                // Leak ReadHandle: This handle is now "owned" by the index
+                std::mem::forget(chunk);
+            } else {
+                // Nothing. We already have a child entry for the chunk, but either way we have added
+                // it to the page table.
+
+                //println!("{:?} should already be present", pos);
+            }
         }
 
-        for (buf, buf_addr) in [(buf1, buf1_addr), (buf2, buf2_addr)] {
+        ctx.submit(self.device.barrier(
+            SrcBarrierInfo {
+                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            },
+            DstBarrierInfo {
+                stage: vk::PipelineStageFlags2::TRANSFER,
+                access: vk::AccessFlags2::TRANSFER_READ,
+            },
+        ))
+        .await;
+
+        let mut use_pos = UsePosType::default();
+        let bytes = bytemuck::bytes_of_mut(&mut use_pos);
+        unsafe {
+            crate::vulkan::memory::copy_to_cpu(
+                ctx,
+                &self.device,
+                page_pool_use_pos_buf.buffer,
+                page_pool_use_pos_layout,
+                bytes.as_mut_ptr().cast(),
+            )
+            .await
+        };
+
+        let use_pos = use_pos as usize;
+        assert!(use_pos <= page_pool_bufs.len());
+        let mut bufs = page_pool_bufs;
+        let to_free = bufs.split_off(use_pos);
+
+        //if bufs.len() != 0 {
+        //    println!("{} pages inserted, {} to free", bufs.len(), to_free.len());
+        //}
+
+        let to_insert_lru = bufs.into_iter().zip(page_pool_buf_addrs.into_iter());
+
+        let mut index = self.device.storage.page_table_index.borrow_mut();
+        let entry = index.get_mut(&self.op).unwrap();
+        for (buf, buf_addr) in to_insert_lru {
             let lru_index = self
                 .device
                 .storage
@@ -847,7 +970,11 @@ impl<'a> PageTableHandle<'a> {
                     type_: PageTableChildType::Inner(buf),
                 },
             );
-            //println!("Inner insert {:?}", buf_addr);
+        }
+
+        for buf in to_free {
+            // Safety: We have allocated these above on the same device
+            unsafe { self.device.storage.deallocate(buf) };
         }
     }
 

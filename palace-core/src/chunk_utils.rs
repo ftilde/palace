@@ -256,11 +256,12 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         });
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-        for (brick, brick_linear_pos) in requested_bricks.into_iter().zip(batch.into_iter()) {
-            page_table_handle
-                .insert(*ctx, ChunkIndex(*brick_linear_pos), brick)
-                .await;
-        }
+        let pos_and_chunk = batch
+            .into_iter()
+            .map(|i| ChunkIndex(*i))
+            .zip(requested_bricks.into_iter())
+            .collect();
+        page_table_handle.insert(*ctx, pos_and_chunk).await;
 
         if let Some(lateness) = ctx.past_deadline(interactive) {
             if lateness > 2.0 {

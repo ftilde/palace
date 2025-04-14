@@ -427,18 +427,18 @@ void main() {
 
                             let out_info = m_out.chunk_info(pos);
 
-                            for (gpu_brick_in, in_brick_pos) in intersecting_bricks
+                            let pos_and_chunk = intersecting_bricks
                                 .into_iter()
                                 .zip(in_brick_positions.into_iter())
-                            {
-                                let brick_pos_linear = crate::data::to_linear(
-                                    &in_brick_pos,
-                                    &m_in.dimension_in_chunks(),
-                                );
-                                page_table
-                                    .insert(*ctx, ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
-                                    .await;
-                            }
+                                .map(|(gpu_brick_in, in_brick_pos)| {
+                                    let brick_pos_linear = crate::data::to_linear(
+                                        &in_brick_pos,
+                                        &m_in.dimension_in_chunks(),
+                                    );
+                                    (ChunkIndex(brick_pos_linear as u64), gpu_brick_in)
+                                })
+                            .collect();
+                            page_table.insert(*ctx, pos_and_chunk).await;
 
                             let page_table_root = page_table.root();
 
