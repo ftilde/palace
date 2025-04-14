@@ -708,6 +708,11 @@ impl PageTablePageCache {
         self.try_reclaim_returned(device);
     }
 
+    pub fn insert_unused(&self, allocs: Vec<Allocation>) {
+        let mut available = self.available.borrow_mut();
+        available.extend(allocs);
+    }
+
     pub fn try_reclaim_returned(&self, device: &DeviceContext) {
         let current_epoch = device.current_epoch();
         let mut returned = self.returned.borrow_mut();
@@ -718,7 +723,7 @@ impl PageTablePageCache {
             .unwrap_or(false)
         {
             available.extend(returned.pop_first().unwrap().1);
-            println!("Available: {}", available.len());
+            //println!("!!!!!!!!!!!!! Available: {}", available.len());
         }
     }
 
@@ -727,7 +732,19 @@ impl PageTablePageCache {
         if let Some(alloc) = available.pop() {
             Request::ready(alloc)
         } else {
+            //println!(">>>>>> Alloc!");
             device.storage.request_allocate_page_table_page(&device)
+        }
+    }
+
+    unsafe fn free_vram(&self, allocator: &Allocator) {
+        let available = std::mem::take(&mut *self.available.borrow_mut());
+        let returned = std::mem::take(&mut *self.returned.borrow_mut());
+        for alloc in available
+            .into_iter()
+            .chain(returned.into_iter().flat_map(|r| r.1))
+        {
+            allocator.deallocate(alloc);
         }
     }
 }
@@ -752,11 +769,8 @@ impl<'a> PageTableHandle<'a> {
         //println!("Inserting {} items", num_items_to_insert);
 
         let bufs_to_allocate = num_items_to_insert * 2;
-        let buf_requests = (0..bufs_to_allocate).map(|_| {
-            self.device
-                .storage
-                .request_allocate_page_table_page(&self.device)
-        });
+        let buf_requests = (0..bufs_to_allocate)
+            .map(|_| self.device.storage.page_table_page_cache.get(self.device));
         let page_pool_bufs = ctx.submit(ctx.group(buf_requests)).await;
 
         #[repr(C)]
@@ -945,7 +959,7 @@ impl<'a> PageTableHandle<'a> {
         let use_pos = use_pos as usize;
         assert!(use_pos <= page_pool_bufs.len());
         let mut bufs = page_pool_bufs;
-        let to_free = bufs.split_off(use_pos);
+        let unused = bufs.split_off(use_pos);
 
         //if bufs.len() != 0 {
         //    println!("{} pages inserted, {} to free", bufs.len(), to_free.len());
@@ -972,10 +986,10 @@ impl<'a> PageTableHandle<'a> {
             );
         }
 
-        for buf in to_free {
-            // Safety: We have allocated these above on the same device
-            unsafe { self.device.storage.deallocate(buf) };
-        }
+        self.device
+            .storage
+            .page_table_page_cache
+            .insert_unused(unused);
     }
 
     pub fn note_use<'h>(&self, buffer_addr: BufferAddress) {
@@ -1140,6 +1154,8 @@ impl Storage {
         for (_, entry) in std::mem::take(&mut *self.page_table_index.borrow_mut()) {
             self.allocator.deallocate(entry.root_storage.allocation);
         }
+
+        self.page_table_page_cache.free_vram(&self.allocator);
 
         for (_, entry) in std::mem::take(&mut *self.data_index.borrow_mut()) {
             match entry.state {
@@ -1371,8 +1387,8 @@ impl Storage {
                     );
 
                     if let PageTableChildType::Inner(allocation) = pt_entry.type_ {
-                        //self.page_table_page_cache.insert(device, allocation);
-                        std::mem::drop(TempRessource::new(device, allocation));
+                        self.page_table_page_cache.insert(device, allocation);
+                        //std::mem::drop(TempRessource::new(device, allocation));
                     }
                 };
             }
@@ -1412,8 +1428,8 @@ impl Storage {
                         let size = allocation.size;
 
                         // Free page once epoch is over and no one can be referencing it anymore
-                        std::mem::drop(TempRessource::new(device, allocation));
-                        //self.page_table_page_cache.insert(device, allocation);
+                        //std::mem::drop(TempRessource::new(device, allocation));
+                        self.page_table_page_cache.insert(device, allocation);
 
                         size as usize
                     }
