@@ -238,6 +238,10 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
 
     // Fulfill requests
     let mut to_request_linear = &to_request_linear[..];
+
+    let mut res = Ok(());
+    let mut pos_and_chunk = Vec::new();
+
     while !to_request_linear.is_empty() {
         let batch;
         (batch, to_request_linear) =
@@ -256,24 +260,27 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         });
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-        let pos_and_chunk = batch
-            .into_iter()
-            .map(|i| ChunkIndex(*i))
-            .zip(requested_bricks.into_iter())
-            .collect();
-        page_table_handle.insert(*ctx, pos_and_chunk).await;
+        pos_and_chunk.extend(
+            batch
+                .into_iter()
+                .map(|i| ChunkIndex(*i))
+                .zip(requested_bricks.into_iter()),
+        );
 
         if let Some(lateness) = ctx.past_deadline(interactive) {
             if lateness > 2.0 {
                 *batch_size = (*batch_size / 2).max(1);
             }
-            return Err(Timeout);
+            res = Err(Timeout);
+            break;
         }
 
         *batch_size = (*batch_size * 4).min(max_batch_size);
     }
 
-    Ok(())
+    page_table_handle.insert(*ctx, pos_and_chunk).await;
+
+    res
 }
 
 pub struct ChunkCopyPipeline<D: DynDimension> {
