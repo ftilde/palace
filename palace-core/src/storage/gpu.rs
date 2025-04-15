@@ -1,5 +1,6 @@
 use ahash::HashMapExt;
 use bytemuck::{Pod, Zeroable};
+use crevice::glsl::GlslStruct;
 use id::Identify;
 use std::{
     alloc::Layout,
@@ -568,6 +569,24 @@ fn dispatch_page_table_release(
 #[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
 pub struct BufferAddress(pub u64);
 
+unsafe impl crevice::glsl::Glsl for BufferAddress {
+    const NAME: &'static str = "uint64_t";
+}
+
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
+pub struct U64(pub u64);
+
+impl From<u64> for U64 {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+unsafe impl crevice::glsl::Glsl for U64 {
+    const NAME: &'static str = "u64";
+}
+
 pub fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
     let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
     BufferAddress(unsafe { device.functions().get_buffer_device_address(&info) })
@@ -582,16 +601,18 @@ fn dispatch_page_table_insert(
     pt_pool_pos: &Allocation,
 ) {
     #[repr(C)]
-    #[derive(Copy, Clone, Pod, Zeroable)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
         root: BufferAddress,
         num_elements: u32,
         _padding: u32,
     }
     let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(Shader::new(include_str!("page_table_insert.glsl")))
-            .use_push_descriptor(true)
-            .build(device)
+        ComputePipelineBuilder::new(
+            Shader::new(include_str!("page_table_insert.glsl")).push_const_block::<PushConstants>(),
+        )
+        .use_push_descriptor(true)
+        .build(device)
     });
     let pipeline = match pipeline {
         Ok(o) => o,

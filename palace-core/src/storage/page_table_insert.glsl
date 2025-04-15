@@ -7,12 +7,6 @@
 #include <util.glsl>
 #include <size_util.glsl>
 
-layout(scalar, push_constant) uniform PushConsts {
-    PageTablePage root;
-    uint num_elements;
-    uint _padding;
-} consts;
-
 struct PosAndChunk {
     uint64_t chunk_id;
     uint64_t buffer_addr;
@@ -30,6 +24,8 @@ layout(std430, binding = 2) buffer PageTablePoolPos {
     uint next;
 } page_table_pool_pos;
 
+declare_push_consts(consts);
+
 PageTablePage pop_page() {
     //TODO add check here if we reduce page_table_pool_size below 2*num_elements
     uint pos = atomicAdd(page_table_pool_pos.next, 1);
@@ -44,6 +40,7 @@ void main() {
     }
 
     PosAndChunk pac = pos_and_chunk.values[current_linear];
+    PageTablePage root = PageTablePage(consts.root);
 
     uvec3 level_indices = page_table_index_to_level_indices(pac.chunk_id);
     uint index0 = level_indices[0];
@@ -52,12 +49,12 @@ void main() {
 
     //debugPrintfEXT("insert %lu: %d %d %d \n", pac.chunk_id, index0, index1, index2);
 
-    while(consts.root.values[index0] == 0) {
+    while(root.values[index0] == 0) {
         PageTablePage page_buf = pop_page();
 
         //debugPrintfEXT("set page level1 %d %lu \n", index0, uint64_t(page_buf));
 
-        uint64_t prev = atomicCompSwap(consts.root.values[index0], 0L, uint64_t(page_buf));
+        uint64_t prev = atomicCompSwap(root.values[index0], 0L, uint64_t(page_buf));
         bool buf_used = prev == 0L;
         if(buf_used) {
             page_buf.page_table_index = with_level(pac.chunk_id, 2);
@@ -66,7 +63,7 @@ void main() {
             page_buf.page_table_index = PAGE_TABLE_INDEX_UNUSED;
         }
     }
-    PageTablePage l1 = PageTablePage(consts.root.values[index0]);
+    PageTablePage l1 = PageTablePage(root.values[index0]);
 
     while(l1.values[index1] == 0) {
         PageTablePage page_buf = pop_page();
