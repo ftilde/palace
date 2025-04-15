@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use ash::vk;
 use itertools::Itertools;
 
@@ -25,6 +27,28 @@ use crate::{
 };
 
 pub type FeedbackTableElement = u64;
+
+const CHUNK_INDEX_BITS: u64 = 48;
+
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TensorQueryValue(u64);
+
+impl From<u64> for TensorQueryValue {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl TensorQueryValue {
+    pub fn chunk_index(&self) -> ChunkIndex {
+        ChunkIndex(self.0 & ((1 << CHUNK_INDEX_BITS) - 1))
+    }
+
+    pub fn level(&self) -> usize {
+        (self.0 >> CHUNK_INDEX_BITS) as usize
+    }
+}
 
 pub struct ChunkFeedbackTable<'a> {
     inner: StateCacheHandle<'a>,
@@ -78,11 +102,11 @@ impl<'a> ChunkFeedbackTable<'a> {
     }
 
     // Note: any changes to the buffer have to be made visible to the cpu side via a barrier first
-    pub async fn download_inserted<'cref, 'inv>(
+    pub async fn download_inserted<'cref, 'inv, T: From<FeedbackTableElement>>(
         &self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-    ) -> Vec<FeedbackTableElement> {
+    ) -> Vec<T> {
         let num_elements = self.num_elements();
         let layout = std::alloc::Layout::array::<FeedbackTableElement>(num_elements).unwrap();
         let mut request_table_cpu = vec![0u64; num_elements];
@@ -102,7 +126,8 @@ impl<'a> ChunkFeedbackTable<'a> {
         let to_request_linear = request_table_cpu
             .into_iter()
             .filter(|v| *v != FeedbackTableElement::max_value())
-            .collect::<Vec<FeedbackTableElement>>();
+            .map(|v| v.into())
+            .collect::<Vec<T>>();
 
         to_request_linear
     }
@@ -136,8 +161,10 @@ impl<'a> RequestTable<'a> {
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        tensor: &'inv TensorOperator<D, StaticElementType<E>>,
-        page_table_handle: &PageTableHandle<'_>,
+        tensor_and_pt: Vec<(
+            &'inv TensorOperator<D, StaticElementType<E>>,
+            &PageTableHandle<'_>,
+        )>,
         batch_size: &mut usize,
         interactive: bool,
         force_reset: bool,
@@ -153,8 +180,7 @@ impl<'a> RequestTable<'a> {
                 &ctx,
                 device,
                 &mut to_request_linear,
-                tensor,
-                page_table_handle,
+                tensor_and_pt,
                 batch_size,
                 interactive,
             )
@@ -222,15 +248,14 @@ pub struct Timeout;
 pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
-    to_request_linear: &mut [FeedbackTableElement],
-    vol: &'inv TensorOperator<D, StaticElementType<E>>,
-    page_table_handle: &PageTableHandle<'_>,
+    to_request_linear: &mut [TensorQueryValue],
+    tensor_and_pt: Vec<(
+        &'inv TensorOperator<D, StaticElementType<E>>,
+        &PageTableHandle<'_>,
+    )>,
     batch_size: &mut usize,
     interactive: bool,
 ) -> Result<(), Timeout> {
-    let dim_in_bricks = vol.metadata.dimension_in_chunks();
-    let num_bricks = dim_in_bricks.hmul();
-
     // Sort to get at least some benefit from spatial neighborhood
     to_request_linear.sort_unstable();
 
@@ -240,18 +265,26 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
     let mut to_request_linear = &to_request_linear[..];
 
     let mut res = Ok(());
-    let mut pos_and_chunk = Vec::new();
 
+    let mut pos_and_chunk = (0..tensor_and_pt.len())
+        .into_iter()
+        .map(|i| (i, Vec::new()))
+        .collect::<BTreeMap<_, _>>();
     while !to_request_linear.is_empty() {
         let batch;
         (batch, to_request_linear) =
             to_request_linear.split_at((*batch_size).min(to_request_linear.len()));
 
         let to_request = batch.iter().map(|v| {
-            assert!(*v < num_bricks as _);
-            vol.chunks.request_gpu(
+            let (tensor, _pt) = tensor_and_pt[v.level()];
+            //println!("request: {:?} -> {} | {:?}", v, v.level(), v.chunk_index());
+            let dim_in_bricks = tensor.metadata.dimension_in_chunks();
+            let num_bricks = dim_in_bricks.hmul();
+
+            assert!(v.chunk_index().0 < num_bricks as _);
+            tensor.chunks.request_gpu(
                 device.id,
-                ChunkIndex((*v).into()),
+                v.chunk_index(),
                 DstBarrierInfo {
                     stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
                     access: vk::AccessFlags2::SHADER_READ,
@@ -260,12 +293,12 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         });
         let requested_bricks = ctx.submit(ctx.group(to_request)).await;
 
-        pos_and_chunk.extend(
-            batch
-                .into_iter()
-                .map(|i| ChunkIndex(*i))
-                .zip(requested_bricks.into_iter()),
-        );
+        for (chunk, tqv) in requested_bricks.into_iter().zip(batch.iter()) {
+            pos_and_chunk
+                .get_mut(&tqv.level())
+                .unwrap()
+                .push((tqv.chunk_index(), chunk));
+        }
 
         if let Some(lateness) = ctx.past_deadline(interactive) {
             if lateness > 2.0 {
@@ -278,7 +311,12 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
         *batch_size = (*batch_size * 4).min(max_batch_size);
     }
 
-    page_table_handle.insert(*ctx, pos_and_chunk).await;
+    //let total_to_insert = pos_and_chunk.values().map(|v| v.len()).sum::<usize>();
+    //println!("Inserting {} total", total_to_insert);
+
+    for (level, pac) in pos_and_chunk {
+        tensor_and_pt[level].1.insert(*ctx, pac).await;
+    }
 
     res
 }

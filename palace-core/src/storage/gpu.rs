@@ -573,20 +573,6 @@ unsafe impl crevice::glsl::Glsl for BufferAddress {
     const NAME: &'static str = "uint64_t";
 }
 
-#[repr(transparent)]
-#[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
-pub struct U64(pub u64);
-
-impl From<u64> for U64 {
-    fn from(value: u64) -> Self {
-        Self(value)
-    }
-}
-
-unsafe impl crevice::glsl::Glsl for U64 {
-    const NAME: &'static str = "u64";
-}
-
 pub fn buffer_address(device: &DeviceContext, buffer: vk::Buffer) -> BufferAddress {
     let info = ash::vk::BufferDeviceAddressInfo::default().buffer(buffer);
     BufferAddress(unsafe { device.functions().get_buffer_device_address(&info) })
@@ -839,6 +825,10 @@ impl<'a> PageTableHandle<'a> {
         ctx: OpaqueTaskContext<'h, 'inv>,
         pos_and_chunk: Vec<(ChunkIndex, ReadHandle<'h>)>,
     ) {
+        if pos_and_chunk.is_empty() {
+            return;
+        }
+
         let num_items_to_insert = pos_and_chunk.len();
         //println!("Inserting {} items", num_items_to_insert);
 
@@ -1676,6 +1666,7 @@ impl Storage {
         use_flags: vk::BufferUsageFlags,
         location: MemoryLocation,
     ) -> Request<'req, 'inv, Allocation> {
+        assert_ne!(layout.size(), 0);
         let (result_sender, result_receiver) = oneshot::channel();
 
         Request {
@@ -1828,6 +1819,8 @@ impl Storage {
         data_descriptor: DataDescriptor,
         layout: Layout,
     ) -> Request<'req, 'inv, WriteHandle<'req>> {
+        assert_ne!(layout.size(), 0);
+
         let mut access = Some(device.storage.register_access(
             device,
             current_frame,

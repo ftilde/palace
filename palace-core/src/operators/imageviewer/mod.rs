@@ -318,8 +318,7 @@ pub fn view_image(
                         request_table.download_and_insert(
                             *ctx,
                             device,
-                            level,
-                            &page_table,
+                            vec![(level, &page_table)],
                             request_batch_size,
                             true,
                             false,

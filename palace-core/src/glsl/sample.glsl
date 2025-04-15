@@ -67,6 +67,11 @@ int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_ta
 //}
 */
 
+#define MAX_CHUNK_ID_BITS 48
+uint64_t pack_tensor_query_value(uint64_t chunk_id, uint level) {
+    return (uint64_t(level) << MAX_CHUNK_ID_BITS) | (chunk_id & ((1UL << MAX_CHUNK_ID_BITS) - 1));
+}
+
 ChunkValue sample_local(Chunk brick, uint[3] loc, TensorMetaData(3) vm) {
     uint local_index = to_linear(loc, vm.chunk_size);
     return brick.values[local_index];

@@ -619,6 +619,7 @@ pub fn raycast(
     #[repr(C)]
     #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
+        request_table: BufferAddress,
         out_mem_dim: Vector<D2, u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
@@ -632,7 +633,6 @@ pub fn raycast(
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
     struct LOD {
         page_table_root: BufferAddress,
-        request_table: BufferAddress,
         use_table: BufferAddress,
         dim: Vector<D3, u32>,
         chunk_dim: Vector<D3, u32>,
@@ -726,22 +726,18 @@ pub fn raycast(
                 });
                 let out_info = m_out.chunk_info(pos);
 
-                let request_table_size = 256;
+                let request_table_size = 2048;
                 let use_table_size = 2048;
-                let raw_request_tables = ctx
-                    .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
-                        ctx.access_state_cache_gpu(
-                            device,
-                            pos,
-                            &format!("lod_table{}", i),
-                            Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
-                        )
-                    })))
+                let raw_request_table = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        "request_table",
+                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
+                    ))
                     .await;
-                let request_tables = raw_request_tables
-                    .into_iter()
-                    .map(|raw| RequestTable::new(device, raw))
-                    .collect::<Vec<_>>();
+                let mut request_table = RequestTable::new(device, raw_request_table);
+                let request_table_addr = request_table.buffer_address();
 
                 let raw_use_tables = ctx
                     .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
@@ -801,17 +797,14 @@ pub fn raycast(
                     || progress_state.unpack() < RaycastingState::RenderingFull
                 {
                     let request_batch_size = ctx
-                        .submit(ctx.access_state_cache(
-                            pos,
-                            "request_batch_size",
-                            input.levels.len(),
-                        ))
+                        .submit(ctx.access_state_cache(pos, "request_batch_size", 1))
                         .await;
                     let mut request_batch_size = unsafe {
                         request_batch_size.init(|r| {
                             crate::data::fill_uninit(r, 1usize);
                         })
                     };
+                    let request_batch_size = &mut request_batch_size[0];
 
                     let dst_info = DstBarrierInfo {
                         stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
@@ -836,12 +829,7 @@ pub fn raycast(
 
                     let mut lods = Vec::new();
                     let mut lod_data = Vec::new();
-                    for ((level, request_table), use_table) in input
-                        .levels
-                        .iter()
-                        .zip(request_tables.into_iter())
-                        .zip(use_tables.into_iter())
-                    {
+                    for (level, use_table) in input.levels.iter().zip(use_tables.into_iter()) {
                         let m_in = level.metadata;
                         let emd = level.embedding_data;
                         //let dim_in_bricks = m_in.dimension_in_chunks();
@@ -852,14 +840,12 @@ pub fn raycast(
                             .await;
 
                         let page_table_root = buffer_address(device, brick_index.buffer);
-                        let req_table_addr = request_table.buffer_address();
                         let use_table_addr = use_table.buffer_address();
 
-                        lod_data.push((brick_index, request_table, use_table, m_in));
+                        lod_data.push((brick_index, use_table, m_in));
 
                         lods.push(LOD {
                             page_table_root,
-                            request_table: req_table_addr,
                             use_table: use_table_addr,
                             dim: m_in.dimensions.raw().into(),
                             chunk_dim: m_in.chunk_size.raw().into(),
@@ -915,27 +901,26 @@ pub fn raycast(
                         ))
                         .await;
 
-                        let mut request_result = RequestTableResult::default();
-                        for ((level, request_batch_size), data) in (input
+                        let tensors_and_pts = input
                             .levels
                             .iter()
-                            .zip(request_batch_size.iter_mut())
-                            .zip(lod_data.iter_mut()))
-                        .rev()
-                        {
-                            let (req_res, ()) = futures::join!(
-                                data.1.download_and_insert(
-                                    *ctx,
-                                    device,
-                                    level,
-                                    &data.0,
-                                    request_batch_size,
-                                    in_preview,
-                                    reset_state,
-                                ),
-                                data.2.download_and_note_use(*ctx, device, &data.0)
-                            );
-                            request_result.combine(req_res);
+                            .map(|t| &t.inner)
+                            .zip(lod_data.iter().map(|d| &d.0))
+                            .collect::<Vec<_>>();
+
+                        let request_result = request_table
+                            .download_and_insert(
+                                *ctx,
+                                device,
+                                tensors_and_pts,
+                                request_batch_size,
+                                in_preview,
+                                reset_state,
+                            )
+                            .await;
+
+                        for data in lod_data.iter_mut().rev() {
+                            data.1.download_and_note_use(*ctx, device, &data.0).await;
                         }
 
                         // Make writes to the request table visible (including initialization)
@@ -967,6 +952,7 @@ pub fn raycast(
                             ]);
 
                             let consts = PushConstants {
+                                request_table: request_table_addr,
                                 tf_min: tf_data.min,
                                 tf_max: tf_data.max,
                                 tf_len: tf_data.len,

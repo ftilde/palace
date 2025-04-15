@@ -18,7 +18,6 @@ layout(buffer_reference, std430) buffer QueryTableType {
 
 struct LOD {
     PageTablePage page_table_root;
-    QueryTableType query_table;
     UseTableType use_table;
     UVec3 dimensions;
     UVec3 chunk_size;
@@ -158,6 +157,8 @@ void main()
     uvec2 out_mem_dim = to_glsl(consts.out_mem_dim);
     uint gID = out_pos.x + out_pos.y * out_mem_dim.x;
 
+    QueryTableType request_table = QueryTableType(consts.request_table);
+
     EEPoint eep;
 
     if(!(out_pos.x >= out_mem_dim.x || out_pos.y >= out_mem_dim.y)) {
@@ -275,7 +276,8 @@ void main()
                         float norm_step = step / diag;
                         update_state(t, state_color, sample_col, norm_step);
                     } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                        try_insert_into_hash_table(level.query_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                        uint64_t query_value = pack_tensor_query_value(sample_brick_pos_linear, level_num);
+                        try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                         break;
                     } else /*res == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors
