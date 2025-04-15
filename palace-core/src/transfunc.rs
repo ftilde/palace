@@ -1,4 +1,5 @@
 use ash::vk;
+use bytemuck::{Pod, Zeroable};
 use crevice::{glsl::GlslStruct, std140::AsStd140};
 use id::Identify;
 
@@ -87,7 +88,8 @@ pub fn apply<'op, D: DynDimension>(
     input: TensorOperator<D, StaticElementType<f32>>,
     tf: TransFuncOperator,
 ) -> TensorOperator<D, StaticElementType<Vector<D4, u8>>> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
         tf_min: f32,
         tf_max: f32,

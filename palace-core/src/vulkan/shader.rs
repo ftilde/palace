@@ -31,12 +31,12 @@ impl ShaderDefines {
         self
     }
 
-    pub fn push_const_block<T: crevice::glsl::GlslStruct>(self) -> Self {
+    pub fn push_const_block<T: crevice::glsl::GlslStruct + bytemuck::Pod>(self) -> Self {
         let mut struct_def = T::glsl_definition().replace("\n", " ");
         struct_def.pop(); //Remove semicolon
         let without_leading_struct = &struct_def[7..];
         let def = format!(
-            "layout(std140, push_constant) uniform {} __name",
+            "layout(scalar, push_constant) uniform {} __name",
             without_leading_struct
         );
         self.add("declare_push_consts(__name)", def)
@@ -57,7 +57,7 @@ pub mod ext {
     pub const INT8_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int8";
     pub const INT16_TYPES: &str = "GL_EXT_shader_explicit_arithmetic_types_int16";
 
-    pub const DEFAULT_EXTENSIONS: &[&str] = &[INT64_TYPES];
+    pub const DEFAULT_EXTENSIONS: &[&str] = &[INT64_TYPES, SCALAR_BLOCK_LAYOUT];
 }
 
 pub struct Shader<'a> {
@@ -98,7 +98,7 @@ impl<'a> Shader<'a> {
         self
     }
 
-    pub fn push_const_block<T: crevice::glsl::GlslStruct>(mut self) -> Self {
+    pub fn push_const_block<T: crevice::glsl::GlslStruct + bytemuck::Pod>(mut self) -> Self {
         self.defines = self.defines.push_const_block::<T>();
         self
     }

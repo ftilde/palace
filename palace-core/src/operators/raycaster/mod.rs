@@ -1,7 +1,8 @@
 use std::alloc::Layout;
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use bytemuck::{Pod, Zeroable};
+use crevice::glsl::GlslStruct;
 
 use crate::{
     array::{
@@ -180,16 +181,18 @@ pub fn entry_exit_points(
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
 ) -> ImageOperator<StaticElementType<[f32; 8]>> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstantsFirstEEP {
-        norm_to_projection: cgmath::Matrix4<f32>,
-        out_mem_dim: cgmath::Vector2<u32>,
+        norm_to_projection: Matrix<D4, f32>,
+        out_mem_dim: Vector<D2, u32>,
     }
 
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstantsInVolumeFix {
-        projection_to_norm: cgmath::Matrix4<f32>,
-        out_mem_dim: cgmath::Vector2<u32>,
+        projection_to_norm: Matrix<D4, f32>,
+        out_mem_dim: Vector<D2, u32>,
     }
 
     TensorOperator::unbatched(
@@ -413,8 +416,8 @@ pub fn entry_exit_points(
                     .extent(extent);
 
                 let push_constants = PushConstantsFirstEEP {
-                    out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap().into(),
-                    norm_to_projection: norm_to_projection.into(),
+                    out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap(),
+                    norm_to_projection,
                 };
                 let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
@@ -465,8 +468,8 @@ pub fn entry_exit_points(
                     let descriptor_config = DescriptorConfig::new([&gpu_brick_out]);
 
                     let consts = PushConstantsInVolumeFix {
-                        projection_to_norm: projection_to_norm.into(),
-                        out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap().into(),
+                        projection_to_norm,
+                        out_mem_dim: out_info.mem_dimensions.try_into_elem().unwrap(),
                     };
 
                     unsafe {
@@ -613,9 +616,10 @@ pub fn raycast(
     tf: TransFuncOperator,
     config: RaycasterConfig,
 ) -> FrameOperator {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
-        out_mem_dim: cgmath::Vector2<u32>,
+        out_mem_dim: Vector<D2, u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
         tf_min: f32,

@@ -77,6 +77,7 @@ pub trait Dimension:
     'static + Copy + bytemuck::Zeroable + Eq + PartialEq + Debug + Hash + Default
 {
     const N: usize;
+    const N_STR: &'static str;
     type NDArrayDim: ndarray::Dimension;
     type Array<T: Copy>: Array<T>;
     type Mat<T: Copy>: Array<T>;
@@ -190,6 +191,7 @@ pub trait SmallerDim: DynDimension {
 
 impl Dimension for D1 {
     const N: usize = 1;
+    const N_STR: &'static str = "1";
     type NDArrayDim = ndarray::Ix1;
     type Array<T: Copy> = [T; 1];
     type Mat<T: Copy> = [T; 1];
@@ -209,6 +211,7 @@ impl LargerDim for D1 {
 
 impl Dimension for D2 {
     const N: usize = 2;
+    const N_STR: &'static str = "2";
     type NDArrayDim = ndarray::Ix2;
     type Array<T: Copy> = [T; 2];
     type Mat<T: Copy> = [T; 4];
@@ -234,6 +237,7 @@ impl SmallerDim for D2 {
 
 impl Dimension for D3 {
     const N: usize = 3;
+    const N_STR: &'static str = "3";
     type NDArrayDim = ndarray::Ix3;
     type Array<T: Copy> = [T; 3];
     type Mat<T: Copy> = [T; 9];
@@ -259,6 +263,7 @@ impl SmallerDim for D3 {
 
 impl Dimension for D4 {
     const N: usize = 4;
+    const N_STR: &'static str = "4";
     type NDArrayDim = ndarray::Ix4;
     type Array<T: Copy> = [T; 4];
     type Mat<T: Copy> = [T; 16];
@@ -284,6 +289,7 @@ impl LargerDim for D4 {
 
 impl Dimension for D5 {
     const N: usize = 5;
+    const N_STR: &'static str = "5";
     type NDArrayDim = ndarray::Ix5;
     type Array<T: Copy> = [T; 5];
     type Mat<T: Copy> = [T; 25];

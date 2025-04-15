@@ -5,7 +5,8 @@ use std::{
 };
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use bytemuck::{Pod, Zeroable};
+use crevice::glsl::GlslStruct;
 use derive_more::Deref;
 use egui::{Rect, TextureId, TexturesDelta};
 
@@ -515,9 +516,10 @@ fn transistion_image_layout_with_barrier(
 
 impl GuiRenderState {
     pub fn render(self, input: FrameOperator) -> FrameOperator {
-        #[derive(Copy, Clone, AsStd140, GlslStruct)]
+        #[repr(C)]
+        #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
         struct PushConstants {
-            frame_size: cgmath::Vector2<u32>,
+            frame_size: Vector<D2, u32>,
         }
 
         const VERTEX_SHADER: &str = "
@@ -527,6 +529,8 @@ layout(location = 2) in vec4 color;
 
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec2 out_uv;
+
+#include <vec.glsl>
 
 declare_push_consts(consts);
 
@@ -538,7 +542,8 @@ vec3 srgb_to_linear(vec3 srgb) {
 }
 
 void main() {
-    vec2 out_pos = 2.0 * pos / consts.frame_size - vec2(1.0);
+    uvec2 frame_size = to_glsl(consts.frame_size);
+    vec2 out_pos = 2.0 * pos / frame_size - vec2(1.0);
     gl_Position = vec4(out_pos, 0.0, 1.0);
     out_color = color;
     out_color.xyz = srgb_to_linear(out_color.xyz);

@@ -1,6 +1,6 @@
 use std::ops::{Add, Mul, Sub};
 
-use crate::{dim::*, vec::Vector};
+use crate::{dim::*, util::string_concat_hack, vec::Vector};
 use id::{Id, Identify};
 
 // A column major matrix
@@ -306,6 +306,21 @@ mod py {
             }
         }
     }
+}
+
+use string_concat_hack::WithConstStr;
+impl<D: Dimension, T: Copy + crevice::glsl::Glsl> WithConstStr for Matrix<D, T> {
+    const BUF: string_concat_hack::ConstStr = string_concat_hack::ConstStr::empty()
+        .append_str(T::NAME)
+        .append_str("[")
+        .append_str(D::N_STR)
+        .append_str("]")
+        .append_str("[")
+        .append_str(D::N_STR)
+        .append_str("]");
+}
+unsafe impl<D: Dimension, T: crevice::glsl::Glsl + Copy> crevice::glsl::Glsl for Matrix<D, T> {
+    const NAME: &'static str = Self::BUF.as_str();
 }
 
 #[cfg(test)]

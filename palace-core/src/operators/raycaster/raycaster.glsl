@@ -74,12 +74,13 @@ vec3 norm_to_world(vec3 pos, LOD l) {
 }
 
 bool sample_ee(uvec2 pos, out EEPoint eep, LOD l) {
+    uvec2 out_mem_dim = to_glsl(consts.out_mem_dim);
 
-    if(pos.x >= consts.out_mem_dim.x || pos.y >= consts.out_mem_dim.y) {
+    if(pos.x >= out_mem_dim.x || pos.y >= out_mem_dim.y) {
         return false;
     }
 
-    uint gID = pos.x + pos.y * consts.out_mem_dim.x;
+    uint gID = pos.x + pos.y * out_mem_dim.x;
 
     vec4 entry = entry_exit_points.values[gID][0];
     vec4 exit = entry_exit_points.values[gID][1];
@@ -154,11 +155,12 @@ u8vec3 apply_phong_shading(u8vec4 sample_u8, vec3 normal, vec3 view, vec3 light)
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
-    uint gID = out_pos.x + out_pos.y * consts.out_mem_dim.x;
+    uvec2 out_mem_dim = to_glsl(consts.out_mem_dim);
+    uint gID = out_pos.x + out_pos.y * out_mem_dim.x;
 
     EEPoint eep;
 
-    if(!(out_pos.x >= consts.out_mem_dim.x || out_pos.y >= consts.out_mem_dim.y)) {
+    if(!(out_pos.x >= out_mem_dim.x || out_pos.y >= out_mem_dim.y)) {
 
         LOD root_level = vol.levels[0];
         bool valid = sample_ee(out_pos, eep, root_level);

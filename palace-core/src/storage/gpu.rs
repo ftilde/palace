@@ -558,7 +558,7 @@ fn dispatch_page_table_release(
         unsafe {
             let mut pipeline = pipeline.bind(cmd);
 
-            pipeline.push_constant_pod(consts);
+            pipeline.push_constant(consts);
             pipeline.dispatch3d(crate::vec::Vector::fill(1));
         }
     });
@@ -611,7 +611,7 @@ fn dispatch_page_table_insert(
             let mut pipeline = pipeline.bind(cmd);
 
             pipeline.push_descriptor_set(0, descriptor_config);
-            pipeline.push_constant_pod(consts);
+            pipeline.push_constant(consts);
             pipeline.dispatch(device, num_elements as usize);
         }
     });

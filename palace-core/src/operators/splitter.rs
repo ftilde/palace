@@ -1,5 +1,6 @@
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use bytemuck::{Pod, Zeroable};
+use crevice::glsl::GlslStruct;
 use id::Identify;
 
 use crate::{
@@ -113,16 +114,19 @@ impl Splitter {
     }
 
     pub fn render(self, input_l: FrameOperator, input_r: FrameOperator) -> FrameOperator {
-        #[derive(Copy, Clone, AsStd140, GlslStruct)]
+        #[repr(C)]
+        #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
         struct PushConstants {
-            size_out: cgmath::Vector2<u32>,
-            size_first: cgmath::Vector2<u32>,
-            size_last: cgmath::Vector2<u32>,
+            size_out: Vector<D2, u32>,
+            size_first: Vector<D2, u32>,
+            size_last: Vector<D2, u32>,
             split_dim: u32, //TODO we could also make this a constant in the shader...
         }
         const SHADER: &'static str = r#"
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_scalar_block_layout : require
+
+#include <vec.glsl>
 
 layout(scalar, binding = 0) readonly buffer InputBufferL{
     u8vec4 values[];
@@ -141,21 +145,23 @@ declare_push_consts(consts);
 void main()
 {
     uvec2 out_pos = gl_GlobalInvocationID.xy;
-    uint g_id_out = out_pos.x + out_pos.y * consts.size_out.x;
+    uvec2 size_out = to_glsl(consts.size_out);
+    uvec2 size_first = to_glsl(consts.size_first);
+    uint g_id_out = out_pos.x + out_pos.y * size_out.x;
 
-    if(all(lessThan(out_pos, consts.size_out))) {
+    if(all(lessThan(out_pos, size_out))) {
         u8vec4 out_val;
 
-        if(out_pos[consts.split_dim] < consts.size_first[consts.split_dim]) {
+        if(out_pos[consts.split_dim] < size_first[consts.split_dim]) {
             uvec2 pos_first = out_pos;
 
-            uint g_id_l = pos_first.x + pos_first.y * consts.size_first.x;
+            uint g_id_l = pos_first.x + pos_first.y * size_first.x;
             out_val = input_l.values[g_id_l];
         } else {
             uvec2 pos_last = out_pos;
-            pos_last[consts.split_dim] -= consts.size_first[consts.split_dim];
+            pos_last[consts.split_dim] -= size_first[consts.split_dim];
 
-            uint g_id_r = pos_last.x + pos_last.y * consts.size_last.x;
+            uint g_id_r = pos_last.x + pos_last.y * to_glsl(consts.size_last).x;
             out_val = input_r.values[g_id_r];
         }
 
@@ -227,9 +233,9 @@ void main()
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant(PushConstants {
-                                size_out: m.dimensions.into_elem::<u32>().into(),
-                                size_first: m_l.dimensions.into_elem::<u32>().into(),
-                                size_last: m_r.dimensions.into_elem::<u32>().into(),
+                                size_out: m.dimensions.into_elem::<u32>(),
+                                size_first: m_l.dimensions.into_elem::<u32>(),
+                                size_last: m_r.dimensions.into_elem::<u32>(),
                                 split_dim,
                             });
                             pipeline.push_descriptor_set(0, descriptor_config);

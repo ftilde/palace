@@ -3,7 +3,6 @@ use std::fmt::Write;
 use std::{cell::RefCell, collections::VecDeque};
 
 use ash::vk;
-use crevice::std140::{AsStd140, Std140};
 use id::Identify;
 
 use crate::dtypes::{AsDynType, DType, ElementType};
@@ -480,16 +479,8 @@ impl<'a, T: PipelineType> BoundPipeline<'a, T> {
         }
     }
 
-    pub fn push_constant_at<V: AsStd140>(&mut self, val: V, stage: vk::ShaderStageFlags) {
-        let v = val.as_std140();
-        let bytes = v.as_bytes();
-
-        // HACK: Match up sizes:
-        // - The reflect library/c compiler appears to be of the opinion that the size of the push
-        // constant struct is simply the difference between the begin of the first member and the
-        // end of the last, while...
-        // - crevice appears to think that the size is rounded up to the alignment of the struct.
-        let bytes = &bytes[..self.pipeline.push_constant_size.unwrap()];
+    pub fn push_constant_at<V: bytemuck::Pod>(&mut self, val: V, stage: vk::ShaderStageFlags) {
+        let bytes = bytemuck::bytes_of(&val);
         self.push_constant_bytes(bytes, stage);
     }
 }
@@ -545,14 +536,10 @@ impl<'a> BoundPipeline<'a, ComputePipelineType> {
         self.dispatch(ctx, linear_size);
     }
 
-    pub fn push_constant<V: AsStd140>(&mut self, val: V) {
+    pub fn push_constant<V: bytemuck::Pod>(&mut self, val: V) {
         self.push_constant_at(val, vk::ShaderStageFlags::COMPUTE);
     }
 
-    pub fn push_constant_pod<B: bytemuck::Pod>(&mut self, val: B) {
-        let bytes = bytemuck::bytes_of(&val);
-        self.push_constant_bytes(bytes, vk::ShaderStageFlags::COMPUTE);
-    }
     pub fn push_constant_dyn<F: FnOnce(&mut DynPushConstantsWriter) -> Result<(), crate::Error>>(
         &mut self,
         p: &DynPushConstants,

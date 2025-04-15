@@ -6,6 +6,7 @@ use std::{
 use crate::{
     coordinate::{ChunkCoordinate, Coordinate, CoordinateType, GlobalCoordinate, LocalCoordinate},
     dim::*,
+    util::string_concat_hack,
 };
 use id::{Id, Identify};
 use num::traits::SaturatingSub;
@@ -30,6 +31,18 @@ impl<D: DynDimension, T: Copy + PartialEq> PartialEq for Vector<D, T> {
     }
 }
 impl<D: DynDimension, T: Copy + Eq> Eq for Vector<D, T> {}
+
+use string_concat_hack::WithConstStr;
+impl<D: Dimension, T: Copy + crevice::glsl::Glsl> WithConstStr for Vector<D, T> {
+    const BUF: string_concat_hack::ConstStr = string_concat_hack::ConstStr::empty()
+        .append_str(T::NAME)
+        .append_str("[")
+        .append_str(D::N_STR)
+        .append_str("]");
+}
+unsafe impl<D: Dimension, T: crevice::glsl::Glsl + Copy> crevice::glsl::Glsl for Vector<D, T> {
+    const NAME: &'static str = Self::BUF.as_str();
+}
 
 //impl<D: DynDimension, T: Copy + PartialOrd> PartialOrd for Vector<D, T> {
 //    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

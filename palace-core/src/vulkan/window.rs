@@ -1,6 +1,6 @@
 use ash::vk;
+use bytemuck::{Pod, Zeroable};
 use crevice::glsl::GlslStruct;
-use crevice::std140::AsStd140;
 
 use super::pipeline::{DescriptorConfig, GraphicsPipeline, GraphicsPipelineBuilder};
 use super::shader::Shader;
@@ -594,7 +594,7 @@ impl Window {
             .extent(self.swap_chain.extent);
 
         let push_constants = PushConstants {
-            size: m.dimensions.try_into_elem().unwrap().into(),
+            size: m.dimensions.try_into_elem().unwrap(),
         };
 
         device.with_cmd_buffer(|cmd| unsafe {
@@ -661,9 +661,10 @@ impl Window {
         Ok(version)
     }
 }
-#[derive(Copy, Clone, AsStd140, GlslStruct)]
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
 struct PushConstants {
-    size: cgmath::Vector2<u32>,
+    size: Vector<D2, u32>,
 }
 
 const VERTEX_SHADER: &str = "
@@ -692,6 +693,7 @@ const FRAG_SHADER: &str = "
 #extension GL_EXT_scalar_block_layout : require
 
 #include <color.glsl>
+#include <vec.glsl>
 
 layout(scalar, binding = 0) readonly buffer InputBuffer{
     u8vec4 values[];
@@ -704,8 +706,9 @@ layout(location = 0) in vec2 texture_pos;
 
 void main() {
     vec2 norm_pos = texture_pos;
-    uvec2 buffer_pos = uvec2(norm_pos * vec2(constants.size));
-    uint buffer_index = buffer_pos.x + buffer_pos.y * constants.size.x;
+    uvec2 size = to_glsl(constants.size);
+    uvec2 buffer_pos = uvec2(norm_pos * vec2(size));
+    uint buffer_index = buffer_pos.x + buffer_pos.y * size.x;
 
     out_color = to_uniform(sourceData.values[buffer_index]);
 }

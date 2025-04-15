@@ -1,7 +1,8 @@
 use std::{alloc::Layout, mem::MaybeUninit};
 
 use ash::vk;
-use crevice::{glsl::GlslStruct, std140::AsStd140};
+use bytemuck::{Pod, Zeroable};
+use crevice::glsl::GlslStruct;
 use gpu_allocator::MemoryLocation::GpuOnly;
 use id::Identify;
 
@@ -217,7 +218,8 @@ async fn tensor_to_rows_table<'a, 'req, 'inv, D: DynDimension>(
     seeds: &impl AsBufferDescriptor,
     tensor_md: TensorMetaData<D>,
 ) -> Result<(TempRessource<'a, Allocation>, u32), crate::Error> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstantsStep {
         s: u32,
     }
@@ -732,7 +734,8 @@ async fn read_scalar<'req, 'inv, T: Copy + Default>(
     out
 }
 
-#[derive(Copy, Clone, AsStd140, GlslStruct)]
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
 struct PushConstsNumRows {
     num_rows: u32,
 }
@@ -851,7 +854,8 @@ async fn dot_product_finish<'req, 'inv>(
     device: &DeviceContext,
     x: &Allocation,
 ) -> Result<(), crate::Error> {
-    #[derive(Copy, Clone, AsStd140, GlslStruct)]
+    #[repr(C)]
+    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstantsStep {
         stride: u32,
         num_values: u32,
