@@ -7,12 +7,9 @@ use crate::{
     array::{ChunkIndex, TensorMetaData},
     data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate},
     dim::{Dimension, DynDimension},
-    dtypes::{DType, StaticElementType},
+    dtypes::{DType, ElementType},
     operators::tensor::TensorOperator,
-    storage::{
-        gpu::{BufferAddress, PageTableHandle, StateCacheHandle, StateCacheResult},
-        Element,
-    },
+    storage::gpu::{BufferAddress, PageTableHandle, StateCacheHandle, StateCacheResult},
     task::OpaqueTaskContext,
     vec::Vector,
     vulkan::{
@@ -157,14 +154,11 @@ impl<'a> RequestTable<'a> {
 
     /// Download the table results, try to insert the requested chunks into page table, respect
     /// timeout
-    pub async fn download_and_insert<'cref, 'inv, D: Dimension, E: Element>(
+    pub async fn download_and_insert<'cref, 'inv, D: Dimension, E: ElementType>(
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        tensor_and_pt: Vec<(
-            &'inv TensorOperator<D, StaticElementType<E>>,
-            &PageTableHandle<'_>,
-        )>,
+        tensor_and_pt: Vec<(&'inv TensorOperator<D, E>, &PageTableHandle<'_>)>,
         batch_size: &mut usize,
         interactive: bool,
         force_reset: bool,
@@ -245,14 +239,11 @@ impl<'a> UseTable<'a> {
 
 pub struct Timeout;
 
-pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: Element>(
+pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: ElementType>(
     ctx: &OpaqueTaskContext<'cref, 'inv>,
     device: &DeviceContext,
     to_request_linear: &mut [TensorQueryValue],
-    tensor_and_pt: Vec<(
-        &'inv TensorOperator<D, StaticElementType<E>>,
-        &PageTableHandle<'_>,
-    )>,
+    tensor_and_pt: Vec<(&'inv TensorOperator<D, E>, &PageTableHandle<'_>)>,
     batch_size: &mut usize,
     interactive: bool,
 ) -> Result<(), Timeout> {
@@ -314,6 +305,7 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
     //let total_to_insert = pos_and_chunk.values().map(|v| v.len()).sum::<usize>();
     //println!("Inserting {} total", total_to_insert);
 
+    //TODO: single insert
     for (level, pac) in pos_and_chunk {
         tensor_and_pt[level].1.insert(*ctx, pac).await;
     }

@@ -68,14 +68,16 @@ pub fn raycast(
 
     let eep = entry_exit_points.into_core();
     let eep = try_into_static_err(eep)?;
-    Ok(palace_core::operators::raycaster::raycast(
-        vol.try_into_core_static()?.try_into()?,
-        eep.try_into()?,
-        tf,
-        config.unwrap_or_default(),
+    Ok(
+        crate::map_result(palace_core::operators::raycaster::raycast(
+            vol.try_into_core_static()?,
+            eep.try_into()?,
+            tf,
+            config.unwrap_or_default(),
+        ))?
+        .into_dyn()
+        .into(),
     )
-    .into_dyn()
-    .into())
 }
 
 #[gen_stub_pyfunction]

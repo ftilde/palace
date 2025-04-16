@@ -520,6 +520,16 @@ impl<D: DynDimension, E> LODTensorOperator<D, E> {
     }
 }
 
+impl<D: DynDimension, E: ElementType> LODTensorOperator<D, E> {
+    pub fn dtype(&self) -> E {
+        let dtype = self.levels[0].dtype();
+        for l in &self.levels {
+            assert_eq!(l.dtype(), dtype);
+        }
+        dtype
+    }
+}
+
 impl<D: DynDimension, E: 'static> LODTensorOperator<D, E> {
     pub fn map<DO: DynDimension, EO>(
         self,

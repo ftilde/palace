@@ -4,7 +4,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
-#define ChunkValue float
+#define ChunkValue INPUT_DTYPE
 
 #include <util.glsl>
 #include <hash.glsl>
@@ -249,14 +249,18 @@ void main()
 
                     int res;
                     uint64_t sample_brick_pos_linear;
-                    float sampled_intensity;
+                    INPUT_DTYPE sampled_intensity_raw;
 
                     #ifdef SHADING_NONE
-                    try_sample(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity);
+                    try_sample(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
                     #else
+                    INPUT_DTYPE[3] grad_f_raw;
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw, grad_f_raw);
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    map(3, grad_f_raw, grad_f, float);
                     #endif
+
+                    float sampled_intensity = float(sampled_intensity_raw);
 
 
                     bool stop = false;

@@ -11,7 +11,7 @@ use crate::{
     chunk_utils::{FeedbackTableElement, RequestTable, RequestTableResult, UseTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{DType, ElementType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
@@ -28,6 +28,7 @@ use crate::{
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
     },
+    Error,
 };
 use id::Identify;
 
@@ -610,12 +611,12 @@ impl From<RawRaycastingState> for RaycastingState {
     }
 }
 
-pub fn raycast(
-    input: LODVolumeOperator<StaticElementType<f32>>,
+pub fn raycast<E: ElementType>(
+    input: LODVolumeOperator<E>,
     entry_exit_points: ImageOperator<StaticElementType<[f32; 8]>>,
     tf: TransFuncOperator,
     config: RaycasterConfig,
-) -> FrameOperator {
+) -> Result<FrameOperator, Error> {
     #[repr(C)]
     #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
@@ -640,7 +641,13 @@ pub fn raycast(
         _padding: u32,
     }
 
-    TensorOperator::unbatched(
+    let dtype: DType = input.dtype().into();
+
+    if dtype.size != 1 {
+        return Err(format!("Tensor element must be one-dimensional: {:?}", dtype).into());
+    }
+
+    Ok(TensorOperator::unbatched(
         op_descriptor!(),
         Default::default(),
         entry_exit_points.metadata,
@@ -649,8 +656,9 @@ pub fn raycast(
             entry_exit_points.clone(),
             DataParam(tf),
             DataParam(config),
+            DataParam(dtype),
         ),
-        |ctx, pos, loc, (input, entry_exit_points, tf, config)| {
+        |ctx, pos, loc, (input, entry_exit_points, tf, config, dtype)| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -760,8 +768,9 @@ pub fn raycast(
                         request_table_size,
                         use_table_size,
                         config,
+                        dtype,
                     ),
-                    |device, (num_levels, request_table_size, use_table_size, config)| {
+                    |device, (num_levels, request_table_size, use_table_size, config, dtype)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("raycaster.glsl"))
                                 .push_const_block::<PushConstants>()
@@ -769,7 +778,9 @@ pub fn raycast(
                                 .define("USE_TABLE_SIZE", use_table_size)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
                                 .define(config.compositing_mode.define_name(), 1)
-                                .define(config.shading.define_name(), 1),
+                                .define(config.shading.define_name(), 1)
+                                .define("INPUT_DTYPE", dtype.glsl_type())
+                                .ext(dtype.glsl_ext()),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
@@ -1022,5 +1033,5 @@ pub fn raycast(
             }
             .into()
         },
-    )
+    ))
 }

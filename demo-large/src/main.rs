@@ -341,7 +341,7 @@ fn raycaster(
         md.into(),
         matrix.into(),
     );
-    palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), state.config)
+    palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), state.config).unwrap()
 }
 
 fn fit_transfer_function(

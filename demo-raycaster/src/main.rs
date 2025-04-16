@@ -239,8 +239,6 @@ fn eval_network(
                 .add((*offset).into())
                 .unwrap()
                 .compile()
-                .unwrap()
-                .try_into()
                 .unwrap();
             scaled
         })
@@ -262,7 +260,7 @@ fn eval_network(
     let mut config = RaycasterConfig::default();
     config.compositing_mode = CompositingMode::DVR;
     config.shading = Shading::Phong;
-    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config);
+    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config)?;
     let frame = operators::rechunk::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;
