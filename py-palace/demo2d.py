@@ -27,7 +27,7 @@ if args.img_file == "mandelbrot":
 
     #img = img.map(lambda img: pc.separable_convolution(img, [pc.gauss_kernel(25.0)]*2))
     #img = img.map(lambda img: pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4)))
-    #print(rt.resolve(pc.cast(img.levels[0], pc.ScalarType.U32), [0,0]).dtype)
+    #print(rt.resolve(pc.cast(img.levels[0], pc.ScalarType.U32), [[0,0]]).dtype)
     img = img.map(lambda img: pc.apply_tf(img, tf))
 elif args.img_file == "circle":
     s = 50

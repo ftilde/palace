@@ -96,7 +96,7 @@ def mouse_to_image_pos(image_state: pc.ImageViewerState, embedded_tensor, pos, f
 def extract_tensor_value(rt, embedded_tensor, pos):
     md = embedded_tensor.inner.metadata
     chunk_pos = md.chunk_pos(pos)
-    chunk = rt.resolve(embedded_tensor, chunk_pos)
+    [chunk] = rt.resolve(embedded_tensor, [chunk_pos])
     pos_in_chunk = md.pos_in_chunk(chunk_pos, pos)
     return chunk[tuple(pos_in_chunk)]
 

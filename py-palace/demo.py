@@ -250,8 +250,4 @@ def render(size, events):
     return frame
 
 
-# So this does not actually work, because Vector<4, u8> cannot be converted into a numpy type. hmm...
-# (And also currently only the conversion for f32 is implemented...)
-#print(rt.resolve(render([10, 10], pc.Events.none()), [0]*2))
-
 rt.run_with_window(render, timeout_ms=10)

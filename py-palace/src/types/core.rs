@@ -25,19 +25,33 @@ impl RunTime {
         &self,
         py: Python,
         op_ref: &palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<T>>,
-        chunk_i: ChunkIndex,
+        chunk_indices: Vec<ChunkIndex>,
     ) -> PyResult<PyObject> {
         let mut rt = self.inner.borrow_mut();
-        let data = map_result(rt.resolve(None, false, |ctx, _| {
+        let chunk_data = map_result(rt.resolve(None, false, |ctx, _| {
             async move {
-                let chunk = ctx.submit(op_ref.chunks.request(chunk_i)).await;
-                let chunk_info = op_ref.metadata.chunk_info(chunk_i);
-                let chunk = palace_core::data::chunk(&chunk, &chunk_info);
-                Ok(chunk.to_owned())
+                let requests = chunk_indices
+                    .iter()
+                    .map(|chunk_i| op_ref.chunks.request(*chunk_i));
+                let chunks = ctx.submit(ctx.group(requests)).await;
+                let chunks = chunk_indices
+                    .into_iter()
+                    .zip(chunks.into_iter())
+                    .map(|(chunk_i, chunk)| {
+                        let chunk_info = op_ref.metadata.chunk_info(chunk_i);
+                        let chunk = palace_core::data::chunk(&chunk, &chunk_info);
+                        chunk.to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                Ok(chunks)
             }
             .into()
         }))?;
-        numpy::PyArray::from_owned_array(py, data).into_py_any(py)
+        chunk_data
+            .into_iter()
+            .map(|data| numpy::PyArray::from_owned_array(py, data))
+            .collect::<Vec<_>>()
+            .into_py_any(py)
     }
 }
 
@@ -76,28 +90,11 @@ impl RunTime {
         &self,
         py: Python,
         v: MaybeEmbeddedTensorOperatorArg,
-        pos: Vec<u32>,
+        positions: Vec<Vec<u32>>,
     ) -> PyResult<PyObject> {
         let v = v.unpack().into_inner();
         let op: palace_core::operators::tensor::TensorOperator<DDyn, DType> = v.try_into()?;
-        if op.dim().n() != pos.len() {
-            return Err(PyErr::new::<PyException, _>(format!(
-                "Expected {}-dimensional chunk position for tensor, but got {}",
-                op.dim().n(),
-                pos.len()
-            )));
-        }
-
         let dim_in_chunks = op.metadata.dimension_in_chunks();
-        let pos: Vector<DDyn, u32> = pos.try_into().unwrap();
-
-        if !pos.zip(&dim_in_chunks, |l, r| l < r.raw).hand() {
-            return Err(PyErr::new::<PyException, _>(format!(
-                "Chunk position {:?} out of range for tensor dimension-in-chunks {:?}",
-                pos,
-                dim_in_chunks.raw(),
-            )));
-        }
 
         let dtype = op.dtype();
         if dtype.size != 1 {
@@ -107,18 +104,41 @@ impl RunTime {
             )));
         }
 
-        let chunk_id = op.metadata.chunk_index(&pos.chunk());
+        let chunk_ids = positions
+            .into_iter()
+            .map(|pos| {
+                if op.dim().n() != pos.len() {
+                    return Err(PyErr::new::<PyException, _>(format!(
+                        "Expected {}-dimensional chunk position for tensor, but got {}",
+                        op.dim().n(),
+                        pos.len()
+                    )));
+                }
+
+                let pos: Vector<DDyn, u32> = pos.try_into().unwrap();
+
+                if !pos.zip(&dim_in_chunks, |l, r| l < r.raw).hand() {
+                    return Err(PyErr::new::<PyException, _>(format!(
+                        "Chunk position {:?} out of range for tensor dimension-in-chunks {:?}",
+                        pos,
+                        dim_in_chunks.raw(),
+                    )));
+                }
+
+                Ok(op.metadata.chunk_index(&pos.chunk()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         match dtype.scalar {
-            ScalarType::U8 => self.resolve_static::<u8>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::I8 => self.resolve_static::<i8>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::U16 => self.resolve_static::<u16>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::I16 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::U32 => self.resolve_static::<u32>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::I32 => self.resolve_static::<i32>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::U64 => self.resolve_static::<u64>(py, &op.try_into().unwrap(), chunk_id),
-            ScalarType::I64 => self.resolve_static::<i64>(py, &op.try_into().unwrap(), chunk_id),
+            ScalarType::U8 => self.resolve_static::<u8>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::I8 => self.resolve_static::<i8>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::U16 => self.resolve_static::<u16>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::I16 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::U32 => self.resolve_static::<u32>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::I32 => self.resolve_static::<i32>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::U64 => self.resolve_static::<u64>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::I64 => self.resolve_static::<i64>(py, &op.try_into().unwrap(), chunk_ids),
         }
     }
 
