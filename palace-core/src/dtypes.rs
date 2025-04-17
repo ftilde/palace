@@ -245,6 +245,10 @@ impl DType {
     fn __str__(&self) -> String {
         format!("{}[{}]", self.scalar.pretty_type(), self.size)
     }
+
+    fn size_in_bytes(&self) -> usize {
+        self.element_layout().size()
+    }
 }
 
 impl std::fmt::Display for DType {
