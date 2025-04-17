@@ -30,20 +30,29 @@ impl RunTime {
         let mut rt = self.inner.borrow_mut();
         let chunk_data = map_result(rt.resolve(None, false, |ctx, _| {
             async move {
-                let requests = chunk_indices
-                    .iter()
-                    .map(|chunk_i| op_ref.chunks.request(*chunk_i));
-                let chunks = ctx.submit(ctx.group(requests)).await;
-                let chunks = chunk_indices
-                    .into_iter()
-                    .zip(chunks.into_iter())
-                    .map(|(chunk_i, chunk)| {
-                        let chunk_info = op_ref.metadata.chunk_info(chunk_i);
-                        let chunk = palace_core::data::chunk(&chunk, &chunk_info);
-                        chunk.to_owned()
-                    })
-                    .collect::<Vec<_>>();
-                Ok(chunks)
+                let mut chunks = ctx
+                    .run_unordered(chunk_indices.into_iter().enumerate().map(
+                        move |(i, chunk_id)| {
+                            {
+                                async move {
+                                    let chunk_handle =
+                                        ctx.submit(op_ref.chunks.request(chunk_id)).await;
+                                    let chunk_info = op_ref.metadata.chunk_info(chunk_id);
+                                    let chunk =
+                                        palace_core::data::chunk(&chunk_handle, &chunk_info);
+                                    let chunk = ctx
+                                        .submit(ctx.spawn_compute(move || chunk.to_owned()))
+                                        .await;
+                                    (i, chunk)
+                                }
+                            }
+                            .into()
+                        },
+                    ))
+                    .await;
+
+                chunks.sort_by_key(|v| v.0);
+                Ok(chunks.into_iter().map(|v| v.1).collect::<Vec<_>>())
             }
             .into()
         }))?;
