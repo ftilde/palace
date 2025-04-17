@@ -149,8 +149,7 @@ def render(size, events):
             pass
         case "smooth":
             def smooth(evol, k):
-                fvol = evol.cast(pc.ScalarType.F32)
-                return fvol.separable_convolution([pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
+                return evol.separable_convolution([pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
 
             k = smoothing_std.load()
             v = v.map(lambda evol: smooth(evol, k))

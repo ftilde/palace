@@ -910,16 +910,6 @@ impl TensorOperator {
             })
             .collect::<Result<Vec<_>, PyErr>>()?;
 
-        for kernel in &kernels {
-            if self.dtype() != kernel.dtype() {
-                return Err(PyErr::new::<PyValueError, _>(format!(
-                    "Kernel must have the same type as tensor ({:?}), but has {:?}",
-                    self.dtype(),
-                    kernel.dtype(),
-                )));
-            }
-        }
-
         let kernel_refs =
             Vector::<DDyn, &CTensorOperator<D1, DType>>::try_from_fn_and_len(kernels.len(), |i| {
                 &kernels[i]
