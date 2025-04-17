@@ -94,15 +94,17 @@ pub fn render_slice(
         .map(|tf| tf.try_into())
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
 
-    Ok(palace_core::operators::sliceviewer::render_slice(
-        input.try_into_core_static()?.try_into()?,
-        result_metadata.try_into_dim()?,
-        projection_mat.try_into()?,
-        tf,
-        RenderConfig2D { coarse_lod_factor },
+    Ok(
+        crate::map_result(palace_core::operators::sliceviewer::render_slice(
+            input.try_into_core_static()?,
+            result_metadata.try_into_dim()?,
+            projection_mat.try_into()?,
+            tf,
+            RenderConfig2D { coarse_lod_factor },
+        ))?
+        .into_dyn()
+        .into(),
     )
-    .into_dyn()
-    .into())
 }
 
 #[gen_stub_pyfunction]

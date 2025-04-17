@@ -12,7 +12,7 @@ use crate::{
     chunk_utils::{FeedbackTableElement, RequestTable, RequestTableResult, UseTable},
     data::{GlobalCoordinate, Matrix, Vector},
     dim::*,
-    dtypes::StaticElementType,
+    dtypes::{DType, ElementType},
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
@@ -23,6 +23,7 @@ use crate::{
         shader::Shader,
         DstBarrierInfo, SrcBarrierInfo,
     },
+    Error,
 };
 
 #[cfg(feature = "python")]
@@ -283,13 +284,13 @@ impl Default for RenderConfig2D {
     }
 }
 
-pub fn render_slice(
-    input: LODVolumeOperator<StaticElementType<f32>>,
+pub fn render_slice<E: ElementType>(
+    input: LODVolumeOperator<E>,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
     tf: TransFuncOperator,
     config: RenderConfig2D,
-) -> FrameOperator {
+) -> Result<FrameOperator, Error> {
     let push_constants = DynPushConstants::new()
         .scalar::<u64>("page_table_root")
         .scalar::<u64>("use_table")
@@ -309,7 +310,7 @@ pub fn render_slice(
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
-#define ChunkValue float
+#define ChunkValue INPUT_DTYPE
 
 #include <util.glsl>
 #include <color.glsl>
@@ -380,8 +381,10 @@ void main()
 
             int res;
             uint64_t sample_brick_pos_linear;
-            float sampled_intensity;
-            try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity);
+            INPUT_DTYPE sampled_intensity_raw;
+            try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+
+            float sampled_intensity = float(sampled_intensity_raw);
 
             if(res == SAMPLE_RES_FOUND) {
                 classify(sampled_intensity, val);
@@ -403,7 +406,13 @@ void main()
 }
 "#;
 
-    TensorOperator::unbatched(
+    let dtype: DType = input.dtype().into();
+
+    if dtype.size != 1 {
+        return Err(format!("Tensor element must be one-dimensional: {:?}", dtype).into());
+    }
+
+    Ok(TensorOperator::unbatched(
         op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
@@ -413,12 +422,13 @@ void main()
             DataParam(projection_mat),
             DataParam(tf),
             DataParam(config),
+            DataParam(dtype),
             DataParam(push_constants),
         ),
         move |ctx,
               pos,
               loc,
-              (input, result_metadata, projection_mat, tf, config, push_constants)| {
+              (input, result_metadata, projection_mat, tf, config, dtype, push_constants)| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -466,15 +476,18 @@ void main()
                         m_in.chunk_size.hmul(),
                         request_table_size,
                         use_table_size,
+                        dtype,
                         push_constants,
                     ),
-                    |device, (mem_size, request_table_size, use_table_size, push_constants)| {
+                    |device, (mem_size, request_table_size, use_table_size, dtype, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(SHADER)
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
-                                .define("USE_TABLE_SIZE", use_table_size),
+                                .define("USE_TABLE_SIZE", use_table_size)
+                                .define("INPUT_DTYPE", dtype.glsl_type())
+                                .ext(dtype.glsl_ext()),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
@@ -647,7 +660,7 @@ void main()
             }
             .into()
         },
-    )
+    ))
 }
 
 #[cfg(test)]

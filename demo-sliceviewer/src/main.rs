@@ -271,7 +271,8 @@ fn slice_viewer_z(
         slice_proj_z,
         tf.clone(),
         render_config,
-    );
+    )
+    .unwrap();
     let slice = operators::rechunk::rechunk(slice, Vector::fill(ChunkSize::Full));
 
     slice
@@ -311,7 +312,8 @@ fn slice_viewer_rot(
         slice_proj_rot,
         tf.clone(),
         render_config,
-    );
+    )
+    .unwrap();
     let slice = operators::rechunk::rechunk(slice, Vector::fill(ChunkSize::Full));
     slice
 }

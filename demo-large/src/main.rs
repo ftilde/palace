@@ -305,7 +305,8 @@ fn slice_viewer_z(
         slice_proj_z,
         tf.clone(),
         Default::default(),
-    );
+    )
+    .unwrap();
     let slice = operators::rechunk::rechunk(slice, Vector::fill(ChunkSize::Full));
     let frame = gui.render(slice);
 
