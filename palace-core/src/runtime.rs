@@ -587,7 +587,9 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             stuck_state = StuckState::WaitingSince(stuck_time);
                         }
                     }
-                    self.cycle_cmd_buffers(Duration::from_secs(0));
+                    // Wait for commandbuffers, if anything at all has been written to it
+                    // (-> Smallest min_age above 0)
+                    self.cycle_cmd_buffers(Duration::from_nanos(1));
                     self.wait_for_async_results();
                 } else {
                     return Ok(());
