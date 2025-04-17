@@ -127,9 +127,10 @@ def alpha_blending(render_over, render_under):
     return inner
 
 
-def fit_tf_range(rt, vol, tf):
-    tf.min = rt.resolve_scalar(vol.min_value(10))
-    tf.max = rt.resolve_scalar(vol.max_value(10))
+def fit_tf_range(rt, tensor, tf):
+    t = tensor.cast(pc.ScalarType.F32)
+    tf.min = rt.resolve_scalar(t.min_value(10))
+    tf.max = rt.resolve_scalar(t.max_value(10))
 
 def slice_time_4d(ts, v):
     def select_time_slice_4d_lod(ts, base_level, target_level):

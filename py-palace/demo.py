@@ -42,7 +42,6 @@ else:
         #vol = vol.single_level_lod()
 
 
-vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
 #for l in vol.levels:
 #    print(l.inner.metadata.dimensions)
 #    print(l.inner.metadata.chunk_size)
@@ -150,17 +149,18 @@ def render(size, events):
             pass
         case "smooth":
             def smooth(evol, k):
-                return evol.separable_convolution([pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
+                fvol = evol.cast(pc.ScalarType.F32)
+                return fvol.separable_convolution([pc.gauss_kernel(k / s) for s in evol.embedding_data.spacing])
 
             k = smoothing_std.load()
             v = v.map(lambda evol: smooth(evol, k))
 
         case "vesselness":
-            v = v.map(lambda evol: pc.vesselness(evol, vesselness_rad_min.load(), vesselness_rad_max.load(), vesselness_steps.load()))
+            v = v.map(lambda evol: pc.vesselness(evol.cast(pc.ScalarType.F32), vesselness_rad_min.load(), vesselness_rad_max.load(), vesselness_steps.load()))
 
     match do_threshold.load():
         case "yes":
-            v = v.map(lambda evol: (evol >= threshold_val.load()).select(1.0, 0.0))
+            v = v.map(lambda evol: (evol.cast(pc.ScalarType.F32) >= threshold_val.load()).select(1.0, 0.0))
         case "no":
             pass
 
