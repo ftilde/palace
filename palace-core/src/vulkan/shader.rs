@@ -136,8 +136,6 @@ impl<'a> Shader<'a> {
         let compiler = Compiler::new().unwrap();
         let mut options = CompileOptions::new().unwrap();
         options.set_source_language(SourceLanguage::GLSL);
-        options.set_generate_debug_info();
-        options.set_optimization_level(OptimizationLevel::Zero); //TODO!!??
         options.set_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3);
         options.set_target_spirv(SpirvVersion::V1_6);
         options.set_include_callback(move |req_arg, include_type, _, _| {
@@ -147,6 +145,17 @@ impl<'a> Shader<'a> {
                 include_type,
             )
         });
+
+        #[cfg(debug_assertions)]
+        {
+            options.set_generate_debug_info();
+            options.set_optimization_level(OptimizationLevel::Zero);
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            options.set_optimization_level(OptimizationLevel::Performance);
+        }
 
         for (k, v) in self.defines.defines.into_iter() {
             options.add_macro_definition(&k, Some(&v));
