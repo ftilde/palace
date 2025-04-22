@@ -1,4 +1,4 @@
-use std::{fs::File, os::unix::fs::MetadataExt, path::PathBuf, sync::Mutex};
+use std::{fs::File, path::PathBuf, sync::Mutex};
 
 use itertools::Itertools;
 use zarrs::{
@@ -13,7 +13,6 @@ use zip::{read::ZipArchive, result::ZipError};
 pub struct Reader {
     main_archive: ZipArchive<CloneFile>,
     clones: Mutex<Vec<ZipArchive<CloneFile>>>,
-    size: u64,
 }
 
 struct CloneFile {
@@ -43,20 +42,18 @@ impl std::io::Seek for CloneFile {
     }
 }
 
-fn open_zip(path: PathBuf) -> Result<(u64, ZipArchive<CloneFile>), palace_core::Error> {
+fn open_zip(path: PathBuf) -> Result<ZipArchive<CloneFile>, palace_core::Error> {
     let file = File::open(&path)?;
-    let size = file.metadata()?.size();
     let file = CloneFile { file, path };
-    Ok((size, ZipArchive::new(file)?))
+    Ok(ZipArchive::new(file)?)
 }
 
 impl Reader {
     pub fn open(path: PathBuf) -> Result<Self, palace_core::Error> {
-        let (size, archive) = open_zip(path)?;
+        let archive = open_zip(path)?;
         Ok(Reader {
             main_archive: archive.into(),
             clones: Default::default(),
-            size,
         }
         .into())
     }
@@ -180,9 +177,9 @@ impl ListableStorageTraits for Reader {
         })
     }
 
-    fn size(&self) -> Result<u64, StorageError> {
-        Ok(self.size)
-    }
+    //fn size(&self) -> Result<u64, StorageError> {
+    //    Ok(self.size)
+    //}
 
     fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
         let mut size = 0;
