@@ -22,7 +22,7 @@ pin-project = "1.0"
 gpu-allocator = { git = "https://github.com/ftilde/gpu-allocator", rev = "562b463643385dcd851c117fd34bf61e30882090" }
 #gpu-allocator = { path = "../../gpu-allocator" }
 cstr = "0.2.11"
-spirv-compiler = "0.2"
+shaderc = "0.9.1"
 crevice = { version="0.12.0", features = ["cgmath"] }
 graphviz-rust = "0.6.1"
 spirq = "1.2.1"

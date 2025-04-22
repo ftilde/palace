@@ -122,8 +122,7 @@ impl<'a> ComputePipelineBuilder<'a> {
         let mut shader = self.shader;
         shader.program_parts.insert(0, local_size_str.into());
 
-        let mut shader =
-            ShaderModule::from_source(df, shader, spirv_compiler::ShaderKind::Compute)?;
+        let mut shader = ShaderModule::from_source(df, shader, shaderc::ShaderKind::Compute)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();
@@ -243,12 +242,9 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     ) -> Result<GraphicsPipeline, crate::Error> {
         let df = device.functions();
         let mut vertex_shader =
-            ShaderModule::from_source(df, self.vertex_shader, spirv_compiler::ShaderKind::Vertex)?;
-        let mut fragment_shader = ShaderModule::from_source(
-            df,
-            self.fragment_shader,
-            spirv_compiler::ShaderKind::Fragment,
-        )?;
+            ShaderModule::from_source(df, self.vertex_shader, shaderc::ShaderKind::Vertex)?;
+        let mut fragment_shader =
+            ShaderModule::from_source(df, self.fragment_shader, shaderc::ShaderKind::Fragment)?;
 
         let entry_point_name = "main";
         let entry_point_name_c = std::ffi::CString::new(entry_point_name).unwrap();

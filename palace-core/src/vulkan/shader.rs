@@ -1,8 +1,8 @@
 use ahash::HashMapExt;
 use ash::vk;
+use shaderc::ShaderKind;
 use spirq::ReflectConfig;
-use spirv_compiler::ShaderKind;
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap};
+use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, path::PathBuf};
 
 use crate::{
     data::Vector,
@@ -66,6 +66,25 @@ pub struct Shader<'a> {
     pub defines: ShaderDefines,
 }
 
+pub(crate) fn include_callback(
+    include_dir: PathBuf,
+    request_arg: &str,
+    include_type: shaderc::IncludeType,
+) -> Result<shaderc::ResolvedInclude, String> {
+    use shaderc::{IncludeType, ResolvedInclude};
+
+    if include_type != IncludeType::Standard {
+        return Err(format!("Unsupported include type {:?}", include_type));
+    }
+
+    let full_path = include_dir.join(request_arg);
+    let content = std::fs::read_to_string(&full_path).map_err(|e| e.to_string())?;
+    Ok(ResolvedInclude {
+        resolved_name: full_path.to_string_lossy().to_string(),
+        content,
+    })
+}
+
 impl<'a> Shader<'a> {
     pub fn new(program: impl Into<Cow<'a, str>>) -> Self {
         Self {
@@ -112,39 +131,40 @@ impl<'a> Shader<'a> {
         let raw_source = self.program_parts.join("");
         let source = format!("{}{}", self.config, raw_source);
 
-        use spirv_compiler::*;
+        use shaderc::*;
 
-        let mut compiler = CompilerBuilder::new()
-            .with_source_language(SourceLanguage::GLSL)
-            .generate_debug_info()
-            .with_opt_level(OptimizationLevel::Zero)
-            .generate_debug_info()
-            .with_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3)
-            .with_target_spirv(SpirvVersion::V1_6)
-            .with_include_dir(env!("GLSL_INCLUDE_DIR"));
+        let compiler = Compiler::new().unwrap();
+        let mut options = CompileOptions::new().unwrap();
+        options.set_source_language(SourceLanguage::GLSL);
+        options.set_generate_debug_info();
+        options.set_optimization_level(OptimizationLevel::Zero); //TODO!!??
+        options.set_target_env(TargetEnv::Vulkan, vk::API_VERSION_1_3);
+        options.set_target_spirv(SpirvVersion::V1_6);
+        options.set_include_callback(move |req_arg, include_type, _, _| {
+            include_callback(
+                PathBuf::from(env!("GLSL_INCLUDE_DIR")),
+                req_arg,
+                include_type,
+            )
+        });
 
         for (k, v) in self.defines.defines.into_iter() {
-            compiler = compiler.with_macro(&k, Some(&v));
+            options.add_macro_definition(&k, Some(&v));
         }
-        let mut compiler = compiler.build().unwrap();
+
         let res = compiler
-            .compile_from_string(&source, kind)
-            .map_err(|e| match e {
-                CompilerError::Log(e) => format!(
-                    "Compilation error for shader (source {:?}):\n{}\n\nFull source:\n{}",
-                    e.file, e.description, source,
-                ),
-                CompilerError::LoadError(e) => {
-                    format!("Load error while compiling shader: {}", e).into()
-                }
-                CompilerError::WriteError(e) => {
-                    format!("Write error while compiling shader: {}", e).into()
-                }
+            .compile_into_spirv(&source, kind, "shader.glsl", "main", Some(&options))
+            .map_err(|e| {
+                format!(
+                    "Compilation error for shader:\n{}\n\nFull source:\n{}",
+                    e.to_string(),
+                    source,
+                )
             })?;
 
         //std::fs::write("./kernel.spv", bytemuck::cast_slice(&res)).unwrap();
 
-        Ok(res)
+        Ok(res.as_binary().to_vec())
     }
 }
 
