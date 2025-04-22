@@ -724,7 +724,8 @@ mod test {
                 slice_proj,
                 crate::transfunc::TransFuncOperator::grey_ramp(0.0, 1.0),
                 Default::default(),
-            );
+            )
+            .unwrap();
             compare_tensor_fn(slice, fill_expected);
         }
     }
