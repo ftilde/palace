@@ -1,4 +1,5 @@
 mod zip_reader;
+mod zip_writer;
 
 use futures::StreamExt;
 use id::{Id, Identify};
@@ -9,6 +10,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use zip_writer::{FlushWriteStore, ZipWriterStore};
 
 use palace_core::{
     array::{TensorEmbeddingData, TensorMetaData},
@@ -31,7 +33,7 @@ use zarrs::{
     array::{codec::ZstdCodec, Array, ArrayBuilder, ArrayError, DataType, FillValue},
     filesystem::FilesystemStore,
     node::{Node, NodePath},
-    storage::{ListableStorageTraits, ReadableStorageTraits},
+    storage::{ListableStorageTraits, ReadableStorageTraits, WritableStorageTraits},
 };
 
 const SPACING_KEY: &str = "spacing_us";
@@ -249,7 +251,7 @@ impl ZarrSourceState {
                                 |(chunk_handle, chunk_id)| {
                                     let chunk_handle = chunk_handle.into_thread_handle();
                                     let array = &this.inner.array;
-                                    ctx.spawn_io(move || {
+                                    ctx.spawn_compute(move || {
                                         let chunk_data = chunk_handle.data();
                                         let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
                                         let bytes = array
@@ -287,7 +289,7 @@ impl ZarrSourceState {
                                     let chunk_handle = chunk_handle.into_thread_handle();
                                     let array = &this.inner.array;
 
-                                    ctx.spawn_io(move || {
+                                    ctx.spawn_compute(move || {
                                         let chunk_pos = metadata.chunk_pos_from_index(chunk_id);
                                         let bytes = array
                                             .retrieve_chunk(
@@ -416,9 +418,9 @@ fn create_array_for_embedded_tensor<'cref, 'inv>(
     Ok(b)
 }
 
-async fn write_tensor<'cref, 'inv>(
+async fn write_tensor<'cref, 'inv, S: WritableStorageTraits + 'static + ?Sized>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
-    array: &Array<FilesystemStore>,
+    array: &Array<S>,
     t: &'inv TensorOperator<DDyn, DType>,
 ) -> Result<(), palace_core::Error> {
     let md = &t.metadata;
@@ -500,7 +502,12 @@ pub fn save_lod_tensor(
     hints: WriteHints,
     recreate_lod: bool,
 ) -> Result<(), palace_core::Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
+    let extension = path.extension().and_then(|v| v.to_str());
+    let store: Arc<dyn FlushWriteStore + 'static> = if let Some("zip") = extension {
+        Arc::new(ZipWriterStore::new(&path)?)
+    } else {
+        Arc::new(FilesystemStore::new(&path)?)
+    };
     let store = &store;
 
     let group = zarrs::group::GroupBuilder::new().build(Arc::clone(store), "/")?;
@@ -540,6 +547,9 @@ pub fn save_lod_tensor(
             }
 
             let new_md = palace_core::operators::resample::coarser_lod_md(&current, steps.clone());
+            std::mem::drop(current);
+
+            store.flush()?;
 
             current = open(path.into(), current_location)?;
 
