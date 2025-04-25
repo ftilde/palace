@@ -355,90 +355,106 @@ impl Hdf5TensorSourceState {
                 //println!("Positions: {}", positions.len());
                 async move {
                     let metadata = &this.inner.metadata;
+                    let dtype = this.inner.dtype;
+                    let num_voxels = this.inner.metadata.chunk_size.hmul();
+                    let layout = dtype.array_layout(num_voxels);
+                    let dataset = &this.inner.dataset_index;
+                    let file = &this.inner.dataset_file;
 
                     match location {
                         DataLocation::CPU(_) => {
-                            for pos in positions {
-                                let chunk = metadata.chunk_info(pos);
-
-                                let num_voxels = this.inner.metadata.chunk_size.hmul();
-
-                                let dtype = this.inner.dtype;
-                                let layout = dtype.array_layout(num_voxels);
-
+                            let allocations = positions.into_iter().map(|chunk_id| {
                                 let data_id =
-                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
-                                let mut chunk_handle =
-                                    ctx.submit(ctx.alloc_raw(data_id, layout)).await;
-                                let chunk_data = chunk_handle.data();
-                                let dataset = &this.inner.dataset_index;
-                                let file = &this.inner.dataset_file;
-                                ctx.submit(ctx.spawn_compute(|| {
-                                    palace_core::data::init_non_full(chunk_data, &chunk, 0);
-                                    let out_info = metadata.chunk_info(pos);
+                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
+                                (ctx.alloc_raw(data_id, layout), chunk_id)
+                            });
+                            let stream = ctx.submit_unordered_with_data(allocations).then_req(
+                                *ctx,
+                                |(chunk_handle, chunk_id)| {
+                                    let chunk_handle = chunk_handle.into_thread_handle();
+                                    ctx.spawn_compute(move || {
+                                        let chunk_info = metadata.chunk_info(chunk_id);
+                                        let chunk_data = chunk_handle.data();
+                                        palace_core::data::init_non_full(
+                                            chunk_data,
+                                            &chunk_info,
+                                            0,
+                                        );
 
-                                    copy_chunk(&dataset, file, chunk_data, out_info).unwrap();
-                                }))
-                                .await;
+                                        copy_chunk(&dataset, file, chunk_data, chunk_info).unwrap();
+                                        chunk_handle
+                                    })
+                                },
+                            );
 
-                                // Safety: At this point the thread pool job above has finished and has initialized all bytes
-                                // in the brick.
-                                unsafe { chunk_handle.initialized(*ctx) };
+                            futures::pin_mut!(stream);
+                            while let Some(handle) = stream.next().await {
+                                let handle = handle.into_main_handle(ctx.storage());
+                                unsafe { handle.initialized(*ctx) };
                             }
                         }
                         DataLocation::GPU(device_id) => {
                             let device = ctx.device_ctx(device_id);
-                            for pos in positions {
-                                let chunk = metadata.chunk_info(pos);
-
-                                let num_voxels = this.inner.metadata.chunk_size.hmul();
-
-                                let dtype = this.inner.dtype;
-                                let layout = dtype.array_layout(num_voxels);
-
+                            let allocations = positions.into_iter().map(|chunk_id| {
                                 let data_id =
-                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), pos);
-                                let brick_handle =
-                                    ctx.submit(ctx.alloc_raw_gpu(device, data_id, layout)).await;
+                                    DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
+                                (ctx.alloc_raw_gpu(device, data_id, layout), chunk_id)
+                            });
+                            let stream = ctx
+                                .submit_unordered_with_data(allocations)
+                                .then_req_with_data(*ctx, |(brick_handle, chunk_id)| {
+                                    let staging_buf = device.staging_to_gpu.request(device, layout);
 
-                                let staging_buf = ctx
-                                    .submit(device.staging_to_gpu.request(device, layout))
-                                    .await;
+                                    (staging_buf, (brick_handle, chunk_id))
+                                })
+                                .then_req(*ctx, |(staging_buf, (chunk_handle, chunk_id))| {
+                                    let chunk_handle = chunk_handle.into_thread_handle();
 
-                                let ptr = staging_buf
-                                    .mapped_ptr()
-                                    .unwrap()
-                                    .cast::<MaybeUninit<u8>>()
-                                    .as_ptr();
-                                let chunk_data = unsafe {
-                                    std::slice::from_raw_parts_mut(ptr, staging_buf.size as usize)
-                                };
+                                    ctx.spawn_compute(move || {
+                                        let ptr = staging_buf
+                                            .mapped_ptr()
+                                            .unwrap()
+                                            .cast::<MaybeUninit<u8>>()
+                                            .as_ptr();
+                                        let chunk_data = unsafe {
+                                            std::slice::from_raw_parts_mut(
+                                                ptr,
+                                                staging_buf.size as usize,
+                                            )
+                                        };
 
-                                let dataset = &this.inner.dataset_index;
-                                let file = &this.inner.dataset_file;
-                                ctx.submit(ctx.spawn_compute(|| {
-                                    palace_core::data::init_non_full(chunk_data, &chunk, 0);
-                                    let out_info = metadata.chunk_info(pos);
+                                        let chunk_info = metadata.chunk_info(chunk_id);
+                                        palace_core::data::init_non_full(
+                                            chunk_data,
+                                            &chunk_info,
+                                            0,
+                                        );
 
-                                    copy_chunk(&dataset, file, chunk_data, out_info).unwrap();
-                                }))
-                                .await;
+                                        copy_chunk(&dataset, file, chunk_data, chunk_info).unwrap();
+                                        (staging_buf, chunk_handle)
+                                    })
+                                });
+
+                            futures::pin_mut!(stream);
+                            while let Some(res) = stream.next().await {
+                                let (staging_buf, chunk_handle) = res;
+                                let handle = chunk_handle.into_main_handle(&device);
 
                                 device.with_cmd_buffer(|cmd| {
                                     let copy_info =
-                                        vk::BufferCopy::default().size(brick_handle.size as _);
+                                        vk::BufferCopy::default().size(handle.size as _);
                                     unsafe {
                                         device.functions().cmd_copy_buffer(
                                             cmd.raw(),
                                             staging_buf.buffer,
-                                            brick_handle.buffer,
+                                            handle.buffer,
                                             &[copy_info],
                                         );
                                     }
                                 });
 
                                 unsafe {
-                                    brick_handle.initialized(
+                                    handle.initialized(
                                         *ctx,
                                         palace_core::vulkan::SrcBarrierInfo {
                                             stage: vk::PipelineStageFlags2::TRANSFER,
