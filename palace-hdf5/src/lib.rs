@@ -172,6 +172,41 @@ pub fn open(
     Ok(state.operate())
 }
 
+pub fn open_lod(
+    path: PathBuf,
+    level_prefix: String,
+) -> Result<LODTensorOperator<DDyn, DType>, Error> {
+    let file = hdf5::File::open(&path)?;
+    let level_array_keys = file
+        .datasets()?
+        .into_iter()
+        .map(|p| p.name())
+        .filter(|p| p.starts_with(&level_prefix))
+        .collect::<Vec<_>>();
+    if level_array_keys.is_empty() {
+        return Err(format!("No tensors with prefix {} found", level_prefix).into());
+    }
+
+    let mut levels = Vec::new();
+    for key in level_array_keys {
+        let state = Hdf5TensorSourceState::open(path.clone(), key)?;
+        levels.push(state.operate());
+    }
+
+    levels.sort_by(|l, r| {
+        l.embedding_data
+            .spacing
+            .length()
+            .total_cmp(&r.embedding_data.spacing.length())
+    });
+
+    for pair in levels.windows(2) {
+        assert!(pair[0].embedding_data.spacing[0] <= pair[1].embedding_data.spacing[0]);
+    }
+
+    Ok(LODTensorOperator { levels })
+}
+
 struct StorageInfo {
     data_size: usize,
     gzip: bool,

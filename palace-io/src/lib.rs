@@ -109,6 +109,9 @@ pub fn open_lod(
         [.., "zarr"] | [.., "zarr", "zip"] => {
             palace_zarr::open_lod(path, hints.location.unwrap_or("/level".to_owned()))
         }
+        [.., "h5"] | [.., "hdf5"] => {
+            palace_hdf5::open_lod(path, hints.location.unwrap_or("/level".to_owned()))
+        }
         _ => Err(format!(
             "Unknown lod tensor format for file {}",
             path.to_string_lossy()
