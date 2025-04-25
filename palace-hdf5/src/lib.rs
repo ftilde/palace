@@ -1,18 +1,22 @@
+use futures::StreamExt;
 use hidefix::idx::DatasetD;
 use id::{Id, Identify};
+use itertools::Itertools;
 use palace_core::array::{ChunkInfo, TensorEmbeddingData, TensorMetaData};
 use palace_core::data::{Coordinate, CoordinateType, GlobalCoordinate, LocalCoordinate};
-use palace_core::dim::DDyn;
+use palace_core::dim::{DDyn, DynDimension};
 use palace_core::dtypes::{DType, ElementType, ScalarType};
 use palace_core::op_descriptor;
 use palace_core::operator::{DataDescriptor, DataParam};
-use palace_core::operators::tensor::EmbeddedTensorOperator;
+use palace_core::operators::resample::DownsampleStep;
+use palace_core::operators::tensor::{EmbeddedTensorOperator, LODTensorOperator};
 use palace_core::storage::DataLocation;
+use palace_core::task::{OpaqueTaskContext, RequestStream};
 use palace_core::vulkan::vk;
 use std::borrow::Cow;
 use std::fs::File;
 use std::mem::MaybeUninit;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use hdf5::Datatype;
@@ -24,6 +28,8 @@ use palace_core::{
     operators::tensor::TensorOperator,
     Error,
 };
+
+const SPACING_KEY: &str = "element_size_um";
 
 #[derive(Clone)]
 pub struct Hdf5TensorSourceState {
@@ -55,6 +61,32 @@ fn to_vector<I: Copy, O: From<I> + Copy>(value: Vec<I>) -> Vector<DDyn, O> {
     Vector::from_fn_and_len(value.len(), |i| value[i].into())
 }
 
+fn extent_palace_to_hdf(e: &Vector<DDyn, GlobalCoordinate>) -> hdf5::Extents {
+    hdf5::Extents::Simple(hdf5::SimpleExtents::from_vec(
+        e.map(|v| hdf5::Extent::fixed(v.raw as usize)).inner(),
+    ))
+}
+
+fn chunk_size(e: &TensorMetaData<DDyn>) -> Vec<usize> {
+    e.dimensions
+        .zip(&e.chunk_size, |a, b| a.raw.min(b.raw) as usize)
+        .inner()
+}
+
+fn chunk_to_slice_arg(i: ChunkInfo<DDyn>) -> hdf5::Hyperslab {
+    let begin = i.begin();
+    let size = &i.logical_dimensions;
+    begin
+        .zip(&size, |begin, size| hdf5::SliceOrIndex::SliceCount {
+            start: begin.raw as usize,
+            step: 1,
+            count: size.raw as usize,
+            block: 1,
+        })
+        .inner()
+        .into()
+}
+
 fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
     let scalar = if d.is::<i8>() {
         ScalarType::I8
@@ -80,21 +112,23 @@ fn dtype_hdf5_to_palace(d: &Datatype) -> Result<DType, Error> {
     Ok(DType::scalar(scalar))
 }
 
-//fn dtype_palace_to_hdf5(d: DType) -> Result<Datatype, Error> {
-//    if d.size != 1 {
-//        Err(format!("No zarr correspondence for {:?}", d))?;
-//    }
-//
-//    Ok(match d.scalar {
-//        ScalarType::U8 => Datatype::from_type::<u8>()?,
-//        ScalarType::I8 => Datatype::from_type::<u8>()?,
-//        ScalarType::U16 => Datatype::from_type::<u16>()?,
-//        ScalarType::I16 => Datatype::from_type::<i16>()?,
-//        ScalarType::F32 => Datatype::from_type::<f32>()?,
-//        ScalarType::U32 => Datatype::from_type::<u32>()?,
-//        ScalarType::I32 => Datatype::from_type::<i32>()?,
-//    })
-//}
+fn dtype_palace_to_hdf5(d: DType) -> Result<Datatype, Error> {
+    if d.size != 1 {
+        Err(format!("No hdf5 correspondence for {:?}", d))?;
+    }
+
+    Ok(match d.scalar {
+        ScalarType::U8 => Datatype::from_type::<u8>()?,
+        ScalarType::I8 => Datatype::from_type::<u8>()?,
+        ScalarType::U16 => Datatype::from_type::<u16>()?,
+        ScalarType::I16 => Datatype::from_type::<i16>()?,
+        ScalarType::F32 => Datatype::from_type::<f32>()?,
+        ScalarType::U32 => Datatype::from_type::<u32>()?,
+        ScalarType::I32 => Datatype::from_type::<i32>()?,
+        ScalarType::U64 => Datatype::from_type::<i64>()?,
+        ScalarType::I64 => Datatype::from_type::<i64>()?,
+    })
+}
 
 pub(crate) fn decode_chunk<'a>(
     chunk_bytes: &'a [u8],
@@ -200,6 +234,7 @@ fn copy_chunk(
     chunk_data_out: &mut [MaybeUninit<u8>],
     out_info: ChunkInfo<DDyn>,
 ) -> Result<(), Error> {
+    //TODO: Does this actually work for non-full chunks???
     let chunk_addr = chunk_info(
         dataset,
         out_info.begin().map(|v| v.raw as u64).inner().as_slice(),
@@ -224,7 +259,7 @@ impl Hdf5TensorSourceState {
             to_size_vector(vol.chunk().unwrap_or_else(|| vol.shape()));
         //println!("Chunksize {:?}", brick_size);
         let spacing: Result<Vector<DDyn, f32>, Error> = vol
-            .attr("element_size_um")
+            .attr(SPACING_KEY)
             .and_then(|a| a.read_1d::<f32>())
             .map_err(|e| e.into())
             .map(|s| to_vector(s.to_vec()).scale(0.001));
@@ -388,4 +423,224 @@ impl Hdf5TensorSourceState {
         .embedded(self.inner.embedding_data.clone())
         .into()
     }
+}
+
+fn write_chunk_static<T: palace_core::storage::Element + hdf5::H5Type>(
+    dataset: &hdf5::Dataset,
+    chunk_data: &[u8],
+    out_info: ChunkInfo<DDyn>,
+) {
+    let typed_data: &[T] = bytemuck::cast_slice(chunk_data);
+    let chunk = data::chunk(typed_data, &out_info);
+    let slice_arg = chunk_to_slice_arg(out_info);
+    dataset
+        .write_slice(chunk.as_standard_layout().view(), slice_arg)
+        .unwrap();
+}
+
+fn write_chunk(
+    dataset: &hdf5::Dataset,
+    chunk_data: &[u8],
+    out_info: ChunkInfo<DDyn>,
+    dtype: ScalarType,
+) {
+    match dtype {
+        ScalarType::U8 => write_chunk_static::<u8>(dataset, chunk_data, out_info),
+        ScalarType::I8 => write_chunk_static::<i8>(dataset, chunk_data, out_info),
+        ScalarType::U16 => write_chunk_static::<i16>(dataset, chunk_data, out_info),
+        ScalarType::I16 => write_chunk_static::<u16>(dataset, chunk_data, out_info),
+        ScalarType::F32 => write_chunk_static::<f32>(dataset, chunk_data, out_info),
+        ScalarType::U32 => write_chunk_static::<u32>(dataset, chunk_data, out_info),
+        ScalarType::I32 => write_chunk_static::<i32>(dataset, chunk_data, out_info),
+        ScalarType::U64 => write_chunk_static::<u64>(dataset, chunk_data, out_info),
+        ScalarType::I64 => write_chunk_static::<i64>(dataset, chunk_data, out_info),
+    }
+}
+
+async fn write_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    dataset: &hdf5::Dataset,
+    t: &'inv TensorOperator<DDyn, DType>,
+) -> Result<(), palace_core::Error> {
+    let md = &t.metadata;
+
+    let num_total = md.dimension_in_chunks().hmul();
+    println!("{} chunks to save", num_total);
+
+    let scalar_dtype = t.dtype().scalar;
+    assert_eq!(t.dtype().size, 1);
+
+    let request_chunk_size = 1024;
+    let chunk_ids_in_parts = md.chunk_indices().chunks(request_chunk_size);
+    let mut i = 0;
+    for chunk_ids in &chunk_ids_in_parts {
+        let requests = chunk_ids.map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
+        let stream =
+            ctx.submit_unordered_with_data(requests)
+                .then_req(ctx, |(chunk_handle, chunk_id)| {
+                    let chunk_info = md.chunk_info(chunk_id);
+
+                    let chunk_handle = chunk_handle.into_thread_handle();
+                    ctx.spawn_io(move || {
+                        write_chunk(dataset, chunk_handle.data(), chunk_info, scalar_dtype);
+                        chunk_handle
+                    })
+                });
+        futures::pin_mut!(stream);
+        while let Some(handle) = stream.next().await {
+            let _handle = handle.into_main_handle(ctx.storage());
+        }
+        i += request_chunk_size;
+        println!(
+            "{}/{}, {}%",
+            i,
+            num_total,
+            i as f32 / num_total as f32 * 100.0
+        );
+    }
+
+    Ok(())
+}
+
+fn create_dataset_for_tensor(
+    file: &hdf5::File,
+    t: &TensorOperator<DDyn, DType>,
+    location: &str,
+    hints: &WriteHints,
+) -> Result<hdf5::Dataset, palace_core::Error> {
+    let md = &t.metadata;
+    let dtype = dtype_palace_to_hdf5(t.dtype())?.to_descriptor()?;
+    Ok(file
+        .new_dataset_builder()
+        .empty_as(&dtype)
+        .shape(extent_palace_to_hdf(&md.dimensions))
+        .chunk(chunk_size(&md))
+        .deflate(hints.compression_level)
+        .create(location)?)
+}
+
+fn create_dataset_for_embedded_tensor(
+    file: &hdf5::File,
+    t: &EmbeddedTensorOperator<DDyn, DType>,
+    location: &str,
+    hints: &WriteHints,
+) -> Result<hdf5::Dataset, palace_core::Error> {
+    let dataset = create_dataset_for_tensor(&file, &t.inner, location, hints)?;
+    dataset
+        .new_attr_builder()
+        .with_data(&t.embedding_data.spacing.clone().inner())
+        .create(SPACING_KEY)?;
+
+    Ok(dataset)
+}
+
+pub async fn save_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv TensorOperator<DDyn, DType>,
+    hints: &WriteHints,
+) -> Result<(), palace_core::Error> {
+    let file = hdf5::FileBuilder::new().create(path)?;
+
+    let dataset = create_dataset_for_tensor(&file, t, "volume", hints)?;
+
+    write_tensor(ctx, &dataset, t).await
+}
+
+pub async fn save_embedded_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv EmbeddedTensorOperator<DDyn, DType>,
+    hints: &WriteHints,
+) -> Result<(), palace_core::Error> {
+    let file = hdf5::FileBuilder::new().create(path)?;
+
+    let dataset = create_dataset_for_embedded_tensor(&file, &t, "volume", hints)?;
+
+    write_tensor(ctx, &dataset, t).await
+}
+
+fn level_path(level: usize) -> String {
+    format!("/level{}", level)
+}
+
+#[derive(Clone)]
+pub struct WriteHints {
+    pub compression_level: u8,
+    pub lod_downsample_steps: Option<Vector<DDyn, DownsampleStep>>,
+}
+
+pub fn save_lod_tensor(
+    runtime: &mut palace_core::runtime::RunTime,
+    path: &Path,
+    t: &LODTensorOperator<DDyn, DType>,
+    hints: &WriteHints,
+    recreate_lod: bool,
+) -> Result<(), palace_core::Error> {
+    let file = hdf5::FileBuilder::new().create(path)?;
+
+    if recreate_lod {
+        let mut current = t.levels[0].clone();
+        let mut current_level = 0;
+
+        let steps = hints.lod_downsample_steps.clone().unwrap_or_else(|| {
+            Vector::fill_with_len(DownsampleStep::Synchronized(2.0), t.levels[0].dim().n())
+        });
+
+        loop {
+            let current_location = level_path(current_level);
+            let current_location_ref = &current_location;
+            let current_ref = &current;
+
+            let file = &file;
+            runtime.resolve(None, false, |ctx, _| {
+                async move {
+                    let dataset = create_dataset_for_embedded_tensor(
+                        file,
+                        &current_ref,
+                        &current_location_ref,
+                        hints,
+                    )?;
+
+                    write_tensor(ctx, &dataset, current_ref).await
+                }
+                .into()
+            })?;
+
+            if !palace_core::operators::resample::can_reduce_further(
+                &current.metadata.dimension_in_chunks(),
+                &steps,
+            ) {
+                break;
+            }
+
+            let new_md = palace_core::operators::resample::coarser_lod_md(&current, steps.clone());
+            std::mem::drop(current);
+
+            current = open(path.into(), current_location)?;
+
+            current =
+                palace_core::operators::resample::smooth_downsample(current, new_md.clone()).into();
+            current_level += 1;
+        }
+    } else {
+        runtime.resolve(None, false, |ctx, _| {
+            async move {
+                for (level, tensor) in t.levels.iter().enumerate() {
+                    let dataset = create_dataset_for_embedded_tensor(
+                        &file,
+                        &tensor,
+                        &level_path(level),
+                        hints,
+                    )?;
+
+                    write_tensor(ctx, &dataset, tensor).await?;
+                }
+                Ok(())
+            }
+            .into()
+        })?;
+    }
+
+    Ok(())
 }

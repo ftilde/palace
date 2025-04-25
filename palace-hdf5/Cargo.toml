@@ -10,3 +10,6 @@ hidefix = "0.12"
 hdf5 = { package = "hdf5-metno", version = "*" } #use the same version as hidefix
 ndarray = "0.16"
 memmap = "0.7.0"
+futures = "0.3.30"
+itertools = "0.13.0"
+bytemuck = "1.22.0"

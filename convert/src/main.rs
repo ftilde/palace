@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use palace_core::{
@@ -11,16 +11,21 @@ use palace_core::{
     vec::Vector,
 };
 use palace_io::LodOrigin;
-use palace_zarr::WriteHints;
 
 #[derive(Subcommand, Clone)]
-enum Output {
-    Zarr,
-    ZarrLod {
+enum FileMode {
+    Single,
+    Lod {
         /// Use the vulkan device with the specified id
         #[arg(long)]
         lod_steps: Option<String>,
     },
+}
+
+#[derive(Clone)]
+enum FileFormat {
+    Zarr,
+    HDF5,
 }
 
 #[derive(Parser)]
@@ -29,7 +34,7 @@ struct CliArgs {
     input: PathBuf,
 
     #[command(subcommand)]
-    output_type: Output,
+    mode: FileMode,
 
     #[arg()]
     output_path: PathBuf,
@@ -61,6 +66,32 @@ struct CliArgs {
     /// Use the vulkan device with the specified id
     #[arg(long)]
     chunk_size: Option<u32>,
+}
+
+fn parse_lod_steps(s: String) -> Vector<DDyn, DownsampleStep> {
+    let vec = s
+        .split(",")
+        .map(|v| {
+            let mut c = v.chars();
+            match c.next().unwrap() {
+                'i' => DownsampleStep::Ignore,
+                'f' => DownsampleStep::Fixed(c.as_str().parse::<f32>().unwrap()),
+                _ => DownsampleStep::Synchronized(v.parse::<f32>().unwrap()),
+            }
+        })
+        .collect::<Vec<_>>();
+    Vector::<DDyn, _>::new(vec)
+}
+
+fn parse_file_type(path: &Path) -> Result<FileFormat, String> {
+    let path = path.to_string_lossy();
+    let segments = path.split('.').collect::<Vec<_>>();
+
+    match segments[..] {
+        [.., "zarr"] | [.., "zarr", "zip"] => Ok(FileFormat::Zarr),
+        [.., "h5"] | [.., "hdf5"] => Ok(FileFormat::HDF5),
+        _ => Err(format!("Unknown file format in file {}", path).into()),
+    }
 }
 
 fn main() {
@@ -100,40 +131,72 @@ fn main() {
     let input = &input;
     let input_lod = &input_lod;
 
-    let mut write_hints = WriteHints {
-        compression_level: args.compression_level,
-        lod_downsample_steps: None,
-    };
+    let format = parse_file_type(&args.output_path).unwrap();
 
-    match args.output_type {
-        Output::Zarr => runtime.resolve(None, false, |ctx, _| {
-            async move {
-                palace_zarr::save_embedded_tensor(ctx, &args.output_path, input, write_hints).await
+    match format {
+        FileFormat::Zarr => {
+            let mut write_hints = palace_zarr::WriteHints {
+                compression_level: args.compression_level,
+                lod_downsample_steps: None,
+            };
+
+            match args.mode {
+                FileMode::Single => runtime.resolve(None, false, |ctx, _| {
+                    async move {
+                        palace_zarr::save_embedded_tensor(
+                            ctx,
+                            &args.output_path,
+                            input,
+                            write_hints,
+                        )
+                        .await
+                    }
+                    .into()
+                }),
+
+                FileMode::Lod { lod_steps } => {
+                    write_hints.lod_downsample_steps = lod_steps.map(parse_lod_steps);
+                    palace_zarr::save_lod_tensor(
+                        &mut runtime,
+                        &args.output_path,
+                        input_lod,
+                        write_hints,
+                        matches!(lod_origin, LodOrigin::Dynamic),
+                    )
+                }
             }
-            .into()
-        }),
-        Output::ZarrLod { lod_steps } => {
-            if let Some(s) = lod_steps {
-                let vec = s
-                    .split(",")
-                    .map(|v| {
-                        let mut c = v.chars();
-                        match c.next().unwrap() {
-                            'i' => DownsampleStep::Ignore,
-                            'f' => DownsampleStep::Fixed(c.as_str().parse::<f32>().unwrap()),
-                            _ => DownsampleStep::Synchronized(v.parse::<f32>().unwrap()),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                write_hints.lod_downsample_steps = Some(Vector::<DDyn, _>::new(vec));
+        }
+        FileFormat::HDF5 => {
+            let mut write_hints = palace_hdf5::WriteHints {
+                compression_level: args.compression_level.try_into().unwrap(),
+                lod_downsample_steps: None,
+            };
+
+            match args.mode {
+                FileMode::Single => runtime.resolve(None, false, |ctx, _| {
+                    async move {
+                        palace_hdf5::save_embedded_tensor(
+                            ctx,
+                            &args.output_path,
+                            input,
+                            &write_hints,
+                        )
+                        .await
+                    }
+                    .into()
+                }),
+
+                FileMode::Lod { lod_steps } => {
+                    write_hints.lod_downsample_steps = lod_steps.map(parse_lod_steps);
+                    palace_hdf5::save_lod_tensor(
+                        &mut runtime,
+                        &args.output_path,
+                        input_lod,
+                        &write_hints,
+                        matches!(lod_origin, LodOrigin::Dynamic),
+                    )
+                }
             }
-            palace_zarr::save_lod_tensor(
-                &mut runtime,
-                &args.output_path,
-                input_lod,
-                write_hints,
-                matches!(lod_origin, LodOrigin::Dynamic),
-            )
         }
     }
     .unwrap();

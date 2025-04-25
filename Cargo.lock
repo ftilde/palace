@@ -584,6 +584,7 @@ dependencies = [
  "bytesize",
  "clap",
  "palace-core",
+ "palace-hdf5",
  "palace-io",
  "palace-zarr",
 ]
@@ -2568,9 +2569,12 @@ dependencies = [
 name = "palace-hdf5"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "futures",
  "hdf5-metno",
  "hidefix",
  "id",
+ "itertools 0.13.0",
  "memmap",
  "ndarray 0.16.1",
  "palace-core",
