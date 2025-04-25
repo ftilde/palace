@@ -66,7 +66,9 @@ pub fn open_single_level(
             let data = path.with_extension("img");
             palace_nifti::open_separate(path, data)?.into_dyn()
         }
-        [.., "h5"] => palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned()))?,
+        [.., "h5" | "hdf5"] => {
+            palace_hdf5::open(path, hints.location.unwrap_or("/volume".to_owned()))?
+        }
         [.., "zarr"] | [.., "zarr", "zip"] => {
             palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
         }
