@@ -13,8 +13,8 @@ use palace_core::operators::tensor::{EmbeddedTensorOperator, LODTensorOperator};
 use palace_core::storage::DataLocation;
 use palace_core::task::{OpaqueTaskContext, RequestStream};
 use palace_core::vulkan::vk;
+use positioned_io::{RandomAccessFile, ReadAt};
 use std::borrow::Cow;
-use std::fs::File;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -42,8 +42,7 @@ pub struct Hdf5TensorSourceStateInner {
     metadata: TensorMetaData<DDyn>,
     embedding_data: TensorEmbeddingData<DDyn>,
     dataset_index: DatasetD<'static>,
-    _dataset_file: File,
-    dataset_mmap: memmap::Mmap,
+    dataset_file: RandomAccessFile,
     path: PathBuf,
     volume_location: String,
     dtype: DType,
@@ -267,7 +266,7 @@ fn chunk_info(ds: &hidefix::idx::DatasetD<'static>, pos: &[u64]) -> FileChunkInf
 
 fn copy_chunk(
     dataset: &DatasetD<'static>,
-    mmap: &memmap::Mmap,
+    file: &RandomAccessFile,
     chunk_data_out: &mut [MaybeUninit<u8>],
     out_info: ChunkInfo<DDyn>,
 ) -> Result<(), Error> {
@@ -277,9 +276,10 @@ fn copy_chunk(
         out_info.begin().map(|v| v.raw as u64).inner().as_slice(),
     );
 
-    let chunk_data_raw = &mmap[chunk_addr.addr as usize..][..chunk_addr.size as usize];
+    let mut buf = vec![0u8; chunk_addr.size as usize];
+    file.read_exact_at(chunk_addr.addr, &mut buf)?;
     let storage_info = storage_info(dataset);
-    let chunk_data = decode_chunk(chunk_data_raw, &storage_info)?;
+    let chunk_data = decode_chunk(&buf, &storage_info)?;
     assert_eq!(chunk_data_out.len(), chunk_data.len());
     data::write_slice_uninit(chunk_data_out, &chunk_data);
 
@@ -330,16 +330,14 @@ impl Hdf5TensorSourceState {
 
         let embedding_data = TensorEmbeddingData { spacing };
 
-        let file = File::open(&path)?;
-        let mmap = unsafe { memmap::Mmap::map(&file)? };
+        let file = RandomAccessFile::open(&path)?;
 
         Ok(Hdf5TensorSourceState {
             inner: Rc::new(Hdf5TensorSourceStateInner {
                 metadata,
                 embedding_data,
                 dataset_index: dset,
-                dataset_mmap: mmap,
-                _dataset_file: file,
+                dataset_file: file,
                 path,
                 volume_location,
                 dtype,
@@ -354,6 +352,7 @@ impl Hdf5TensorSourceState {
             self.inner.metadata.clone(),
             DataParam(self.clone()),
             move |ctx, positions, location, this| {
+                //println!("Positions: {}", positions.len());
                 async move {
                     let metadata = &this.inner.metadata;
 
@@ -373,12 +372,12 @@ impl Hdf5TensorSourceState {
                                     ctx.submit(ctx.alloc_raw(data_id, layout)).await;
                                 let chunk_data = chunk_handle.data();
                                 let dataset = &this.inner.dataset_index;
-                                let mmap = &this.inner.dataset_mmap;
-                                ctx.submit(ctx.spawn_io(|| {
+                                let file = &this.inner.dataset_file;
+                                ctx.submit(ctx.spawn_compute(|| {
                                     palace_core::data::init_non_full(chunk_data, &chunk, 0);
                                     let out_info = metadata.chunk_info(pos);
 
-                                    copy_chunk(&dataset, mmap, chunk_data, out_info).unwrap();
+                                    copy_chunk(&dataset, file, chunk_data, out_info).unwrap();
                                 }))
                                 .await;
 
@@ -416,12 +415,12 @@ impl Hdf5TensorSourceState {
                                 };
 
                                 let dataset = &this.inner.dataset_index;
-                                let mmap = &this.inner.dataset_mmap;
-                                ctx.submit(ctx.spawn_io(|| {
+                                let file = &this.inner.dataset_file;
+                                ctx.submit(ctx.spawn_compute(|| {
                                     palace_core::data::init_non_full(chunk_data, &chunk, 0);
                                     let out_info = metadata.chunk_info(pos);
 
-                                    copy_chunk(&dataset, mmap, chunk_data, out_info).unwrap();
+                                    copy_chunk(&dataset, file, chunk_data, out_info).unwrap();
                                 }))
                                 .await;
 
