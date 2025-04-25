@@ -464,13 +464,24 @@ async fn write_tensor<'cref, 'inv, S: WritableStorageTraits + 'static + ?Sized>(
     Ok(())
 }
 
+fn create_store_for_path(
+    path: &Path,
+) -> Result<Arc<dyn FlushWriteStore + 'static>, palace_core::Error> {
+    let extension = path.extension().and_then(|v| v.to_str());
+    Ok(if let Some("zip") = extension {
+        Arc::new(ZipWriterStore::new(&path)?)
+    } else {
+        Arc::new(FilesystemStore::new(&path)?)
+    })
+}
+
 pub async fn save_tensor<'cref, 'inv>(
     ctx: OpaqueTaskContext<'cref, 'inv>,
     path: &Path,
     t: &'inv TensorOperator<DDyn, DType>,
     hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
+    let store = create_store_for_path(&path)?;
     let array = create_array_for_tensor(t, &hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
@@ -483,7 +494,7 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
     t: &'inv EmbeddedTensorOperator<DDyn, DType>,
     hints: WriteHints,
 ) -> Result<(), palace_core::Error> {
-    let store = Arc::new(FilesystemStore::new(&path)?);
+    let store = create_store_for_path(&path)?;
     let array = create_array_for_embedded_tensor(t, &hints)?.build(store, "/array")?;
 
     array.store_metadata()?;
@@ -502,12 +513,7 @@ pub fn save_lod_tensor(
     hints: WriteHints,
     recreate_lod: bool,
 ) -> Result<(), palace_core::Error> {
-    let extension = path.extension().and_then(|v| v.to_str());
-    let store: Arc<dyn FlushWriteStore + 'static> = if let Some("zip") = extension {
-        Arc::new(ZipWriterStore::new(&path)?)
-    } else {
-        Arc::new(FilesystemStore::new(&path)?)
-    };
+    let store = create_store_for_path(&path)?;
     let store = &store;
 
     let group = zarrs::group::GroupBuilder::new().build(Arc::clone(store), "/")?;
@@ -553,8 +559,6 @@ pub fn save_lod_tensor(
 
             current = open(path.into(), current_location)?;
 
-            //TODO: Maybe we do not want to hardcode this. It would also be easy to offer something
-            //like "cache everything but the highest resolution layer" on LODTensorOperator
             current = smooth_downsample(current, new_md.clone()).into();
             current_level += 1;
         }
