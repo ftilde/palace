@@ -30,6 +30,8 @@ use palace_core::{
 };
 
 const SPACING_KEY: &str = "element_size_um";
+const SPACING_FACTOR_FILE_TO_MEM: f32 = 0.001;
+const SPACING_FACTOR_MEM_TO_FILE: f32 = 1.0 / SPACING_FACTOR_FILE_TO_MEM;
 
 #[derive(Clone)]
 pub struct Hdf5TensorSourceState {
@@ -262,7 +264,7 @@ impl Hdf5TensorSourceState {
             .attr(SPACING_KEY)
             .and_then(|a| a.read_1d::<f32>())
             .map_err(|e| e.into())
-            .map(|s| to_vector(s.to_vec()).scale(0.001));
+            .map(|s| to_vector(s.to_vec()).scale(SPACING_FACTOR_FILE_TO_MEM));
 
         let spacing = match spacing {
             Ok(spacing) => spacing,
@@ -528,7 +530,12 @@ fn create_dataset_for_embedded_tensor(
     let dataset = create_dataset_for_tensor(&file, &t.inner, location, hints)?;
     dataset
         .new_attr_builder()
-        .with_data(&t.embedding_data.spacing.clone().inner())
+        .with_data(
+            &t.embedding_data
+                .spacing
+                .scale(SPACING_FACTOR_MEM_TO_FILE)
+                .inner(),
+        )
         .create(SPACING_KEY)?;
 
     Ok(dataset)
