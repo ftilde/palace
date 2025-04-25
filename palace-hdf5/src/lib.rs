@@ -270,15 +270,15 @@ fn copy_chunk(
     chunk_data_out: &mut [MaybeUninit<u8>],
     out_info: ChunkInfo<DDyn>,
 ) -> Result<(), Error> {
-    //TODO: Does this actually work for non-full chunks???
     let chunk_addr = chunk_info(
         dataset,
         out_info.begin().map(|v| v.raw as u64).inner().as_slice(),
     );
 
-    let mut buf = vec![0u8; chunk_addr.size as usize];
+    let mut buf = palace_core::util::alloc_vec_aligned_zeroed::<u8>(chunk_addr.size as usize, 4096);
     file.read_exact_at(chunk_addr.addr, &mut buf)?;
     let storage_info = storage_info(dataset);
+
     let chunk_data = decode_chunk(&buf, &storage_info)?;
     assert_eq!(chunk_data_out.len(), chunk_data.len());
     data::write_slice_uninit(chunk_data_out, &chunk_data);

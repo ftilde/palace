@@ -107,3 +107,17 @@ pub mod string_concat_hack {
         const BUF: ConstStr;
     }
 }
+
+pub fn alloc_vec_aligned<T>(capacity: usize, align_to: usize) -> Vec<u8> {
+    let layout = std::alloc::Layout::array::<T>(capacity).unwrap();
+    let layout = layout.align_to(align_to).unwrap();
+    let allocation = unsafe { std::alloc::alloc(layout) };
+    unsafe { Vec::from_raw_parts(allocation, 0, capacity) }
+}
+
+pub fn alloc_vec_aligned_zeroed<T: bytemuck::Zeroable>(size: usize, align_to: usize) -> Vec<u8> {
+    let layout = std::alloc::Layout::array::<T>(size).unwrap();
+    let layout = layout.align_to(align_to).unwrap();
+    let allocation = unsafe { std::alloc::alloc_zeroed(layout) };
+    unsafe { Vec::from_raw_parts(allocation, size, size) }
+}
