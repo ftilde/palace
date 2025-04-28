@@ -275,13 +275,25 @@ fn copy_chunk(
         out_info.begin().map(|v| v.raw as u64).inner().as_slice(),
     );
 
-    let mut buf = palace_core::util::alloc_vec_aligned_zeroed::<u8>(chunk_addr.size as usize, 4096);
-    file.read_exact_at(chunk_addr.addr, &mut buf)?;
     let storage_info = storage_info(dataset);
 
-    let chunk_data = decode_chunk(&buf, &storage_info)?;
-    assert_eq!(chunk_data_out.len(), chunk_data.len());
-    data::write_slice_uninit(chunk_data_out, &chunk_data);
+    if !storage_info.gzip && !storage_info.shuffle && out_info.is_full() {
+        // This is unsound:
+        // let chunk_data_out_ptr = chunk_data_out.as_mut_ptr() as *mut u8;
+        //let mut chunk_data_out =
+        //    unsafe { std::slice::from_raw_parts_mut(chunk_data_out_ptr, chunk_data_out.len()) };
+        // So we do unnecessary initialization for now. (Does not cost much, though).
+        let mut chunk_data_out = data::fill_uninit(chunk_data_out, 0u8);
+        file.read_exact_at(chunk_addr.addr, &mut chunk_data_out)?;
+    } else {
+        let mut buf =
+            palace_core::util::alloc_vec_aligned_zeroed::<u8>(chunk_addr.size as usize, 4096);
+        file.read_exact_at(chunk_addr.addr, &mut buf)?;
+
+        let chunk_data = decode_chunk(&buf, &storage_info)?;
+        assert_eq!(chunk_data_out.len(), chunk_data.len());
+        data::write_slice_uninit(chunk_data_out, &chunk_data);
+    }
 
     Ok(())
 }
