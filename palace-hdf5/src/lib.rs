@@ -562,13 +562,15 @@ fn create_dataset_for_tensor(
 ) -> Result<hdf5::Dataset, palace_core::Error> {
     let md = &t.metadata;
     let dtype = dtype_palace_to_hdf5(t.dtype())?.to_descriptor()?;
-    Ok(file
+    let mut file = file
         .new_dataset_builder()
         .empty_as(&dtype)
         .shape(extent_palace_to_hdf(&md.dimensions))
-        .chunk(chunk_size(&md))
-        .deflate(hints.compression_level)
-        .create(location)?)
+        .chunk(chunk_size(&md));
+    if hints.compression_level > 0 {
+        file = file.deflate(hints.compression_level);
+    }
+    Ok(file.create(location)?)
 }
 
 fn create_dataset_for_embedded_tensor(
