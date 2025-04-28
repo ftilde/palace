@@ -292,7 +292,7 @@ impl RunTime {
         } else {
             None
         };
-        let frame = FrameNumber(1.try_into().unwrap());
+        let frame = FrameNumber::first();
         Ok(RunTime {
             ram,
             disk,
@@ -398,6 +398,9 @@ pub struct FrameNumber(NonZeroU64);
 impl FrameNumber {
     pub fn diff(self, other: Self) -> u64 {
         self.0.get() - other.0.get()
+    }
+    pub fn first() -> Self {
+        FrameNumber(1.try_into().unwrap())
     }
 }
 

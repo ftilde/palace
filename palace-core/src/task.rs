@@ -15,6 +15,7 @@ use crate::dim::DynDimension;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId};
 use crate::runtime::{CompletedRequests, Deadline, FrameNumber, RequestQueue, TaskHints};
+use crate::storage::cpu::ReadHandle;
 use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
 use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{disk, CpuDataLocation, DataVersionType, Element};
@@ -1086,8 +1087,58 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
         let base_id = DataId::new(self.current_op(), item);
         let id = DataId(Id::combine(&[base_id.0, Id::hash(name)]));
 
-        self.storage
-            .request_access_state_cache(self.current_frame, id, size)
+        // Safety: We ensure no simulatenous access by taking the ChunkIndex into account for the
+        // id.
+        unsafe {
+            self.storage
+                .request_access_state_cache(self.current_frame, id, size)
+        }
+    }
+
+    pub fn access_state_cache_shared<'req, T: Send + Default>(
+        &'req self,
+        name: &str,
+        size: usize,
+    ) -> Request<'req, 'inv, ReadHandle<'req, [T], RamAllocator>> {
+        let base_id = self.current_op();
+        let id = DataId(Id::combine(&[base_id.inner(), Id::hash(name)]));
+
+        let access = self.storage.register_access(self.current_frame, id);
+        let layout = Layout::array::<T>(size).unwrap();
+
+        let longevity = crate::storage::DataLongevity::Cache;
+        let data_descriptor = DataDescriptor { id, longevity };
+
+        match unsafe { self.storage.read(access) } {
+            Ok(r) => Request::ready(r),
+            Err(access) => Request {
+                type_: RequestType::Allocation(
+                    AllocationId::next(),
+                    AllocationRequest::Ram(layout, data_descriptor, CpuDataLocation::Ram),
+                ),
+                gen_poll: Box::new(move |_ctx| {
+                    let mut access = Some(access);
+                    Box::new(move || {
+                        access = match self.storage.access_initializing(access.take().unwrap()) {
+                            Ok(v) => {
+                                let mut wh = v.map_drop_handler(|h| h.into_error()).transmute(size);
+                                crate::data::fill_uninit_default(&mut *wh);
+                                return Some(
+                                    unsafe { wh.initialized(self.inner) }
+                                        .into_read_handle(longevity),
+                                );
+                            }
+                            Err(acc) => match unsafe { self.storage.read(acc) } {
+                                Ok(r) => return Some(r),
+                                Err(acc) => Some(acc),
+                            },
+                        };
+                        None
+                    })
+                }),
+                _marker: Default::default(),
+            },
+        }
     }
 }
 

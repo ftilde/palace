@@ -135,6 +135,14 @@ pub fn fill_uninit<T: Clone>(data: &mut [MaybeUninit<T>], val: T) -> &mut [T] {
     unsafe { slice_assume_init_mut(data) }
 }
 
+#[allow(unused)]
+pub fn fill_uninit_default<T: Default>(data: &mut [MaybeUninit<T>]) -> &mut [T] {
+    for v in data.iter_mut() {
+        v.write(T::default());
+    }
+    unsafe { slice_assume_init_mut(data) }
+}
+
 //pub struct Brick<'a, T> {
 //    size: LocalVoxelPosition,
 //    mem_size: LocalVoxelPosition,

@@ -243,45 +243,49 @@ pub struct DropMarkInitialized<'a, Allocator> {
     current_frame: FrameNumber,
     current_task: TaskId,
 }
+impl<'a, Allocator> DropMarkInitialized<'a, Allocator> {
+    fn mark_initialized(&mut self) {
+        let version = match self.version_type() {
+            DataVersionType::Final => DataVersion::Final,
+            DataVersionType::Preview => DataVersion::Preview(self.current_frame),
+        };
+
+        let mut binding = self.access.storage.index.borrow_mut();
+        let state = &mut binding.get_mut(&self.access.id).unwrap().state;
+        *state = match state {
+            StorageEntryState::Registered => {
+                panic!("Entry should be in state Initializing, but is in Registered");
+            }
+            StorageEntryState::Initialized(..) => {
+                panic!("Entry should be in state Initializing, but is in Initialized");
+            }
+            StorageEntryState::Initializing(info, WriteAccessCount::One) => {
+                StorageEntryState::Initialized(*info, version)
+            }
+            StorageEntryState::Initializing(_info, WriteAccessCount::Zero) => {
+                panic!("Invalid state");
+            }
+        };
+    }
+    fn version_type(&self) -> DataVersionType {
+        self.version.unwrap_or_else(|| {
+            if self
+                .predicted_preview_tasks
+                .borrow()
+                .contains(&self.current_task)
+            {
+                DataVersionType::Preview
+            } else {
+                DataVersionType::Final
+            }
+        })
+    }
+}
 impl<Allocator> Drop for DropMarkInitialized<'_, Allocator> {
     fn drop(&mut self) {
-        {
-            let version_type = self.version.unwrap_or_else(|| {
-                if self
-                    .predicted_preview_tasks
-                    .borrow()
-                    .contains(&self.current_task)
-                {
-                    DataVersionType::Preview
-                } else {
-                    DataVersionType::Final
-                }
-            });
-            let version = match version_type {
-                DataVersionType::Final => DataVersion::Final,
-                DataVersionType::Preview => DataVersion::Preview(self.current_frame),
-            };
+        self.access.storage.new_data.add(self.access.id);
 
-            let mut binding = self.access.storage.index.borrow_mut();
-            let state = &mut binding.get_mut(&self.access.id).unwrap().state;
-
-            self.access.storage.new_data.add(self.access.id);
-
-            *state = match state {
-                StorageEntryState::Registered => {
-                    panic!("Entry should be in state Initializing, but is in Registered");
-                }
-                StorageEntryState::Initialized(..) => {
-                    panic!("Entry should be in state Initializing, but is in Initialized");
-                }
-                StorageEntryState::Initializing(info, WriteAccessCount::One) => {
-                    StorageEntryState::Initialized(*info, version)
-                }
-                StorageEntryState::Initializing(_info, WriteAccessCount::Zero) => {
-                    panic!("Invalid state");
-                }
-            };
-        }
+        self.mark_initialized();
     }
 }
 
@@ -454,6 +458,14 @@ impl<DropHandler> RawWriteHandle<DropHandler> {
         // Safety: We ensure exclusive access by taking a mutable self reference
         unsafe { std::slice::from_raw_parts_mut(self.data, self.layout.size()) }
     }
+
+    pub fn map_drop_handler<DH>(self, f: impl FnOnce(DropHandler) -> DH) -> RawWriteHandle<DH> {
+        RawWriteHandle {
+            data: self.data,
+            layout: self.layout,
+            drop_handler: f(self.drop_handler),
+        }
+    }
 }
 
 impl<D: Send> std::ops::Deref for RawWriteHandle<D> {
@@ -599,17 +611,13 @@ impl<'a, T: ?Sized> WriteHandleUninit<'a, T, super::ram::RamAllocator> {
     }
 }
 impl<DropHandler> RawWriteHandle<DropHandler> {
-    fn transmute<'a, T: bytemuck::AnyBitPattern>(
-        self,
-        size: usize,
-    ) -> WriteHandle<'a, [MaybeUninit<T>], DropHandler> {
+    pub fn transmute<'a, T>(self, size: usize) -> WriteHandle<'a, [MaybeUninit<T>], DropHandler> {
         let layout = Layout::array::<T>(size).unwrap();
         assert_eq!(layout, self.layout);
 
         let t_ptr = self.data.cast::<MaybeUninit<T>>();
 
-        // Safety: We constructed the pointer with the required layout and T is
-        // bytemuck::AnyBitPattern
+        // Safety: We constructed the pointer with the required layout
         let t_ref = unsafe { std::slice::from_raw_parts_mut(t_ptr, size) };
         WriteHandle {
             data: t_ref,
@@ -617,6 +625,7 @@ impl<DropHandler> RawWriteHandle<DropHandler> {
         }
     }
 }
+
 impl<'a, Allocator> RawWriteHandleUninit<'a, Allocator> {
     /// Safety: The corresponding slot has to have been completely written to.
     pub unsafe fn initialized<'inv>(
@@ -665,6 +674,27 @@ impl<'a, T: ?Sized> WriteHandleInit<'a, T, super::ram::RamAllocator> {
         }
     }
 }
+impl<'a, T: ?Sized, Allocator> WriteHandleInit<'a, T, Allocator> {
+    pub fn into_read_handle(mut self, data_longevity: DataLongevity) -> ReadHandle<'a, T, Allocator>
+    where
+        T: Send,
+    {
+        let version = self.drop_handler.version_type();
+        self.drop_handler.mark_initialized();
+        let id = self.drop_handler.access.id;
+        let storage = self.drop_handler.access.storage;
+        std::mem::forget(self.drop_handler);
+        let access = AccessToken { storage, id };
+
+        ReadHandle {
+            access,
+            data_longevity,
+            version,
+            data: &*self.data,
+        }
+    }
+}
+
 pub enum InplaceResult<'a, 'inv, T, Allocator> {
     Inplace(WriteHandleInit<'a, [T], Allocator>, DataVersionType),
     New(
@@ -759,7 +789,7 @@ pub struct DropUnref<'a, Allocator> {
     access: AccessToken<'a, Allocator>,
 }
 impl<'a, Allocator> DropUnref<'a, Allocator> {
-    fn into_error(self) -> DropError<'a, Allocator> {
+    pub fn into_error(self) -> DropError<'a, Allocator> {
         let id = self.access.id;
         let storage = self.access.storage;
         // Avoid running destructor
@@ -1030,6 +1060,8 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 data_longevity: descriptor.longevity,
             };
 
+            assert!(matches!(entry.state, StorageEntryState::Registered));
+
             entry.state = StorageEntryState::Initializing(info, WriteAccessCount::Zero);
 
             data
@@ -1038,7 +1070,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         Ok((data, AccessToken::new(self, descriptor.id)))
     }
 
-    fn access_initializing<'a>(
+    pub(crate) fn access_initializing<'a>(
         &self,
         access: AccessToken<'a, Allocator>,
     ) -> Result<RawWriteHandle<DropUnref<'a, Allocator>>, AccessToken<'a, Allocator>> {
@@ -1117,7 +1149,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
     }
 
     /// Safety: The initial allocation for the TaskId must have happened with the same type
-    pub unsafe fn read<'b, 't: 'b, T: Element>(
+    pub unsafe fn read<'b, 't: 'b, T>(
         &'b self,
         access: AccessToken<'t, Allocator>,
     ) -> Result<ReadHandle<'b, [T], Allocator>, AccessToken<'t, Allocator>> {
@@ -1190,7 +1222,9 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
             .map(move |v| v.transmute(size))
     }
 
-    pub fn request_access_state_cache<'req, 'inv, T: bytemuck::AnyBitPattern + Send>(
+    // Safety: Caller has to make sure that there are no concurrent write accesses. (I.e. only call
+    // this function once at a time before dropping the StateCacheHandle).
+    pub unsafe fn request_access_state_cache<'req, 'inv, T: Send>(
         &'req self,
         current_frame: FrameNumber,
         id: DataId,

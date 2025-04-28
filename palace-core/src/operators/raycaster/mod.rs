@@ -15,6 +15,7 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OperatorDescriptor, OperatorNetworkNode},
     operators::tensor::TensorOperator,
+    runtime::FrameNumber,
     storage::{
         gpu::{buffer_address, BufferAddress},
         DataVersionType,
@@ -587,6 +588,48 @@ enum RaycastingState {
 #[derive(Copy, Clone, bytemuck::AnyBitPattern)]
 struct RawRaycastingState(u8);
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct RawSharedRaycastingStateInner {
+    frame: FrameNumber,
+    preview_done: bool,
+    next_preview_done: bool,
+}
+
+impl Default for RawSharedRaycastingStateInner {
+    fn default() -> Self {
+        Self {
+            frame: FrameNumber::first(),
+            preview_done: false,
+            next_preview_done: false,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawSharedRaycastingState {
+    inner: std::cell::Cell<RawSharedRaycastingStateInner>,
+}
+
+impl RawSharedRaycastingState {
+    fn preview_all_done(&self, current_frame: FrameNumber) -> bool {
+        let mut current = self.inner.get();
+        if current.frame != current_frame {
+            current.frame = current_frame;
+            current.preview_done = current.next_preview_done;
+            current.next_preview_done = true;
+            self.inner.set(current);
+        }
+        current.preview_done
+    }
+    fn mark_preview_not_done(&self) {
+        let mut current = self.inner.get();
+        current.next_preview_done = false;
+        self.inner.set(current);
+    }
+}
+
 impl From<RaycastingState> for RawRaycastingState {
     fn from(value: RaycastingState) -> Self {
         RawRaycastingState(value as u8)
@@ -661,6 +704,16 @@ pub fn raycast<E: ElementType>(
         |ctx, pos, loc, (input, entry_exit_points, tf, config, dtype)| {
             async move {
                 let device = ctx.preferred_device(loc);
+
+                let global_progress_state = ctx
+                    .submit(ctx.access_state_cache_shared::<RawSharedRaycastingState>(
+                        "global_progress_state",
+                        1,
+                    ))
+                    .await;
+                let [ref global_progress_state] = &*global_progress_state else {
+                    panic!("Invalid size");
+                };
 
                 let progress_state = ctx
                     .submit(ctx.access_state_cache::<RawRaycastingState>(pos, "progress_state", 1))
@@ -803,10 +856,12 @@ pub fn raycast<E: ElementType>(
                     });
                 }
 
-                if reuse_res.new
-                    || ctx.past_deadline(in_preview).is_none()
-                    || progress_state.unpack() < RaycastingState::RenderingFull
-                {
+                let wait_for_others = !global_progress_state.preview_all_done(ctx.current_frame)
+                    && progress_state.unpack() >= RaycastingState::PreviewDone;
+
+                let should_progress = ctx.past_deadline(in_preview).is_none() && !wait_for_others;
+
+                if reuse_res.new || should_progress {
                     let request_batch_size = ctx
                         .submit(ctx.access_state_cache(pos, "request_batch_size", 1))
                         .await;
@@ -1014,6 +1069,10 @@ pub fn raycast<E: ElementType>(
                     //    "Request table size ================ {:?}",
                     //    &*request_batch_size
                     //);
+                }
+
+                if progress_state.unpack() < RaycastingState::PreviewDone {
+                    global_progress_state.mark_preview_not_done();
                 }
 
                 let src_info = SrcBarrierInfo {
