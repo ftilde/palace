@@ -313,14 +313,14 @@ mod py {
     #[pyclass(unsendable)]
     #[derive(Clone, Debug)]
     pub struct TensorEmbeddingData {
-        spacing: Vec<f32>,
+        pub spacing: Vec<f32>,
     }
 
     #[pyo3_stub_gen::derive::gen_stub_pymethods]
     #[pymethods]
     impl TensorEmbeddingData {
         #[new]
-        fn new(value: Vec<f32>) -> Self {
+        pub fn new(value: Vec<f32>) -> Self {
             Self { spacing: value }
         }
 
