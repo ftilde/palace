@@ -243,29 +243,31 @@ pub fn slice_projection_mat_centered_rotate(
 
 pub fn select_level<'a, D: SmallerDim, T>(
     lod: &'a LODTensorOperator<D::Smaller, T>,
-    transform_rw: Matrix<D, f32>,
+    out_pixel_to_input_physical: Matrix<D, f32>,
     neighbor_dirs: &[Vector<D::Smaller, f32>],
     config: RenderConfig2D,
 ) -> (usize, &'a EmbeddedTensorOperator<D::Smaller, T>) {
     let neighbor_dirs = neighbor_dirs
         .iter()
-        .map(|p| (transform_rw.clone() * &p.push_dim_large(0.0)).to_non_homogeneous_coord())
+        .map(|p| out_pixel_to_input_physical.to_scaling_part() * p)
         .collect::<Vec<_>>();
 
-    let mut selected_level = lod.levels.len() - 1;
+    let mut selected_level = 0;
 
     'outer: for (i, level) in lod.levels.iter().enumerate() {
         let emd = &level.embedding_data;
 
         for dir in &neighbor_dirs {
             let abs_dir = dir.map(|v| v.abs()).normalized();
-            let dir_spacing_dist = (abs_dir * emd.spacing.clone()).length();
-            let pixel_dist = dir.length();
-            if dir_spacing_dist >= pixel_dist * config.coarse_lod_factor {
-                selected_level = i;
+            let in_tensor_elm_dist_physical = (abs_dir * emd.spacing.clone()).length();
+            let out_pixel_dist_in_input_physical = dir.length();
+            if in_tensor_elm_dist_physical
+                > out_pixel_dist_in_input_physical * config.coarse_lod_factor
+            {
                 break 'outer;
             }
         }
+        selected_level = i;
     }
 
     (selected_level, &lod.levels[selected_level])

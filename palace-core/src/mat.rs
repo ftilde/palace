@@ -145,7 +145,7 @@ impl<D: LargerDim, T: num::Zero + num::One + Copy> Matrix<D, T> {
 }
 
 impl<D: SmallerDim, T: num::Zero + num::One + Copy> Matrix<D, T> {
-    pub fn to_scaling_part(self) -> Matrix<D::Smaller, T> {
+    pub fn to_scaling_part(&self) -> Matrix<D::Smaller, T> {
         Matrix::<D::Smaller, T>::from_fn_and_dim(self.dim.smaller(), |row, col| {
             self.at(row + 1, col + 1)
         })
