@@ -191,7 +191,9 @@ pub fn view_image(
         image.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         view_state,
-        Default::default(),
+        RenderConfig2D {
+            coarse_lod_factor: 1.0,
+        },
     )
     .into_dyn()
     .into())
