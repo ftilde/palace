@@ -1107,6 +1107,7 @@ impl_embedded_tensor_operator_with_delegate!(
     __truediv__(a: JitArgument),
     min(a: JitArgument),
     max(a: JitArgument),
+    concat(a: JitArgument),
     __lt__(a: JitArgument),
     __le__(a: JitArgument),
     __gt__(a: JitArgument),
