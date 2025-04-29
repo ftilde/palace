@@ -182,18 +182,18 @@ pub fn open_or_create_lod(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (image, result_metadata, view_state, coarse_lod_factor=1.0))]
 pub fn view_image(
     image: LODTensorOperator,
     result_metadata: PyTensorMetaData,
     view_state: palace_core::operators::imageviewer::ImageViewerState,
+    coarse_lod_factor: f32,
 ) -> PyResult<TensorOperator> {
     Ok(palace_core::operators::imageviewer::view_image(
         image.try_into_core_static()?.try_into()?,
         result_metadata.try_into_dim()?,
         view_state,
-        RenderConfig2D {
-            coarse_lod_factor: 1.0,
-        },
+        RenderConfig2D { coarse_lod_factor },
     )
     .into_dyn()
     .into())
