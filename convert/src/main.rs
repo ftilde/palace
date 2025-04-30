@@ -39,6 +39,10 @@ struct CliArgs {
     #[arg()]
     output_path: PathBuf,
 
+    // Location hint for input volume
+    #[arg(short, long)]
+    location: Option<String>,
+
     /// Size of the memory pool that will be allocated
     #[arg(short, long, default_value = "8G")]
     mem_size: bytesize::ByteSize,
@@ -107,12 +111,16 @@ fn main() {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        args.devices,
+        dbg!(args.devices),
     )
     .unwrap();
 
-    let (input_lod, lod_origin) =
-        palace_io::open_or_create_lod(args.input, palace_io::Hints::default()).unwrap();
+    let mut input_hints = palace_io::Hints::default();
+    if let Some(location) = args.location {
+        input_hints = input_hints.location(location);
+    }
+
+    let (input_lod, lod_origin) = palace_io::open_or_create_lod(args.input, input_hints).unwrap();
 
     let input_lod = if let Some(chunk_size) = args.chunk_size {
         let chunk_size = input_lod.levels[0]
