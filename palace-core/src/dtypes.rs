@@ -183,7 +183,7 @@ mod py {
 
 #[derive(Copy, Clone, Debug, Identify, Eq, PartialEq)]
 #[cfg_attr(feature = "python", pyo3_stub_gen::derive::gen_stub_pyclass)]
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(get_all))]
 pub struct DType {
     pub scalar: ScalarType,
     pub size: u32,
