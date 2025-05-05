@@ -431,6 +431,11 @@ async fn write_tensor<'cref, 'inv, S: WritableStorageTraits + 'static + ?Sized>(
     let request_chunk_size = 1024;
     let chunk_ids_in_parts = md.chunk_indices().chunks(request_chunk_size);
     let mut i = 0;
+    let opts = zarrs::array::codec::CodecOptions::builder()
+        .store_empty_chunks(true)
+        .build();
+    let opts = &opts;
+
     for chunk_ids in &chunk_ids_in_parts {
         let requests = chunk_ids.map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
         let stream =
@@ -441,9 +446,10 @@ async fn write_tensor<'cref, 'inv, S: WritableStorageTraits + 'static + ?Sized>(
                     let chunk_handle = chunk_handle.into_thread_handle();
                     let array = &array;
                     ctx.spawn_io(move || {
-                        array.store_chunk(
+                        array.store_chunk_opt(
                             to_zarr_pos(&chunk_pos).inner().as_slice(),
                             chunk_handle.data(),
+                            opts,
                         )?;
                         Ok::<_, ArrayError>(chunk_handle)
                     })
