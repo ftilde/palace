@@ -8,6 +8,7 @@ disk_cache_size = 20 << 30
 
 parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
+parser.add_argument('-l', '--img_location', type=str)
 parser.add_argument('-t', '--transfunc', type=str)
 
 args = parser.parse_args()
@@ -49,8 +50,32 @@ elif args.img_file == "circle":
     #img = pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4))
     img = img.embedded(pc.TensorEmbeddingData([1.0, 1.0])).single_level_lod()
 else:
-    img = pc.open(args.img_file)
-    img = img.single_level_lod()
+    def unify_img(img):
+        match img.nd():
+            case 2:
+                return img
+            case 3:
+                chunks = list(img.inner.metadata.chunk_size)
+                chunks[-1] = pc.chunk_size_full
+                channels = img.inner.metadata.dimensions[-1]
+
+                img = img.rechunk(chunks).fold_into_dtype()
+                while channels < 4:
+                    img = img.concat(pc.jit(1).cast(img.inner.dtype.scalar))
+                    channels += 1
+
+            case o:
+                raise "Cannot handle img of dim {}".format(o)
+        return img
+
+    try:
+        img = pc.open_lod(args.img_file)
+    except:
+        img = pc.open(args.img_file, tensor_path_hint=args.img_location)
+        steps = list(reversed([2.0 if i < 2 else None for i in range(0, img.nd())]))
+        img = img.create_lod(steps)
+
+    img = img.map(lambda img: unify_img(img))
 
 store = pc.Store()
 
