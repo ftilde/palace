@@ -317,10 +317,10 @@ impl Hdf5TensorSourceState {
             Ok(spacing) => spacing,
             Err(e) => {
                 eprintln!(
-                    "Could not load spacing from dataset: {}\n Using default spacing.",
+                    "Could not load spacing from dataset: {}\n Using default spacing (1.0/dim[0]).",
                     e
                 );
-                Vector::fill_with_len(1.0, dimensions.len())
+                Vector::fill_with_len(1.0 / dimensions[0].raw as f32, dimensions.len())
             }
         };
 
