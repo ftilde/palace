@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use palace_core::{
-    dim::DDyn,
+    dim::{DDyn, DynDimension},
     operators::{
         rechunk::{rechunk, ChunkSize},
         resample::DownsampleStep,
@@ -67,9 +67,9 @@ struct CliArgs {
     #[arg(short, long, default_value = "1")]
     compression_level: i32,
 
-    /// Use the vulkan device with the specified id
+    /// Rechunk tensor to specified chunk size
     #[arg(long)]
-    chunk_size: Option<u32>,
+    chunk_size: Option<String>,
 }
 
 fn parse_lod_steps(s: String) -> Vector<DDyn, DownsampleStep> {
@@ -82,6 +82,17 @@ fn parse_lod_steps(s: String) -> Vector<DDyn, DownsampleStep> {
                 'f' => DownsampleStep::Fixed(c.as_str().parse::<f32>().unwrap()),
                 _ => DownsampleStep::Synchronized(v.parse::<f32>().unwrap()),
             }
+        })
+        .collect::<Vec<_>>();
+    Vector::<DDyn, _>::new(vec)
+}
+
+fn parse_chunk_size(s: &str) -> Vector<DDyn, ChunkSize> {
+    let vec = s
+        .split(",")
+        .map(|v| match v {
+            "full" => ChunkSize::Full,
+            o => ChunkSize::Fixed(o.parse::<u32>().unwrap().into()),
         })
         .collect::<Vec<_>>();
     Vector::<DDyn, _>::new(vec)
@@ -122,11 +133,18 @@ fn main() {
 
     let (input_lod, lod_origin) = palace_io::open_or_create_lod(args.input, input_hints).unwrap();
 
-    let input_lod = if let Some(chunk_size) = args.chunk_size {
-        let chunk_size = input_lod.levels[0]
-            .metadata
-            .chunk_size
-            .map(|_| ChunkSize::Fixed(chunk_size.into()));
+    let input_lod = if let Some(chunk_size_str) = args.chunk_size {
+        let chunk_size = parse_chunk_size(&chunk_size_str);
+        let nd = input_lod.levels[0].metadata.dim().n();
+        let chunk_size = match (chunk_size.dim().n(), nd) {
+            (1, n) => Vector::fill_with_len(chunk_size[0], n),
+            (l, r) if l == r => chunk_size,
+            (_l, _r) => panic!(
+                "Invalid chunk specification for tensor of dim {}: {}",
+                nd, chunk_size_str
+            ),
+        };
+
         input_lod.map(|t| t.map_inner(|t| rechunk(t, chunk_size.clone())))
     } else {
         input_lod
