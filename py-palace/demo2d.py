@@ -14,7 +14,7 @@ parser.add_argument('-t', '--transfunc', type=str)
 args = parser.parse_args()
 
 devices = []
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=[])
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
 if args.img_file == "mandelbrot":
     b = 1024*2
@@ -26,10 +26,15 @@ if args.img_file == "mandelbrot":
     tf.min = 0.0;
     tf.max = 1.0;
 
-    #img = img.map(lambda img: pc.separable_convolution(img, [pc.gauss_kernel(25.0)]*2))
-    #img = img.map(lambda img: pc.cast(pc.separable_convolution(pc.cast(img.unfold_dtype(), pc.ScalarType.F32), [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]).fold_into_dtype(), pc.DType(pc.ScalarType.U8, 4)))
-    #print(rt.resolve(pc.cast(img.levels[0], pc.ScalarType.U32), [[0,0]]).dtype)
+
     img = img.map(lambda img: pc.apply_tf(img, tf))
+
+    #def smooth(img):
+    #    kernels = [pc.gauss_kernel(2.0)]*2 + [np.array([1], np.float32)]
+    #    img.inner = img.inner.unfold_dtype().cast(pc.ScalarType.F32).separable_convolution(kernels).fold_into_dtype().cast(pc.DType(pc.ScalarType.U8, 4))
+    #    return img
+    #img = img.map(smooth)
+
 elif args.img_file == "circle":
     s = 50
     img = np.zeros((s, s), dtype=np.float32)
@@ -61,7 +66,7 @@ else:
 
                 img = img.rechunk(chunks).fold_into_dtype()
                 while channels < 4:
-                    img = img.concat(pc.jit(1).cast(img.inner.dtype.scalar))
+                    img = img.concat(pc.jit(255).cast(img.inner.dtype.scalar))
                     channels += 1
 
             case o:
@@ -72,7 +77,7 @@ else:
         img = pc.open_lod(args.img_file)
     except:
         img = pc.open(args.img_file, tensor_path_hint=args.img_location)
-        steps = list(reversed([2.0 if i < 2 else None for i in range(0, img.nd())]))
+        steps = list([2.0 if i < 2 else None for i in range(0, img.nd())])
         img = img.create_lod(steps)
 
     img = img.map(lambda img: unify_img(img))
