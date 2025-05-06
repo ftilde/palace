@@ -320,17 +320,17 @@ impl<D: SmallerDim> TensorOperator<D, DType> {
     pub fn fold_into_dtype(self) -> Result<TensorOperator<D::Smaller, DType>, crate::Error> {
         let dtype = self.dtype();
 
-        let chunk_dim = self.metadata.dimension_in_chunks().raw();
-        let outer_dim = self.metadata.chunk_size.small_dim_element().raw;
-        if chunk_dim.small_dim_element() != 1 {
+        let outer_chunk_size = self.metadata.chunk_size.small_dim_element().raw;
+        let outer_dim = self.metadata.dimensions.small_dim_element().raw;
+        if outer_chunk_size != outer_dim {
             Err(format!(
-                "Tensor consist of single chunk in last dimension, but has dimension-in-chunks {:?}",
-                chunk_dim
+                "Tensor chunk size ({}) and size ({}) don't match in last dimension",
+                outer_chunk_size, outer_dim
             )
             .into())
         } else {
             let new_md = self.metadata.clone().pop_dim_small();
-            let new_dtype = dtype.vectorize(outer_dim);
+            let new_dtype = dtype.vectorize(outer_chunk_size);
             Ok(TensorOperator {
                 metadata: new_md,
                 chunks: self.chunks.reinterpret_dtype(new_dtype),
