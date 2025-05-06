@@ -204,22 +204,18 @@ fn slice_viewer_z(
         //chunk_size: Vector::fill(512.into()),
     };
 
-    let slice_proj_z =
-        state
-            .inner
-            .projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size);
-
-    let mat_ref = &slice_proj_z;
-    let vol_ref = &vol;
     let info = if let Some(mouse_state) = &events.latest_state().mouse_state {
         let mouse_pos = mouse_state.pos;
-        let md = vol.fine_metadata();
-        let md_ref = &md;
+        let level = &vol.levels[0];
+        let slice_proj_z = state
+            .inner
+            .projection_mat(level.metadata, level.embedding_data, size);
+        let mat_ref = &slice_proj_z;
         runtime
             .resolve(None, false, move |ctx, _| {
                 async move {
                     let mat = mat_ref;
-                    let m_in = md_ref;
+                    let md = &level.metadata;
 
                     let mouse_pos = Vector::<D4, f32>::from([
                         1.0,
@@ -230,22 +226,18 @@ fn slice_viewer_z(
                     let vol_pos = *mat * &mouse_pos;
                     let vol_pos = vol_pos.drop_dim(0).map(|v| v.round() as i32);
 
-                    let dim = m_in.dimensions.raw();
+                    let dim = md.dimensions.raw();
 
                     let inside = vol_pos
                         .zip(&dim, |p, d| 0 <= p && p < d as i32)
                         .fold(true, |a, b| a && b);
                     let ret = if inside {
                         let vol_pos = vol_pos.map(|v| (v as u32)).global();
-                        let chunk_pos = m_in.chunk_pos(&vol_pos);
-                        let chunk_info = m_in.chunk_info_vec(&chunk_pos);
+                        let chunk_pos = md.chunk_pos(&vol_pos);
+                        let chunk_info = md.chunk_info_vec(&chunk_pos);
 
                         let brick = ctx
-                            .submit(
-                                vol_ref.levels[0]
-                                    .chunks
-                                    .request(m_in.chunk_index(&chunk_pos)),
-                            )
+                            .submit(level.chunks.request(md.chunk_index(&chunk_pos)))
                             .await;
 
                         let local_pos = chunk_info.in_chunk(&vol_pos);
@@ -299,6 +291,10 @@ fn slice_viewer_z(
             }))
     });
 
+    let slice_proj_z =
+        state
+            .inner
+            .projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size);
     let slice = crate::operators::sliceviewer::render_slice(
         vol,
         md.into(),
