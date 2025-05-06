@@ -2179,17 +2179,29 @@ impl Allocator {
 
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
+
+        // Transfer buffers (CpuToGpu or GpuToCpu) are allocated on a different heap than the vast
+        // majority of other allocations (GpuOnly). Our model of a single capacity for the whole
+        // gpu doesn't quite fit the bill (due to different heaps for different memory sizes), so a
+        // redesign might be in order in general, but this helps the situation for now.
+        let allow_capacity_increase = self.allocator_capacity.get() < self.max_capacity
+            || location != MemoryLocation::GpuOnly;
+
         let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
             name: "buffer allocation",
             requirements,
             location,
             linear: true, // Buffers are always linear
             allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            allow_capacity_increase: self.allocator_capacity.get() < self.max_capacity,
+            allow_capacity_increase,
         });
         let allocation = match allocation {
             Ok(a) => a,
             Err(e) => {
+                println!(
+                    "Allocation with layout {:?} failed, flags: {:?}, location: {:?}: {:?}",
+                    layout, use_flags, location, e
+                );
                 unsafe { self.device.destroy_buffer(buffer, None) };
                 return Err(e);
             }
