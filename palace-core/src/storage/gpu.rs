@@ -2198,10 +2198,10 @@ impl Allocator {
         let allocation = match allocation {
             Ok(a) => a,
             Err(e) => {
-                println!(
-                    "Allocation with layout {:?} failed, flags: {:?}, location: {:?}: {:?}",
-                    layout, use_flags, location, e
-                );
+                //println!(
+                //    "Allocation with layout {:?} failed, flags: {:?}, location: {:?}: {:?}",
+                //    layout, use_flags, location, e
+                //);
                 unsafe { self.device.destroy_buffer(buffer, None) };
                 return Err(e);
             }
