@@ -511,8 +511,8 @@ fn write_chunk(
     match dtype {
         ScalarType::U8 => write_chunk_static::<u8>(dataset, chunk_data, out_info),
         ScalarType::I8 => write_chunk_static::<i8>(dataset, chunk_data, out_info),
-        ScalarType::U16 => write_chunk_static::<i16>(dataset, chunk_data, out_info),
-        ScalarType::I16 => write_chunk_static::<u16>(dataset, chunk_data, out_info),
+        ScalarType::U16 => write_chunk_static::<u16>(dataset, chunk_data, out_info),
+        ScalarType::I16 => write_chunk_static::<i16>(dataset, chunk_data, out_info),
         ScalarType::F32 => write_chunk_static::<f32>(dataset, chunk_data, out_info),
         ScalarType::U32 => write_chunk_static::<u32>(dataset, chunk_data, out_info),
         ScalarType::I32 => write_chunk_static::<i32>(dataset, chunk_data, out_info),
