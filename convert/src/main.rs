@@ -122,7 +122,7 @@ fn main() {
         args.compute_pool_size,
         disk_cache_size,
         None,
-        dbg!(args.devices),
+        args.devices,
     )
     .unwrap();
 
