@@ -306,7 +306,7 @@ impl ScalarType {
         }
     }
 
-    fn pretty_type(&self) -> &'static str {
+    pub fn pretty_type(&self) -> &'static str {
         match self {
             ScalarType::U8 => "u8",
             ScalarType::I8 => "i8",
@@ -318,6 +318,21 @@ impl ScalarType {
             ScalarType::I64 => "i64",
             ScalarType::F32 => "f32",
         }
+    }
+
+    pub fn try_from_pretty(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "u8" => Self::U8,
+            "i8" => Self::I8,
+            "u16" => Self::U16,
+            "i16" => Self::I16,
+            "u32" => Self::U32,
+            "i32" => Self::I32,
+            "u64" => Self::U64,
+            "i64" => Self::I64,
+            "f32" => Self::F32,
+            _ => return Err(format!("{} is not a valar ScalarType", s).into()),
+        })
     }
 }
 

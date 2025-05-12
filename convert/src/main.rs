@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use palace_core::{
     dim::{DDyn, DynDimension},
+    dtypes::ScalarType,
     operators::{rechunk::ChunkSize, resample::DownsampleStep},
     runtime::RunTime,
     vec::Vector,
@@ -63,6 +64,10 @@ struct CliArgs {
     /// Use the vulkan device with the specified id
     #[arg(short, long, default_value = "1")]
     compression_level: i32,
+
+    /// Cast to specified scalar data type before saving
+    #[arg(long, value_parser(ScalarType::try_from_pretty))]
+    cast_dtype: Option<ScalarType>,
 
     /// Rechunk tensor to specified chunk size
     #[arg(long)]
@@ -152,7 +157,20 @@ fn main() {
         input_hints = input_hints.rechunk(true);
     }
 
-    let (input_lod, lod_origin) = palace_io::open_or_create_lod(args.input, input_hints).unwrap();
+    let (mut input_lod, lod_origin) =
+        palace_io::open_or_create_lod(args.input, input_hints).unwrap();
+
+    if let Some(dtype) = args.cast_dtype {
+        input_lod = input_lod.map(|v| {
+            v.map_inner(|v| {
+                palace_core::jit::jit(v)
+                    .cast(dtype.vec(1))
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+            })
+        });
+    }
 
     let input = input_lod.levels[0].clone().into_dyn();
 
