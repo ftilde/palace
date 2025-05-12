@@ -5,11 +5,14 @@ use std::path::{Path, PathBuf};
 
 use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
-    data::{LocalVoxelPosition, Vector, VoxelPosition},
+    data::{Vector, VoxelPosition},
     dim::*,
     dtypes::{DType, ScalarType},
     jit::jit,
-    operators::tensor::{EmbeddedVolumeOperator, TensorOperator},
+    operators::{
+        rechunk::ChunkSize,
+        tensor::{EmbeddedVolumeOperator, TensorOperator},
+    },
     transfunc::TransFuncOperator,
     Error,
 };
@@ -45,7 +48,7 @@ fn default_if_nan(v: f32, default: f32) -> f32 {
 
 pub fn open(
     path: &Path,
-    brick_size: LocalVoxelPosition,
+    brick_size: Vector<D3, ChunkSize>,
 ) -> Result<EmbeddedVolumeOperator<DType>, Error> {
     let content = std::fs::read_to_string(path)?;
     let package = parser::parse(&content)?;
@@ -122,9 +125,11 @@ pub fn open(
         return Err("No valid .raw file path in file".into());
     };
 
+    let chunk_size = brick_size.zip(&size, |c, s| c.apply(s));
+
     let metadata = VolumeMetaData {
         dimensions: size,
-        chunk_size: brick_size,
+        chunk_size,
     };
 
     let vol = palace_core::operators::raw::open(raw_path, metadata, dtype)?;

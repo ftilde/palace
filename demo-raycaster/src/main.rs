@@ -95,12 +95,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.devices,
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(128.into());
+    let chunk_size = LocalVoxelPosition::fill(128.into());
+    let chunk_size_hint = chunk_size.map(ChunkSize::Fixed).into_dyn();
 
     let vol = match args.input {
         Input::File(path) => palace_io::open_or_create_lod(
             path.vol,
-            palace_io::Hints::new().chunk_size(brick_size.into_dyn()),
+            palace_io::Hints::new().chunk_size(chunk_size_hint),
         )?
         .0
         .map(|v| {
@@ -118,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::Synthetic(args) => {
             let md = array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
+                chunk_size,
             };
             let ed = Default::default();
             match args.scenario {

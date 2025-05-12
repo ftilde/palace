@@ -3,10 +3,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use palace_core::{
     dim::{DDyn, DynDimension},
-    operators::{
-        rechunk::{rechunk, ChunkSize},
-        resample::DownsampleStep,
-    },
+    operators::{rechunk::ChunkSize, resample::DownsampleStep},
     runtime::RunTime,
     vec::Vector,
 };
@@ -131,26 +128,31 @@ fn main() {
         input_hints = input_hints.location(location);
     }
 
-    let (input_lod, lod_origin) = palace_io::open_or_create_lod(args.input, input_hints).unwrap();
+    let nd = {
+        // open once just to get dimensionality
+        let (input_lod, _lod_origin) =
+            palace_io::open_or_create_lod(args.input.clone(), input_hints.clone()).unwrap();
+        input_lod.levels[0].metadata.dim().n()
+    };
 
-    let input_lod = if let Some(chunk_size_str) = args.chunk_size {
+    let chunk_size = args.chunk_size.map(|chunk_size_str| {
         let chunk_size = parse_chunk_size(&chunk_size_str);
-        let nd = input_lod.levels[0].metadata.dim().n();
-        let chunk_size = match (chunk_size.dim().n(), nd) {
+        match (chunk_size.dim().n(), nd) {
             (1, n) => Vector::fill_with_len(chunk_size[0], n),
             (l, r) if l == r => chunk_size,
             (_l, _r) => panic!(
                 "Invalid chunk specification for tensor of dim {}: {}",
                 nd, chunk_size_str
             ),
-        };
+        }
+    });
 
-        input_lod.map(|t| t.map_inner(|t| rechunk(t, chunk_size.clone())))
-    } else {
-        input_lod
-    };
+    if let Some(chunk_size) = chunk_size {
+        input_hints = input_hints.chunk_size(chunk_size.clone());
+        input_hints = input_hints.rechunk(true);
+    }
 
-    let input_lod = input_lod.into_dyn();
+    let (input_lod, lod_origin) = palace_io::open_or_create_lod(args.input, input_hints).unwrap();
 
     let input = input_lod.levels[0].clone().into_dyn();
 

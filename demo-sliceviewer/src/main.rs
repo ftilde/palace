@@ -95,7 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.devices,
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(32.into());
+    let chunk_size = LocalVoxelPosition::fill(32.into());
+    let chunk_size_hint = chunk_size.map(ChunkSize::Fixed).into_dyn();
 
     let tf = TransFuncOperator::grey_ramp(0.0, 1.0);
 
@@ -103,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::File(path) => {
             let vol = palace_io::open_or_create_lod(
                 path.vol,
-                palace_io::Hints::new().chunk_size(brick_size.into_dyn()),
+                palace_io::Hints::new().chunk_size(chunk_size_hint),
             )?
             .0;
             vol.map(|v| {
@@ -123,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::Synthetic(args) => {
             let md = array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
+                chunk_size,
             };
             let ed = TensorEmbeddingData {
                 spacing: md.dimensions.map(|v| 1.0 / v.raw as f32),

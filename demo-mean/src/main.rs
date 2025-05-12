@@ -6,6 +6,7 @@ use palace_core::data::{LocalVoxelPosition, VoxelPosition};
 use palace_core::dim::DDyn;
 use palace_core::dtypes::{ScalarType, StaticElementType};
 use palace_core::operators;
+use palace_core::operators::rechunk::ChunkSize;
 use palace_core::operators::tensor::TensorOperator;
 use palace_core::runtime::RunTime;
 use palace_io::Hints;
@@ -78,12 +79,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.devices,
     )?;
 
-    let brick_size = LocalVoxelPosition::fill(64.into());
+    let chunk_size = LocalVoxelPosition::fill(64.into());
+    let chunk_size_hint = chunk_size.map(ChunkSize::Fixed).into_dyn();
 
     let vol = match args.input {
         Input::File(path) => {
-            let v =
-                palace_io::open(path.vol, Hints::new().chunk_size(brick_size.into_dyn()))?.inner;
+            let v = palace_io::open(path.vol, Hints::new().chunk_size(chunk_size_hint))?.inner;
             palace_core::jit::jit(v)
                 .cast(ScalarType::F32.into())
                 .unwrap()
@@ -92,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Input::SyntheticCpu(args) => operators::rasterize_function::normalized(
             VoxelPosition::fill(args.size.into()),
-            brick_size,
+            chunk_size,
             |v| {
                 let r2 = v
                     .map(|v| v - 0.5)
@@ -106,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Input::Synthetic(args) => operators::procedural::rasterize(
             array::VolumeMetaData {
                 dimensions: VoxelPosition::fill(args.size.into()),
-                chunk_size: brick_size,
+                chunk_size,
             },
             r#"float run(float[3] p, uint[3] pos_voxel) {
                 vec3 centered = vec3(p[2], p[1], p[0])-vec3(0.5);
