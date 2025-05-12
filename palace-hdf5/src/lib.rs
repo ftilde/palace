@@ -545,7 +545,7 @@ async fn write_tensor<'cref, 'inv>(
                     let chunk_info = md.chunk_info(chunk_id);
 
                     let chunk_handle = chunk_handle.into_thread_handle();
-                    ctx.spawn_io(move || {
+                    ctx.spawn_compute(move || {
                         write_chunk(dataset, chunk_handle.data(), chunk_info, scalar_dtype);
                         chunk_handle
                     })
