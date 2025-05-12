@@ -118,6 +118,7 @@ void main() {
         eigenvalues(m, l1, l2, l3);
 
         float vesselness = sato_vesselness(l1, l2, l3, 0.5 /* = 2*0.5*0.5 */, 8.0 /* = 2*2*2 */);
+        //float vesselness = frangi_vesselness(l1, l2, l3, 0.5, 0.5, 100.0 /*TODO?*/);
 
         outputData.values[gID] = vesselness;
     }
