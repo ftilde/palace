@@ -132,15 +132,18 @@ def fit_tf_range(rt, tensor, tf):
     tf.min = rt.resolve_scalar(t.min_value(10))
     tf.max = rt.resolve_scalar(t.max_value(10))
 
-def slice_time_4d(ts, v):
+def slice_time_nd(ts, v):
     def select_time_slice_4d_lod(ts, base_level, target_level):
         #assert base_level.dim() == 4
         #assert target_level.dim() == 4
+        nd = v.nd();
+        out_nd = nd-1
 
-        pos = np.array([1, ts, 0, 0, 0], dtype=np.float32)
+        pos = np.array([1, ts] + [0] * out_nd, dtype=np.float32)
         pos = target_level.inner.metadata.norm_to_voxel().dot(base_level.inner.metadata.voxel_to_norm().dot(pos));
         ts = round(pos[1])
-        return target_level[ts,:,:,:]
+        slice_args = [ts] + [slice(None)] * out_nd
+        return target_level[slice_args]
 
     return v.map(lambda l: select_time_slice_4d_lod(ts, v.levels[0], l))
 

@@ -79,7 +79,7 @@ def select_vol_from_ts(v, ts):
         case 3:
             return v
         case 4:
-            return palace_util.slice_time_4d(ts, v)
+            return palace_util.slice_time_nd(ts, v)
         case o:
             raise f"Invalid number of tensor dimensions: {o}"
 
