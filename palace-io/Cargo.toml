@@ -10,3 +10,4 @@ palace-vvd = { path = "../palace-vvd" }
 palace-nifti = { path = "../palace-nifti" }
 palace-zarr = { path = "../palace-zarr" }
 palace-png = { path = "../palace-png" }
+palace-video = { path = "../palace-video" }

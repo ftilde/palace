@@ -15,7 +15,7 @@ members = [
     "id",
     "id-derive",
     "state-link",
-    "state-link-derive", "palace-zarr", "convert", "palace-png",
+    "state-link-derive", "palace-zarr", "convert", "palace-png", "palace-video",
 ]
 
 resolver = "2"

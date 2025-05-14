@@ -76,6 +76,11 @@ pub fn open_single_level(
             .into_dyn()
             .try_into()
             .unwrap(),
+        [.., "mp4"] => palace_video::open(path.to_string_lossy().as_ref())?
+            .embedded(Default::default())
+            .into_dyn()
+            .try_into()
+            .unwrap(),
         _ => {
             return Err(format!("Unknown tensor format for file {}", path.to_string_lossy()).into())
         }
