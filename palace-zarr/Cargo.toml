@@ -10,4 +10,4 @@ palace-core = { path = "../palace-core" }
 id = { path = "../id" }
 serde_json = "1.0.127"
 zarrs = { version = "0.19.2", default-features = false, features=["zstd", "filesystem"] }
-zip = "2.6.1"
+zip = "3.0.0"
