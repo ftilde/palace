@@ -12,7 +12,11 @@ use palace_core::{
     vec::Vector,
     Error,
 };
-use video_rs::{Decoder, Location};
+use video_rs::{
+    decode::DecoderSplit,
+    ffmpeg::ffi::{av_seek_frame, AVSEEK_FLAG_BACKWARD},
+    Decoder, Location, Reader,
+};
 
 #[derive(Clone)]
 pub struct VideoSourceState {
@@ -25,11 +29,18 @@ impl Identify for VideoSourceState {
     }
 }
 
+struct DecoderParts {
+    decoder: DecoderSplit,
+    reader: Reader,
+    reader_stream_index: usize,
+}
+
 pub struct VideoSourceStateInner {
     metadata: TensorMetaData<D3>,
     //embedding_data: TensorEmbeddingData<D3>,
-    decoder: Mutex<Decoder>,
+    decoder: Mutex<DecoderParts>,
     loc: PathBuf,
+    pts_per_frame: i64,
 }
 
 type TensorElement = Vector<D4, u8>;
@@ -47,7 +58,10 @@ impl VideoSourceState {
     pub fn open(loc: Location) -> Result<Self, Error> {
         let loc_path = loc.as_path().to_owned();
         let decoder = Decoder::new(loc)?;
+
+        let duration_pts = decoder.duration()?.into_value().unwrap();
         let n_frames = decoder.frames()?;
+        let pts_per_frame = duration_pts / n_frames as i64;
         let frame_size = decoder.size_out();
 
         let metadata = TensorMetaData {
@@ -56,11 +70,19 @@ impl VideoSourceState {
             chunk_size: Vector::<D3, _>::new([1u32, frame_size.1, frame_size.0]).local(),
         };
 
+        let (decoder, reader, reader_stream_index) = decoder.into_parts();
+        let decoder = DecoderParts {
+            decoder,
+            reader,
+            reader_stream_index,
+        };
+
         let decoder = Mutex::new(decoder);
         let inner = VideoSourceStateInner {
             metadata,
             decoder,
             loc: loc_path,
+            pts_per_frame,
         };
 
         Ok(VideoSourceState {
@@ -79,6 +101,7 @@ impl VideoSourceState {
                 async move {
                     let metadata = &this.inner.metadata;
                     let decoder = &this.inner.decoder;
+                    let pts_per_frame = this.inner.pts_per_frame;
 
                     let allocations = positions
                         .into_iter()
@@ -90,12 +113,48 @@ impl VideoSourceState {
                             ctx.spawn_compute(move || {
                                 let chunk_info = metadata.chunk_info(chunk_id);
                                 let frame_num = chunk_info.begin[0].raw;
-                                let (_t, in_chunk) = {
+                                let time_pts = frame_num as i64 * pts_per_frame;
+                                let in_chunk = 'ret: loop {
                                     let mut decoder = decoder.lock().unwrap();
+                                    let stream_index = decoder.reader_stream_index;
 
-                                    decoder.seek(frame_num as i64)?;
-                                    decoder.decode()?
+                                    let stream = decoder.reader.input.stream(stream_index).unwrap();
+
+                                    let start_time = stream.start_time();
+
+                                    let timestamp = time_pts + start_time;
+
+                                    unsafe {
+                                        match av_seek_frame(
+                                            decoder.reader.input.as_mut_ptr(),
+                                            stream_index as _,
+                                            timestamp,
+                                            AVSEEK_FLAG_BACKWARD,
+                                        ) {
+                                            s if s >= 0 => Ok(()),
+                                            e => Err(video_rs::ffmpeg::Error::from(e)),
+                                        }
+                                    }
+                                    .map_err(video_rs::Error::BackendError)
+                                    .inspect(|_| decoder.decoder.reset())?;
+
+                                    loop {
+                                        let (t, frame) = loop {
+                                            let packet = decoder.reader.read(stream_index)?;
+                                            if let Some(p) = decoder.decoder.decode(packet)? {
+                                                break p;
+                                            }
+                                        };
+                                        let t = t.into_value().unwrap();
+                                        let t = t - start_time;
+
+                                        //println!("requested: {}, actual: {}", time_pts, t);
+                                        if t >= time_pts {
+                                            break 'ret frame;
+                                        }
+                                    }
                                 };
+                                //println!("===============================");
 
                                 let chunk_data = &mut *chunk_handle;
                                 assert!(chunk_info.is_full());
