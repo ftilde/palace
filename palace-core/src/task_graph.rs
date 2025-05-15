@@ -597,41 +597,43 @@ impl TaskGraph {
         }
     }
     pub fn has_produced_data(&mut self, task: TaskId, data: DataId) {
-        let dpb_entry = self.data_provided_by.get_mut(&data).unwrap();
-        assert!(dpb_entry.remove(&task));
-        if dpb_entry.is_empty() {
-            self.data_provided_by.remove(&data);
-        }
+        // Tasks may produce data that has not been requested, so the None-case is also possible
+        if let Some(dpb_entry) = self.data_provided_by.get_mut(&data) {
+            assert!(dpb_entry.remove(&task));
+            if dpb_entry.is_empty() {
+                self.data_provided_by.remove(&data);
+            }
 
-        let entry = self.will_provide_data.get_mut(&task).unwrap();
-        assert!(entry.remove(&data));
-        if entry.is_empty() {
-            self.will_provide_data.remove(&task);
-        }
+            let entry = self.will_provide_data.get_mut(&task).unwrap();
+            assert!(entry.remove(&data));
+            if entry.is_empty() {
+                self.will_provide_data.remove(&task);
+            }
 
-        let fulfiller_entries = self.request_to_active_fulfillers.get_mut(&data).unwrap();
+            let fulfiller_entries = self.request_to_active_fulfillers.get_mut(&data).unwrap();
 
-        if let Some(data_request_entry) = self.data_requests.get(&data) {
-            // Note: May be none if builtin::cacher produced it
-            for loc in data_request_entry.iter() {
-                for requestor in loc.1 {
-                    if fulfiller_entries.get(requestor) == Some(&task) {
-                        self.high_level.remove_dependency(
-                            *requestor,
-                            task,
-                            RequestId::Data(VisibleDataId {
-                                id: data,
-                                location: *loc.0,
-                            }),
-                        );
+            if let Some(data_request_entry) = self.data_requests.get(&data) {
+                // Note: May be none if builtin::cacher produced it
+                for loc in data_request_entry.iter() {
+                    for requestor in loc.1 {
+                        if fulfiller_entries.get(requestor) == Some(&task) {
+                            self.high_level.remove_dependency(
+                                *requestor,
+                                task,
+                                RequestId::Data(VisibleDataId {
+                                    id: data,
+                                    location: *loc.0,
+                                }),
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        fulfiller_entries.retain(|_k, v| *v != task);
-        if fulfiller_entries.is_empty() {
-            self.request_to_active_fulfillers.remove(&data);
+            fulfiller_entries.retain(|_k, v| *v != task);
+            if fulfiller_entries.is_empty() {
+                self.request_to_active_fulfillers.remove(&data);
+            }
         }
     }
 
