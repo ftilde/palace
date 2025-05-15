@@ -223,6 +223,7 @@ impl RawVolumeSourceState {
                         let data_id =
                             DataDescriptor::new(ctx.current_op_desc().unwrap(), m.chunk_index(pos));
                         ctx.alloc_raw(data_id, dtype.array_layout(num_voxels))
+                            .unwrap_value()
                     });
 
                     (ctx.group(brick_handles), positions)

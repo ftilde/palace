@@ -103,9 +103,13 @@ impl VideoSourceState {
                     let decoder = &this.inner.decoder;
                     let pts_per_frame = this.inner.pts_per_frame;
 
-                    let allocations = positions
-                        .into_iter()
-                        .map(|chunk_id| (ctx.alloc_slot(chunk_id, &metadata.chunk_size), chunk_id));
+                    let allocations = positions.into_iter().map(|chunk_id| {
+                        (
+                            ctx.alloc_slot(chunk_id, &metadata.chunk_size)
+                                .unwrap_value(),
+                            chunk_id,
+                        )
+                    });
                     let stream = ctx.submit_unordered_with_data(allocations).then_req(
                         *ctx,
                         |(chunk_handle, chunk_id)| {

@@ -327,7 +327,7 @@ impl TransferManager {
             };
             match dst {
                 CpuDataLocation::Ram => {
-                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
+                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await.unwrap();
 
                     unsafe {
                         copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data_ptr())
@@ -340,7 +340,7 @@ impl TransferManager {
                     }
                 }
                 CpuDataLocation::Disk => {
-                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
+                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await.unwrap();
 
                     unsafe {
                         copy_to_cpu(ctx, device, gpu_buf_in.buffer, layout, out_buf.data_ptr())
@@ -374,7 +374,7 @@ impl TransferManager {
             };
             match dst {
                 CpuDataLocation::Ram => {
-                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await;
+                    let out_buf = ctx.submit(ctx.alloc_raw(desc, layout)).await.unwrap();
 
                     // Safety: layout is taken from input, output was constructed with the very
                     // layout
@@ -388,7 +388,7 @@ impl TransferManager {
                     }
                 }
                 CpuDataLocation::Disk => {
-                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await;
+                    let out_buf = ctx.submit(ctx.alloc_raw_disk(desc, layout)).await.unwrap();
 
                     // Safety: layout is taken from input, output was constructed with the very
                     // layout

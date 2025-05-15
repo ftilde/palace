@@ -244,7 +244,7 @@ impl ZarrSourceState {
                             let allocations = positions.into_iter().map(|chunk_id| {
                                 let data_id =
                                     DataDescriptor::new(ctx.current_op_desc().unwrap(), chunk_id);
-                                (ctx.alloc_raw(data_id, layout), chunk_id)
+                                (ctx.alloc_raw(data_id, layout).unwrap_value(), chunk_id)
                             });
                             let stream = ctx.submit_unordered_with_data(allocations).then_req(
                                 *ctx,

@@ -15,7 +15,7 @@ use crate::dim::DynDimension;
 use crate::dtypes::{ConversionError, DType, ElementType, StaticElementType};
 use crate::operator::{DataDescriptor, DataId, OpaqueOperator, OperatorDescriptor, OperatorId};
 use crate::runtime::{CompletedRequests, Deadline, FrameNumber, RequestQueue, TaskHints};
-use crate::storage::cpu::ReadHandle;
+use crate::storage::cpu::{ConcurrentWriteAccessError, ReadHandle};
 use crate::storage::gpu::{BarrierEpoch, MemoryLocation, WriteHandle};
 use crate::storage::ram::{self, RamAllocator, RawWriteHandleUninit, WriteHandleUninit};
 use crate::storage::{disk, CpuDataLocation, DataVersionType, Element};
@@ -170,7 +170,6 @@ pub struct Request<'req, 'inv, V> {
     pub gen_poll: Box<dyn FnOnce(PollContext<'req>) -> ResultPoll<'req, V> + 'req>,
     pub _marker: std::marker::PhantomData<&'req ()>,
 }
-
 impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
     pub fn ready(v: V) -> Self {
         Self {
@@ -197,6 +196,11 @@ impl<'req, 'inv, V: 'req> Request<'req, 'inv, V> {
                 Box::new(move || inner_poll().map(|v| (f.take().unwrap())(v)))
             }),
         }
+    }
+}
+impl<'req, 'inv, V: 'req, E: 'req + std::fmt::Debug> Request<'req, 'inv, Result<V, E>> {
+    pub fn unwrap_value(self) -> Request<'req, 'inv, V> {
+        self.map(|v| v.unwrap())
     }
 }
 
@@ -404,7 +408,7 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &'req self,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, RawWriteHandleUninit<'req>> {
+    ) -> Request<'req, 'inv, Result<RawWriteHandleUninit<'req>, ConcurrentWriteAccessError>> {
         self.storage
             .request_alloc_raw(self.current_frame, data_descriptor, layout)
     }
@@ -413,7 +417,11 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         &'req self,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, crate::storage::disk::RawWriteHandleUninit<'req>> {
+    ) -> Request<
+        'req,
+        'inv,
+        Result<crate::storage::disk::RawWriteHandleUninit<'req>, ConcurrentWriteAccessError>,
+    > {
         self.disk_cache
             .unwrap()
             .request_alloc_raw(self.current_frame, data_descriptor, layout)
@@ -957,7 +965,11 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Ou
         &'req self,
         item: ChunkIndex,
         size: &Vector<D, LocalCoordinate>,
-    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
+    ) -> Request<
+        'req,
+        'inv,
+        Result<WriteHandleUninit<'req, [MaybeUninit<Output>]>, ConcurrentWriteAccessError>,
+    > {
         self.alloc_slot_num_elements(item, size.hmul())
     }
 
@@ -965,7 +977,11 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Ou
         &'req self,
         item: ChunkIndex,
         size: usize,
-    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<Output>]>> {
+    ) -> Request<
+        'req,
+        'inv,
+        Result<WriteHandleUninit<'req, [MaybeUninit<Output>]>, ConcurrentWriteAccessError>,
+    > {
         let id = DataDescriptor::new(self.current_op_desc().unwrap(), item);
         self.storage
             .request_alloc_slot(self.current_frame, id, size)
@@ -1121,7 +1137,10 @@ impl<'cref, 'inv, OutputType: ElementType> TaskContext<'cref, 'inv, OutputType> 
                     Box::new(move || {
                         access = match self.storage.access_initializing(access.take().unwrap()) {
                             Ok(v) => {
-                                let mut wh = v.map_drop_handler(|h| h.into_error()).transmute(size);
+                                let mut wh = v
+                                    .unwrap()
+                                    .map_drop_handler(|h| h.into_error())
+                                    .transmute(size);
                                 crate::data::fill_uninit_default(&mut *wh);
                                 return Some(
                                     unsafe { wh.initialized(self.inner) }
@@ -1147,6 +1166,7 @@ impl<'cref, 'inv, Output: Element> TaskContext<'cref, 'inv, StaticElementType<Ou
     pub fn write_scalar<'a>(&'a self, value: Output) -> Request<'a, 'inv, ()> {
         let ctx = **self;
         self.alloc_slot_num_elements(ChunkIndex(0), 1)
+            .unwrap_value()
             .map(move |mut slot| {
                 slot[0].write(value);
                 unsafe { slot.initialized(ctx) };

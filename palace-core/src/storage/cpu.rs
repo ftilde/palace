@@ -53,6 +53,9 @@ enum WriteAccessCount {
     Zero,
 }
 
+#[derive(Debug)]
+pub struct ConcurrentWriteAccessError;
+
 #[derive(Copy, Clone, Debug)]
 enum StorageEntryState {
     Registered,
@@ -941,6 +944,19 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
             .unwrap_or(false)
     }
 
+    pub fn exists_in_storage(&self, id: DataId) -> bool {
+        self.index
+            .borrow()
+            .get(&id)
+            .map(|e| {
+                matches!(
+                    e.state,
+                    StorageEntryState::Initializing(_, _) | StorageEntryState::Initialized(_, _)
+                )
+            })
+            .unwrap_or(false)
+    }
+
     pub fn try_free(&self, key: DataId) -> Result<(), ()> {
         let mut index = self.index.borrow_mut();
         if index.get(&key).unwrap().safe_to_delete() {
@@ -1073,12 +1089,15 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
     pub(crate) fn access_initializing<'a>(
         &self,
         access: AccessToken<'a, Allocator>,
-    ) -> Result<RawWriteHandle<DropUnref<'a, Allocator>>, AccessToken<'a, Allocator>> {
+    ) -> Result<
+        Result<RawWriteHandle<DropUnref<'a, Allocator>>, ConcurrentWriteAccessError>,
+        AccessToken<'a, Allocator>,
+    > {
         let mut index = self.index.borrow_mut();
         let entry = index.get_mut(&access.id).unwrap();
 
         if let StorageEntryState::Initializing(info, ref mut count) = entry.state {
-            if let WriteAccessCount::Zero = *count {
+            Ok(if let WriteAccessCount::Zero = *count {
                 *count = WriteAccessCount::One;
                 Ok(RawWriteHandle {
                     data: info.data,
@@ -1086,8 +1105,8 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                     drop_handler: DropUnref { access },
                 })
             } else {
-                panic!("Concurrent write access to initializing datum attempted")
-            }
+                Err(ConcurrentWriteAccessError)
+            })
         } else {
             Err(access)
         }
@@ -1184,7 +1203,14 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         current_frame: FrameNumber,
         data_descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Request<'req, 'inv, RawWriteHandleUninit<'req, Allocator>> {
+    ) -> Request<
+        'req,
+        'inv,
+        Result<RawWriteHandleUninit<'req, Allocator>, ConcurrentWriteAccessError>,
+    > {
+        if self.exists_in_storage(data_descriptor.id) {
+            return Request::ready(Err(ConcurrentWriteAccessError));
+        }
         let mut access = Some(self.register_access(current_frame, data_descriptor.id));
 
         Request {
@@ -1196,11 +1222,11 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                 Box::new(move || {
                     access = match self.access_initializing(access.take().unwrap()) {
                         Ok(r) => {
-                            return Some(RawWriteHandle {
+                            return Some(r.map(|r| RawWriteHandle {
                                 data: r.data,
                                 layout: r.layout,
                                 drop_handler: r.drop_handler.into_error(),
-                            })
+                            }))
                         }
                         Err(acc) => Some(acc),
                     };
@@ -1216,10 +1242,14 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         current_frame: FrameNumber,
         key: DataDescriptor,
         size: usize,
-    ) -> Request<'req, 'inv, WriteHandleUninit<'req, [MaybeUninit<T>], Allocator>> {
+    ) -> Request<
+        'req,
+        'inv,
+        Result<WriteHandleUninit<'req, [MaybeUninit<T>], Allocator>, ConcurrentWriteAccessError>,
+    > {
         let layout = Layout::array::<T>(size).unwrap();
         self.request_alloc_raw(current_frame, key, layout)
-            .map(move |v| v.transmute(size))
+            .map(move |v| v.map(|v| v.transmute(size)))
     }
 
     // Safety: Caller has to make sure that there are no concurrent write accesses. (I.e. only call
@@ -1239,7 +1269,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         };
 
         match self.access_initializing(access) {
-            Ok(r) => Request::ready(StateCacheResult::Existing(r.transmute(size))),
+            Ok(r) => Request::ready(StateCacheResult::Existing(r.unwrap().transmute(size))),
             Err(access) => {
                 let mut access = Some(access);
                 Request {
@@ -1250,7 +1280,9 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
                     gen_poll: Box::new(move |_ctx| {
                         Box::new(move || {
                             access = match self.access_initializing(access.take().unwrap()) {
-                                Ok(r) => return Some(StateCacheResult::New(r.transmute(size))),
+                                Ok(r) => {
+                                    return Some(StateCacheResult::New(r.unwrap().transmute(size)))
+                                }
                                 Err(acc) => Some(acc),
                             };
                             None
@@ -1347,7 +1379,7 @@ impl Storage<super::ram::RamAllocator> {
                 data_longevity: info.data_longevity,
                 version,
             };
-            InplaceResult::New(r, w)
+            InplaceResult::New(r, w.map(|v| v.unwrap()))
         })
     }
 }
