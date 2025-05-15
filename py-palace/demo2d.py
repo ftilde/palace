@@ -1,5 +1,6 @@
 import numpy as np
 import palace as pc
+import palace_util
 import argparse
 
 ram_size = 8 << 30
@@ -62,12 +63,9 @@ else:
             case 3:
                 chunks = list(img.inner.metadata.chunk_size)
                 chunks[-1] = pc.chunk_size_full
-                channels = img.inner.metadata.dimensions[-1]
 
                 img = img.rechunk(chunks).fold_into_dtype()
-                while channels < 4:
-                    img = img.concat(pc.jit(255).cast(img.inner.dtype.scalar))
-                    channels += 1
+                img.inner = palace_util.pad_dtype_channels_to(img.inner, 4, 255)
 
             case o:
                 raise "Cannot handle img of dim {}".format(o)

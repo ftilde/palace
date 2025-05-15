@@ -126,6 +126,12 @@ def alpha_blending(render_over, render_under):
 
     return inner
 
+def pad_dtype_channels_to(image, n, pad_value):
+    current_channels = image.dtype.size
+    while current_channels < n:
+        image = image.concat(pc.jit(pad_value).cast(image.dtype.scalar))
+        current_channels += 1
+    return image
 
 def fit_tf_range(rt, tensor, tf):
     t = tensor.cast(pc.ScalarType.F32)
