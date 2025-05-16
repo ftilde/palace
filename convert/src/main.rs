@@ -69,6 +69,10 @@ struct CliArgs {
     #[arg(long, value_parser(ScalarType::try_from_pretty))]
     cast_dtype: Option<ScalarType>,
 
+    /// Convert vector datatype value into outer dimension
+    #[arg(long)]
+    unfold_dtype: bool,
+
     /// Rechunk tensor to specified chunk size
     #[arg(long)]
     chunk_size: Option<String>,
@@ -159,6 +163,10 @@ fn main() {
 
     let (mut input_lod, lod_origin) =
         palace_io::open_or_create_lod(args.input, input_hints).unwrap();
+
+    if args.unfold_dtype {
+        input_lod = input_lod.map(|v| v.map_inner(|v| v.unfold_dtype().unwrap()));
+    }
 
     if let Some(dtype) = args.cast_dtype {
         input_lod = input_lod.map(|v| {
