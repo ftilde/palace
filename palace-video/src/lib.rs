@@ -1,4 +1,9 @@
-use std::{path::PathBuf, rc::Rc, str::FromStr, sync::Mutex};
+use std::{
+    path::PathBuf,
+    rc::Rc,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use futures::StreamExt;
 use id::Identify;
@@ -53,6 +58,14 @@ pub fn open(loc: &str) -> Result<TensorOperator<D3, StaticElementType<TensorElem
     Ok(VideoSourceState::open(loc)?.operate())
 }
 
+impl VideoSourceStateInner {
+    fn pts_to_frame_number(&self, pts: i64) -> u32 {
+        (pts / self.pts_per_frame) as u32
+    }
+    fn frame_number_to_pts(&self, frame_num: u32) -> i64 {
+        frame_num as i64 * self.pts_per_frame
+    }
+}
 impl VideoSourceState {
     pub fn open(loc: Location) -> Result<Self, Error> {
         let loc_path = loc.as_path().to_owned();
@@ -100,7 +113,7 @@ impl VideoSourceState {
                 async move {
                     let metadata = &this.inner.metadata;
                     let decoder = &this.inner.decoder;
-                    let pts_per_frame = this.inner.pts_per_frame;
+                    let inner = &*this.inner;
 
                     let num_elements = metadata.num_chunk_elements();
                     let layout = std::alloc::Layout::array::<TensorElement>(num_elements).unwrap();
@@ -110,7 +123,7 @@ impl VideoSourceState {
                             .submit(ctx.spawn_compute(move || {
                                 let chunk_info = metadata.chunk_info(pos);
                                 let frame_num = chunk_info.begin[0].raw;
-                                let time_pts = frame_num as i64 * pts_per_frame;
+                                let time_pts = inner.frame_number_to_pts(frame_num);
 
                                 let mut decoder = decoder.lock().unwrap();
                                 let stream_index = decoder.reader_stream_index;
@@ -136,9 +149,13 @@ impl VideoSourceState {
                                 .inspect(|_| decoder.decoder.reset())?;
 
                                 let mut frames = Vec::new();
-                                loop {
+                                'outer: loop {
                                     let (t, frame) = loop {
-                                        let packet = decoder.reader.read(stream_index)?;
+                                        let packet = match decoder.reader.read(stream_index) {
+                                            Ok(p) => p,
+                                            Err(video_rs::Error::ReadExhausted) => break 'outer,
+                                            Err(e) => return Err(e),
+                                        };
                                         if let Some(frame) = decoder.decoder.decode_raw(packet)? {
                                             let t = frame.packet().dts;
 
@@ -147,17 +164,40 @@ impl VideoSourceState {
                                     };
                                     let t = t - start_time;
 
-                                    let frame_num = (t / pts_per_frame) as u32;
+                                    let is_key = frame.is_key();
+                                    frames.push((t, Arc::new(frame)));
+
+                                    //println!("push {} ", t);
+
+                                    if t >= time_pts && is_key {
+                                        break;
+                                    }
+                                }
+
+                                let min_frame =
+                                    inner.pts_to_frame_number(frames.first().unwrap().0);
+                                let max_frame = inner.pts_to_frame_number(frames.last().unwrap().0);
+
+                                let mut out_frames = Vec::with_capacity(frames.len());
+                                for frame_num in min_frame..=max_frame {
+                                    let pts = inner.frame_number_to_pts(frame_num);
+                                    let right_i = frames.partition_point(|v| v.0 < pts);
+                                    let left_i = right_i.saturating_sub(1);
+                                    let right = &frames[right_i];
+                                    let left = &frames[left_i];
+
                                     let chunk_id = metadata.chunk_index(
                                         &Vector::<D3, _>::new([frame_num, 0, 0]).chunk(),
                                     );
-                                    frames.push((chunk_id, frame));
 
-                                    //println!("requested: {}, actual: {}", time_pts, t);
-                                    if t >= time_pts {
-                                        return Result::<_, video_rs::Error>::Ok(frames);
-                                    }
+                                    if pts - left.0 < right.0 - pts {
+                                        out_frames.push((chunk_id, left.1.clone()));
+                                    } else {
+                                        out_frames.push((chunk_id, right.1.clone()));
+                                    };
+                                    //println!("push {} for {}, chunk {:?}", r, pts, chunk_id);
                                 }
+                                return Result::<_, video_rs::Error>::Ok(out_frames);
                             }))
                             .await?;
 
@@ -170,7 +210,7 @@ impl VideoSourceState {
 
                         let out_chunks = ctx.submit(ctx.group(allocations)).await;
                         let copies = out_chunks.into_iter().zip(frames.into_iter()).filter_map(
-                            |(out_chunk_handle, (chunk_id, mut frame))| {
+                            |(out_chunk_handle, (chunk_id, frame))| {
                                 if let Ok(mut chunk_handle) = out_chunk_handle {
                                     let chunk_info = metadata.chunk_info(chunk_id);
                                     Some(ctx.spawn_compute(move || {
@@ -180,7 +220,7 @@ impl VideoSourceState {
                                         let w = chunk_info.logical_dimensions[2].raw as usize;
                                         let h = chunk_info.logical_dimensions[1].raw as usize;
 
-                                        let frame_ptr = unsafe { frame.as_mut_ptr() };
+                                        let frame_ptr = unsafe { frame.as_ptr() };
                                         //let frame_format = video_rs::ffmpeg::ffi::AV_PIX_FMT_BGR32;
                                         let source_format = unsafe { (*frame_ptr).format };
                                         let assumed_format = AVPixelFormat::AV_PIX_FMT_RGB24;
