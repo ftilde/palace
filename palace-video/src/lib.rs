@@ -11,7 +11,7 @@ use palace_core::{
     array::TensorMetaData,
     dim::D3,
     dtypes::StaticElementType,
-    operator::{DataDescriptor, DataParam, OperatorDescriptor},
+    operator::{DataParam, OperatorDescriptor},
     operators::tensor::TensorOperator,
     vec::Vector,
     Error,
@@ -119,6 +119,14 @@ impl VideoSourceState {
                     let layout = std::alloc::Layout::array::<TensorElement>(num_elements).unwrap();
 
                     for pos in positions {
+                        if ctx
+                            .storage()
+                            .exists_in_storage(ctx.data_descriptor(pos).unwrap().id)
+                        {
+                            //println!("Welp, {:?} already there", pos);
+                            continue;
+                        }
+
                         let frames = ctx
                             .submit(ctx.spawn_compute(move || {
                                 let chunk_info = metadata.chunk_info(pos);
@@ -202,8 +210,7 @@ impl VideoSourceState {
                             .await?;
 
                         let allocations = frames.iter().map(|(chunk_id, _)| {
-                            let data_id =
-                                DataDescriptor::new(ctx.current_op_desc().unwrap(), *chunk_id);
+                            let data_id = ctx.data_descriptor(*chunk_id).unwrap();
                             ctx.alloc_raw(data_id, layout)
                                 .map(|v| v.map(|v| v.into_thread_handle()))
                         });
