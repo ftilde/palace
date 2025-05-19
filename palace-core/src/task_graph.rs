@@ -611,31 +611,32 @@ impl TaskGraph {
                 if entry.is_empty() {
                     self.will_provide_data.remove(&task);
                 }
+            }
+        }
 
-                let fulfiller_entries = self.request_to_active_fulfillers.get_mut(&data).unwrap();
-
-                if let Some(data_request_entry) = self.data_requests.get(&data) {
-                    // Note: May be none if builtin::cacher produced it
-                    for loc in data_request_entry.iter() {
-                        for requestor in loc.1 {
-                            if fulfiller_entries.get(requestor) == Some(&task) {
-                                self.high_level.remove_dependency(
-                                    *requestor,
-                                    task,
-                                    RequestId::Data(VisibleDataId {
-                                        id: data,
-                                        location: *loc.0,
-                                    }),
-                                );
-                            }
+        // Again, may be none if not requested
+        if let Some(fulfiller_entries) = self.request_to_active_fulfillers.get_mut(&data) {
+            if let Some(data_request_entry) = self.data_requests.get(&data) {
+                // Note: May be none if builtin::cacher produced it
+                for loc in data_request_entry.iter() {
+                    for requestor in loc.1 {
+                        if fulfiller_entries.get(requestor) == Some(&task) {
+                            self.high_level.remove_dependency(
+                                *requestor,
+                                task,
+                                RequestId::Data(VisibleDataId {
+                                    id: data,
+                                    location: *loc.0,
+                                }),
+                            );
                         }
                     }
                 }
+            }
 
-                fulfiller_entries.retain(|_k, v| *v != task);
-                if fulfiller_entries.is_empty() {
-                    self.request_to_active_fulfillers.remove(&data);
-                }
+            fulfiller_entries.retain(|_k, v| *v != task);
+            if fulfiller_entries.is_empty() {
+                self.request_to_active_fulfillers.remove(&data);
             }
         }
     }
@@ -804,8 +805,8 @@ impl TaskGraph {
         self.ready.remove(&id);
         self.resolved_deps.remove(&id);
 
-        let wpd = self.will_provide_data.remove(&id);
-        assert!(wpd.is_none());
+        let _wpd = self.will_provide_data.remove(&id);
+        //assert!(wpd.is_none());
         let _wfr = self.will_fullfil_req.remove(&id);
 
         let deps = self.waits_on.remove(&id).unwrap();

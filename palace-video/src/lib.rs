@@ -124,6 +124,35 @@ impl VideoSourceState {
                             .exists_in_storage(ctx.data_descriptor(pos).unwrap().id)
                         {
                             //println!("Welp, {:?} already there", pos);
+
+                            let data_id = ctx.data_descriptor(pos).unwrap().id;
+                            if ctx
+                                .storage()
+                                .is_readable(data_id, palace_core::storage::DataVersion::Final)
+                            {
+                                ctx.storage().add_new_data_hint(data_id);
+                            }
+
+                            //This doesn't work because (likely) because the data may not be initialized yet.
+
+                            //is_currently_being fulfilled in runtime.rs (or similar) is very flawed for this model.
+                            //problem:
+                            //    - data is requested
+                            //    - task for that data started
+                            //    - another task ist produces the data
+                            //    - it does not get transferred because the original task "currently fulfills" it
+                            //    - original task does not fulfill it
+
+                            //With the fake fulfillments (add_new_data_hint) we get:
+                            //    - data is requested
+                            //    - task for that data is started
+                            //    - another task produces wants to produce the data (allocates the slot)
+                            //    - task 1 notices that and (unconditionally) hints fulfillment
+                            //    - runtime tries to make data available, but it isn't yet (other task is not done with completion)
+                            //
+                            //Solution (???):
+                            //    - Only emit hint when data is actually readable (???)
+
                             continue;
                         }
 
@@ -260,6 +289,13 @@ impl VideoSourceState {
                                         Result::<_, video_rs::Error>::Ok(chunk_handle)
                                     }))
                                 } else {
+                                    let data_id = ctx.data_descriptor(chunk_id).unwrap().id;
+                                    if ctx.storage().is_readable(
+                                        data_id,
+                                        palace_core::storage::DataVersion::Final,
+                                    ) {
+                                        ctx.storage().add_new_data_hint(data_id);
+                                    }
                                     //println!("{:?} already present, wow!", chunk_id);
                                     None
                                 }

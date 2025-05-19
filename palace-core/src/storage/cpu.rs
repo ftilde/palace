@@ -871,6 +871,10 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         }
     }
 
+    pub fn add_new_data_hint(&self, id: DataId) {
+        self.new_data.add(id);
+    }
+
     pub fn next_garbage_collect(&self) -> GarbageCollectId {
         self.garbage_collect_id_gen.preview_next()
     }
