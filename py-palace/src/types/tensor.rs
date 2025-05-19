@@ -658,6 +658,14 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
         #[gen_stub_pymethods]
         #[pymethods]
         impl EmbeddedTensorOperator {
+            #[getter]
+            pub fn dtype(&self) -> DType {
+                self.inner.dtype()
+            }
+            #[getter]
+            pub fn metadata(&self) -> PyResult<PyTensorMetaData> {
+                self.inner.metadata()
+            }
             fn single_level_lod(&self) -> PyResult<LODTensorOperator> {
                 Ok(LODTensorOperator {
                     levels: vec![self.clone()],

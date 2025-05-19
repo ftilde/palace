@@ -11,26 +11,40 @@ palace_util.add_runtime_args(parser)
 args = parser.parse_args()
 
 img = pc.open(args.img_file)
-print(img.inner.metadata.dimensions)
-print(img.inner.metadata.chunk_size)
-print(img.embedding_data.spacing)
-if img.inner.metadata.dimensions[-1] < 4:
-    img = img.fold_into_dtype()
-print(img.inner.metadata.dimensions)
-print(img.inner.metadata.chunk_size)
-print(img.embedding_data.spacing)
-img.inner = palace_util.pad_dtype_channels_to(img.inner, 4, 255)
-md: pc.TensorMetaData = img.inner.metadata
-nd = img.nd()
-size_time = img.inner.metadata.dimensions[0]
 
+try:
+    img = pc.open_lod(args.img_file)
+    if img.levels[0].metadata.dimensions[-1] < 4:
+        img = img.map(lambda i: i.fold_into_dtype())
+except:
+    img = pc.open(args.img_file)
+    if img.metadata.dimensions[-1] < 4:
+        img = img.fold_into_dtype()
+
+    chunks = list(reversed([128 if i < 3 else 8 for i in range(0, img.nd())]))
+    img = img.rechunk(chunks)
+    steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, img.nd())]))
+    img = img.create_lod(steps)
+
+img = img.map(lambda i: palace_util.pad_dtype_channels_to(i, 4, 255))
+
+md: pc.TensorMetaData = img.fine_metadata()
+nd = img.nd()
+size_time = md.dimensions[0]
+
+
+for l in img.levels:
+    print(l.metadata.dimensions)
+    #print(l.metadata.chunk_size)
+
+#img = img.rechunk(chunk_sizes)
 
 rt = palace_util.build_runtime_from_args(args)
 
-ed = img.embedding_data
+ed = img.fine_embedding_data()
 
-foreground_seeds = np.empty(shape=[0,2], dtype=np.float32)
-background_seeds = np.empty(shape=[0,2], dtype=np.float32)
+foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
+background_seeds = np.empty(shape=[0,nd], dtype=np.float32)
 
 #if args.transfunc:
 #    tf = pc.load_tf(args.transfunc)
@@ -66,8 +80,8 @@ def select_from_ts(v, ts):
         case 2:
             return v
         case 3:
-            #return palace_util.slice_time_nd(ts, v)
-            return v[ts,:,:]
+            return palace_util.slice_time_nd(ts, v)
+            #return v[ts,:,:]
         case o:
             raise f"Invalid number of tensor dimensions: {o}"
 
@@ -103,12 +117,12 @@ def apply_rw_mode(input):
     match mode.load():
         case "normal":
             i = to_scalar(input)
-            i = i.levels[0].rechunk([pc.chunk_size_full]*2)
+            i = i.levels[0].rechunk([pc.chunk_size_full]*nd)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
-            return (input, rw_result.create_lod([2.0]*2))
+            return (input, rw_result.create_lod(lod_args))
 
         case "hierarchical":
             i = to_scalar(input)
@@ -120,11 +134,11 @@ def apply_rw_mode(input):
 def render(size, events: pc.Events):
     global mouse_pos_and_value
 
-    slice_img = select_from_ts(img, timestep.load())
-    slice_img = slice_img.rechunk([128]*2)
-    img_lod = slice_img.create_lod([2.0]*2)
 
-    v, rw_result = apply_rw_mode(img_lod)
+    v, rw_result = apply_rw_mode(img)
+
+    v = select_from_ts(v, timestep.load())
+    rw_result = select_from_ts(rw_result, timestep.load())
 
     # GUI stuff
     widgets = []
@@ -151,11 +165,17 @@ def render(size, events: pc.Events):
         global foreground_seeds, background_seeds
 
         image_pos = palace_util.mouse_to_image_pos(slice_state.load(), embedded_tensor, pos, frame_size)
-        image_pos = np.array(image_pos, dtype=np.float32).reshape((1, 2))
+        match nd:
+            case 2:
+                pos_nd = np.array(image_pos, dtype=np.float32).reshape((1,2))
+            case 3:
+                pos_nd = [timestep.load()] + list(img_pos)
+                pos_nd = np.array(pos_nd, dtype=np.float32).reshape((1,3))
+
         if foreground:
-            foreground_seeds = np.concat([foreground_seeds, image_pos])
+            foreground_seeds = np.concat([foreground_seeds, pos_nd])
         else:
-            background_seeds = np.concat([background_seeds, image_pos])
+            background_seeds = np.concat([background_seeds, pos_nd])
 
     def view_image(image, state):
         def inner(size, events):
