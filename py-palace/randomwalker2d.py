@@ -21,14 +21,15 @@ img = pc.open(args.img_file)
 print(img.inner.metadata.dimensions)
 print(img.inner.metadata.chunk_size)
 print(img.embedding_data.spacing)
-img = img.fold_into_dtype()
+if img.inner.metadata.dimensions[-1] < 4:
+    img = img.fold_into_dtype()
 print(img.inner.metadata.dimensions)
 print(img.inner.metadata.chunk_size)
 print(img.embedding_data.spacing)
 img.inner = palace_util.pad_dtype_channels_to(img.inner, 4, 255)
 md: pc.TensorMetaData = img.inner.metadata
 nd = img.nd()
-dim_t = img.inner.metadata.dimensions[0]
+size_time = img.inner.metadata.dimensions[0]
 
 
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=args.devices)
@@ -78,10 +79,10 @@ def select_from_ts(v, ts):
             raise f"Invalid number of tensor dimensions: {o}"
 
 def ts_next(ts):
-    ts.write((ts.load() + 1) % dim_t)
+    ts.write((ts.load() + 1) % size_time)
 
 def ts_prev(ts):
-    ts.write((ts.load() + dim_t - 1) % dim_t)
+    ts.write((ts.load() + size_time - 1) % size_time)
 
 def apply_weight_function(tensor):
     match weight_function.load():
@@ -146,7 +147,7 @@ def render(size, events: pc.Events):
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
     if nd > 2:
-        widgets.append(palace_util.named_slider("Timestep", timestep, 0, dim_t-1))
+        widgets.append(palace_util.named_slider("Timestep", timestep, 0, size_time-1))
 
     if mouse_pos_and_value is not None:
         img_pos, value = mouse_pos_and_value
