@@ -121,7 +121,7 @@ def render(size, events: pc.Events):
     global mouse_pos_and_value
 
     slice_img = select_from_ts(img, timestep.load())
-    #slice_img = slice_img.rechunk([128]*2)
+    slice_img = slice_img.rechunk([128]*2)
     img_lod = slice_img.create_lod([2.0]*2)
 
     v, rw_result = apply_rw_mode(img_lod)
@@ -174,7 +174,6 @@ def render(size, events: pc.Events):
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
         out = palace_util.alpha_blending(frame_rw, frame)
-        return out
 
         def inspect(size, events):
             tensor = rw_result.levels[0]
