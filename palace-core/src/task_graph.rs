@@ -302,7 +302,10 @@ fn pseudo_tid(t: TaskId) -> (bool, TaskId) {
         | "builtin::alloc_vram"
         | "builtin::alloc_vram_raw"
         | "builtin::alloc_vram_img"
+        | "builtin::gc_disk"
+        | "builtin::gc_ram"
         | "builtin::transfer_mgr" => (true, TaskId::new(t.op, 0)),
+        "builtin::gc_vram" => (true, t),
         _ => (false, t),
     }
 }
@@ -321,7 +324,11 @@ impl HighLevelGraph {
         if matches!(e, crate::util::MapEntry::Vacant(_)) {
             self.event_stream.node_add(t);
         } else {
-            assert!(pseudo);
+            assert!(
+                pseudo,
+                "{:?} is already present in the map, and is not a pseudo task",
+                t
+            );
         }
         e.or_default();
         //assert!(self.provides_for.insert(t, Default::default()).is_none());
