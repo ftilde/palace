@@ -167,10 +167,15 @@ def render(size, events: pc.Events):
         image_pos = palace_util.mouse_to_image_pos(slice_state.load(), embedded_tensor, pos, frame_size)
         match nd:
             case 2:
-                pos_nd = np.array(image_pos, dtype=np.float32).reshape((1,2))
+                pos_nd = np.array(image_pos, dtype=np.float32)
             case 3:
                 pos_nd = [timestep.load()] + list(img_pos)
-                pos_nd = np.array(pos_nd, dtype=np.float32).reshape((1,3))
+                pos_nd = np.array(pos_nd, dtype=np.float32)
+
+        pos_nd = np.concatenate(([1], pos_nd), dtype = np.float32)
+        pos_nd = img.fine_embedding_data().voxel_to_physical().dot(pos_nd)
+        pos_nd = pos_nd[1:]
+        pos_nd = pos_nd.reshape((1, nd))
 
         if foreground:
             foreground_seeds = np.concat([foreground_seeds, pos_nd])
