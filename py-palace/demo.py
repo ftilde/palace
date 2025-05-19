@@ -209,7 +209,8 @@ def render(size, events):
 
     if mouse_pos_and_value is not None:
         vol_pos, value = mouse_pos_and_value
-        widgets.append(pc.Label(f"Value at {vol_pos} = {value}"))
+        phys_pos = vol_pos * l0ed.spacing;
+        widgets.append(pc.Label(f"Value at {phys_pos} = {value}"))
         mouse_pos_and_value = None
 
     def render_slice(v, state, tf, tile_size=None, devices=None):
