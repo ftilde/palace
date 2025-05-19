@@ -389,14 +389,15 @@ impl HighLevelGraph {
         let (pseudo, t) = pseudo_tid(t);
 
         if !pseudo {
-            //let depends_on = self.depends_on.get(&t).unwrap().clone();
-            let depends_on = self.depends_on.remove(&t).unwrap();
+            let depends_on = self.depends_on.get(&t).unwrap().clone();
+            //let depends_on = self.depends_on.remove(&t).unwrap();
             //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
             for (dep, n) in depends_on {
-                //for req in n {
-                //    self.remove_dependency(t, dep, req);
-                //}
-                assert!(n.is_empty(), "{:?} deps on {:?} for {:?}", t, dep, n);
+                for req in n {
+                    // This can happen when another task fulfills a requested unsolicitedly
+                    self.remove_dependency(t, dep, req);
+                }
+                //assert!(n.is_empty(), "{:?} deps on {:?} for {:?}", t, dep, n);
             }
             //let _provided = self.provides_for.remove(&t).unwrap();
             //for provided in provided.into_iter() {
