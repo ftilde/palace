@@ -3,17 +3,10 @@ import palace as pc
 import palace_util
 import argparse
 
-ram_size = 8 << 30
-vram_size = 10 << 30
-disk_cache_size = 20 << 30
-
-def list_of_ints(arg):
-    return list(map(int, arg.split(',')))
-
 parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
 parser.add_argument('-t', '--transfunc', type=str)
-parser.add_argument('-d', '--devices', type=palace_util.list_of_ints, default=[])
+palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
 
@@ -32,7 +25,7 @@ nd = img.nd()
 size_time = img.inner.metadata.dimensions[0]
 
 
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=args.devices)
+rt = palace_util.build_runtime_from_args(args)
 
 ed = img.embedding_data
 

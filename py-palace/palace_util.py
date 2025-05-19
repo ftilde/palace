@@ -1,5 +1,6 @@
 import palace as pc
 import numpy as np
+import re
 
 # General pattern for renderable components:
 # component: size, events -> frame operator
@@ -164,3 +165,32 @@ def named_slider(name, state, min, max, logarithmic=False):
 # Not really palace related, but shared between demos, useful for device selection via args
 def list_of_ints(arg):
     return list(map(int, arg.split(',')))
+
+def parse_si_number(s):
+    s = s.strip()
+    match = re.match(r'^(\d+)([a-zA-Z]*)$', s)
+    if not match:
+        raise argparse.ArgumentTypeError(f"Invalid SI number: '{s}'")
+    number, suffix = match.groups()
+    number = int(number)
+    si_factors = {
+        '':    1,
+        'K':   1e3,
+        'M':   1e6,
+        'G':   1e9,
+        'T':   1e12,
+        'P':   1e15,
+    }
+    if suffix not in si_factors:
+        raise argparse.ArgumentTypeError(f"Unknown SI prefix: '{suffix}'")
+    return number * int(si_factors[suffix])
+
+def add_runtime_args(parser):
+    parser.add_argument('-m', '--mem_size', type=parse_si_number, default=8<<30)
+    parser.add_argument('-g', '--gpu_mem_size', type=parse_si_number, default=8<<30)
+    parser.add_argument('-d', '--disk_cache_size', type=parse_si_number, default=20<<30)
+    parser.add_argument('-c', '--compute_pool_size', type=int, default=None)
+    parser.add_argument('--devices', type=list_of_ints, default=[])
+
+def build_runtime_from_args(args):
+    return pc.RunTime(args.mem_size, args.gpu_mem_size, args.disk_cache_size, devices=args.devices, num_compute_threads=args.compute_pool_size)
