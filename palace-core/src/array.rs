@@ -164,6 +164,11 @@ impl<D: LargerDim> TensorEmbeddingData<D> {
     pub fn physical_to_voxel(&self) -> Matrix<D::Larger, f32> {
         Matrix::from_scale(&self.spacing.map(|v| 1.0 / v)).to_homogeneous()
     }
+    pub fn push_dim_small(self, spacing: f32) -> TensorEmbeddingData<D::Larger> {
+        TensorEmbeddingData {
+            spacing: self.spacing.push_dim_large(spacing),
+        }
+    }
 }
 
 pub fn norm_to_physical<D: LargerDim>(

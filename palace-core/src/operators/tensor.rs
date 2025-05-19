@@ -410,14 +410,16 @@ impl<D: DynDimension, E: 'static> EmbeddedTensorOperator<D, E> {
         LODTensorOperator { levels: vec![self] }
     }
 
-    pub fn map_inner<O>(
+    pub fn map_inner<O: 'static>(
         self,
         f: impl FnOnce(TensorOperator<D, E>) -> TensorOperator<D, O>,
     ) -> EmbeddedTensorOperator<D, O> {
-        EmbeddedTensorOperator {
+        let ret = EmbeddedTensorOperator {
             inner: f(self.inner),
             embedding_data: self.embedding_data,
-        }
+        };
+        assert_eq!(ret.inner.dim().n(), ret.embedding_data.dim().n());
+        ret
     }
 
     pub fn cache(self) -> Self {
@@ -444,6 +446,29 @@ impl<D: DynDimension, E> EmbeddedTensorOperator<D, E> {
         Some(EmbeddedTensorOperator {
             inner: self.inner.try_into_static()?,
             embedding_data: self.embedding_data.try_into_static()?,
+        })
+    }
+}
+impl<D: LargerDim> EmbeddedTensorOperator<D, DType> {
+    pub fn unfold_dtype(
+        self,
+        new_dim_spacing: f32,
+    ) -> Result<EmbeddedTensorOperator<D::Larger, DType>, crate::Error> {
+        let inner = self.inner.unfold_dtype()?;
+        Ok(EmbeddedTensorOperator {
+            inner,
+            embedding_data: self.embedding_data.push_dim_small(new_dim_spacing),
+        })
+    }
+}
+impl<D: SmallerDim> EmbeddedTensorOperator<D, DType> {
+    pub fn fold_into_dtype(
+        self,
+    ) -> Result<EmbeddedTensorOperator<D::Smaller, DType>, crate::Error> {
+        let inner = self.inner.fold_into_dtype()?;
+        Ok(EmbeddedTensorOperator {
+            inner,
+            embedding_data: self.embedding_data.pop_dim_small(),
         })
     }
 }

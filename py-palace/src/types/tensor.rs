@@ -708,21 +708,13 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
             }
 
             fn fold_into_dtype(&self) -> PyResult<Self> {
-                let mut new_spacing = self.embedding_data.spacing.clone();
-                new_spacing.pop();
-                Ok(EmbeddedTensorOperator {
-                    inner: self.inner.fold_into_dtype()?,
-                    embedding_data: PyTensorEmbeddingData::new(new_spacing),
-                })
+                Ok(self.clone().into_core().fold_into_dtype()
+                    .map_err(crate::map_err)?.into())
             }
-            //fn unfold_dtype(&self) -> PyResult<Self> {
-            //    Ok(self
-            //        .clone()
-            //        .into_core()
-            //        .unfold_dtype()
-            //        .map_err(crate::map_err)?
-            //        .into())
-            //}
+            fn unfold_dtype(&self, new_spacing: f32) -> PyResult<Self> {
+                Ok(self.clone().into_core().unfold_dtype(new_spacing)
+                    .map_err(crate::map_err)?.into())
+            }
 
             //TODO: Quite annoying that we cannot annotate the default argument with the macro
             //expansion below. Don't really know how to do that... We could maybe add the

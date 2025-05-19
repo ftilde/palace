@@ -165,7 +165,7 @@ fn main() {
         palace_io::open_or_create_lod(args.input, input_hints).unwrap();
 
     if args.unfold_dtype {
-        input_lod = input_lod.map(|v| v.map_inner(|v| v.unfold_dtype().unwrap()));
+        input_lod = input_lod.map(|v| v.unfold_dtype(1.0).unwrap());
     }
 
     if let Some(dtype) = args.cast_dtype {
