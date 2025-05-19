@@ -7,26 +7,37 @@ ram_size = 8 << 30
 vram_size = 10 << 30
 disk_cache_size = 20 << 30
 
+def list_of_ints(arg):
+    return list(map(int, arg.split(',')))
+
 parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('-d', '--devices', type=list_of_ints)
 
 args = parser.parse_args()
 
 img = pc.open(args.img_file)
+print(img.inner.metadata.dimensions)
+print(img.inner.metadata.chunk_size)
+print(img.embedding_data.spacing)
+img = img.fold_into_dtype()
+print(img.inner.metadata.dimensions)
+print(img.inner.metadata.chunk_size)
+print(img.embedding_data.spacing)
+img.inner = palace_util.pad_dtype_channels_to(img.inner, 4, 255)
 md: pc.TensorMetaData = img.inner.metadata
-ndim = len(md.dimensions)
+nd = img.nd()
+dim_t = img.inner.metadata.dimensions[0]
 
-img = img.rechunk([128]*ndim)
-img = img.create_lod([2.0]*2)
 
-devices = []
+devices = args.devices or []
 rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
 
-ed = img.levels[0].embedding_data
+ed = img.embedding_data
 
-foreground_seeds = np.empty(shape=[0,ndim], dtype=np.float32)
-background_seeds = np.empty(shape=[0,ndim], dtype=np.float32)
+foreground_seeds = np.empty(shape=[0,2], dtype=np.float32)
+background_seeds = np.empty(shape=[0,2], dtype=np.float32)
 
 #if args.transfunc:
 #    tf = pc.load_tf(args.transfunc)
@@ -43,6 +54,8 @@ min_edge_weight = store.store_primitive(1e-5)
 beta = store.store_primitive(128.0)
 extent = store.store_primitive(1)
 
+timestep = store.store_primitive(0)
+
 gui_state = pc.GuiState(rt)
 
 num_tf_values = 128
@@ -54,6 +67,22 @@ def prob_tf_from_values(values):
 tf_prob = prob_tf_from_values([[0, 0, num_tf_values-i-1, num_tf_values-i-1] for i in range(num_tf_values)] + [[i, 0, 0, i] for i in range(num_tf_values)])
 
 mouse_pos_and_value = None
+
+def select_from_ts(v, ts):
+    match nd:
+        case 2:
+            return v
+        case 3:
+            #return palace_util.slice_time_nd(ts, v)
+            return v[ts,:,:]
+        case o:
+            raise f"Invalid number of tensor dimensions: {o}"
+
+def ts_next(ts):
+    ts.write((ts.load() + 1) % dim_t)
+
+def ts_prev(ts):
+    ts.write((ts.load() + dim_t - 1) % dim_t)
 
 def apply_weight_function(tensor):
     match weight_function.load():
@@ -81,7 +110,7 @@ def apply_rw_mode(input):
     match mode.load():
         case "normal":
             i = to_scalar(input)
-            i = i.levels[0].rechunk([pc.chunk_size_full]*ndim)
+            i = i.levels[0].rechunk([pc.chunk_size_full]*2)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
@@ -98,7 +127,11 @@ def apply_rw_mode(input):
 def render(size, events: pc.Events):
     global mouse_pos_and_value
 
-    v, rw_result = apply_rw_mode(img)
+    slice_img = select_from_ts(img, timestep.load())
+    #slice_img = slice_img.rechunk([128]*2)
+    img_lod = slice_img.create_lod([2.0]*2)
+
+    v, rw_result = apply_rw_mode(img_lod)
 
     # GUI stuff
     widgets = []
@@ -113,6 +146,9 @@ def render(size, events: pc.Events):
 
     widgets.append(palace_util.named_slider("min_edge_weight", min_edge_weight, 1e-20, 1, logarithmic=True))
 
+    if nd > 2:
+        widgets.append(palace_util.named_slider("Timestep", timestep, 0, dim_t-1))
+
     if mouse_pos_and_value is not None:
         img_pos, value = mouse_pos_and_value
         widgets.append(pc.Label(f"Value at {img_pos} = {value}"))
@@ -122,7 +158,7 @@ def render(size, events: pc.Events):
         global foreground_seeds, background_seeds
 
         image_pos = palace_util.mouse_to_image_pos(slice_state.load(), embedded_tensor, pos, frame_size)
-        image_pos = np.array(image_pos, dtype=np.float32).reshape((1, ndim))
+        image_pos = np.array(image_pos, dtype=np.float32).reshape((1, 2))
         if foreground:
             foreground_seeds = np.concat([foreground_seeds, image_pos])
         else:
@@ -145,7 +181,7 @@ def render(size, events: pc.Events):
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
         out = palace_util.alpha_blending(frame_rw, frame)
-        #out = slice_rw
+        return out
 
         def inspect(size, events):
             tensor = rw_result.levels[0]
@@ -166,6 +202,11 @@ def render(size, events: pc.Events):
         if img_pos is not None:
             value = palace_util.extract_tensor_value(rt, tensor, img_pos)
             mouse_pos_and_value = (img_pos, value)
+
+    events.act([
+        pc.OnKeyPress("N", lambda: ts_next(timestep)),
+        pc.OnKeyPress("P", lambda: ts_prev(timestep)),
+        ])
 
     # Actual composition of the rendering
     frame = overlay(view_state)
