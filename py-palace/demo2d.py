@@ -11,11 +11,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
 parser.add_argument('-l', '--img_location', type=str)
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('-d', '--devices', type=palace_util.list_of_ints, default=[])
 
 args = parser.parse_args()
 
-devices = []
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=args.devices)
 
 if args.img_file == "mandelbrot":
     b = 1024*2

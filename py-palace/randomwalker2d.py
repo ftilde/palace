@@ -13,7 +13,7 @@ def list_of_ints(arg):
 parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
 parser.add_argument('-t', '--transfunc', type=str)
-parser.add_argument('-d', '--devices', type=list_of_ints)
+parser.add_argument('-d', '--devices', type=palace_util.list_of_ints, default=[])
 
 args = parser.parse_args()
 
@@ -31,8 +31,7 @@ nd = img.nd()
 dim_t = img.inner.metadata.dimensions[0]
 
 
-devices = args.devices or []
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=args.devices)
 
 ed = img.embedding_data
 

@@ -161,3 +161,6 @@ def named_slider(name, state, min, max, logarithmic=False):
         pc.Label(name),
     ])
 
+# Not really palace related, but shared between demos, useful for device selection via args
+def list_of_ints(arg):
+    return list(map(int, arg.split(',')))

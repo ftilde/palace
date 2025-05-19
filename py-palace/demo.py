@@ -11,11 +11,11 @@ disk_cache_size = 20 << 30
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('-d', '--devices', type=palace_util.list_of_ints, default=[])
 
 args = parser.parse_args()
 
-devices = []
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
+rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=args.devices, num_compute_threads=8)
 
 if args.volume_file == "fill":
     b = 32
