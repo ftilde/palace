@@ -1028,8 +1028,23 @@ impl TensorOperator {
     fn index(&self, index: u32) -> PyResult<Self> {
         jit_unary(UnaryOp::Index(index), self)
     }
+    fn index_range(&self, from: u32, to: u32) -> PyResult<Self> {
+        jit_unary(UnaryOp::IndexRange(from, to), self)
+    }
     fn splat(&self, size: u32) -> PyResult<Self> {
         jit_unary(UnaryOp::Splat(size), self)
+    }
+    fn hsum(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Fold(jit::FoldOp::Sum), self)
+    }
+    fn hmul(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Fold(jit::FoldOp::Mul), self)
+    }
+    fn hmin(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Fold(jit::FoldOp::Min), self)
+    }
+    fn hmax(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Fold(jit::FoldOp::Max), self)
     }
 
     fn __add__(&self, a: JitArgument) -> PyResult<Self> {
@@ -1107,6 +1122,7 @@ impl_embedded_tensor_operator_with_delegate!(
     abs(),
     cast(to: MaybeScalarDType),
     index(index: u32),
+    index_range(from: u32, to: u32),
     splat(size: u32),
 
     __add__(a: JitArgument),

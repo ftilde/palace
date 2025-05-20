@@ -77,6 +77,7 @@ pub enum UnaryOp {
     Exp,
     Cast(DType),
     Index(u32),
+    IndexRange(u32, u32),
     Splat(u32),
     Fold(FoldOp),
 }
@@ -115,6 +116,24 @@ impl UnaryOp {
                     .into());
                 }
             }
+            UnaryOp::IndexRange(from, to) => {
+                if from >= to {
+                    return Err(format!(
+                        "From ({}) must be strictly smaller that to ({})",
+                        from, to
+                    )
+                    .into());
+                }
+                if *to <= input.size {
+                    input.scalar.vec(to - from).into()
+                } else {
+                    return Err(format!(
+                        "End index {} out of range for vector value of size {}",
+                        to, input.size
+                    )
+                    .into());
+                }
+            }
             UnaryOp::Splat(size) => {
                 if input.size == 1 {
                     DType {
@@ -142,6 +161,13 @@ impl Display for WriteUnary {
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
             UnaryOp::Index(i) => write!(f, "{}[{}]", v.0, i),
+            UnaryOp::IndexRange(from, _to) => {
+                if v.1.size == 1 {
+                    write!(f, "{}[{}]", v.0, from)
+                } else {
+                    write!(f, "{}[{}+{}]", v.0, from, VEC_LOOP_VARIABLE_NAME)
+                }
+            }
             UnaryOp::Splat(_i) => write!(f, "{}", v),
             UnaryOp::Fold(fold_op) => {
                 if v.1.size == 1 {
@@ -716,6 +742,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn index(self, i: u32) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Index(i), self)
+    }
+    pub fn index_range(self, from: u32, to: u32) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::IndexRange(from, to), self)
     }
     pub fn hmul(self) -> Self {
         Self::unary_op(UnaryOp::Fold(FoldOp::Mul), self).unwrap()
