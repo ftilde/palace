@@ -73,7 +73,7 @@ impl VideoSourceState {
 
         let duration = dbg!(decoder.duration()?);
         let mut duration_pts = duration.into_value().unwrap();
-        let fps = dbg!(decoder.frame_rate()) as f64;
+        let fps = decoder.frame_rate() as f64;
         let frame_size = decoder.size_out();
         let mut n_frames = decoder.frames()?;
 
@@ -92,10 +92,10 @@ impl VideoSourceState {
             n_frames = (duration_s * fps) as u64;
         }
         let pts_per_frame = duration_pts / n_frames as i64;
-        println!(
-            "Duration (pts) {} | n_frames {} | pts per frame {}",
-            duration_pts, n_frames, pts_per_frame
-        );
+        //println!(
+        //    "Duration (pts) {} | n_frames {} | pts per frame {}",
+        //    duration_pts, n_frames, pts_per_frame
+        //);
 
         let metadata = TensorMetaData {
             dimensions: Vector::<D3, _>::new([n_frames as u32, frame_size.1, frame_size.0])
