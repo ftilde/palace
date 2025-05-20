@@ -34,6 +34,9 @@ md: pc.TensorMetaData = img.fine_metadata()
 nd = img.nd()
 size_time = md.dimensions[0]
 
+scalar_weight_functions = ["grady", "bian_mean", "bhatt_var_gaussian", "ttest"]
+vector_weight_functions = ["custom"]
+weight_functions = vector_weight_functions + scalar_weight_functions
 
 for l in img.levels:
     print(l.metadata.dimensions)
@@ -57,7 +60,7 @@ store = pc.Store()
 view_state = pc.ImageViewerState().store(store)
 
 mode = store.store_primitive("hierarchical")
-weight_function = store.store_primitive("bian_mean")
+weight_function = store.store_primitive("custom")
 min_edge_weight = store.store_primitive(1e-5)
 
 beta = store.store_primitive(128.0)
@@ -99,32 +102,45 @@ def ts_prev(ts):
     ts.write((ts.load() + size_time - 1) % size_time)
 
 def apply_weight_function(tensor):
-    match weight_function.load():
+    wf = weight_function.load()
+
+    def sq_f32(t):
+        t = t.cast(pc.ScalarType.F32)
+        return t * t
+
+    if wf in scalar_weight_functions:
+        i = tensor.cast(pc.ScalarType.F32.vec(tensor.dtype.size))
+        i = (i*i).hsum().sqrt()
+    else:
+        i = tensor
+
+    match wf:
         case "grady":
-            return pc.randomwalker_weights(tensor, min_edge_weight.load(), beta.load())
+            return pc.randomwalker_weights(i, min_edge_weight.load(), beta.load())
+        case "custom":
+            pairs = pc.randomwalker_weight_pairs(i)
+            n = pairs.dtype.size
+            n2 = n//2;
+            pairs = pairs.cast(pc.ScalarType.F32.vec(n))
+            diff = pairs.index_range(0, n2) - pairs.index_range(n2, n)
+            w = (-(diff * diff).hsum() * beta.load()).exp()
+            return w.max(min_edge_weight.load())
+
         case "bian_mean":
-            return pc.randomwalker_weights_bian(tensor, min_edge_weight.load(), extent.load())
+            return pc.randomwalker_weights_bian(i, min_edge_weight.load(), extent.load())
         case "bhatt_var_gaussian":
-            return pc.randomwalker_weights_bhattacharyya_var_gaussian(tensor, min_edge_weight.load(), extent.load())
+            return pc.randomwalker_weights_bhattacharyya_var_gaussian(i, min_edge_weight.load(), extent.load())
         case "ttest":
-            return pc.randomwalker_weights_ttest(tensor, min_edge_weight.load(), extent.load())
+            return pc.randomwalker_weights_ttest(i, min_edge_weight.load(), extent.load())
 
 def apply_rw_mode(input):
 
     fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
     bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
 
-    def sq_f32(t):
-        t = t.cast(pc.ScalarType.F32)
-        return t * t
-
-    def to_scalar(input):
-        return input.map(lambda l: sq_f32(l.index(0)) + sq_f32(l.index(1)) + sq_f32(l.index(2)))
-
     match mode.load():
         case "normal":
-            i = to_scalar(input)
-            i = i.levels[0].rechunk([pc.chunk_size_full]*nd)
+            i = input.levels[0].rechunk([pc.chunk_size_full]*nd)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
@@ -132,8 +148,7 @@ def apply_rw_mode(input):
             return (input, rw_result.create_lod(lod_args))
 
         case "hierarchical":
-            i = to_scalar(input)
-            weights = i.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
+            weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
             rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
             return (input, rw_result)
 
@@ -151,9 +166,9 @@ def render(size, events: pc.Events):
     widgets = []
 
     widgets.append(pc.ComboBox("Mode", mode, ["normal", "hierarchical"]))
-    widgets.append(pc.ComboBox("Weight Function", weight_function, ["grady", "bian_mean", "bhatt_var_gaussian", "ttest"]))
+    widgets.append(pc.ComboBox("Weight Function", weight_function, weight_functions))
     match weight_function.load():
-        case "grady":
+        case "grady" | "custom":
             widgets.append(palace_util.named_slider("beta", beta, 0.01, 10000, logarithmic=True))
         case "bian_mean" | "var_gaussian" | "ttest":
             widgets.append(palace_util.named_slider("extent", extent, 1, 5))
