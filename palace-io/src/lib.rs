@@ -76,7 +76,7 @@ pub fn open_single_level(
             .into_dyn()
             .try_into()
             .unwrap(),
-        [.., "mp4"] => palace_video::open(path.to_string_lossy().as_ref())?
+        [.., "mp4" | "mkv"] => palace_video::open(path.to_string_lossy().as_ref())?
             .embedded(Default::default())
             .into_dyn()
             .try_into()
