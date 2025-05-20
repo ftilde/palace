@@ -75,6 +75,7 @@ pub enum UnaryOp {
     Neg,
     Log,
     Exp,
+    Sqrt,
     Cast(DType),
     Index(u32),
     IndexRange(u32, u32),
@@ -88,6 +89,7 @@ impl UnaryOp {
             UnaryOp::Abs => input,
             UnaryOp::Log => input,
             UnaryOp::Exp => input,
+            UnaryOp::Sqrt => input,
             UnaryOp::Cast(output) => {
                 if input.vec_size() == output.vec_size() {
                     *output
@@ -158,6 +160,7 @@ impl Display for WriteUnary {
             UnaryOp::Log => write!(f, "log({})", v),
             UnaryOp::Exp => write!(f, "exp({})", v),
             UnaryOp::Abs => write!(f, "abs({})", v),
+            UnaryOp::Sqrt => write!(f, "sqrt({})", v),
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
             UnaryOp::Index(i) => write!(f, "{}[{}]", v.0, i),
@@ -733,6 +736,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn exp(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Exp, self)
+    }
+    pub fn sqrt(self) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Sqrt, self)
     }
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)

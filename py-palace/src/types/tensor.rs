@@ -1018,6 +1018,9 @@ impl TensorOperator {
     fn exp(&self) -> PyResult<Self> {
         jit_unary(UnaryOp::Exp, self)
     }
+    fn sqrt(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Sqrt, self)
+    }
     fn cast(&self, to: MaybeScalarDType) -> PyResult<Self> {
         let to = match to {
             MaybeScalarDType::Scalar(s) => DType::scalar(s),
@@ -1119,6 +1122,7 @@ impl_embedded_tensor_operator_with_delegate!(
     __neg__(),
     log(),
     exp(),
+    sqrt(),
     abs(),
     cast(to: MaybeScalarDType),
     index(index: u32),
