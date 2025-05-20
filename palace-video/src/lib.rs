@@ -71,8 +71,7 @@ impl VideoSourceState {
         let loc_path = loc.as_path().to_owned();
         let decoder = Decoder::new(loc)?;
 
-        let duration = dbg!(decoder.duration()?);
-        let mut duration_pts = duration.into_value().unwrap();
+        let mut duration_pts = decoder.duration()?.into_value().unwrap();
         let fps = decoder.frame_rate() as f64;
         let frame_size = decoder.size_out();
         let mut n_frames = decoder.frames()?;
