@@ -1012,6 +1012,12 @@ impl TensorOperator {
     fn __neg__(&self) -> PyResult<Self> {
         jit_unary(UnaryOp::Neg, self)
     }
+    fn log(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Log, self)
+    }
+    fn exp(&self) -> PyResult<Self> {
+        jit_unary(UnaryOp::Exp, self)
+    }
     fn cast(&self, to: MaybeScalarDType) -> PyResult<Self> {
         let to = match to {
             MaybeScalarDType::Scalar(s) => DType::scalar(s),
@@ -1096,6 +1102,8 @@ impl_embedded_tensor_operator_with_delegate!(
     rechunk(size: Vec<ChunkSize>),
 
     __neg__(),
+    log(),
+    exp(),
     abs(),
     cast(to: MaybeScalarDType),
     index(index: u32),

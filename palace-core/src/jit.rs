@@ -74,6 +74,7 @@ pub enum UnaryOp {
     Abs,
     Neg,
     Log,
+    Exp,
     Cast(DType),
     Index(u32),
     Splat(u32),
@@ -85,6 +86,7 @@ impl UnaryOp {
         Ok(match self {
             UnaryOp::Abs => input,
             UnaryOp::Log => input,
+            UnaryOp::Exp => input,
             UnaryOp::Cast(output) => {
                 if input.vec_size() == output.vec_size() {
                     *output
@@ -135,6 +137,7 @@ impl Display for WriteUnary {
         let v = &self.2;
         match self.1 {
             UnaryOp::Log => write!(f, "log({})", v),
+            UnaryOp::Exp => write!(f, "exp({})", v),
             UnaryOp::Abs => write!(f, "abs({})", v),
             UnaryOp::Cast(output) => write!(f, "{}({})", output.scalar.glsl_type(), v),
             UnaryOp::Neg => write!(f, "-{}", v),
@@ -701,6 +704,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn log(self) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Log, self)
+    }
+    pub fn exp(self) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Exp, self)
     }
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)
