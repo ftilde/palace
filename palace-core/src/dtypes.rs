@@ -345,4 +345,46 @@ impl ScalarType {
             size,
         }
     }
+
+    pub fn is_integer(&self) -> bool {
+        match self {
+            ScalarType::U8
+            | ScalarType::I8
+            | ScalarType::U16
+            | ScalarType::I16
+            | ScalarType::U32
+            | ScalarType::I32
+            | ScalarType::U64
+            | ScalarType::I64 => true,
+            ScalarType::F32 => false,
+        }
+    }
+
+    pub fn max_value(&self) -> f64 {
+        match self {
+            ScalarType::U8 => u8::max_value() as f64,
+            ScalarType::I8 => i8::max_value() as f64,
+            ScalarType::U16 => u16::max_value() as f64,
+            ScalarType::I16 => i16::max_value() as f64,
+            ScalarType::F32 => f32::INFINITY as f64,
+            ScalarType::U32 => u32::max_value() as f64,
+            ScalarType::I32 => i32::max_value() as f64,
+            ScalarType::U64 => u64::max_value() as f64,
+            ScalarType::I64 => i64::max_value() as f64,
+        }
+    }
+
+    pub fn min_value(&self) -> f64 {
+        match self {
+            ScalarType::U8 => u8::min_value() as f64,
+            ScalarType::I8 => i8::min_value() as f64,
+            ScalarType::U16 => u16::min_value() as f64,
+            ScalarType::I16 => i16::min_value() as f64,
+            ScalarType::F32 => -f32::INFINITY as f64,
+            ScalarType::U32 => u32::min_value() as f64,
+            ScalarType::I32 => i32::min_value() as f64,
+            ScalarType::U64 => u64::min_value() as f64,
+            ScalarType::I64 => i64::min_value() as f64,
+        }
+    }
 }

@@ -104,10 +104,6 @@ def ts_prev(ts):
 def apply_weight_function(tensor):
     wf = weight_function.load()
 
-    def sq_f32(t):
-        t = t.cast(pc.ScalarType.F32)
-        return t * t
-
     if wf in scalar_weight_functions:
         i = tensor.cast(pc.ScalarType.F32.vec(tensor.dtype.size))
         i = (i*i).hsum().sqrt()
@@ -121,7 +117,10 @@ def apply_weight_function(tensor):
             pairs = pc.randomwalker_weight_pairs(i)
             n = pairs.dtype.size
             n2 = n//2;
+            orig_dtype = pairs.dtype.scalar
             pairs = pairs.cast(pc.ScalarType.F32.vec(n))
+            if orig_dtype.is_integer():
+                pairs = pairs / pc.jit(orig_dtype.max_value()).splat(n)
             diff = pairs.index_range(0, n2) - pairs.index_range(n2, n)
             w = (-(diff * diff).hsum() * beta.load()).exp()
             return w.max(min_edge_weight.load())
