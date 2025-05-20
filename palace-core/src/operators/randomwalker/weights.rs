@@ -4,7 +4,7 @@ use id::Identify;
 use crate::{
     chunk_utils::ChunkNeighborhood,
     data::ChunkCoordinate,
-    dim::{DynDimension, LargerDim},
+    dim::{DynDimension, LargerDim, D2},
     dtypes::{ScalarType, StaticElementType},
     jit::{self, JitTensorOperator},
     op_descriptor,
@@ -69,6 +69,126 @@ pub enum WeightFunction {
     BianMean { extent: u32 },
     BhattacharyyaVarGaussian { extent: u32 },
     TTest { extent: u32 },
+}
+
+pub fn random_walker_weight_pairs<D: DynDimension + LargerDim>(
+    tensor: TensorOperator<D, StaticElementType<f32>>,
+) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<Vector<D2, f32>>> {
+    let nd = tensor.metadata.dim().n();
+
+    let out_md = tensor
+        .metadata
+        .clone()
+        .push_dim_small((nd as u32).into(), (nd as u32).into());
+
+    TensorOperator::with_state(
+        op_descriptor!(),
+        Default::default(),
+        out_md.clone(),
+        (tensor, DataParam(out_md)),
+        |ctx, mut positions, loc, (tensor, out_md)| {
+            async move {
+                let device = ctx.preferred_device(loc);
+                let nd = tensor.metadata.dim().n();
+
+                let md = &tensor.metadata;
+
+                let push_constants = DynPushConstants::new()
+                    .vec::<u32>(nd, "tensor_dim_in")
+                    .vec::<u32>(nd, "chunk_dim_in")
+                    .vec::<u32>(nd, "chunk_begin")
+                    .scalar::<u32>("dim");
+
+                let pipeline = device.request_state(
+                    (md.chunk_size.hmul(), nd, &push_constants),
+                    |device, (mem_size, nd, push_constants)| {
+                        ComputePipelineBuilder::new(
+                            Shader::new(include_str!("randomwalker_weight_pairs.glsl"))
+                                .push_const_block_dyn(push_constants)
+                                .define("BRICK_MEM_SIZE", mem_size)
+                                .define("ND", nd),
+                        )
+                        .build(device)
+                    },
+                )?;
+
+                let read_info = DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ,
+                };
+
+                positions.sort();
+                let push_constants = &push_constants;
+
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(|pos| {
+                        async move {
+                            let input = ctx
+                                .submit(tensor.chunks.request_gpu(device.id, pos, read_info))
+                                .await;
+
+                            let neighbor_requests = (0..nd).into_iter().map(|dim| {
+                                let pos_nd = tensor.metadata.chunk_pos_from_index(pos);
+                                let neighbor_nd = pos_nd.map_element(dim, |e: ChunkCoordinate| {
+                                    (e + 1u32)
+                                        .min(tensor.metadata.dimension_in_chunks()[dim] - 1u32)
+                                });
+                                tensor.chunks.request_gpu(
+                                    device.id,
+                                    tensor.metadata.chunk_index(&neighbor_nd),
+                                    read_info,
+                                )
+                            });
+
+                            let neighbors = ctx.submit(ctx.group(neighbor_requests)).await;
+
+                            let chunk_info = md.chunk_info(pos);
+
+                            let out_chunk = ctx
+                                .submit(ctx.alloc_slot_gpu(&device, pos, &out_md.chunk_size))
+                                .await;
+                            for dim in 0..nd {
+                                let neighbor = &neighbors[dim];
+
+                                let global_size = md.chunk_size.raw();
+
+                                let descriptor_config =
+                                    DescriptorConfig::new([&input, neighbor, &out_chunk]);
+
+                                device.with_cmd_buffer(|cmd| unsafe {
+                                    let mut pipeline = pipeline.bind(cmd);
+
+                                    pipeline.push_constant_dyn(&push_constants, |consts| {
+                                        consts.vec(&md.dimensions.raw())?;
+                                        consts.vec(&md.chunk_size.raw())?;
+                                        consts.vec(&chunk_info.begin().raw())?;
+                                        consts.scalar(dim as u32)?;
+                                        Ok(())
+                                    });
+                                    pipeline.write_descriptor_set(0, descriptor_config);
+                                    pipeline.dispatch_dyn(device, global_size);
+                                });
+                            }
+
+                            unsafe {
+                                out_chunk.initialized(
+                                    *ctx,
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                )
+                            };
+                        }
+                        .into()
+                    }))
+                    .await;
+
+                Ok(())
+            }
+            .into()
+        },
+    )
 }
 
 pub fn random_walker_weights_grady<D: DynDimension + LargerDim>(

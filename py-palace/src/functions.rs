@@ -269,6 +269,19 @@ pub fn randomwalker_weights(
     Ok(res.into())
 }
 
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn randomwalker_weight_pairs(
+    input: MaybeEmbeddedTensorOperatorArg,
+) -> PyResult<TensorOperator> {
+    let input = input.unpack().into_inner().try_into()?;
+    let res: CTensorOperator<DDyn, DType> =
+        palace_core::operators::randomwalker::random_walker_weight_pairs(input)
+            .into_dyn()
+            .into();
+    Ok(res.into())
+}
+
 #[derive(FromPyObject)]
 #[gen_stub_pyclass_enum]
 pub enum MaybeVecUint {

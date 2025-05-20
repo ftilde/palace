@@ -39,6 +39,7 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(procedural, m)?)?;
     m.add_function(wrap_pyfunction!(from_numpy, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights, m)?)?;
+    m.add_function(wrap_pyfunction!(randomwalker_weight_pairs, m)?)?;
     m.add_function(wrap_pyfunction!(randomwalker_weights_bian, m)?)?;
     m.add_function(wrap_pyfunction!(
         randomwalker_weights_bhattacharyya_var_gaussian,
