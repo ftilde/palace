@@ -172,22 +172,23 @@ def render(size, events: pc.Events):
         global foreground_seeds, background_seeds
 
         image_pos = palace_util.mouse_to_image_pos(slice_state.load(), embedded_tensor, pos, frame_size)
-        match nd:
-            case 2:
-                pos_nd = np.array(image_pos, dtype=np.float32)
-            case 3:
-                pos_nd = [timestep.load()] + list(img_pos)
-                pos_nd = np.array(pos_nd, dtype=np.float32)
+        if image_pos is not None:
+            match nd:
+                case 2:
+                    pos_nd = np.array(image_pos, dtype=np.float32)
+                case 3:
+                    pos_nd = [timestep.load()] + list(img_pos)
+                    pos_nd = np.array(pos_nd, dtype=np.float32)
 
-        pos_nd = np.concatenate(([1], pos_nd), dtype = np.float32)
-        pos_nd = img.fine_embedding_data().voxel_to_physical().dot(pos_nd)
-        pos_nd = pos_nd[1:]
-        pos_nd = pos_nd.reshape((1, nd))
+            pos_nd = np.concatenate(([1], pos_nd), dtype = np.float32)
+            pos_nd = img.fine_embedding_data().voxel_to_physical().dot(pos_nd)
+            pos_nd = pos_nd[1:]
+            pos_nd = pos_nd.reshape((1, nd))
 
-        if foreground:
-            foreground_seeds = np.concat([foreground_seeds, pos_nd])
-        else:
-            background_seeds = np.concat([background_seeds, pos_nd])
+            if foreground:
+                foreground_seeds = np.concat([foreground_seeds, pos_nd])
+            else:
+                background_seeds = np.concat([background_seeds, pos_nd])
 
     def view_image(image, state):
         def inner(size, events):
