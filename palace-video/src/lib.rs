@@ -71,10 +71,31 @@ impl VideoSourceState {
         let loc_path = loc.as_path().to_owned();
         let decoder = Decoder::new(loc)?;
 
-        let duration_pts = decoder.duration()?.into_value().unwrap();
-        let n_frames = decoder.frames()?;
-        let pts_per_frame = duration_pts / n_frames as i64;
+        let duration = dbg!(decoder.duration()?);
+        let mut duration_pts = duration.into_value().unwrap();
+        let fps = dbg!(decoder.frame_rate()) as f64;
         let frame_size = decoder.size_out();
+        let mut n_frames = decoder.frames()?;
+
+        let (decoder, reader, reader_stream_index) = decoder.into_parts();
+
+        if duration_pts < 0 {
+            duration_pts = unsafe { *reader.input.as_ptr() }.duration;
+        }
+
+        if n_frames == 0 {
+            let duration_s = video_rs::Time::new(
+                Some(duration_pts),
+                video_rs::ffmpeg::ffi::AV_TIME_BASE_Q.into(),
+            )
+            .as_secs_f64();
+            n_frames = (duration_s * fps) as u64;
+        }
+        let pts_per_frame = duration_pts / n_frames as i64;
+        println!(
+            "Duration (pts) {} | n_frames {} | pts per frame {}",
+            duration_pts, n_frames, pts_per_frame
+        );
 
         let metadata = TensorMetaData {
             dimensions: Vector::<D3, _>::new([n_frames as u32, frame_size.1, frame_size.0])
@@ -82,7 +103,6 @@ impl VideoSourceState {
             chunk_size: Vector::<D3, _>::new([1u32, frame_size.1, frame_size.0]).local(),
         };
 
-        let (decoder, reader, reader_stream_index) = decoder.into_parts();
         let decoder = DecoderParts {
             decoder,
             reader,
