@@ -4,8 +4,8 @@ use id::Identify;
 use crate::{
     chunk_utils::ChunkNeighborhood,
     data::ChunkCoordinate,
-    dim::{DynDimension, LargerDim, D2},
-    dtypes::{ScalarType, StaticElementType},
+    dim::{DynDimension, LargerDim},
+    dtypes::{DType, ElementType, ScalarType, StaticElementType},
     jit::{self, JitTensorOperator},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
@@ -71,9 +71,9 @@ pub enum WeightFunction {
     TTest { extent: u32 },
 }
 
-pub fn random_walker_weight_pairs<D: DynDimension + LargerDim>(
-    tensor: TensorOperator<D, StaticElementType<f32>>,
-) -> TensorOperator<<D as LargerDim>::Larger, StaticElementType<Vector<D2, f32>>> {
+pub fn random_walker_weight_pairs<D: DynDimension + LargerDim, T: ElementType>(
+    tensor: TensorOperator<D, T>,
+) -> TensorOperator<<D as LargerDim>::Larger, DType> {
     let nd = tensor.metadata.dim().n();
 
     let out_md = tensor
@@ -81,9 +81,12 @@ pub fn random_walker_weight_pairs<D: DynDimension + LargerDim>(
         .clone()
         .push_dim_small((nd as u32).into(), (nd as u32).into());
 
+    let in_dtype: DType = tensor.dtype().into();
+    let out_dtype = in_dtype.vectorize(2);
+
     TensorOperator::with_state(
         op_descriptor!(),
-        Default::default(),
+        out_dtype,
         out_md.clone(),
         (tensor, DataParam(out_md)),
         |ctx, mut positions, loc, (tensor, out_md)| {
@@ -92,6 +95,7 @@ pub fn random_walker_weight_pairs<D: DynDimension + LargerDim>(
                 let nd = tensor.metadata.dim().n();
 
                 let md = &tensor.metadata;
+                let dtype: DType = tensor.dtype().into();
 
                 let push_constants = DynPushConstants::new()
                     .vec::<u32>(nd, "tensor_dim_in")
@@ -100,13 +104,15 @@ pub fn random_walker_weight_pairs<D: DynDimension + LargerDim>(
                     .scalar::<u32>("dim");
 
                 let pipeline = device.request_state(
-                    (md.chunk_size.hmul(), nd, &push_constants),
-                    |device, (mem_size, nd, push_constants)| {
+                    (md.chunk_size.hmul(), nd, dtype, &push_constants),
+                    |device, (mem_size, nd, dtype, push_constants)| {
                         ComputePipelineBuilder::new(
                             Shader::new(include_str!("randomwalker_weight_pairs.glsl"))
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
-                                .define("ND", nd),
+                                .define("ND", nd)
+                                .define("T", dtype.glsl_type_force_vec())
+                                .ext(dtype.glsl_ext()),
                         )
                         .build(device)
                     },

@@ -6,15 +6,15 @@
 #include <size_util.glsl>
 
 layout(std430, binding = 0) readonly buffer Input {
-    float values[BRICK_MEM_SIZE];
+    T values[BRICK_MEM_SIZE];
 } input_buf;
 
 layout(std430, binding = 1) readonly buffer Neighbor {
-    float values[BRICK_MEM_SIZE];
+    T values[BRICK_MEM_SIZE];
 } neighbor_buf;
 
 layout(std430, binding = 2) buffer WeightPairs {
-    vec2 values[BRICK_MEM_SIZE][ND];
+    T values[BRICK_MEM_SIZE][ND][2];
 } weight_pairs;
 
 declare_push_consts(consts);
@@ -33,9 +33,9 @@ void main() {
     uint[ND] neighbor = current;
     neighbor[dim] += 1;
     if(all(less_than(add(consts.chunk_begin, neighbor), consts.tensor_dim_in))) {
-        float current_val = input_buf.values[current_linear];
+        T current_val = input_buf.values[current_linear];
 
-        float neighbor_val;
+        T neighbor_val;
         if(neighbor[dim] < consts.chunk_dim_in[dim]) {
             uint neighbor_linear = to_linear(neighbor, consts.chunk_dim_in);
             neighbor_val = input_buf.values[neighbor_linear];
@@ -45,8 +45,11 @@ void main() {
             neighbor_val = neighbor_buf.values[neighbor_linear];
         }
 
-        weight_pairs.values[current_linear][dim] = vec2(current_val, neighbor_val);
+        weight_pairs.values[current_linear][dim][0] = current_val;
+        weight_pairs.values[current_linear][dim][1] = neighbor_val;
     } else {
-        weight_pairs.values[current_linear][dim] = vec2(NaN);
+        //T garbage_value = T(0);
+        //weight_pairs.values[current_linear][dim][0] = garbage_value;
+        //weight_pairs.values[current_linear][dim][1] = garbage_value;
     }
 }

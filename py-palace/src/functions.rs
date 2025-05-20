@@ -274,7 +274,7 @@ pub fn randomwalker_weights(
 pub fn randomwalker_weight_pairs(
     input: MaybeEmbeddedTensorOperatorArg,
 ) -> PyResult<TensorOperator> {
-    let input = input.unpack().into_inner().try_into()?;
+    let input: CTensorOperator<DDyn, DType> = input.unpack().into_inner().try_into()?;
     let res: CTensorOperator<DDyn, DType> =
         palace_core::operators::randomwalker::random_walker_weight_pairs(input)
             .into_dyn()
