@@ -63,7 +63,7 @@ macro_rules! impl_conversion {
                 } else {
                     Err(ConversionError {
                         actual: value.into(),
-                        expected: stringify!($ty),
+                        expected: <$ty>::D_TYPE,
                     })
                 }
             }
@@ -96,7 +96,7 @@ impl<D: Dimension, T: Copy + AsDynType> AsDynType for Vector<D, T> {
     const D_TYPE: DType = T::D_TYPE.vectorize(D::N as u32);
 }
 
-impl<D: Dimension, T: Copy> TryFrom<DType> for StaticElementType<Vector<D, T>>
+impl<D: Dimension, T: Copy + AsDynType> TryFrom<DType> for StaticElementType<Vector<D, T>>
 where
     StaticElementType<T>: TryFrom<ScalarType, Error = ConversionError>,
 {
@@ -107,7 +107,7 @@ where
         if value.size as usize != D::N {
             return Err(ConversionError {
                 actual: value.into(),
-                expected: stringify!(Vector<D, T>),
+                expected: <Vector<D, T>>::D_TYPE,
             });
         }
         Ok(Default::default())
@@ -120,7 +120,7 @@ impl<const N: usize, T: Copy + AsDynType> AsDynType for [T; N] {
     };
 }
 
-impl<const N: usize, T: Copy> TryFrom<DType> for StaticElementType<[T; N]>
+impl<const N: usize, T: Copy + AsDynType> TryFrom<DType> for StaticElementType<[T; N]>
 where
     StaticElementType<T>: TryFrom<ScalarType, Error = ConversionError>,
 {
@@ -131,7 +131,7 @@ where
         if value.size as usize != N {
             return Err(ConversionError {
                 actual: value.into(),
-                expected: stringify!(Vector<D, T>),
+                expected: <[T; N]>::D_TYPE,
             });
         }
         Ok(Default::default())
@@ -152,7 +152,7 @@ impl_conversion!(f32, F32);
 
 #[derive(Debug)]
 pub struct ConversionError {
-    pub expected: &'static str,
+    pub expected: DType,
     pub actual: DType,
 }
 
