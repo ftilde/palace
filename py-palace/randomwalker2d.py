@@ -25,8 +25,8 @@ except:
 
     chunks = list(reversed([128 if i < 3 else 8 for i in range(0, img.nd())]))
     img = img.rechunk(chunks)
-    steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, img.nd())]))
-    img = img.create_lod(steps)
+    lod_args = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, img.nd())]))
+    img = img.create_lod(lod_args)
 
 img = img.map(lambda i: palace_util.pad_dtype_channels_to(i, 4, 255))
 
