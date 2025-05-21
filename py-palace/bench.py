@@ -74,4 +74,4 @@ def render(size, events):
 
     return frame(size, events)
 
-rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=True)
+rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False)
