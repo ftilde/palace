@@ -138,10 +138,10 @@ impl VideoSourceState {
                     let layout = std::alloc::Layout::array::<TensorElement>(num_elements).unwrap();
 
                     for pos in positions {
-                        if ctx
-                            .storage()
-                            .exists_in_storage(ctx.data_descriptor(pos).unwrap().id)
-                        {
+                        if ctx.storage().exists_in_storage(
+                            ctx.data_descriptor(pos).unwrap().id,
+                            palace_core::storage::DataVersion::Final,
+                        ) {
                             //println!("Welp, {:?} already there", pos);
 
                             let data_id = ctx.data_descriptor(pos).unwrap().id;

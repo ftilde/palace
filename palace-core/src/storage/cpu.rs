@@ -948,15 +948,14 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
             .unwrap_or(false)
     }
 
-    pub fn exists_in_storage(&self, id: DataId) -> bool {
+    pub fn exists_in_storage(&self, id: DataId, from_version: DataVersion) -> bool {
         self.index
             .borrow()
             .get(&id)
-            .map(|e| {
-                matches!(
-                    e.state,
-                    StorageEntryState::Initializing(_, _) | StorageEntryState::Initialized(_, _)
-                )
+            .map(|e| match e.state {
+                StorageEntryState::Registered => false,
+                StorageEntryState::Initializing(_, _) => true,
+                StorageEntryState::Initialized(_, data_version) => data_version >= from_version,
             })
             .unwrap_or(false)
     }
@@ -1212,7 +1211,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         'inv,
         Result<RawWriteHandleUninit<'req, Allocator>, ConcurrentWriteAccessError>,
     > {
-        if self.exists_in_storage(data_descriptor.id) {
+        if self.exists_in_storage(data_descriptor.id, DataVersion::Preview(current_frame)) {
             return Request::ready(Err(ConcurrentWriteAccessError));
         }
         let mut access = Some(self.register_access(current_frame, data_descriptor.id));
