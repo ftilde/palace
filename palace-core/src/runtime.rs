@@ -236,6 +236,82 @@ impl BarrierBatcher {
         }
     }
 }
+pub struct RunTimeBuilder<'a> {
+    num_compute_threads: usize,
+    disk_cache_size: Option<usize>,
+    disk_cache_path: &'a Path,
+    devices: Vec<usize>, //Empty: any
+}
+
+impl<'a> RunTimeBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            num_compute_threads: num_cpus::get(),
+            disk_cache_size: None,
+            disk_cache_path: &Path::new("./disk.cache"),
+            devices: Vec::new(),
+        }
+    }
+    pub fn num_compute_threads(mut self, n: usize) -> Self {
+        self.num_compute_threads = n;
+        self
+    }
+    pub fn num_compute_threads_opt(self, n: Option<usize>) -> Self {
+        if let Some(n) = n {
+            self.num_compute_threads(n)
+        } else {
+            self
+        }
+    }
+    pub fn disk_cache_size(mut self, n: usize) -> Self {
+        self.disk_cache_size = Some(n);
+        self
+    }
+    pub fn disk_cache_size_opt(self, n: Option<usize>) -> Self {
+        if let Some(n) = n {
+            self.disk_cache_size(n)
+        } else {
+            self
+        }
+    }
+    pub fn disk_cache_path<'b>(self, path: &'b Path) -> RunTimeBuilder<'b>
+    where
+        'a: 'b,
+    {
+        let mut ret: RunTimeBuilder<'b> = self;
+        ret.disk_cache_path = path;
+        ret
+    }
+    pub fn devices(mut self, devices: Vec<usize>) -> Self {
+        self.devices = devices;
+        self
+    }
+    pub fn finish(self, storage_size: usize, gpu_storage_size: u64) -> Result<RunTime, Error> {
+        let (async_result_sender, async_result_receiver) = mpsc::channel();
+        let vulkan = VulkanContext::new(gpu_storage_size, self.devices)?;
+        let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
+        let ram = crate::storage::cpu::Storage::new(ram);
+        let disk = if let Some(size) = self.disk_cache_size {
+            let disk = crate::storage::disk::MmapAllocator::new(self.disk_cache_path, size)?;
+            Some(crate::storage::cpu::Storage::new(disk))
+        } else {
+            None
+        };
+        let frame = FrameNumber::first();
+        Ok(RunTime {
+            ram,
+            disk,
+            compute_thread_pool: ComputeThreadPool::new(
+                async_result_sender.clone(),
+                self.num_compute_threads,
+            ),
+            io_thread_pool: IoThreadPool::new(async_result_sender),
+            async_result_receiver,
+            vulkan,
+            frame,
+        })
+    }
+}
 
 pub struct RunTime {
     pub ram: crate::storage::ram::Storage,
@@ -270,43 +346,9 @@ impl Deadline {
 }
 
 impl RunTime {
-    pub fn new(
-        storage_size: usize,
-        gpu_storage_size: u64,
-        num_compute_threads: Option<usize>,
-        disk_cache_size: Option<usize>,
-        disk_cache_path: Option<&Path>,
-        devices: Vec<usize>, //Empty: any
-    ) -> Result<Self, Error> {
-        let num_compute_threads = num_compute_threads.unwrap_or(num_cpus::get());
-        let (async_result_sender, async_result_receiver) = mpsc::channel();
-        let vulkan = VulkanContext::new(gpu_storage_size, devices)?;
-        let ram = crate::storage::ram::RamAllocator::new(storage_size)?;
-        let ram = crate::storage::cpu::Storage::new(ram);
-        let disk = if let Some(size) = disk_cache_size {
-            let disk = crate::storage::disk::MmapAllocator::new(
-                disk_cache_path.unwrap_or(&Path::new("./disk.cache")),
-                size,
-            )?;
-            Some(crate::storage::cpu::Storage::new(disk))
-        } else {
-            None
-        };
-        let frame = FrameNumber::first();
-        Ok(RunTime {
-            ram,
-            disk,
-            compute_thread_pool: ComputeThreadPool::new(
-                async_result_sender.clone(),
-                num_compute_threads,
-            ),
-            io_thread_pool: IoThreadPool::new(async_result_sender),
-            async_result_receiver,
-            vulkan,
-            frame,
-        })
+    pub fn build() -> RunTimeBuilder<'static> {
+        RunTimeBuilder::new()
     }
-
     pub fn checked_device_id(&self, raw_id: usize) -> Option<DeviceId> {
         self.vulkan.checked_device_id(raw_id)
     }

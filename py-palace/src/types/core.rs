@@ -82,14 +82,13 @@ impl RunTime {
     ) -> PyResult<Self> {
         Ok(Self {
             inner: Rc::new(
-                map_result(palace_core::runtime::RunTime::new(
-                    storage_size,
-                    gpu_storage_size,
-                    num_compute_threads,
-                    disk_cache_size,
-                    None,
-                    devices,
-                ))?
+                map_result(
+                    palace_core::runtime::RunTime::build()
+                        .disk_cache_size_opt(disk_cache_size)
+                        .devices(devices)
+                        .num_compute_threads_opt(num_compute_threads)
+                        .finish(storage_size, gpu_storage_size),
+                )?
                 .into(),
             ),
         })

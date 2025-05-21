@@ -118,19 +118,12 @@ fn parse_file_type(path: &Path) -> Result<FileFormat, String> {
 fn main() {
     let args = CliArgs::parse();
 
-    let storage_size = args.mem_size.0 as _;
-    let gpu_storage_size = args.gpu_mem_size.0 as _;
-    let disk_cache_size = args.disk_cache_size.map(|v| v.0 as _);
-
-    let mut runtime = RunTime::new(
-        storage_size,
-        gpu_storage_size,
-        args.compute_pool_size,
-        disk_cache_size,
-        None,
-        args.devices,
-    )
-    .unwrap();
+    let mut runtime = RunTime::build()
+        .disk_cache_size_opt(args.disk_cache_size.map(|v| v.0 as _))
+        .devices(args.devices)
+        .num_compute_threads_opt(args.compute_pool_size)
+        .finish(args.mem_size.0 as _, args.gpu_mem_size.0 as _)
+        .unwrap();
 
     let mut input_hints = palace_io::Hints::default();
     if let Some(location) = args.location {
