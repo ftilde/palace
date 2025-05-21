@@ -27,8 +27,6 @@ const WAIT_TIMEOUT_GPU: Duration = Duration::from_micros(100);
 const WAIT_TIMEOUT_CPU: Duration = Duration::from_micros(100);
 const STUCK_TIMEOUT: Duration = Duration::from_secs(5);
 
-const OPERATOR_REQUEST_BATCHING_GRANULARITY: usize = 64;
-
 struct DataRequestItem {
     id: DataId,
     item: ChunkIndex,
@@ -241,6 +239,8 @@ pub struct RunTimeBuilder<'a> {
     disk_cache_size: Option<usize>,
     disk_cache_path: &'a Path,
     devices: Vec<usize>, //Empty: any
+    max_parallel_tasks: usize,
+    max_requests_per_task: usize,
 }
 
 impl<'a> RunTimeBuilder<'a> {
@@ -250,6 +250,8 @@ impl<'a> RunTimeBuilder<'a> {
             disk_cache_size: None,
             disk_cache_path: &Path::new("./disk.cache"),
             devices: Vec::new(),
+            max_parallel_tasks: crate::task_graph::DEFAULT_MAX_PARALLEL_TASKS_PER_OPERATOR,
+            max_requests_per_task: 64,
         }
     }
     pub fn num_compute_threads(mut self, n: usize) -> Self {
@@ -286,6 +288,28 @@ impl<'a> RunTimeBuilder<'a> {
         self.devices = devices;
         self
     }
+    pub fn max_requests_per_task(mut self, n: usize) -> Self {
+        self.max_requests_per_task = n;
+        self
+    }
+    pub fn max_requests_per_task_opt(self, n: Option<usize>) -> Self {
+        if let Some(n) = n {
+            self.max_requests_per_task(n)
+        } else {
+            self
+        }
+    }
+    pub fn max_parallel_tasks(mut self, n: usize) -> Self {
+        self.max_parallel_tasks = n;
+        self
+    }
+    pub fn max_parallel_tasks_opt(self, n: Option<usize>) -> Self {
+        if let Some(n) = n {
+            self.max_parallel_tasks(n)
+        } else {
+            self
+        }
+    }
     pub fn finish(self, storage_size: usize, gpu_storage_size: u64) -> Result<RunTime, Error> {
         let (async_result_sender, async_result_receiver) = mpsc::channel();
         let vulkan = VulkanContext::new(gpu_storage_size, self.devices)?;
@@ -309,6 +333,8 @@ impl<'a> RunTimeBuilder<'a> {
             async_result_receiver,
             vulkan,
             frame,
+            max_parallel_tasks: self.max_parallel_tasks,
+            max_requests_per_task: self.max_requests_per_task,
         })
     }
 }
@@ -321,6 +347,8 @@ pub struct RunTime {
     pub io_thread_pool: IoThreadPool,
     pub async_result_receiver: mpsc::Receiver<JobInfo>,
     frame: FrameNumber,
+    max_parallel_tasks: usize,
+    max_requests_per_task: usize,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -402,7 +430,7 @@ impl RunTime {
                     &mut self.async_result_receiver,
                 ),
                 waker: dummy_waker(),
-                task_graph: TaskGraph::new(save_task_stream),
+                task_graph: TaskGraph::new(self.max_parallel_tasks, save_task_stream),
                 statistics: Statistics::new(),
                 operator_info: Default::default(),
                 transfer_manager: Default::default(),
@@ -410,6 +438,7 @@ impl RunTime {
                 barrier_batcher: BarrierBatcher::new(),
                 deadline: deadline.unwrap_or(Deadline::never()),
                 start: Instant::now(),
+                max_requests_per_task: self.max_requests_per_task,
             }
         };
 
@@ -479,6 +508,7 @@ struct Executor<'cref, 'inv> {
     waker: Waker,
     deadline: Deadline,
     start: Instant,
+    max_requests_per_task: usize,
 }
 
 impl<'cref, 'inv> Executor<'cref, 'inv> {
@@ -965,7 +995,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                             let batch_size = match data_request.source.granularity() {
                                 crate::operator::ItemGranularity::Single => 1,
                                 crate::operator::ItemGranularity::Batched => {
-                                    OPERATOR_REQUEST_BATCHING_GRANULARITY
+                                    self.max_requests_per_task
                                 }
                             };
                             // Add item to batcher to spawn later

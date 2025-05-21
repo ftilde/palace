@@ -189,8 +189,10 @@ def add_runtime_args(parser):
     parser.add_argument('-m', '--mem_size', type=parse_si_number, default=8<<30)
     parser.add_argument('-g', '--gpu_mem_size', type=parse_si_number, default=8<<30)
     parser.add_argument('-d', '--disk_cache_size', type=parse_si_number, default=20<<30)
-    parser.add_argument('-c', '--compute_pool_size', type=int, default=None)
+    parser.add_argument('-c', '--compute-pool-size', type=int, default=None)
     parser.add_argument('--devices', type=list_of_ints, default=[])
+    parser.add_argument('--max-parallel-tasks', type=int, default=None)
+    parser.add_argument('--max-requests-per-task', type=int, default=None)
 
 def build_runtime_from_args(args):
-    return pc.RunTime(args.mem_size, args.gpu_mem_size, args.disk_cache_size, devices=args.devices, num_compute_threads=args.compute_pool_size)
+    return pc.RunTime(args.mem_size, args.gpu_mem_size, args.disk_cache_size, devices=args.devices, num_compute_threads=args.compute_pool_size, max_requests_per_task=args.max_requests_per_task, max_parallel_tasks=args.max_parallel_tasks)

@@ -422,14 +422,14 @@ impl HighLevelGraph {
     }
 }
 
-const NUM_PARALLEL_TASKS_PER_OPERATOR: usize = 2;
 #[derive(Default)]
 struct PostponedOperatorTask {
     queue: VecDeque<(TaskId, Priority)>,
     num_active: usize,
 }
 
-#[derive(Default)]
+pub const DEFAULT_MAX_PARALLEL_TASKS_PER_OPERATOR: usize = 2;
+
 pub struct TaskGraph {
     tasks: Map<TaskId, TaskMetadata>,
     waits_on: Map<TaskId, Map<RequestId, ProgressIndicator>>,
@@ -447,6 +447,31 @@ pub struct TaskGraph {
     high_level: HighLevelGraph,
     ts_counter: u32,
     postponed_data_operator_tasks: Map<OperatorId, PostponedOperatorTask>,
+    max_parallel_tasks_per_operator: usize,
+}
+
+impl Default for TaskGraph {
+    fn default() -> Self {
+        Self {
+            tasks: Default::default(),
+            waits_on: Default::default(),
+            required_by: Default::default(),
+            will_provide_data: Default::default(),
+            data_provided_by: Default::default(),
+            will_fullfil_req: Default::default(),
+            req_fullfil_by: Default::default(),
+            ready: Default::default(),
+            resolved_deps: Default::default(),
+            in_groups: Default::default(),
+            groups: Default::default(),
+            data_requests: Default::default(),
+            request_to_active_fulfillers: Default::default(),
+            high_level: Default::default(),
+            ts_counter: Default::default(),
+            postponed_data_operator_tasks: Default::default(),
+            max_parallel_tasks_per_operator: DEFAULT_MAX_PARALLEL_TASKS_PER_OPERATOR,
+        }
+    }
 }
 
 trait EventStreamNode {
@@ -498,8 +523,9 @@ impl Drop for TaskGraph {
 }
 
 impl TaskGraph {
-    pub fn new(enable_stream_recording: bool) -> Self {
+    pub fn new(max_parallel_tasks_per_operator: usize, enable_stream_recording: bool) -> Self {
         let mut s = Self::default();
+        s.max_parallel_tasks_per_operator = max_parallel_tasks_per_operator;
         s.high_level = HighLevelGraph::new(enable_stream_recording);
         s
     }
@@ -683,7 +709,7 @@ impl TaskGraph {
                 .postponed_data_operator_tasks
                 .entry(id.operator())
                 .or_default();
-            if entry.num_active < NUM_PARALLEL_TASKS_PER_OPERATOR {
+            if entry.num_active < self.max_parallel_tasks_per_operator {
                 entry.num_active += 1;
                 true
             } else {

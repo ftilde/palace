@@ -13,11 +13,11 @@ disk_cache_size = 20 << 30
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-b', '--batch', type=int, default=128)
+palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
 
-devices = [1]
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices, num_compute_threads=None)
+rt = palace_util.build_runtime_from_args(args)
 
 try:
     vol = pc.open_lod(args.volume_file)

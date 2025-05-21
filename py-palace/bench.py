@@ -4,20 +4,16 @@ import palace_util
 import argparse
 import time
 
-ram_size = 8 << 30
-vram_size = 10 << 30
-disk_cache_size = 20 << 30
-
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-t', '--transfunc', type=str)
 parser.add_argument('--tfmin', type=float, default=0.0)
 parser.add_argument('--tfmax', type=float, default=1.0)
+palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
 
-devices = [1]
-rt = pc.RunTime(ram_size, vram_size, disk_cache_size, devices=devices)
+rt = palace_util.build_runtime_from_args(args)
 
 try:
     vol = pc.open_lod(args.volume_file)
@@ -78,4 +74,4 @@ def render(size, events):
 
     return frame(size, events)
 
-rt.run_with_window(render, timeout_ms=10, bench=True)
+rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=True)
