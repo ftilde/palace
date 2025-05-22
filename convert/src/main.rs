@@ -76,6 +76,12 @@ struct CliArgs {
     /// Rechunk tensor to specified chunk size
     #[arg(long)]
     chunk_size: Option<String>,
+
+    #[arg(long)]
+    max_parallel_tasks: Option<usize>,
+
+    #[arg(long)]
+    max_requests_per_task: Option<usize>,
 }
 
 fn parse_lod_steps(s: String) -> Vector<DDyn, DownsampleStep> {
@@ -122,6 +128,8 @@ fn main() {
         .disk_cache_size_opt(args.disk_cache_size.map(|v| v.0 as _))
         .devices(args.devices)
         .num_compute_threads_opt(args.compute_pool_size)
+        .max_parallel_tasks_opt(args.max_parallel_tasks)
+        .max_requests_per_task_opt(args.max_requests_per_task)
         .finish(args.mem_size.0 as _, args.gpu_mem_size.0 as _)
         .unwrap();
 
