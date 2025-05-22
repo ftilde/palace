@@ -71,25 +71,28 @@ impl VideoSourceState {
         let loc_path = loc.as_path().to_owned();
         let decoder = Decoder::new(loc)?;
 
-        let mut duration_pts = decoder.duration()?.into_value().unwrap();
+        let mut duration = decoder.duration()?;
         let fps = decoder.frame_rate() as f64;
         let frame_size = decoder.size_out();
         let mut n_frames = decoder.frames()?;
 
         let (decoder, reader, reader_stream_index) = decoder.into_parts();
 
-        if duration_pts < 0 {
-            duration_pts = unsafe { *reader.input.as_ptr() }.duration;
+        if duration.into_value().is_none_or(|v| v < 0) {
+            let duration_global_pts = unsafe { *reader.input.as_ptr() }.duration;
+            duration = video_rs::Time::new(
+                Some(duration_global_pts),
+                video_rs::ffmpeg::ffi::AV_TIME_BASE_Q.into(),
+            );
         }
 
         if n_frames == 0 {
-            let duration_s = video_rs::Time::new(
-                Some(duration_pts),
-                video_rs::ffmpeg::ffi::AV_TIME_BASE_Q.into(),
-            )
-            .as_secs_f64();
-            n_frames = (duration_s * fps) as u64;
+            n_frames = (duration.as_secs_f64() * fps) as u64;
         }
+        let duration_pts = duration
+            .with_time_base(decoder.time_base())
+            .into_value()
+            .unwrap();
         let pts_per_frame = duration_pts / n_frames as i64;
         //println!(
         //    "Duration (pts) {} | n_frames {} | pts per frame {}",
