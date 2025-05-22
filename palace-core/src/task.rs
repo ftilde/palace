@@ -371,6 +371,10 @@ impl<'cref, 'inv> OpaqueTaskContext<'cref, 'inv> {
         self.current_task.operator()
     }
 
+    pub fn current_task(&self) -> TaskId {
+        self.current_task
+    }
+
     // Only available if task originated from an operator (may not be the case for transfer tasks
     // for example)
     pub fn current_op_desc(&self) -> Option<OperatorDescriptor> {
