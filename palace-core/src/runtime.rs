@@ -717,23 +717,17 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                         .max()
                         .unwrap();
 
-                    let any_need_fulfillment = requested.1.iter().any(|requestor| {
-                        !self.task_graph.is_currently_being_fulfilled(*requestor, id)
-                    });
-
-                    if any_need_fulfillment {
-                        if let Some(task_id) =
-                            self.try_make_available(id, produced_loc, requested.0, req_prio)
-                        {
-                            for requestor in requested.1.iter() {
-                                if !self.task_graph.is_currently_being_fulfilled(*requestor, id) {
-                                    self.task_graph
-                                        .will_provide_data_for(task_id, id, *requestor);
-                                }
+                    if let Some(task_id) =
+                        self.try_make_available(id, produced_loc, requested.0, req_prio)
+                    {
+                        for requestor in requested.1.iter() {
+                            if !self.task_graph.is_currently_being_fulfilled(*requestor, id) {
+                                self.task_graph
+                                    .will_provide_data_for(task_id, id, *requestor);
                             }
-                        } else {
-                            self.task_graph.resolved_implied(r_id);
                         }
+                    } else {
+                        self.task_graph.resolved_implied(r_id);
                     }
                 }
             }
