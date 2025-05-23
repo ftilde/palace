@@ -181,8 +181,8 @@ impl VideoSourceState {
                         let frames = ctx
                             .submit(ctx.spawn_compute(move || {
                                 let chunk_info = metadata.chunk_info(pos);
-                                let frame_num = chunk_info.begin[0].raw;
-                                let time_pts = inner.frame_number_to_pts(frame_num);
+                                let requested_frame_num = chunk_info.begin[0].raw;
+                                let time_pts = inner.frame_number_to_pts(requested_frame_num);
 
                                 let mut decoder = decoder.lock().unwrap();
                                 let stream_index = decoder.reader_stream_index;
@@ -238,9 +238,16 @@ impl VideoSourceState {
                                 let max_frame = inner.pts_to_frame_number(frames.last().unwrap().0);
 
                                 let mut out_frames = Vec::with_capacity(frames.len());
-                                for frame_num in min_frame..=max_frame {
+
+                                assert!(
+                                    min_frame <= pos.raw() as u32, // && pos.raw() as u32 <= max_frame,
+                                    "Requested frame not included"
+                                );
+
+                                for frame_num in min_frame..=max_frame.max(requested_frame_num) {
                                     let pts = inner.frame_number_to_pts(frame_num);
-                                    let right_i = frames.partition_point(|v| v.0 < pts);
+                                    let right_i =
+                                        frames.partition_point(|v| v.0 < pts).min(frames.len() - 1);
                                     let left_i = right_i.saturating_sub(1);
                                     let right = &frames[right_i];
                                     let left = &frames[left_i];
@@ -249,7 +256,7 @@ impl VideoSourceState {
                                         &Vector::<D3, _>::new([frame_num, 0, 0]).chunk(),
                                     );
 
-                                    if pts - left.0 < right.0 - pts {
+                                    if (pts - left.0).abs() < (right.0 - pts).abs() {
                                         out_frames.push((chunk_id, left.1.clone()));
                                     } else {
                                         out_frames.push((chunk_id, right.1.clone()));

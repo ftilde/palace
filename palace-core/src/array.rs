@@ -481,6 +481,12 @@ impl<D: SmallerDim> TensorMetaData<D> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Identify, Pod, Zeroable)]
 pub struct ChunkIndex(pub(crate) u64);
 
+impl ChunkIndex {
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+}
+
 pub type VolumeMetaData = TensorMetaData<D3>;
 pub type VolumeEmbeddingData = TensorEmbeddingData<D3>;
 impl VolumeMetaData {
