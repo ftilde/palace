@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, hash::Hash};
+use std::{collections::VecDeque, hash::Hash, path::Path};
 
 use crate::{
     operator::{DataId, OperatorId},
@@ -522,7 +522,9 @@ impl Drop for TaskGraph {
     fn drop(&mut self) {
         if std::thread::panicking() {
             println!("Panic detected, exporting task graph state...");
-            export(&self);
+            crate::task_graph::save(&self, Path::new("task_graph.svg"));
+            crate::task_graph::save_full_detail(&self, Path::new("task_graph_detailed.svg"));
+            crate::task_graph::save_task_stream(&self, Path::new("hltaskeventstream.json"));
         }
     }
 }
@@ -887,7 +889,7 @@ enum StreamAction {
     Remove,
 }
 
-pub fn export_full_detail(task_graph: &TaskGraph) {
+pub fn save_full_detail(task_graph: &TaskGraph, out_path: &Path) {
     use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
@@ -1030,8 +1032,6 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
         stmts,
     };
 
-    let filename = "taskgraph.svg";
-
     let mut ctx = PrinterContext::default();
     ctx.always_inline();
     let _empty = exec(
@@ -1040,31 +1040,34 @@ pub fn export_full_detail(task_graph: &TaskGraph) {
         vec![
             CommandArg::Format(Format::Svg),
             CommandArg::Layout(Layout::Dot),
-            CommandArg::Output(filename.to_string()),
+            CommandArg::Output(out_path.to_string_lossy().to_string()),
         ],
     )
     .unwrap();
-    println!("Finished writing dependency graph to file: {}", filename);
+    println!(
+        "Finished writing dependency graph to file: {}",
+        out_path.to_string_lossy()
+    );
+}
 
-    let filename = "hltaskeventstream.json";
-
+pub fn save_task_stream(task_graph: &TaskGraph, out_path: &Path) {
     if task_graph.high_level.event_stream.enabled {
         task_graph
             .high_level
             .event_stream
             .inner
             .stream
-            .save(std::path::Path::new(filename));
+            .save(out_path);
         println!(
             "Finished writing high level event stream to file: {}",
-            filename
+            out_path.to_string_lossy()
         );
     } else {
         println!("Task event stream recording was not enabled",);
     }
 }
 
-pub fn export(task_graph: &TaskGraph) {
+pub fn save(task_graph: &TaskGraph, out_path: &Path) {
     use graphviz_rust::attributes::EdgeAttributes;
     use graphviz_rust::cmd::*;
     use graphviz_rust::dot_structures::{Edge, Graph, Id, Node, NodeId, Stmt};
@@ -1203,8 +1206,6 @@ pub fn export(task_graph: &TaskGraph) {
         stmts,
     };
 
-    let filename = "taskgraph.svg";
-
     let mut ctx = PrinterContext::default();
     ctx.always_inline();
     let _empty = exec(
@@ -1213,25 +1214,12 @@ pub fn export(task_graph: &TaskGraph) {
         vec![
             CommandArg::Format(Format::Svg),
             CommandArg::Layout(Layout::Dot),
-            CommandArg::Output(filename.to_string()),
+            CommandArg::Output(out_path.to_string_lossy().to_string()),
         ],
     )
     .unwrap();
-    println!("Finished writing dependency graph to file: {}", filename);
-
-    let filename = "hltaskeventstream.json";
-    if task_graph.high_level.event_stream.enabled {
-        task_graph
-            .high_level
-            .event_stream
-            .inner
-            .stream
-            .save(std::path::Path::new(filename));
-        println!(
-            "Finished writing high level event stream to file: {}",
-            filename
-        );
-    } else {
-        println!("Task event stream recording was not enabled",);
-    }
+    println!(
+        "Finished writing dependency graph to file: {}",
+        out_path.to_string_lossy()
+    );
 }

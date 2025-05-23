@@ -445,7 +445,10 @@ impl RunTime {
         let res = executor.resolve(|ctx| task(ctx, &&()));
 
         if save_task_stream {
-            crate::task_graph::export(&executor.task_graph);
+            crate::task_graph::save_task_stream(
+                &executor.task_graph,
+                Path::new("hltaskeventstream.json"),
+            );
         }
 
         res
@@ -610,7 +613,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     Poll::Ready(Err(e)) => {
                         self.register_produced_data(task_id, cache_results);
                         println!("Execution errored {}", e);
-                        crate::task_graph::export(&self.task_graph);
+                        crate::task_graph::save(&self.task_graph, Path::new("task_graph.svg"));
+                        crate::task_graph::save_task_stream(
+                            &self.task_graph,
+                            Path::new("hltaskeventstream.json"),
+                        );
                         return Err(e);
                     }
                     Poll::Pending => {
@@ -649,7 +656,15 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 );
                                 d.storage.print_usage();
                             }
-                            crate::task_graph::export(&self.task_graph);
+                            crate::task_graph::save(&self.task_graph, Path::new("task_graph.svg"));
+                            crate::task_graph::save_full_detail(
+                                &self.task_graph,
+                                Path::new("task_graph_detailed.svg"),
+                            );
+                            crate::task_graph::save_task_stream(
+                                &self.task_graph,
+                                Path::new("hltaskeventstream.json"),
+                            );
 
                             //eprintln!("Device states:");
                             //for device in self.data.device_contexts {
