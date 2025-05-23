@@ -285,7 +285,7 @@ impl GraphEventStream {
 
 struct HighLevelGraph {
     depends_on: Map<TaskId, Map<TaskId, Set<RequestId>>>,
-    //provides_for: Map<TaskId, Map<TaskId, usize>>,
+    provides_for: Map<TaskId, Map<TaskId, Set<RequestId>>>,
     event_stream: GraphEventStream,
 }
 
@@ -314,6 +314,7 @@ impl HighLevelGraph {
     pub fn new(enable_stream_recording: bool) -> Self {
         Self {
             depends_on: Default::default(),
+            provides_for: Default::default(),
             event_stream: GraphEventStream::new(enable_stream_recording),
         }
     }
@@ -331,7 +332,7 @@ impl HighLevelGraph {
             );
         }
         e.or_default();
-        //assert!(self.provides_for.insert(t, Default::default()).is_none());
+        self.provides_for.insert(t, Default::default());
     }
     fn add_dependency(&mut self, from: TaskId, to: TaskId, req: RequestId) {
         let (_pseudo, from) = pseudo_tid(from);
@@ -352,13 +353,13 @@ impl HighLevelGraph {
             }
         }
 
-        //let edge_entry = self
-        //    .provides_for
-        //    .entry(to)
-        //    .or_default()
-        //    .entry(from)
-        //    .or_default();
-        //*edge_entry += 1;
+        let edge_entry = self
+            .provides_for
+            .entry(to)
+            .or_default()
+            .entry(from)
+            .or_default();
+        edge_entry.insert(req);
     }
     fn remove_dependency(&mut self, from: TaskId, to: TaskId, req: RequestId) {
         let (pseudo_to, from) = pseudo_tid(from);
@@ -372,7 +373,7 @@ impl HighLevelGraph {
                 let len = edge_entry.len();
                 if len == 0 {
                     self.event_stream.edge_remove(from, to, 1);
-                    self.depends_on.get_mut(&from).unwrap().remove(&to).unwrap();
+                    from_entry.remove(&to).unwrap();
                 } else {
                     self.event_stream.edge_update(from, to, len + 1, len);
                 }
@@ -384,20 +385,25 @@ impl HighLevelGraph {
                 panic!("{:?} should dep on {:?} for {:?}", from, to, req);
             }
         }
-        //let edge_entry = self
-        //    .provides_for
-        //    .entry(to)
-        //    .or_default()
-        //    .get_mut(&from)
-        //    .unwrap();
-        //*edge_entry -= 1;
+
+        let to_entry = self.provides_for.entry(to).or_default();
+        if let Some(edge_entry) = to_entry.get_mut(&from) {
+            edge_entry.remove(&req);
+            if edge_entry.len() == 0 {
+                to_entry.remove(&from);
+            }
+        } else {
+            if !pseudo_to && !pseudo_from {
+                // same as above
+                panic!("{:?} should dep on {:?} for {:?}", from, to, req);
+            }
+        }
     }
     fn remove_task(&mut self, t: TaskId) {
         let (pseudo, t) = pseudo_tid(t);
 
         if !pseudo {
             let depends_on = self.depends_on.get(&t).unwrap().clone();
-            //let depends_on = self.depends_on.remove(&t).unwrap();
             //assert!(depends_on.is_empty(), "{:?} dep on {:?}", t, depends_on);
             for (dep, n) in depends_on {
                 for req in n {
@@ -406,17 +412,16 @@ impl HighLevelGraph {
                 }
                 //assert!(n.is_empty(), "{:?} deps on {:?} for {:?}", t, dep, n);
             }
-            //let _provided = self.provides_for.remove(&t).unwrap();
-            //for provided in provided.into_iter() {
-            //    let e = self
-            //        .depends_on
-            //        .get_mut(&provided.0)
-            //        .unwrap()
-            //        .remove(&t)
-            //        .unwrap();
-            //    assert_eq!(e, 0, "for {:?}", t);
-            //    //self.event_stream.edge_remove(provided.0, t, provided.1);
-            //}
+            let provided = self.provides_for.get(&t).unwrap().clone();
+            for (provided, n) in provided {
+                //assert_eq!(e, 0, "for {:?}", t);
+                //self.event_stream.edge_remove(provided.0, t, provided.1);
+                for req in n {
+                    self.remove_dependency(provided, t, req);
+                }
+            }
+            let _depends_on = self.depends_on.remove(&t).unwrap();
+            let _provided = self.provides_for.remove(&t).unwrap();
             self.event_stream.node_remove(t);
         }
     }
