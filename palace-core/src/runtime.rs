@@ -631,6 +631,11 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     if let Some(stuck_time) = stuck_time {
                         if stuck_time.elapsed() > STUCK_TIMEOUT {
                             eprintln!("Execution appears to be stuck. Generating dependency file");
+
+                            let s = bytesize::to_string(self.data.storage.size() as _, true);
+                            eprintln!("Ram utilization: ({} capacity):", s,);
+                            self.data.storage.print_usage();
+
                             for d in self.data.device_contexts.values() {
                                 let c = d.storage.capacity();
                                 let c = bytesize::to_string(c, true);

@@ -871,6 +871,48 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         }
     }
 
+    pub fn print_usage(&self) {
+        #[derive(Debug)]
+        #[allow(unused)] //For some reason the Debug does not silence unused warnings
+        enum AccessStatePrint {
+            Some(usize),
+            None(Option<LRUIndex>),
+        }
+
+        let index = self.index.borrow();
+        let mut entries: Vec<_> = index
+            .iter()
+            .map(|(k, v)| {
+                let (state, size) = match &v.state {
+                    StorageEntryState::Registered => ("registered", 0),
+                    StorageEntryState::Initializing(storage_info, _) => {
+                        ("initializing", storage_info.layout.size())
+                    }
+                    StorageEntryState::Initialized(storage_info, _) => {
+                        ("initialized", storage_info.layout.size())
+                    }
+                };
+                let access = match v.access {
+                    AccessState::Some(n) => AccessStatePrint::Some(n),
+                    AccessState::None(lruindex) => AccessStatePrint::None(lruindex),
+                };
+                (k, state, size, access)
+            })
+            .collect();
+
+        entries.sort_by_key(|v| v.2);
+
+        for entry in entries {
+            println!(
+                "{:?} {} {:?} {}",
+                entry.0,
+                entry.1,
+                entry.3,
+                bytesize::to_string(entry.2 as _, true)
+            );
+        }
+    }
+
     pub fn add_new_data_hint(&self, id: DataId) {
         self.new_data.add(id);
     }
