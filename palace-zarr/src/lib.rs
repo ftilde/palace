@@ -445,7 +445,7 @@ async fn write_tensor<'cref, 'inv, S: WritableStorageTraits + 'static + ?Sized>(
 
                     let chunk_handle = chunk_handle.into_thread_handle();
                     let array = &array;
-                    ctx.spawn_io(move || {
+                    ctx.spawn_compute(move || {
                         array.store_chunk_opt(
                             to_zarr_pos(&chunk_pos).inner().as_slice(),
                             chunk_handle.data(),
