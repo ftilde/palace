@@ -8,3 +8,4 @@ palace-core = { path = "../palace-core" }
 id = { path = "../id" }
 video-rs = { version = "0.10.3", features = ["ndarray"] }
 futures = "0.3.30"
+libc = "0.2.172"

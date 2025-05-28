@@ -3,6 +3,7 @@ perf.data*
 profile.json.gz
 flamegraph*.svg
 heaptrack*.zst
+massif.*
 taskgraph.svg
 *taskeventstream.json
 foo.png

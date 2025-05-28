@@ -2848,6 +2848,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "id",
+ "libc",
  "palace-core",
  "video-rs",
 ]
