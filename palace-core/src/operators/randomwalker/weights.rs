@@ -634,7 +634,13 @@ fn random_walker_weights_variable_gaussian<D: DynDimension + LargerDim>(
         .push_dim_small((nd as u32).into(), (nd as u32).into());
 
     for d in 0..nd {
-        assert!(tensor.metadata.chunk_size[d].raw > 2 * extent[d] + 1);
+        assert!(
+            tensor.metadata.chunk_size[d].raw > 2 * extent[d] + 1,
+            "{} (chunksize) <= {} (2*extent+1) in dim {}",
+            tensor.metadata.chunk_size[d].raw,
+            2 * extent[d] + 1,
+            d
+        );
     }
 
     TensorOperator::with_state(
