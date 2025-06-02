@@ -22,6 +22,7 @@ use super::{
 pub enum Range {
     Scalar(u32),
     FromTo(u32, u32),
+    Full,
 }
 
 impl Range {
@@ -33,6 +34,7 @@ impl Range {
                 (start, end)
             }
             Range::FromTo(begin, end) => ((*begin).min(size), (*end).min(size)),
+            Range::Full => (0, size),
         }
     }
 }
