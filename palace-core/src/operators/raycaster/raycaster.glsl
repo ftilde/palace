@@ -249,18 +249,16 @@ void main()
 
                     int res;
                     uint64_t sample_brick_pos_linear;
-                    INPUT_DTYPE sampled_intensity_raw;
+                    float sampled_intensity;
 
                     #ifdef SHADING_NONE
+                    INPUT_DTYPE sampled_intensity_raw;
                     try_sample(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+                    sampled_intensity = float(sampled_intensity_raw);
                     #else
-                    INPUT_DTYPE[3] grad_f_raw;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw, grad_f_raw);
                     float[3] grad_f;
-                    map(3, grad_f_raw, grad_f, float);
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
                     #endif
-
-                    float sampled_intensity = float(sampled_intensity_raw);
 
 
                     bool stop = false;
