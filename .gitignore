@@ -4,7 +4,7 @@ profile.json.gz
 flamegraph*.svg
 heaptrack*.zst
 massif.*
-taskgraph.svg
+task_graph.svg
 *taskeventstream.json
 foo.png
 validator_output.txt
