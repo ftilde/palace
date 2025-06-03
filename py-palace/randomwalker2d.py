@@ -37,8 +37,8 @@ nd = img.nd()
 size_time = md.dimensions[0]
 
 scalar_weight_functions = ["grady", "bian_mean", "bhatt_var_gaussian", "ttest"]
-vector_weight_functions = ["custom"]
-weight_functions = vector_weight_functions + scalar_weight_functions
+vector_weight_functions = ["grady rgb"]
+weight_functions = scalar_weight_functions + vector_weight_functions
 
 for l in img.levels:
     print(l.metadata.dimensions)
