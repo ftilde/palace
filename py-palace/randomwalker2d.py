@@ -17,6 +17,8 @@ try:
     if img.levels[0].metadata.dimensions[-1] < 4:
         img = img.map(lambda i: i.fold_into_dtype())
 
+    lod_args = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, img.nd())]))
+
     #img.levels = img.levels[2:]
 except:
     img = pc.open(args.img_file)
