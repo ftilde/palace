@@ -25,7 +25,7 @@ except:
     if img.metadata.dimensions[-1] < 4:
         img = img.fold_into_dtype()
 
-    chunks = list(reversed([128 if i < 3 else 8 for i in range(0, img.nd())]))
+    chunks = list(reversed([128 if i < 2 else 8 for i in range(0, img.nd())]))
     img = img.rechunk(chunks)
     lod_args = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, img.nd())]))
     img = img.create_lod(lod_args)
