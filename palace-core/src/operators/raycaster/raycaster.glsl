@@ -261,7 +261,6 @@ void main()
                     #endif
 
 
-                    bool stop = false;
                     if(res == SAMPLE_RES_FOUND) {
                         u8vec4 sample_col = classify(sampled_intensity);
 
