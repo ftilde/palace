@@ -360,6 +360,18 @@ impl ScalarType {
         }
     }
 
+    pub fn is_signed(&self) -> bool {
+        match self {
+            ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => false,
+
+            ScalarType::I8
+            | ScalarType::I16
+            | ScalarType::I32
+            | ScalarType::I64
+            | ScalarType::F32 => true,
+        }
+    }
+
     pub fn max_value(&self) -> f64 {
         match self {
             ScalarType::U8 => u8::max_value() as f64,

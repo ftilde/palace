@@ -86,7 +86,17 @@ pub enum UnaryOp {
 impl UnaryOp {
     fn dtype(&self, input: DType) -> Result<DType, crate::Error> {
         Ok(match self {
-            UnaryOp::Abs => input,
+            UnaryOp::Abs => {
+                if input.scalar.is_signed() {
+                    input
+                } else {
+                    return Err(format!(
+                        "Value of unsigned type {:?} cannot be passed to abs",
+                        input
+                    )
+                    .into());
+                }
+            }
             UnaryOp::Log => input,
             UnaryOp::Exp => input,
             UnaryOp::Sqrt => input,
@@ -97,16 +107,15 @@ impl UnaryOp {
                     return Err(format!("{:?} cannot be converted to {:?}", input, output).into());
                 }
             }
-            UnaryOp::Neg => match input.scalar {
-                ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 => {
-                    return Err(format!("Value of type {:?} cannot be negated", input).into())
+            UnaryOp::Neg => {
+                if input.scalar.is_signed() {
+                    input
+                } else {
+                    return Err(
+                        format!("Value of unsigned type {:?} cannot be negated", input).into(),
+                    );
                 }
-                ScalarType::I8
-                | ScalarType::I16
-                | ScalarType::I32
-                | ScalarType::I64
-                | ScalarType::F32 => input,
-            },
+            }
             UnaryOp::Index(i) => {
                 if *i < input.size {
                     input.scalar.into()
