@@ -72,10 +72,10 @@ pub struct DeviceId(pub palace_core::vulkan::DeviceId);
 #[pymethods]
 impl RunTime {
     #[new]
-    #[pyo3(signature = (storage_size, gpu_storage_size, disk_cache_size=None, num_compute_threads=None, devices=Vec::new(), max_parallel_tasks=None, max_requests_per_task=None))]
+    #[pyo3(signature = (ram_storage_size, vram_storage_size, disk_cache_size=None, num_compute_threads=None, devices=Vec::new(), max_parallel_tasks=None, max_requests_per_task=None))]
     pub fn new(
-        storage_size: usize,
-        gpu_storage_size: u64,
+        ram_storage_size: usize,
+        vram_storage_size: u64,
         disk_cache_size: Option<usize>,
         num_compute_threads: Option<usize>,
         devices: Vec<usize>,
@@ -91,7 +91,7 @@ impl RunTime {
                         .num_compute_threads_opt(num_compute_threads)
                         .max_parallel_tasks_opt(max_parallel_tasks)
                         .max_requests_per_task_opt(max_requests_per_task)
-                        .finish(storage_size, gpu_storage_size),
+                        .finish(ram_storage_size, vram_storage_size),
                 )?
                 .into(),
             ),
