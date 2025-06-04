@@ -71,34 +71,36 @@ time_series_4d = pc.open("path.h5")
 raw_vol = time_series_4d[27,:,:,:]
 
 # Tensor processing
-kernel = np.array([1.,2.,1.])*0.25
-smooth_vol = pc.separable_conv(raw_vol, [kernel]*3)
-vol = pc.abs(smooth_vol - raw_vol)
+kernel = np.array([1.,2.,1.], dtype=np.float32)*0.25
+raw_vol = raw_vol.cast(pc.ScalarType.I16)
+smooth_vol = raw_vol.separable_convolution([kernel]*3)
+vol = (smooth_vol - raw_vol).abs()
 
-# Rendering config
 fov = 30.0
 frame_size = [1920, 1200]
-tile_size = [128]*2
+tile_size = [512]*2
 config = pc.RaycasterConfig()
-tf = pc.grey_ramp_tf()
+tf = pc.grey_ramp_tf(min=0.0, max=1.0)
 camera_state = pc.CameraState.for_volume(
-  vol.metadata(), vol.embedding_data(), fov)
+  vol.metadata, vol.embedding_data, fov)
 frame_md = pc.TensorMetaData(frame_size, tile_size)
 
 # Rendering pipeline
-proj = camera_state.projection_mat(frame_md.size)
-eep = pc.entry_exit_points(vol.fine_metadata(),
-    vol.embedding_data(), frame_md, proj)
+proj = camera_state.projection_mat(frame_md.dimensions)
+eep = pc.entry_exit_points(vol.metadata,
+    vol.embedding_data, frame_md, proj)
 lod = vol.single_level_lod()
 frame = pc.raycast(lod, eep, config, tf)
 
 # Frame processing
-smooth_frame = pc.separable_conv(frame, [kernel]*2)
-frame = pc.abs(smooth_frame - frame)
+frame = frame.cast(pc.ScalarType.F32.vec(4))
+smooth_frame = frame.separable_convolution([kernel]*2)
+frame = (smooth_frame - frame).abs()
+frame = frame.cast(pc.ScalarType.U8.vec(4))
 
 # Create runtime
-rt = pc.RunTime(ram_size=10<<30, vram_size=10<<30)
+rt = pc.RunTime(ram_storage_size=10<<30, vram_storage_size=10<<30)
 # Query top left rendered tile
 # Only here actual computation happens
-top_left_tile = rt.resolve(frame, [0]*2)
+top_left_tile = rt.resolve(frame.unfold_dtype(), [[0]*3])
 ```
