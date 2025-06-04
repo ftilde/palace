@@ -104,3 +104,9 @@ rt = pc.RunTime(ram_storage_size=10<<30, vram_storage_size=10<<30)
 # Only here actual computation happens
 top_left_tile = rt.resolve(frame.unfold_dtype(), [[0]*3])
 ```
+
+# License
+
+Copyright 2025 University of Münster
+
+This software is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
