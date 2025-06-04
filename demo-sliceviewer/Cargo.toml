@@ -2,6 +2,7 @@
 name = "demo-sliceviewer"
 version = "0.1.0"
 edition = "2021"
+license = "MPL-2.0"
 
 [dependencies]
 palace-core = { path = "../palace-core" }
