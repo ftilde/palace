@@ -62,7 +62,7 @@ store = pc.Store()
 view_state = pc.ImageViewerState().store(store)
 
 mode = store.store_primitive("hierarchical")
-weight_function = store.store_primitive("custom")
+weight_function = store.store_primitive("grady")
 min_edge_weight = store.store_primitive(1e-5)
 
 beta = store.store_primitive(128.0)
