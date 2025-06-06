@@ -315,6 +315,7 @@ pub fn render_slice<E: ElementType>(
 #define ChunkValue INPUT_DTYPE
 
 #include <util.glsl>
+#include <util2d.glsl>
 #include <color.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
@@ -363,7 +364,7 @@ void main()
             float v = brick_values.values[gID];
             classify(v, val);
         } else if(s == INIT_EMPTY) {
-            val = u8vec4(0, 0, 255, 255);
+            val = checkered_color(out_pos);
         } else {
             vec3 pos = vec3(vec2(out_pos + to_glsl(consts.out_begin)), 0);
             //vec3 sample_pos_f = mulh_mat4(transform.value, pos);
@@ -395,9 +396,9 @@ void main()
                 brick_values.values[gID] = sampled_intensity;
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
                 try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                val = u8vec4(255, 0, 0, 255);
+                val = COLOR_NOT_LOADED;
             } else /* SAMPLE_RES_OUTSIDE */ {
-                val = u8vec4(0, 0, 255, 255);
+                val = checkered_color(out_pos);
 
                 state.values[gID] = INIT_EMPTY;
             }

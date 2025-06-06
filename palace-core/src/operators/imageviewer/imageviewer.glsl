@@ -8,6 +8,7 @@
 #define ChunkValue u8vec4
 
 #include <util.glsl>
+#include <util2d.glsl>
 #include <color.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
@@ -46,7 +47,7 @@ void main()
         if(s == INIT_VAL) {
             val = out_values.values[gID];
         } else if(s == INIT_EMPTY) {
-            val = u8vec4(0, 0, 255, 255);
+            val = checkered_color(out_pos);
         } else {
             vec2 pos = vec2(out_pos + to_glsl(consts.out_begin));
             vec2 sample_pos_f = (to_glsl(consts.transform) * vec3(pos, 1)).xy;
@@ -69,9 +70,9 @@ void main()
                 out_values.values[gID] = val;
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
                 try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
-                val = u8vec4(255, 0, 0, 255);
+                val = COLOR_NOT_LOADED;
             } else /* SAMPLE_RES_OUTSIDE */ {
-                val = u8vec4(0, 0, 255, 255);
+                val = checkered_color(out_pos);
 
                 state.values[gID] = INIT_EMPTY;
             }
