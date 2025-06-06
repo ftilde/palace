@@ -315,17 +315,20 @@ impl VideoSourceState {
 
                                         assert_eq!(bytes_copied, layout.size() as i32);
 
-                                        // This is probably not great for performance, however:
-                                        // With the default glibc memory allocator we get a memory
-                                        // "leak" which is due to the allocator creating more and
-                                        // more memory arenas, but never freeing them. (Apparently
-                                        // through lock contention? Although I'm not sure why this
-                                        // specific part of the code would trigger this behavior,
-                                        // but others not...).
-                                        // As a workaround we explicitly tell the allocator to free
-                                        // space here.
-                                        let space_to_spare = 1 << 20; //1MB
-                                        unsafe { libc::malloc_trim(space_to_spare) };
+                                        #[cfg(target_env = "gnu")]
+                                        {
+                                            // This is probably not great for performance, however:
+                                            // With the default glibc memory allocator we get a memory
+                                            // "leak" which is due to the allocator creating more and
+                                            // more memory arenas, but never freeing them. (Apparently
+                                            // through lock contention? Although I'm not sure why this
+                                            // specific part of the code would trigger this behavior,
+                                            // but others not...).
+                                            // As a workaround we explicitly tell the allocator to free
+                                            // space here.
+                                            let space_to_spare = 1 << 20; //1MB
+                                            unsafe { libc::malloc_trim(space_to_spare) };
+                                        }
 
                                         Result::<_, video_rs::Error>::Ok(chunk_handle)
                                     }))
