@@ -165,8 +165,26 @@ pub(crate) fn decode_chunk<'a>(
 
 pub fn open(
     path: PathBuf,
-    volume_location: String,
+    volume_location: Option<String>,
 ) -> Result<EmbeddedTensorOperator<DDyn, DType>, Error> {
+    let volume_location = if let Some(volume_location) = volume_location {
+        volume_location
+    } else {
+        let file = hdf5::File::open(&path)?;
+        let datasets = file.datasets()?;
+        match datasets.len() {
+            0 => return Err(format!("No tensors found in dataset").into()),
+            1 => datasets[0].name(),
+            n => {
+                return Err(format!(
+                    "More than ({}) one tensor found and no dataset name given",
+                    n
+                )
+                .into())
+            }
+        }
+    };
+
     let state = Hdf5TensorSourceState::open(path, volume_location)?;
     Ok(state.operate())
 }
@@ -688,7 +706,7 @@ pub fn save_lod_tensor(
             let new_md = palace_core::operators::resample::coarser_lod_md(&current, steps.clone());
             std::mem::drop(current);
 
-            current = open(path.into(), current_location)?;
+            current = open(path.into(), Some(current_location))?;
 
             current =
                 palace_core::operators::resample::smooth_downsample(current, new_md.clone()).into();
