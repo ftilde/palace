@@ -28,6 +28,14 @@ if args.volume_file == "fill":
     vol = pc.procedural(md, ed, prog).levels[0]
     vol = vol.create_lod([2.0]*nd)
 
+elif args.volume_file == "mandelbulb":
+    b = 64
+    s = 40000
+    nd = 3
+    ed = pc.TensorEmbeddingData([1.0]*nd)
+    md = pc.TensorMetaData([s]*nd, [b]*nd)
+    vol = pc.mandelbulb(md, ed)
+
 else:
     try:
         vol = pc.open_lod(args.volume_file)
