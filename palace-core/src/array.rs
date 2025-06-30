@@ -451,8 +451,7 @@ impl<D: DynDimension> TensorMetaData<D> {
         }
     }
     pub fn chunk_indices(&self) -> impl Iterator<Item = ChunkIndex> {
-        let bp = self.dimension_in_chunks();
-        (0..bp.hmul() as u64).into_iter().map(ChunkIndex)
+        (0..self.num_chunks() as u64).into_iter().map(ChunkIndex)
     }
 }
 impl<D: LargerDim> TensorMetaData<D> {

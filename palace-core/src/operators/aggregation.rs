@@ -3,10 +3,10 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use ash::vk;
 use futures::StreamExt;
 use id::Identify;
-use rand::{seq::SliceRandom, SeedableRng};
+use rand::SeedableRng;
 
 use crate::{
-    array::ChunkInfo,
+    array::{ChunkIndex, ChunkInfo},
     dim::DynDimension,
     dtypes::StaticElementType,
     op_descriptor,
@@ -226,22 +226,30 @@ fn scalar_aggregation<'op, D: DynDimension>(
 
                 let m = &input.metadata;
 
-                let mut all_chunks = m.chunk_indices().into_iter().collect::<Vec<_>>();
+                let num_chunks = m.num_chunks();
                 let (to_request, num_elements) = match **sample_method {
-                    SampleMethod::All => (all_chunks.as_slice(), m.dimensions.hmul()),
+                    SampleMethod::All => {
+                        (m.chunk_indices().collect::<Vec<_>>(), m.dimensions.hmul())
+                    }
                     SampleMethod::Subset(n) => {
+                        assert!(n < num_chunks);
                         let mut h = DefaultHasher::new();
                         ctx.current_op().inner().hash(&mut h);
                         let seed = h.finish();
                         let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
-                        let (ret, _) = all_chunks.partial_shuffle(&mut rng, n);
+
+                        let to_sample = rand::seq::index::sample(&mut rng, num_chunks, n);
+                        let mut ret = (0..n)
+                            .into_iter()
+                            .map(|i| ChunkIndex(to_sample.index(i) as u64))
+                            .collect::<Vec<_>>();
                         ret.sort();
 
                         let num_elements = ret
                             .iter()
                             .map(|pos| m.chunk_info(*pos).logical_dimensions.hmul())
                             .sum();
-                        (&*ret, num_elements)
+                        (ret, num_elements)
                     }
                 };
 
