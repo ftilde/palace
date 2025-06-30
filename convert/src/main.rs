@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use palace_core::{
     dim::{DDyn, DynDimension},
-    dtypes::ScalarType,
-    operators::{rechunk::ChunkSize, resample::DownsampleStep},
+    dtypes::{DType, ScalarType},
+    operators::{
+        procedural, rechunk::ChunkSize, resample::DownsampleStep, tensor::LODTensorOperator,
+    },
     runtime::RunTime,
     vec::Vector,
 };
@@ -77,6 +79,10 @@ struct CliArgs {
     #[arg(long)]
     chunk_size: Option<String>,
 
+    /// Size for procedurally generated volumes
+    #[arg(long)]
+    size_hint: Option<u32>,
+
     #[arg(long)]
     max_parallel_tasks: Option<usize>,
 
@@ -121,6 +127,57 @@ fn parse_file_type(path: &Path) -> Result<FileFormat, String> {
     }
 }
 
+fn open(
+    path: PathBuf,
+    hints: palace_io::Hints,
+    size_hint: Option<u32>,
+) -> Result<(LODTensorOperator<DDyn, DType>, LodOrigin), Box<dyn std::error::Error>> {
+    fn gen_md(
+        hints: palace_io::Hints,
+        size_hint: Option<u32>,
+    ) -> Result<palace_core::array::VolumeMetaData, Box<dyn std::error::Error>> {
+        let dimensions = palace_core::vec::VoxelPosition::fill(
+            size_hint
+                .ok_or_else(|| format!("Procedurally generated volumes need a size hint"))?
+                .into(),
+        );
+        Ok(palace_core::array::VolumeMetaData {
+            dimensions,
+            chunk_size: hints
+                .chunk_size
+                .map(|v| {
+                    v.try_into_static()
+                        .unwrap()
+                        .zip(&dimensions, |l, r| l.apply(r))
+                })
+                .unwrap_or(Vector::<palace_core::dim::D3, _>::fill(64.into())),
+        })
+    }
+    let ed = Default::default();
+
+    match path.to_string_lossy().as_ref() {
+        "mandelbulb" => Ok((
+            procedural::mandelbulb(gen_md(hints, size_hint)?, ed)
+                .into_dyn()
+                .into(),
+            LodOrigin::Existing,
+        )),
+        "ball" => Ok((
+            procedural::ball(gen_md(hints, size_hint)?, ed)
+                .into_dyn()
+                .into(),
+            LodOrigin::Existing,
+        )),
+        "full" => Ok((
+            procedural::full(gen_md(hints, size_hint)?, ed)
+                .into_dyn()
+                .into(),
+            LodOrigin::Existing,
+        )),
+        _ => palace_io::open_or_create_lod(path, hints),
+    }
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -141,7 +198,7 @@ fn main() {
     let nd = {
         // open once just to get dimensionality
         let (input_lod, _lod_origin) =
-            palace_io::open_or_create_lod(args.input.clone(), input_hints.clone()).unwrap();
+            open(args.input.clone(), input_hints.clone(), args.size_hint).unwrap();
         input_lod.levels[0].metadata.dim().n()
     };
 
@@ -162,8 +219,7 @@ fn main() {
         input_hints = input_hints.rechunk(true);
     }
 
-    let (mut input_lod, lod_origin) =
-        palace_io::open_or_create_lod(args.input, input_hints).unwrap();
+    let (mut input_lod, lod_origin) = open(args.input, input_hints, args.size_hint).unwrap();
 
     if args.unfold_dtype {
         input_lod = input_lod.map(|v| v.unfold_dtype(1.0).unwrap());
@@ -173,6 +229,8 @@ fn main() {
         input_lod = input_lod.map(|v| {
             v.map_inner(|v| {
                 palace_core::jit::jit(v)
+                    //.mul(255.0.into())
+                    //.unwrap()
                     .cast(dtype.vec(1))
                     .unwrap()
                     .compile()
