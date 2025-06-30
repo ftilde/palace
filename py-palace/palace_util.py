@@ -57,7 +57,7 @@ def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=Non
 
         actual_tile_size = [tile_size or s for s in size]
 
-        md = pc.TensorMetaData(size, size)
+        md = pc.TensorMetaData(size, actual_tile_size)
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
