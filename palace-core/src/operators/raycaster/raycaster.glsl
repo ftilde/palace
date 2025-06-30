@@ -174,18 +174,7 @@ void main()
 
                 float diag = length(vec3(to_glsl_uvec3(root_level.dimensions)) * to_glsl_vec3(root_level.spacing));
 
-                // Note: The following differ, because they fulfill a different
-                // function:
-                // eep_x_offset will be used for actual
-                // distance-to-neighbor-pixel estimates. Thus we have a
-                // distance of 1.
-                // eep_y_offset only gives a rough direction estimate to
-                // compute the actual x direction (in embedded volume space).
-                // In order not to sample the exact same eep position, we
-                // choose a larger pixel distance than 1. This can be a problem
-                // if the volume is large and the camera is in the volume.
                 uvec2 eep_x_offset = uvec2(1,0);
-                uvec2 eep_y_offset = uvec2(0,10);
 
                 EEPoint eep_x;
                 if(!sample_ee(out_pos + eep_x_offset, eep_x, root_level)) {
@@ -194,17 +183,11 @@ void main()
                         eep_x.exit = vec3(1.0);
                     }
                 }
-                EEPoint eep_y;
-                if(!sample_ee(out_pos + eep_y_offset, eep_y, root_level)) {
-                    if(!sample_ee(out_pos - eep_y_offset, eep_y, root_level)) {
-                        eep_y.entry = vec3(0.0);
-                        eep_y.exit = vec3(1.0);
-                    }
-                }
                 vec3 center = eep.entry;
                 vec3 front = eep.exit - eep.entry;
 
-                vec3 rough_dir_y = eep_y.entry - center;
+                vec3 rough_dir_x = eep_x.exit - eep.exit;
+                vec3 rough_dir_y = cross(rough_dir_x, front);
                 vec3 dir_x = normalize(cross(rough_dir_y, front));
 
                 vec3 start = eep.entry;
@@ -229,6 +212,7 @@ void main()
                         uint next = level_num+1;
                         vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
                         float left_spacing_dist = length(abs(dir_x) * next_spacing);
+
                         if(left_spacing_dist >= pixel_dist * lod_coarseness) {
                             break;
                         }
