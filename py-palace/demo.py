@@ -30,7 +30,7 @@ if args.volume_file == "fill":
 
 elif args.volume_file == "mandelbulb":
     b = 64
-    s = 40000
+    s = 4_000_000
     nd = 3
     ed = pc.TensorEmbeddingData([1.0]*nd)
     md = pc.TensorMetaData([s]*nd, [b]*nd)

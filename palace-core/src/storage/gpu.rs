@@ -2,6 +2,7 @@ use ahash::HashMapExt;
 use bytemuck::{Pod, Zeroable};
 use crevice::glsl::GlslStruct;
 use id::Identify;
+use page_table::MAX_NUM_CHUNKS;
 use std::{
     alloc::Layout,
     cell::{Cell, RefCell},
@@ -33,13 +34,15 @@ use crate::{
     },
 };
 
-mod page_table {
+pub mod page_table {
     use std::alloc::Layout;
 
     pub const LEVELS: u64 = 3;
 
-    pub const BITS_PER_LEVEL: u64 = 15;
-    pub const LEVEL_TABLE_SIZE: u64 = (2 << BITS_PER_LEVEL) + 1; //One extra entry for PageTableIndex
+    pub const BITS_PER_LEVEL: u64 = 16;
+    pub const TOTAL_CHUNK_INDEXING_BITS: u64 = LEVELS * BITS_PER_LEVEL;
+    pub const MAX_NUM_CHUNKS: u64 = 1 << TOTAL_CHUNK_INDEXING_BITS;
+    pub const LEVEL_TABLE_SIZE: u64 = (1 << BITS_PER_LEVEL) + 1; //One extra entry for PageTableIndex
 
     pub const PAGE_LAYOUT: Layout = match Layout::array::<u64>(LEVEL_TABLE_SIZE as usize) {
         Ok(l) => l,
@@ -47,7 +50,7 @@ mod page_table {
     };
 
     pub const LEVEL_IDENTIFIER_BITS: u64 = 2;
-    pub const LEVEL_IDENTIFIER_SIZE: u64 = 2 << LEVEL_IDENTIFIER_BITS;
+    pub const LEVEL_IDENTIFIER_SIZE: u64 = 1 << LEVEL_IDENTIFIER_BITS;
     pub const LEVEL_IDENTIFIER_MASK: u64 = LEVEL_IDENTIFIER_SIZE - 1;
 }
 
@@ -846,9 +849,16 @@ impl<'a> PageTableHandle<'a> {
 
         let pos_and_chunk_addr = pos_and_chunk
             .iter()
-            .map(|(pos, chunk)| PosAndChunkAddr {
-                pos: *pos,
-                chunk_addr: buffer_address(self.device, chunk.buffer),
+            .map(|(pos, chunk)| {
+                assert!(
+                    pos.0 < MAX_NUM_CHUNKS,
+                    "Operator has more than the allowed maximum of {} chunks",
+                    MAX_NUM_CHUNKS
+                );
+                PosAndChunkAddr {
+                    pos: *pos,
+                    chunk_addr: buffer_address(self.device, chunk.buffer),
+                }
             })
             .collect::<Vec<_>>();
 

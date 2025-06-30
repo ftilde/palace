@@ -272,6 +272,10 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
             //println!("request: {:?} -> {} | {:?}", v, v.level(), v.chunk_index());
             let dim_in_bricks = tensor.metadata.dimension_in_chunks();
             let num_bricks = dim_in_bricks.hmul();
+            assert!(
+                (num_bricks as u64) < crate::storage::gpu::page_table::MAX_NUM_CHUNKS,
+                "Cannot create page table for tensor with {} chunks. Maximum number of chunks is {}.", num_bricks, crate::storage::gpu::page_table::MAX_NUM_CHUNKS,
+            );
 
             assert!(v.chunk_index().0 < num_bricks as _);
             tensor.chunks.request_gpu(
