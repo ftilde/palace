@@ -5,6 +5,7 @@ import math
 import itertools
 import functools
 import time
+import palace_util
 
 ram_size = 8 << 30
 vram_size = 10 << 30
