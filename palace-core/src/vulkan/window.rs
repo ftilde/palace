@@ -310,7 +310,7 @@ fn create_sync_objects(device: &DeviceContext) -> SyncObjects {
     }
 }
 
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
+const MAX_FRAMES_IN_FLIGHT: usize = 3;
 
 struct SyncObjects {
     image_available_semaphore: vk::Semaphore,
