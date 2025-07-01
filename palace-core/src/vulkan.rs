@@ -255,6 +255,7 @@ unsafe fn strcmp(v1: *const std::ffi::c_char, v2: *const std::ffi::c_char) -> bo
 #[derive(Clone)]
 pub struct DeviceFunctions {
     pub device: ash::Device,
+    pub debug_utils_ext: debug_utils::Device,
     pub push_descriptor_ext: push_descriptor::Device,
     pub swap_chain_ext: swapchain::Device, //TODO: Make optional?
 }
@@ -453,6 +454,7 @@ impl DeviceContext {
                 .create_device(physical_device, &create_info, None)
                 .expect("Device creation failed.");
 
+            let debug_utils_ext = debug_utils::Device::new(instance, &device);
             let push_descriptor_ext = push_descriptor::Device::new(instance, &device);
             let swap_chain_ext = swapchain::Device::new(instance, &device);
 
@@ -509,6 +511,7 @@ impl DeviceContext {
 
             let functions = DeviceFunctions {
                 device,
+                debug_utils_ext,
                 push_descriptor_ext,
                 swap_chain_ext,
             };
