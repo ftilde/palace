@@ -49,8 +49,8 @@ pub struct Splitter {
 
 impl Splitter {
     pub fn split_events(&mut self, e: &mut EventStream) -> (EventStream, EventStream) {
-        let size_last = self.size_last()[self.split_dim].raw as i32;
-        let t = |p| p - Vector::<D2, i32>::fill(0).map_element(self.split_dim, |_| size_last);
+        let size_first = self.size_first()[self.split_dim].raw as i32;
+        let t = |p| p - Vector::<D2, i32>::fill(0).map_element(self.split_dim, |_| size_first);
 
         let mut first = EventStream::with_state(e.latest_state().clone());
         let mut last = EventStream::with_state(e.latest_state().clone().transform(t));
@@ -59,7 +59,7 @@ impl Splitter {
         //events
         e.act(|e| {
             if let Some(mouse_state) = &e.state.mouse_state {
-                let in_first = mouse_state.pos[self.split_dim] < size_last;
+                let in_first = mouse_state.pos[self.split_dim] < size_first;
                 if in_first {
                     first.add(e);
                 } else {
