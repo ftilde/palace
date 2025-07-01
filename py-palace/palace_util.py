@@ -8,7 +8,7 @@ import re
 # This is also the signature required for the first argument of window.run!
 def split(dim, fraction, render_first, render_last):
     def inner(size, events):
-        splitter = pc.Splitter(size, 0.5, dim)
+        splitter = pc.Splitter(size, fraction, dim)
 
         events_l, events_r = splitter.split_events(events)
 
