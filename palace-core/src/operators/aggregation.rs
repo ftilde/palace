@@ -232,7 +232,7 @@ fn scalar_aggregation<'op, D: DynDimension>(
                         (m.chunk_indices().collect::<Vec<_>>(), m.dimensions.hmul())
                     }
                     SampleMethod::Subset(n) => {
-                        assert!(n < num_chunks);
+                        let n = n.min(num_chunks);
                         let mut h = DefaultHasher::new();
                         ctx.current_op().inner().hash(&mut h);
                         let seed = h.finish();
