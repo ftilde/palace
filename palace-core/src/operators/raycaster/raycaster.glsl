@@ -189,6 +189,7 @@ void main()
                 vec3 rough_dir_x = eep_x.exit - eep.exit;
                 vec3 rough_dir_y = cross(rough_dir_x, front);
                 vec3 dir_x = normalize(cross(rough_dir_y, front));
+                vec3 dir_y = normalize(cross(dir_x, front));
 
                 vec3 start = eep.entry;
                 vec3 end = eep.exit;
@@ -212,8 +213,10 @@ void main()
                         uint next = level_num+1;
                         vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
                         float left_spacing_dist = length(abs(dir_x) * next_spacing);
+                        float top_spacing_dist = length(abs(dir_y) * next_spacing);
+                        float spacing_dist = min(left_spacing_dist, top_spacing_dist);
 
-                        if(left_spacing_dist >= pixel_dist * lod_coarseness) {
+                        if(spacing_dist >= pixel_dist * lod_coarseness) {
                             break;
                         }
                         level_num = next;
