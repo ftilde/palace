@@ -80,14 +80,17 @@ store = pc.Store()
 
 view_state = pc.ImageViewerState().store(store)
 
+tile_size = [2*d for d in img.levels[0].metadata.chunk_size]
+
 def render(size, events):
     events.act([
         pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: view_state.mutate(lambda s: s.drag(delta))),
         pc.OnWheelMove(lambda delta, pos: view_state.mutate(lambda s: s.zoom(delta, pos))),
     ]);
 
-    md = pc.TensorMetaData(size, size)
+    md = pc.TensorMetaData(size, tile_size)
     frame = pc.view_image(img, md, view_state.load())
+    frame = frame.rechunk([pc.chunk_size_full]*2)
 
     return frame
 
