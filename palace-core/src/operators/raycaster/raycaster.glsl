@@ -196,8 +196,12 @@ void main()
                 float t_end = distance(start, end);
                 vec3 dir = normalize(end - start);
 
-                float start_pixel_dist = abs(dot(dir_x, eep_x.entry - eep.entry));
-                float end_pixel_dist = abs(dot(dir_x, eep_x.exit - eep.exit));
+                vec3 entry_diff = eep_x.entry - eep.entry;
+                vec3 exit_diff = eep_x.exit - eep.exit;
+                float start_pixel_dist_x = abs(dot(dir_x, entry_diff));
+                float end_pixel_dist_x = abs(dot(dir_x, exit_diff));
+                float start_pixel_dist_y = abs(dot(dir_y, entry_diff));
+                float end_pixel_dist_y = abs(dot(dir_y, exit_diff));
 
 
                 float lod_coarseness = consts.lod_coarseness;
@@ -207,16 +211,16 @@ void main()
                 uint64_t prev_sample_brick_pos = 0xffffffffffffffffL;
                 while(t <= t_end) {
                     float alpha = t/t_end;
-                    float pixel_dist = start_pixel_dist * (1.0-alpha) + end_pixel_dist * alpha;
+                    float pixel_dist_x = start_pixel_dist_x * (1.0-alpha) + end_pixel_dist_x * alpha;
+                    float pixel_dist_y = start_pixel_dist_y * (1.0-alpha) + end_pixel_dist_y * alpha;
 
                     while(level_num < NUM_LEVELS - 1) {
                         uint next = level_num+1;
                         vec3 next_spacing = to_glsl_vec3(vol.levels[next].spacing);
                         float left_spacing_dist = length(abs(dir_x) * next_spacing);
                         float top_spacing_dist = length(abs(dir_y) * next_spacing);
-                        float spacing_dist = min(left_spacing_dist, top_spacing_dist);
 
-                        if(spacing_dist >= pixel_dist * lod_coarseness) {
+                        if(left_spacing_dist >= pixel_dist_x * lod_coarseness || top_spacing_dist >= pixel_dist_y * lod_coarseness) {
                             break;
                         }
                         level_num = next;
