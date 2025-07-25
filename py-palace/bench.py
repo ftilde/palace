@@ -7,10 +7,12 @@ import time
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('--compositing', type=str, default="MOP")
 parser.add_argument('--tfmin', type=float, default=0.0)
 parser.add_argument('--tfmax', type=float, default=1.0)
 parser.add_argument('--width', type=int, default=800)
 parser.add_argument('--height', type=int, default=600)
+parser.add_argument('--normalized-size', action='store_true')
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -50,13 +52,16 @@ nd = vol.nd()
 l0md = vol.fine_metadata()
 l0ed = vol.fine_embedding_data()
 
-min_scale = l0ed.spacing.min() / 10.0
-max_scale = (l0ed.spacing * l0md.dimensions).mean() / 5.0
+if args.normalized_size:
+    for l in vol.levels:
+        l.embedding_data.spacing = np.array([2.0]*3, dtype=np.float32)
 
 camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
 
-camera_state.trackball().mutate(lambda v: v.move_inout(8.5))
+raycaster_config.compositing_mode().write(args.compositing)
+
+#camera_state.trackball().mutate(lambda v: v.move_inout(8.5))
 
 def fit_tf_to_values(vol):
     palace_util.fit_tf_range(rt, vol.levels[0], tf)
@@ -76,4 +81,7 @@ def render(size, events):
 
     return frame(size, events)
 
+start = time.time()
 rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=(args.width,args.height))
+end = time.time()
+print("Elapsed time: {}s".format(end - start))
