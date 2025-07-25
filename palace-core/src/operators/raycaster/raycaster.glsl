@@ -175,6 +175,7 @@ void main()
                 float diag = length(vec3(to_glsl_uvec3(root_level.dimensions)) * to_glsl_vec3(root_level.spacing));
 
                 uvec2 eep_x_offset = uvec2(1,0);
+                uvec2 eep_y_offset = uvec2(0,1);
 
                 EEPoint eep_x;
                 if(!sample_ee(out_pos + eep_x_offset, eep_x, root_level)) {
@@ -183,25 +184,30 @@ void main()
                         eep_x.exit = vec3(1.0);
                     }
                 }
+                EEPoint eep_y;
+                if(!sample_ee(out_pos + eep_y_offset, eep_y, root_level)) {
+                    if(!sample_ee(out_pos - eep_y_offset, eep_y, root_level)) {
+                        eep_y.entry = vec3(0.0);
+                        eep_y.exit = vec3(1.0);
+                    }
+                }
                 vec3 center = eep.entry;
                 vec3 front = eep.exit - eep.entry;
 
                 vec3 rough_dir_x = eep_x.exit - eep.exit;
-                vec3 rough_dir_y = cross(rough_dir_x, front);
+                vec3 rough_dir_y = eep_y.exit - eep.exit;
                 vec3 dir_x = normalize(cross(rough_dir_y, front));
-                vec3 dir_y = normalize(cross(dir_x, front));
+                vec3 dir_y = normalize(cross(rough_dir_x, front));
 
                 vec3 start = eep.entry;
                 vec3 end = eep.exit;
                 float t_end = distance(start, end);
                 vec3 dir = normalize(end - start);
 
-                vec3 entry_diff = eep_x.entry - eep.entry;
-                vec3 exit_diff = eep_x.exit - eep.exit;
-                float start_pixel_dist_x = abs(dot(dir_x, entry_diff));
-                float end_pixel_dist_x = abs(dot(dir_x, exit_diff));
-                float start_pixel_dist_y = abs(dot(dir_y, entry_diff));
-                float end_pixel_dist_y = abs(dot(dir_y, exit_diff));
+                float start_pixel_dist_x = abs(dot(dir_x, eep_x.entry - eep.entry));
+                float end_pixel_dist_x = abs(dot(dir_x, eep_x.exit - eep.exit));
+                float start_pixel_dist_y = abs(dot(dir_y, eep_y.exit - eep.exit));
+                float end_pixel_dist_y = abs(dot(dir_y, eep_y.exit - eep.exit));
 
 
                 float lod_coarseness = consts.lod_coarseness;
