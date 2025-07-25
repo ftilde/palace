@@ -174,7 +174,7 @@ impl RunTime {
         rt.checked_device_id(raw_id).map(DeviceId)
     }
 
-    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false, display_device=None))]
+    #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false, display_device=None, window_size=None))]
     fn run_with_window(
         &self,
         gen_frame: &Bound<pyo3::types::PyFunction>,
@@ -182,6 +182,7 @@ impl RunTime {
         record_task_stream: bool,
         bench: bool,
         display_device: Option<usize>,
+        window_size: Option<(u32, u32)>,
     ) -> PyResult<()> {
         let mut rt = self.inner.clone();
         let display_device = {
@@ -198,6 +199,7 @@ impl RunTime {
             &mut rt,
             Duration::from_millis(timeout_ms),
             display_device,
+            window_size,
             |_event_loop, window, rt, events, timeout| {
                 let size = window.size();
                 let size = [size.y().raw, size.x().raw];

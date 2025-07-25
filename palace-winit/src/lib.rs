@@ -13,6 +13,7 @@ use palace_core::{
     vulkan::VulkanContext,
 };
 use raw_window_handle::HasWindowHandle;
+use winit::dpi::LogicalSize;
 use winit::event_loop::EventLoop;
 use winit::window::Window as WWindow;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop};
@@ -142,8 +143,14 @@ pub fn create_window(
     ctx: &VulkanContext,
     target: &ActiveEventLoop,
     on_device: Option<DeviceId>,
+    size: Option<(u32, u32)>,
 ) -> Result<(WWindow, PWindow), palace_core::Error> {
     let win_attributes = winit::window::Window::default_attributes().with_title("palace");
+    let win_attributes = if let Some((w, h)) = size {
+        win_attributes.with_inner_size(LogicalSize::new(w, h))
+    } else {
+        win_attributes
+    };
     let winit_win = target.create_window(win_attributes).unwrap();
     let surface = create_surface(&ctx.entry, &ctx.instance, &winit_win);
     let size = winit_win.inner_size();
@@ -163,6 +170,7 @@ struct AppState<'a, R, F, E> {
     draw: F,
     run_result: Result<(), E>,
     display_device: Option<DeviceId>,
+    initial_size: Option<(u32, u32)>,
 }
 
 pub trait MutWrapper<Inner> {
@@ -196,10 +204,15 @@ impl<
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         //event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        self.window =
-            Some(self.runtime.with_mut(|rt| {
-                create_window(&rt.vulkan, &event_loop, self.display_device).unwrap()
-            }));
+        self.window = Some(self.runtime.with_mut(|rt| {
+            create_window(
+                &rt.vulkan,
+                &event_loop,
+                self.display_device,
+                self.initial_size,
+            )
+            .unwrap()
+        }));
     }
 
     fn window_event(
@@ -267,6 +280,7 @@ pub fn run_with_window_wrapper<
     runtime: &mut R,
     timeout_per_frame: Duration,
     display_device: Option<DeviceId>,
+    initial_size: Option<(u32, u32)>,
     draw: F,
 ) -> Result<(), E> {
     let event_loop = EventLoop::new().unwrap();
@@ -279,6 +293,7 @@ pub fn run_with_window_wrapper<
         draw,
         run_result: Ok(()),
         display_device,
+        initial_size,
     };
 
     event_loop.run_app(&mut state).unwrap();
@@ -306,7 +321,7 @@ pub fn run_with_window_on_device<
     display_device: Option<DeviceId>,
     draw: F,
 ) -> Result<(), palace_core::Error> {
-    run_with_window_wrapper(&mut runtime, timeout_per_frame, display_device, draw)
+    run_with_window_wrapper(&mut runtime, timeout_per_frame, display_device, None, draw)
 }
 
 pub fn run_with_window<

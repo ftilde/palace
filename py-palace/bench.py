@@ -9,6 +9,8 @@ parser.add_argument('volume_file')
 parser.add_argument('-t', '--transfunc', type=str)
 parser.add_argument('--tfmin', type=float, default=0.0)
 parser.add_argument('--tfmax', type=float, default=1.0)
+parser.add_argument('--width', type=int, default=800)
+parser.add_argument('--height', type=int, default=600)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -74,4 +76,4 @@ def render(size, events):
 
     return frame(size, events)
 
-rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False)
+rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=(args.width,args.height))
