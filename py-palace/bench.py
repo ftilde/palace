@@ -13,6 +13,8 @@ parser.add_argument('--tfmax', type=float, default=1.0)
 parser.add_argument('--width', type=int, default=800)
 parser.add_argument('--height', type=int, default=600)
 parser.add_argument('--normalized-size', action='store_true')
+parser.add_argument('--camera-distance', type=float, default=None)
+parser.add_argument('--fov', type=float, default=30)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -63,14 +65,11 @@ l0ed = vol.fine_embedding_data()
 
 raycaster_config = pc.RaycasterConfig().store(store)
 raycaster_config.compositing_mode().write(args.compositing)
-<<<<<<< Updated upstream
-camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
-raycaster_config = pc.RaycasterConfig().store(store)
-=======
 camera_state = pc.CameraState.for_volume(l0md, l0ed, args.fov).store(store)
->>>>>>> Stashed changes
 
-#camera_state.trackball().mutate(lambda v: v.move_inout(8.5))
+if args.camera_distance:
+    camera_state.trackball().eye().write([-args.camera_distance, 0.0, 0.0])
+    camera_state.trackball().up().write(-np.array(camera_state.trackball().up().load()))
 
 def fit_tf_to_values(vol):
     palace_util.fit_tf_range(rt, vol.levels[0], tf)
