@@ -49,17 +49,26 @@ store = pc.Store()
 
 nd = vol.nd()
 
+if args.normalized_size:
+    levels = []
+    for l in vol.levels:
+        ed = l.embedding_data
+        ed.spacing = np.array([2.0]*3, dtype=np.float32) / np.array(l.metadata.dimensions, dtype=np.float32)
+        l.embedding_data = ed
+        levels.append(l)
+    vol.levels = levels
+
 l0md = vol.fine_metadata()
 l0ed = vol.fine_embedding_data()
 
-if args.normalized_size:
-    for l in vol.levels:
-        l.embedding_data.spacing = np.array([2.0]*3, dtype=np.float32)
-
+raycaster_config = pc.RaycasterConfig().store(store)
+raycaster_config.compositing_mode().write(args.compositing)
+<<<<<<< Updated upstream
 camera_state = pc.CameraState.for_volume(l0md, l0ed, 30.0).store(store)
 raycaster_config = pc.RaycasterConfig().store(store)
-
-raycaster_config.compositing_mode().write(args.compositing)
+=======
+camera_state = pc.CameraState.for_volume(l0md, l0ed, args.fov).store(store)
+>>>>>>> Stashed changes
 
 #camera_state.trackball().mutate(lambda v: v.move_inout(8.5))
 
