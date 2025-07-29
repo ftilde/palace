@@ -1,3 +1,6 @@
+use futures::StreamExt;
+use itertools::Itertools;
+use ndarray::ShapeBuilder;
 use sxd_document::*;
 use sxd_xpath::evaluate_xpath;
 
@@ -5,14 +8,15 @@ use std::path::{Path, PathBuf};
 
 use palace_core::{
     array::{TensorEmbeddingData, VolumeMetaData},
-    data::{Vector, VoxelPosition},
+    data::{GlobalCoordinate, Vector, VoxelPosition},
     dim::*,
-    dtypes::{DType, ScalarType},
+    dtypes::{DType, ElementType, ScalarType},
     jit::jit,
     operators::{
         rechunk::ChunkSize,
-        tensor::{EmbeddedVolumeOperator, TensorOperator},
+        tensor::{EmbeddedTensorOperator, EmbeddedVolumeOperator, TensorOperator},
     },
+    task::{OpaqueTaskContext, RequestStream},
     transfunc::TransFuncOperator,
     Error,
 };
@@ -217,4 +221,174 @@ pub fn load_tfi(path: &Path) -> Result<TransFuncOperator, Error> {
             ret
         },
     ))
+}
+
+fn write_vvd(
+    out: &mut dyn std::io::Write,
+    raw_file: &str,
+    dtype: DType,
+    dimensions: Vector<D3, GlobalCoordinate>,
+    spacing: Vector<D3, f32>,
+) -> Result<(), palace_core::Error> {
+    if dtype.size != 1 {
+        return Err(format!(
+            "Only scalar dtypes are supported, but dtype with size {} given",
+            dtype.size
+        )
+        .into());
+    }
+    let format = {
+        let this = &dtype.scalar;
+        match this {
+            ScalarType::U8 => "uint8",
+            ScalarType::I8 => "int8",
+            ScalarType::U16 => "uint16",
+            ScalarType::I16 => "int16",
+            ScalarType::U32 => "uint32",
+            ScalarType::I32 => "int32",
+            ScalarType::U64 => "uint64",
+            ScalarType::I64 => "int64",
+            ScalarType::F32 => "float",
+        }
+    };
+
+    let dim = dimensions.raw();
+
+    write!(
+        out,
+        r#"<?xml version="1.0" ?>
+<VoreenData version="1">
+    <Volumes>
+        <Volume>
+            <RawData format="{format}" x="{dim_x}" y="{dim_y}" z="{dim_z}">
+                <Paths noPathSet="false">
+                    <paths>
+                        <item value="{raw_file}" />
+                    </paths>
+                </Paths>
+            </RawData>
+            <MetaData>
+                <MetaItem name="Offset" type="Vec3MetaData">
+                    <value x="0" y="0" z="0" />
+                </MetaItem>
+                <MetaItem name="Spacing" type="Vec3MetaData">
+                    <value x="{spacing_x}" y="{spacing_y}" z="{spacing_z}" />
+                </MetaItem>
+            </MetaData>
+        </Volume>
+    </Volumes>
+</VoreenData>"#,
+        format = format,
+        dim_x = dim.x(),
+        dim_y = dim.y(),
+        dim_z = dim.z(),
+        spacing_x = spacing.x(),
+        spacing_y = spacing.y(),
+        spacing_z = spacing.z(),
+    )?;
+
+    Ok(())
+}
+
+pub async fn save_embedded_tensor<'cref, 'inv>(
+    ctx: OpaqueTaskContext<'cref, 'inv>,
+    path: &Path,
+    t: &'inv EmbeddedTensorOperator<D3, DType>,
+) -> Result<(), palace_core::Error> {
+    let raw_path = path.with_extension("raw");
+    let mut vvd_out = std::fs::File::options()
+        .truncate(true)
+        .write(true)
+        .create(true)
+        .open(path)?;
+
+    let raw_file_name = raw_path.file_name().unwrap();
+    let raw_file_name = raw_file_name.to_str().unwrap();
+    write_vvd(
+        &mut vvd_out,
+        raw_file_name,
+        t.dtype(),
+        t.metadata.dimensions,
+        t.embedding_data.spacing,
+    )?;
+
+    let file_size = t
+        .dtype()
+        .array_layout(t.metadata.num_tensor_elements())
+        .size();
+    let mut out_file = std::fs::File::options()
+        .truncate(true)
+        .write(true)
+        .read(true)
+        .create(true)
+        .open(raw_path)?;
+    out_file.set_len(file_size as u64)?;
+    let mut out_file = unsafe { memmap::MmapMut::map_mut(&mut out_file) }?;
+    let out_file_ptr = out_file.as_mut_ptr();
+
+    let num_dtype_bytes = t.dtype().element_layout().size();
+    let out_dim = t
+        .metadata
+        .dimensions
+        .push_dim_small(num_dtype_bytes.try_into().unwrap());
+    let stride = palace_core::data::dimension_order_stride(&out_dim);
+
+    let md = &t.metadata.push_dim_small(
+        num_dtype_bytes.try_into().unwrap(),
+        num_dtype_bytes.try_into().unwrap(),
+    );
+
+    let num_total = md.dimension_in_chunks().hmul();
+    println!("{} chunks to save", num_total);
+
+    let request_chunk_size = 1024;
+    let chunk_ids_in_parts = md.chunk_indices().chunks(request_chunk_size);
+    let mut i = 0;
+    for chunk_ids in &chunk_ids_in_parts {
+        let requests = chunk_ids.map(|chunk_id| (t.chunks.request_raw(chunk_id), chunk_id));
+        let stream =
+            ctx.submit_unordered_with_data(requests)
+                .then_req(ctx, |(chunk_handle, chunk_id)| {
+                    let chunk_info = md.chunk_info(chunk_id);
+
+                    let begin = chunk_info.begin();
+                    let start_offset = (*begin * stride).hadd();
+
+                    let start_ptr =
+                        unsafe { out_file_ptr.offset(start_offset.try_into().unwrap()) };
+
+                    let stride = D4::to_ndarray_dim_dyn(stride.inner());
+
+                    let size: ndarray::Shape<
+                        <palace_core::dim::D4 as palace_core::dim::DynDimension>::NDArrayDimDyn,
+                    > = chunk_info.logical_dimensions.to_ndarray_dim().into();
+                    let shape = size.strides(stride);
+
+                    let mut chunk_view_out =
+                        unsafe { ndarray::ArrayViewMut::from_shape_ptr(shape, start_ptr) };
+
+                    let chunk_handle = chunk_handle.into_thread_handle();
+                    ctx.spawn_compute(move || {
+                        let chunk_view_in =
+                            palace_core::data::chunk(chunk_handle.data(), &chunk_info);
+
+                        chunk_view_out.assign(&chunk_view_in);
+
+                        chunk_handle
+                    })
+                });
+        futures::pin_mut!(stream);
+        while let Some(handle) = stream.next().await {
+            let _handle = handle.into_main_handle(ctx.storage());
+        }
+        i += request_chunk_size;
+        println!(
+            "{}/{}, {}%",
+            i,
+            num_total,
+            i as f32 / num_total as f32 * 100.0
+        );
+    }
+
+    Ok(())
 }

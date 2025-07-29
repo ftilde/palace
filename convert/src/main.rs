@@ -5,7 +5,10 @@ use palace_core::{
     dim::{DDyn, DynDimension},
     dtypes::{DType, ScalarType},
     operators::{
-        procedural, rechunk::ChunkSize, resample::DownsampleStep, tensor::LODTensorOperator,
+        procedural,
+        rechunk::ChunkSize,
+        resample::DownsampleStep,
+        tensor::{EmbeddedTensorOperator, LODTensorOperator},
     },
     runtime::RunTime,
     vec::Vector,
@@ -26,6 +29,7 @@ enum FileMode {
 enum FileFormat {
     Zarr,
     HDF5,
+    VVD,
 }
 
 #[derive(Parser)]
@@ -123,6 +127,7 @@ fn parse_file_type(path: &Path) -> Result<FileFormat, String> {
     match segments[..] {
         [.., "zarr"] | [.., "zarr", "zip"] => Ok(FileFormat::Zarr),
         [.., "h5"] | [.., "hdf5"] => Ok(FileFormat::HDF5),
+        [.., "vvd"] => Ok(FileFormat::VVD),
         _ => Err(format!("Unknown file format in file {}", path).into()),
     }
 }
@@ -311,6 +316,24 @@ fn main() {
                 }
             }
         }
+        FileFormat::VVD => match args.mode {
+            FileMode::Single => {
+                let v: EmbeddedTensorOperator<palace_core::dim::D3, _> = input
+                    .clone()
+                    .try_into_static()
+                    .ok_or_else(|| format!("vvd format only supports volumes (3D tensors)."))
+                    .unwrap();
+                let v = &v;
+                runtime.resolve(None, false, |ctx, _| {
+                    async move { palace_vvd::save_embedded_tensor(ctx, &args.output_path, v).await }
+                        .into()
+                })
+            }
+
+            FileMode::Lod { .. } => {
+                panic!("vvd format does not support lod volumes.");
+            }
+        },
     }
     .unwrap();
 }

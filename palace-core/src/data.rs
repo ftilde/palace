@@ -8,9 +8,9 @@ use crate::dim::*;
 pub use crate::mat::*;
 pub use crate::vec::*;
 
-fn dimension_order_stride<D: DynDimension, T: CoordinateType>(
+pub fn dimension_order_stride<D: DynDimension, T: CoordinateType>(
     mem_size: &Vector<D, Coordinate<T>>,
-) -> D::NDArrayDimDyn {
+) -> Vector<D, usize> {
     let nd = mem_size.len();
     let mem_size = mem_size.as_index();
     let mut out = Vector::<D, usize>::fill_with_len(1usize, nd);
@@ -19,7 +19,7 @@ fn dimension_order_stride<D: DynDimension, T: CoordinateType>(
         out[i] = rol;
         rol *= mem_size[i];
     }
-    D::to_ndarray_dim_dyn(out.inner())
+    out
 }
 pub fn contiguous_shape<D: DynDimension, T: CoordinateType>(
     size: &Vector<D, Coordinate<T>>,
@@ -32,6 +32,7 @@ pub fn stride_shape<D: DynDimension, T: CoordinateType>(
 ) -> ndarray::StrideShape<D::NDArrayDimDyn> {
     use ndarray::ShapeBuilder;
     let stride = dimension_order_stride(mem_size);
+    let stride = D::to_ndarray_dim_dyn(stride.inner());
 
     let size: ndarray::Shape<D::NDArrayDimDyn> = size.to_ndarray_dim().into();
     size.strides(stride)

@@ -624,6 +624,7 @@ dependencies = [
  "palace-core",
  "palace-hdf5",
  "palace-io",
+ "palace-vvd",
  "palace-zarr",
 ]
 
@@ -2857,6 +2858,10 @@ dependencies = [
 name = "palace-vvd"
 version = "0.1.0"
 dependencies = [
+ "futures",
+ "itertools 0.13.0",
+ "memmap",
+ "ndarray 0.16.1",
  "palace-core",
  "sxd-document",
  "sxd-xpath",

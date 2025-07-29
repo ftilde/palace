@@ -10,3 +10,7 @@ license = "MPL-2.0"
 palace-core = { path = "../palace-core" }
 sxd-xpath = "0.4"
 sxd-document = "0.3"
+memmap = "0.7.0"
+ndarray = "0.16"
+futures = "0.3.30"
+itertools = "0.13.0"
