@@ -374,8 +374,8 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         }
 
                         #[pyo3(name = "load")]
-                        fn load_py(&self, py: pyo3::Python) -> pyo3::PyObject {
-                            self.store.borrow_mut(py).inner.load(&self.inner).into_py(py)
+                        fn load_py<'a>(&self, py: pyo3::Python<'a>) -> pyo3::Bound<'a, #name> {
+                            self.store.borrow_mut(py).inner.load(&self.inner).into_pyobject(py).unwrap()
                         }
 
                         #[pyo3(name = "link_to")]
@@ -387,7 +387,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                         fn mutate_py(&self, py: pyo3::Python, f: &pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
                             let val_py = self.load_py(py);
                             f.call1((&val_py,))?;
-                            let val = val_py.extract::<#name>(py)?;
+                            let val = val_py.extract::<#name>()?;
                             self.write_py(py, &val)
                         }
 
@@ -404,8 +404,6 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
 
                     impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
                         fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::Store>) -> pyo3::PyObject {
-                            use pyo3::ToPyObject;
-
                             let inner = <<Self as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner);
                             let init = #node_handle_name {
                                 inner,

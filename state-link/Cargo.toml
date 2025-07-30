@@ -9,7 +9,7 @@ license = "MPL-2.0"
 [dependencies]
 derive_more = "0.99.17"
 state-link-derive = { path = "../state-link-derive" }
-pyo3 = { version = "0.23.0", features = ["py-clone"], optional = true }
+pyo3 = { version = "0.25.1", features = ["py-clone"], optional = true }
 pyo3-stub-gen = { version = "0.6.0", features = ["numpy"], optional = true }
 
 [features]
