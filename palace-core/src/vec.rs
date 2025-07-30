@@ -766,6 +766,14 @@ impl<D: DynDimension> Vector<D, u32> {
         self.iter().map(|v| *v as usize).sum()
     }
 }
+impl<D: DynDimension> Vector<D, usize> {
+    pub fn hmul(&self) -> usize {
+        self.iter().product()
+    }
+    pub fn hadd(&self) -> usize {
+        self.iter().sum()
+    }
+}
 
 //impl<D: Dimension, T: CoordinateType> Vector<D, Coordinate<T>> {
 //    pub fn to_ndarray_dim(self) -> D::NDArrayDim {

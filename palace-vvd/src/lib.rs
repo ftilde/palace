@@ -351,8 +351,8 @@ pub async fn save_embedded_tensor<'cref, 'inv>(
                 .then_req(ctx, |(chunk_handle, chunk_id)| {
                     let chunk_info = md.chunk_info(chunk_id);
 
-                    let begin = chunk_info.begin();
-                    let start_offset = (*begin * stride).hadd();
+                    let begin = chunk_info.begin().map(|v| v.raw as usize);
+                    let start_offset = (begin * stride).hadd();
 
                     let start_ptr =
                         unsafe { out_file_ptr.offset(start_offset.try_into().unwrap()) };
