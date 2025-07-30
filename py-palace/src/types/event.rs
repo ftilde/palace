@@ -13,6 +13,12 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_py
 #[derive(From, Into)]
 pub struct Events(pub palace_core::event::EventStream);
 
+impl pyo3_stub_gen::PyStubType for &mut Events {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        Events::type_output()
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl Events {

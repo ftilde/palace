@@ -3,10 +3,16 @@ use std::any::TypeId;
 use pyo3::{prelude::*, IntoPyObjectExt};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
-#[derive(Default)]
 #[pyclass]
 #[gen_stub_pyclass]
 pub struct Store {
+    pub inner: Py<StoreInner>,
+}
+
+#[derive(Default)]
+#[pyclass]
+#[gen_stub_pyclass]
+pub struct StoreInner {
     pub inner: super::Store,
 }
 
@@ -22,34 +28,36 @@ enum StorePrimitive {
 #[gen_stub_pymethods]
 impl Store {
     #[new]
-    fn new() -> Self {
-        Default::default()
+    fn new(py: Python) -> Self {
+        Self {
+            inner: Py::new(py, StoreInner::default()).unwrap(),
+        }
     }
 
-    fn store_primitive(this: Py<Store>, py: Python, primitive: StorePrimitive) -> PyObject {
+    fn store_primitive(&self, py: Python, primitive: StorePrimitive) -> PyObject {
         match primitive {
             StorePrimitive::F32(v) => NodeHandleF32 {
                 inner: {
-                    let x = this.borrow_mut(py).inner.store(&v);
+                    let x = self.inner.borrow_mut(py).inner.store(&v);
                     x
                 },
-                store: this.into(),
+                store: self.inner.clone().into(),
             }
             .into_py_any(py),
             StorePrimitive::U32(v) => NodeHandleU32 {
                 inner: {
-                    let x = this.borrow_mut(py).inner.store(&v);
+                    let x = self.inner.borrow_mut(py).inner.store(&v);
                     x
                 },
-                store: this.into(),
+                store: self.inner.clone().into(),
             }
             .into_py_any(py),
             StorePrimitive::String(v) => NodeHandleString {
                 inner: {
-                    let x = this.borrow_mut(py).inner.store(&v);
+                    let x = self.inner.borrow_mut(py).inner.store(&v);
                     x
                 },
-                store: this.into(),
+                store: self.inner.clone().into(),
             }
             .into_py_any(py),
         }
@@ -61,7 +69,7 @@ impl Store {
 #[derive(Clone)]
 pub struct NodeHandleF32 {
     inner: <f32 as super::State>::NodeHandle,
-    store: Py<Store>,
+    store: Py<StoreInner>,
 }
 
 #[pymethods]
@@ -96,7 +104,7 @@ impl NodeHandleF32 {
 #[derive(Clone)]
 pub struct NodeHandleU32 {
     inner: <u32 as super::State>::NodeHandle,
-    store: Py<Store>,
+    store: Py<StoreInner>,
 }
 
 #[pymethods]
@@ -126,13 +134,15 @@ impl NodeHandleU32 {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
 pub struct NodeHandleString {
     pub inner: <String as super::State>::NodeHandle,
-    pub store: Py<Store>,
+    pub store: Py<StoreInner>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl NodeHandleString {
     pub fn write(&self, py: Python, val: String) -> PyResult<()> {
@@ -152,14 +162,15 @@ impl NodeHandleString {
     pub fn load(&self, py: Python) -> String {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
-    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: PyObject) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py_any(py).unwrap();
-        let res_py = f.call1((&val_py,))?;
-        let val = res_py.extract::<String>()?;
+        let res_py = f.call1(py, (&val_py,))?;
+        let val = res_py.extract::<String>(py)?;
         self.write(py, val)
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass]
 pub struct NodeHandleArray {
     item_type_: TypeId,
@@ -168,8 +179,8 @@ pub struct NodeHandleArray {
     inner: super::GenericNodeHandle,
     load_item: fn(Python, &super::GenericNodeHandle, &super::Store) -> PyObject,
     write_item: fn(Python, &super::GenericNodeHandle, &PyObject, &mut super::Store) -> PyResult<()>,
-    build_item_handle: fn(Python, super::GenericNodeHandle, Py<Store>) -> PyObject,
-    store: Py<Store>,
+    build_item_handle: fn(Python, super::GenericNodeHandle, Py<StoreInner>) -> PyObject,
+    store: Py<StoreInner>,
 }
 
 fn write_item<T: super::State + Clone + for<'f> FromPyObject<'f>>(
@@ -185,11 +196,16 @@ fn write_item<T: super::State + Clone + for<'f> FromPyObject<'f>>(
 pub trait PyState:
     std::any::Any + super::State + Clone + for<'f> IntoPyObject<'f> + for<'f> FromPyObject<'f> + 'static
 {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject;
+    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<StoreInner>)
+        -> PyObject;
 }
 
 impl PyState for f32 {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
+    fn build_handle(
+        py: Python,
+        inner: super::GenericNodeHandle,
+        store: Py<StoreInner>,
+    ) -> PyObject {
         let init = NodeHandleF32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
@@ -199,7 +215,11 @@ impl PyState for f32 {
 }
 
 impl PyState for u32 {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
+    fn build_handle(
+        py: Python,
+        inner: super::GenericNodeHandle,
+        store: Py<StoreInner>,
+    ) -> PyObject {
         let init = NodeHandleU32 {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
@@ -209,7 +229,11 @@ impl PyState for u32 {
 }
 
 impl PyState for String {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
+    fn build_handle(
+        py: Python,
+        inner: super::GenericNodeHandle,
+        store: Py<StoreInner>,
+    ) -> PyObject {
         let init = NodeHandleString {
             inner: <<Self as super::State>::NodeHandle as super::NodeHandle>::pack(inner),
             store,
@@ -219,7 +243,11 @@ impl PyState for String {
 }
 
 impl<const I: usize, T: PyState> PyState for [T; I] {
-    fn build_handle(py: Python, inner: super::GenericNodeHandle, store: Py<Store>) -> PyObject {
+    fn build_handle(
+        py: Python,
+        inner: super::GenericNodeHandle,
+        store: Py<StoreInner>,
+    ) -> PyObject {
         let init = NodeHandleArray::new::<T>(inner, I, store);
         init.into_py_any(py).unwrap()
     }
@@ -236,7 +264,7 @@ impl NodeHandleArray {
     >(
         inner: super::GenericNodeHandle,
         len: usize,
-        store: Py<Store>,
+        store: Py<StoreInner>,
     ) -> Self {
         Self {
             item_type_: TypeId::of::<T>(),
@@ -260,6 +288,7 @@ pub fn map_link_err(err: super::Error) -> PyErr {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl NodeHandleArray {
     fn load(&self, py: Python) -> PyObject {
@@ -343,17 +372,17 @@ impl NodeHandleArray {
         ))
     }
 
-    fn mutate(&self, py: Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> PyResult<()> {
+    fn mutate(&self, py: Python, f: PyObject) -> PyResult<()> {
         let initial = self.load(py);
-        let new_py = f.call1((initial,))?;
-        let new = new_py.extract::<Vec<PyObject>>()?;
+        let new_py = f.call1(py, (initial,))?;
+        let new = new_py.extract::<Vec<PyObject>>(py)?;
         self.write(py, new)
     }
 
-    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: PyObject) -> pyo3::PyResult<()> {
         let val_py = self.load(py);
-        let res_py = f.call1((&val_py,))?;
-        let val = res_py.extract::<Vec<PyObject>>()?;
+        let res_py = f.call1(py, (&val_py,))?;
+        let val = res_py.extract::<Vec<PyObject>>(py)?;
         self.write(py, val)
     }
 }

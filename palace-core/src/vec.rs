@@ -628,7 +628,7 @@ mod py {
         fn build_handle(
             py: Python,
             inner: state_link::GenericNodeHandle,
-            store: Py<state_link::py::Store>,
+            store: Py<state_link::py::StoreInner>,
         ) -> PyObject {
             let init = state_link::py::NodeHandleArray::new::<T>(inner, D::N, store);
             init.into_py_any(py).unwrap()

@@ -353,9 +353,9 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     // pymethods block, at least without adding the multiple-pymethods feature, which has
                     // its own issues: https://github.com/PyO3/pyo3/issues/341
                     impl #impl_generics #name #ty_generics #where_clause {
-                        fn store_py(&self, py: pyo3::Python, store: pyo3::Py<::state_link::py::Store>) -> pyo3::PyObject {
-                            let node = store.borrow_mut(py).inner.store(self).inner;
-                            <Self as ::state_link::py::PyState>::build_handle(py, node, store)
+                        fn store_py(&self, py: pyo3::Python, store: &::state_link::py::Store) -> pyo3::PyObject {
+                            let node = store.inner.borrow_mut(py).inner.store(self).inner;
+                            <Self as ::state_link::py::PyState>::build_handle(py, node, store.inner.clone())
                         }
                     }
 
@@ -363,7 +363,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     #[pyo3::pyclass]
                     struct #node_handle_name {
                         inner: #inner_node_handle_name,
-                        store: pyo3::Py<state_link::py::Store>,
+                        store: pyo3::Py<state_link::py::StoreInner>,
                     }
 
                     #[pyo3::pymethods]
@@ -403,7 +403,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                     }
 
                     impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
-                        fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::Store>) -> pyo3::PyObject {
+                        fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::StoreInner>) -> pyo3::PyObject {
                             let inner = <<Self as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner);
                             let init = #node_handle_name {
                                 inner,
@@ -420,7 +420,7 @@ fn derive_wrapper(input: TokenStream, gen_python: bool) -> TokenStream {
                 //Nothing to do, no handles to give access to
                 quote! {
                     impl #impl_generics ::state_link::py::PyState for #name #ty_generics #where_clause {
-                        fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::Store>) -> pyo3::PyObject {
+                        fn build_handle(py: pyo3::Python, inner: ::state_link::GenericNodeHandle, store: Py<state_link::py::StoreInner>) -> pyo3::PyObject {
                             let init = state_link::py::NodeHandleString {
                                 inner: <<String as state_link::State>::NodeHandle as state_link::NodeHandle>::pack(inner),
                                 store,

@@ -8,7 +8,7 @@ use palace_core::operators::conv::BorderHandling;
 use palace_core::vec::Vector;
 use palace_core::{dim::*, storage::Element};
 use pyo3::exceptions::PyValueError;
-use pyo3::types::{PyFunction, PySlice};
+use pyo3::types::PySlice;
 use pyo3::IntoPyObjectExt;
 use pyo3::{exceptions::PyException, prelude::*};
 
@@ -400,7 +400,7 @@ pub enum MaybeEmbeddedTensorOperator {
     Embedded { e: EmbeddedTensorOperator },
 }
 
-//#[gen_stub_pymethods] results in internal error: entered unreachable code
+#[gen_stub_pymethods]
 #[pymethods]
 impl MaybeEmbeddedTensorOperator {
     fn embedded(&self, embedding_data: PyTensorEmbeddingData) -> PyResult<EmbeddedTensorOperator> {
@@ -560,6 +560,7 @@ impl LODTensorOperator {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl LODTensorOperator {
     pub fn fine_metadata(&self) -> PyResult<PyTensorMetaData> {
@@ -577,7 +578,7 @@ impl LODTensorOperator {
         Ok(nd)
     }
 
-    pub fn map(&self, py: Python, f: Py<PyFunction>) -> PyResult<Self> {
+    pub fn map(&self, py: Python, f: PyObject) -> PyResult<Self> {
         Ok(Self {
             levels: self
                 .levels
@@ -618,15 +619,19 @@ impl LODTensorOperator {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass]
 #[derive(Copy, Clone)]
-pub struct FixedStep(f32);
+pub struct FixedStep {
+    v: f32,
+}
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl FixedStep {
     #[new]
     fn new(v: f32) -> Self {
-        Self(v)
+        Self { v }
     }
 }
 
@@ -639,8 +644,8 @@ pub enum DownsampleStep {
 
 impl<'py> FromPyObject<'py> for DownsampleStep {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        Ok(if let Ok(FixedStep(f)) = ob.extract::<FixedStep>() {
-            DownsampleStep::Fixed(f)
+        Ok(if let Ok(FixedStep { v }) = ob.extract::<FixedStep>() {
+            DownsampleStep::Fixed(v)
         } else {
             let v = ob.extract::<Option<f32>>()?;
             match v {

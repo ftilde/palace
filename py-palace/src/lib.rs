@@ -57,6 +57,9 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<palace_core::operators::raycaster::RaycasterConfig>()?;
     m.add_class::<palace_core::operators::raycaster::TrackballState>()?;
     m.add_class::<palace_core::operators::imageviewer::ImageViewerState>()?;
+    m.add_class::<TensorOperator>()?;
+    m.add_class::<EmbeddedTensorOperator>()?;
+    m.add_class::<LODTensorOperator>()?;
     m.add_class::<TransFuncOperator>()?;
     m.add_class::<PyTensorMetaData>()?;
     m.add_class::<PyTensorEmbeddingData>()?;

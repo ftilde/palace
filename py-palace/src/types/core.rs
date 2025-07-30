@@ -9,7 +9,7 @@ use palace_core::{
     vec::Vector,
 };
 use pyo3::{exceptions::PyException, prelude::*, IntoPyObjectExt};
-use pyo3_stub_gen::derive::gen_stub_pyclass;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use super::{Events, MaybeEmbeddedTensorOperatorArg, ScalarOperator, TensorOperator};
 
@@ -69,6 +69,7 @@ impl RunTime {
 #[derive(Copy, Clone)]
 pub struct DeviceId(pub palace_core::vulkan::DeviceId);
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl RunTime {
     #[new]
@@ -177,7 +178,8 @@ impl RunTime {
     #[pyo3(signature=(gen_frame, timeout_ms, record_task_stream=false, bench=false, display_device=None, window_size=None))]
     fn run_with_window(
         &self,
-        gen_frame: &Bound<pyo3::types::PyFunction>,
+        py: Python,
+        gen_frame: PyObject,
         timeout_ms: u64,
         record_task_stream: bool,
         bench: bool,
@@ -204,8 +206,10 @@ impl RunTime {
                 let size = window.size();
                 let size = [size.y().raw, size.x().raw];
                 let events = Events(events);
-                let frame = gen_frame.call((size, events), None)?;
-                let frame = frame.extract::<TensorOperator>()?.try_into_core_static()?;
+                let frame = gen_frame.call1(py, (size, events))?;
+                let frame = frame
+                    .extract::<TensorOperator>(py)?
+                    .try_into_core_static()?;
                 let frame = frame.try_into()?;
 
                 let frame_ref = &frame;

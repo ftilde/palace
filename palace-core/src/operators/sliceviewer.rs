@@ -2,6 +2,7 @@ use std::alloc::Layout;
 
 use ash::vk;
 use id::Identify;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use super::tensor::{EmbeddedTensorOperator, FrameOperator, LODTensorOperator, LODVolumeOperator};
 
@@ -30,6 +31,7 @@ use crate::{
 use pyo3::prelude::*;
 
 #[derive(Clone, state_link::State)]
+#[cfg_attr(feature = "python", gen_stub_pyclass)]
 #[cfg_attr(feature = "python", pyclass)]
 pub struct SliceviewState {
     #[pyo3(get, set)]
@@ -80,6 +82,7 @@ impl SliceviewState {
     }
 }
 
+#[cfg_attr(feature = "python", gen_stub_pymethods)]
 #[cfg_attr(feature = "python", pymethods)]
 impl SliceviewState {
     #[staticmethod]
@@ -96,7 +99,7 @@ impl SliceviewState {
         ))
     }
 
-    fn store(&self, py: pyo3::Python, store: Py<::state_link::py::Store>) -> pyo3::PyObject {
+    fn store(&self, py: pyo3::Python, store: &::state_link::py::Store) -> pyo3::PyObject {
         self.store_py(py, store)
     }
 

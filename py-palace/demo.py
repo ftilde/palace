@@ -25,8 +25,8 @@ if args.volume_file == "fill":
             //return ((pos_voxel[0]+pos_voxel[1]+pos_voxel[2]) % 2) * 1.0;
         }
         """
-    vol = pc.procedural(md, ed, prog).levels[0]
-    vol = vol.create_lod([2.0]*nd)
+    evol = pc.procedural(md, ed, prog).levels[0]
+    vol = evol.create_lod([2.0]*nd)
 
 elif args.volume_file == "mandelbulb":
     b = 64
@@ -40,9 +40,9 @@ else:
     try:
         vol = pc.open_lod(args.volume_file)
     except:
-        vol = pc.open(args.volume_file)
+        evol = pc.open(args.volume_file)
         steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
-        vol = vol.create_lod(steps)
+        vol = evol.create_lod(steps)
         #vol = vol.single_level_lod()
 
 
@@ -63,7 +63,7 @@ store = pc.Store()
 
 nd = vol.nd()
 
-def select_vol_from_ts(ts):
+def select_vol_from_ts(ts) -> pc.LODTensorOperator:
     match nd:
         case 3:
             return vol

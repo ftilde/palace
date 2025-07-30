@@ -1,7 +1,7 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::{PyArray0, PyArrayMethods};
 use palace_core::operators::gui as c;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -13,6 +13,7 @@ pub struct GuiState {
     runtime: RunTime,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl GuiState {
     #[new]
@@ -63,6 +64,7 @@ impl Drop for GuiState {
 #[pyclass(unsendable)]
 pub struct GuiRenderState(Option<c::GuiRenderState>);
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl GuiRenderState {
     pub fn render(&mut self, input: TensorOperator) -> PyResult<TensorOperator> {
@@ -84,11 +86,13 @@ pub struct Button {
     text: String,
     action: Py<PyFunction>,
 }
+#[gen_stub_pymethods]
 #[pymethods]
 impl Button {
     #[new]
-    fn new(text: String, action: Py<PyFunction>) -> Self {
-        Self { text, action }
+    fn new(py: Python, text: String, action: PyObject) -> PyResult<Self> {
+        let action = action.extract(py)?;
+        Ok(Self { text, action })
     }
 }
 
@@ -100,6 +104,7 @@ pub struct ComboBox {
     alternatives: Vec<String>,
     current: NodeHandleString,
 }
+#[gen_stub_pymethods]
 #[pymethods]
 impl ComboBox {
     #[new]
@@ -118,6 +123,7 @@ impl ComboBox {
 pub struct Label {
     text: String,
 }
+#[gen_stub_pymethods]
 #[pymethods]
 impl Label {
     #[new]
@@ -173,6 +179,7 @@ pub struct Slider {
     logarithmic: bool,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl Slider {
     #[new]
@@ -193,6 +200,7 @@ impl Slider {
 pub struct Horizontal {
     nodes: Vec<GuiNode>,
 }
+#[gen_stub_pymethods]
 #[pymethods]
 impl Horizontal {
     #[new]
@@ -207,6 +215,7 @@ impl Horizontal {
 pub struct Vertical {
     nodes: Vec<GuiNode>,
 }
+#[gen_stub_pymethods]
 #[pymethods]
 impl Vertical {
     #[new]
