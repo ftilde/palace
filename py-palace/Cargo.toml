@@ -9,8 +9,8 @@ name = "palace"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.25.1", features = ["extension-module"] }
-pyo3-stub-gen = { version = "0.6.0", features = ["numpy"] }
+pyo3 = { version = "0.25.1" }
+pyo3-stub-gen = { version = "0.11.1", features = ["numpy"] }
 numpy = "0.25"
 derive_more = "0.99"
 palace-core = { path = "../palace-core" }

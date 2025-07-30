@@ -6,3 +6,6 @@ build-backend = "maturin"
 name = "palace"
 requires-python = ">=3.9"
 version = "0.1"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
