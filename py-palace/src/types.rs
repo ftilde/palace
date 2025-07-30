@@ -15,11 +15,21 @@ pub use self::transfer_function::*;
 use palace_core::operators::rechunk::ChunkSize as CChunkSize;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyclass;
+use pyo3_stub_gen::derive::gen_stub_pymethods;
 
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
 pub struct ChunkSizeFull;
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ChunkSizeFull {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+}
 
 #[gen_stub_pyclass]
 #[derive(Copy, Clone, Debug)]

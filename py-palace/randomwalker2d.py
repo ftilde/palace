@@ -141,7 +141,7 @@ def apply_rw_mode(input):
 
     match mode.load():
         case "normal":
-            i = input.levels[0].rechunk([pc.chunk_size_full]*nd)
+            i = input.levels[0].rechunk([pc.ChunkSizeFull()]*nd)
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)

@@ -50,13 +50,13 @@ fn palace(_py: Python<'_>, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hierarchical_randomwalker, m)?)?;
     m.add_function(wrap_pyfunction!(rasterize_seed_points, m)?)?;
     m.add_function(wrap_pyfunction!(crate::jit::jit, m)?)?;
-    m.add("chunk_size_full", ChunkSizeFull)?;
     m.add_class::<palace_core::operators::sliceviewer::SliceviewState>()?;
     m.add_class::<palace_core::operators::splitter::SplitDirection>()?;
     m.add_class::<palace_core::operators::raycaster::CameraState>()?;
     m.add_class::<palace_core::operators::raycaster::RaycasterConfig>()?;
     m.add_class::<palace_core::operators::raycaster::TrackballState>()?;
     m.add_class::<palace_core::operators::imageviewer::ImageViewerState>()?;
+    m.add_class::<ChunkSizeFull>()?;
     m.add_class::<TensorOperator>()?;
     m.add_class::<EmbeddedTensorOperator>()?;
     m.add_class::<LODTensorOperator>()?;

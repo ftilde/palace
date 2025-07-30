@@ -41,7 +41,7 @@ else:
         vol = pc.open_lod(args.volume_file)
     except:
         evol = pc.open(args.volume_file)
-        steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
+        steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, evol.nd())]))
         vol = evol.create_lod(steps)
         #vol = vol.single_level_lod()
 

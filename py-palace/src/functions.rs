@@ -8,9 +8,9 @@ use palace_core::operators::raycaster::RaycasterConfig;
 use palace_core::operators::sliceviewer::RenderConfig2D;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pyfunction};
+use pyo3_stub_gen::derive::{gen_stub_pyclass_complex_enum, gen_stub_pyfunction};
 
-//#[gen_stub_pyfunction] TODO: Not working because PyUntypedArray does not impl the required type
+#[gen_stub_pyfunction]
 #[pyfunction]
 pub fn from_numpy(a: &Bound<PyUntypedArray>) -> PyResult<TensorOperator> {
     Ok(tensor_from_numpy(a)?.into())
@@ -283,7 +283,7 @@ pub fn randomwalker_weight_pairs(
 }
 
 #[derive(FromPyObject)]
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 pub enum MaybeVecUint {
     Splat(u32),
     Vec(Vec<u32>),

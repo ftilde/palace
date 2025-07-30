@@ -41,7 +41,7 @@ def render_raycast(vol, camera_state, config, tf, tile_size=None, devices=None):
         frame = pc.raycast(vol, eep, config.load(), tf)
         if devices:
             frame = frame.distribute_on_gpus(devices)
-        frame = frame.rechunk([pc.chunk_size_full]*2)
+        frame = frame.rechunk([pc.ChunkSizeFull()]*2)
 
         return frame
     return inner
@@ -64,7 +64,7 @@ def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=Non
         frame = pc.render_slice(vol, md, proj, tf, coarse_lod_factor)
         if devices:
             frame = frame.distribute_on_gpus(devices)
-        frame = frame.rechunk([pc.chunk_size_full]*2)
+        frame = frame.rechunk([pc.ChunkSizeFull()]*2)
 
         return frame
     return inner

@@ -51,7 +51,7 @@ nd = vol.nd()
 
 # Reduce the LOD hierarchy and compute root on a larger full volume. This is still manageable in terms of computation time, but increases the "range" of labels in smaller structures quite a bit.
 max_level = len(vol.levels) - 2
-vol.levels = [l if i != max_level else l.rechunk([pc.chunk_size_full] * nd) for i, l in enumerate(vol.levels) if i <= max_level]
+vol.levels = [l if i != max_level else l.rechunk([pc.ChunkSizeFull()] * nd) for i, l in enumerate(vol.levels) if i <= max_level]
 
 for level in vol.levels:
     print("{} {}".format(level.inner.metadata.dimensions, level.inner.metadata.chunk_size))
@@ -192,7 +192,7 @@ def apply_rw_mode(input):
 
     match mode.load():
         case "normal":
-            i = input.levels[0].rechunk([pc.chunk_size_full]*nd)
+            i = input.levels[0].rechunk([pc.ChunkSizeFull()]*nd)
             md: pc.TensorMetaData = i.inner.metadata
             ed = i.embedding_data
             weights = apply_weight_function(i)
@@ -276,9 +276,10 @@ def render(size, events: pc.Events):
                 background_seeds = np.concat([background_seeds, pos_nd])
 
     def overlay_slice(state):
+        tile_size = 512
 
-        slice = palace_util.render_slice(v, state, tf, lod_coarseness_2d.load())
-        slice_rw = palace_util.render_slice(rw_result, state, tf_prob, lod_coarseness_2d.load())
+        slice = palace_util.render_slice(v, state, tf, lod_coarseness_2d.load(), tile_size=tile_size)
+        slice_rw = palace_util.render_slice(rw_result, state, tf_prob, lod_coarseness_2d.load(), tile_size=tile_size)
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 

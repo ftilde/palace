@@ -16,7 +16,7 @@ use palace_core::operators::scalar::ScalarOperator as CScalarOperator;
 use palace_core::operators::tensor::EmbeddedTensorOperator as CEmbeddedTensorOperator;
 use palace_core::operators::tensor::LODTensorOperator as CLODTensorOperator;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 
 use crate::jit::{jit_binary, jit_ternary, jit_unary, JitArgument};
 use crate::types::DeviceId;
@@ -366,7 +366,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 #[derive(FromPyObject, Clone)]
 pub enum MaybeEmbeddedTensorOperatorArg {
     Not(TensorOperator),
@@ -392,7 +392,7 @@ impl From<MaybeEmbeddedTensorOperatorArg> for MaybeEmbeddedTensorOperator {
     }
 }
 
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub enum MaybeEmbeddedTensorOperator {
@@ -635,7 +635,7 @@ impl FixedStep {
     }
 }
 
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 pub enum DownsampleStep {
     Ignore,
     Fixed(f32),
@@ -758,14 +758,14 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
     };
 }
 
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 #[derive(FromPyObject)]
 pub enum MaybeScalarDType {
     Scalar(ScalarType),
     DType(DType),
 }
 
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 #[derive(FromPyObject)]
 pub enum SliceArg {
     Scalar(u32),

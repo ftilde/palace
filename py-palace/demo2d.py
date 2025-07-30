@@ -58,7 +58,7 @@ else:
                 return img
             case 3:
                 chunks = list(img.inner.metadata.chunk_size)
-                chunks[-1] = pc.chunk_size_full
+                chunks[-1] = pc.ChunkSizeFull()
 
                 img = img.rechunk(chunks).fold_into_dtype()
                 img.inner = palace_util.pad_dtype_channels_to(img.inner, 4, 255)
@@ -90,7 +90,7 @@ def render(size, events):
 
     md = pc.TensorMetaData(size, tile_size)
     frame = pc.view_image(img, md, view_state.load())
-    frame = frame.rechunk([pc.chunk_size_full]*2)
+    frame = frame.rechunk([pc.ChunkSizeFull()]*2)
 
     return frame
 

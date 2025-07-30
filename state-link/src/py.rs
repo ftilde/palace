@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use pyo3::{prelude::*, IntoPyObjectExt};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
 
 #[pyclass]
 #[gen_stub_pyclass]
@@ -17,7 +17,7 @@ pub struct StoreInner {
 }
 
 #[derive(FromPyObject)]
-#[gen_stub_pyclass_enum]
+#[gen_stub_pyclass_complex_enum]
 enum StorePrimitive {
     U32(u32),
     F32(f32),
@@ -65,6 +65,7 @@ impl Store {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
 pub struct NodeHandleF32 {
@@ -72,6 +73,7 @@ pub struct NodeHandleF32 {
     store: Py<StoreInner>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl NodeHandleF32 {
     pub fn write(&self, py: Python, val: f32) -> PyResult<()> {
@@ -92,14 +94,15 @@ impl NodeHandleF32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
 
-    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: PyObject) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py_any(py).unwrap();
-        let res_py = f.call1((&val_py,))?;
-        let val = res_py.extract::<f32>()?;
+        let res_py = f.call1(py, (&val_py,))?;
+        let val = res_py.extract::<f32>(py)?;
         self.write(py, val)
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
 pub struct NodeHandleU32 {
@@ -107,6 +110,7 @@ pub struct NodeHandleU32 {
     store: Py<StoreInner>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl NodeHandleU32 {
     pub fn write(&self, py: Python, val: u32) -> PyResult<()> {
@@ -126,10 +130,10 @@ impl NodeHandleU32 {
     pub fn load(&self, py: Python) -> u32 {
         self.store.borrow_mut(py).inner.load(&self.inner)
     }
-    fn map(&self, py: pyo3::Python, f: pyo3::Bound<pyo3::types::PyFunction>) -> pyo3::PyResult<()> {
+    fn map(&self, py: pyo3::Python, f: PyObject) -> pyo3::PyResult<()> {
         let val_py = self.load(py).into_py_any(py).unwrap();
-        let res_py = f.call1((&val_py,))?;
-        let val = res_py.extract::<u32>()?;
+        let res_py = f.call1(py, (&val_py,))?;
+        let val = res_py.extract::<u32>(py)?;
         self.write(py, val)
     }
 }

@@ -550,6 +550,7 @@ pub struct RaycasterConfig {
     pub shading: Shading,
 }
 
+#[cfg_attr(feature = "python", gen_stub_pymethods)]
 #[cfg_attr(feature = "python", pymethods)]
 impl RaycasterConfig {
     #[new]
