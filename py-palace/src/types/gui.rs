@@ -1,7 +1,7 @@
 use super::{core::RunTime, Events, TensorOperator};
 use numpy::{PyArray0, PyArrayMethods};
 use palace_core::operators::gui as c;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods, gen_stub_type_union_enum};
 use state_link::py::{NodeHandleF32, NodeHandleString, NodeHandleU32};
 
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
@@ -132,7 +132,7 @@ impl Label {
     }
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(Clone, FromPyObject)]
 enum SliderVal {
     Array0(Py<PyArray0<f64>>),
@@ -224,7 +224,7 @@ impl Vertical {
     }
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject, Clone)]
 enum GuiNode {
     Button(Button),

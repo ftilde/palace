@@ -16,7 +16,9 @@ use palace_core::operators::scalar::ScalarOperator as CScalarOperator;
 use palace_core::operators::tensor::EmbeddedTensorOperator as CEmbeddedTensorOperator;
 use palace_core::operators::tensor::LODTensorOperator as CLODTensorOperator;
 use palace_core::operators::tensor::TensorOperator as CTensorOperator;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{
+    gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods, gen_stub_type_union_enum,
+};
 
 use crate::jit::{jit_binary, jit_ternary, jit_unary, JitArgument};
 use crate::types::DeviceId;
@@ -358,7 +360,7 @@ impl EmbeddedTensorOperator {
     }
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject, Clone)]
 pub enum MaybeEmbeddedTensorOperatorArg {
     Not(TensorOperator),
@@ -627,25 +629,43 @@ impl FixedStep {
     }
 }
 
-#[gen_stub_pyclass_complex_enum]
-pub enum DownsampleStep {
-    Ignore,
-    Fixed(f32),
-    Synchronized(f32),
+#[gen_stub_pyclass]
+#[pyclass]
+#[derive(Copy, Clone)]
+pub struct SynchronizedStep {
+    v: f32,
 }
 
-impl<'py> FromPyObject<'py> for DownsampleStep {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        Ok(if let Ok(FixedStep { v }) = ob.extract::<FixedStep>() {
-            DownsampleStep::Fixed(v)
-        } else {
-            let v = ob.extract::<Option<f32>>()?;
-            match v {
-                Some(f) => DownsampleStep::Synchronized(f),
-                None => DownsampleStep::Ignore,
-            }
-        })
+#[gen_stub_pymethods]
+#[pymethods]
+impl SynchronizedStep {
+    #[new]
+    fn new(v: f32) -> Self {
+        Self { v }
     }
+}
+
+#[gen_stub_pyclass]
+#[pyclass]
+#[derive(Copy, Clone)]
+pub struct IgnoreStep {}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl IgnoreStep {
+    #[new]
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+#[gen_stub_type_union_enum]
+#[derive(FromPyObject)]
+pub enum DownsampleStep {
+    Ignore(IgnoreStep),
+    Fixed(FixedStep),
+    Synchronized(SynchronizedStep),
+    SynchronizedViaNumber(f32),
 }
 
 // Methods for [Embedded]TensorOperator
@@ -675,9 +695,10 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
             fn create_lod(&self, steps: Vec<DownsampleStep>) -> PyResult<LODTensorOperator> {
                 use palace_core::operators::resample::DownsampleStep as CDownsampleStep;
                 let steps = Vector::from_fn_and_len(steps.len(), |i| match steps[i] {
-                    DownsampleStep::Ignore => CDownsampleStep::Ignore,
-                    DownsampleStep::Fixed(f) => CDownsampleStep::Fixed(f),
-                    DownsampleStep::Synchronized(f) => CDownsampleStep::Synchronized(f),
+                    DownsampleStep::Ignore(_) => CDownsampleStep::Ignore,
+                    DownsampleStep::Fixed(f) => CDownsampleStep::Fixed(f.v),
+                    DownsampleStep::Synchronized(f) => CDownsampleStep::Synchronized(f.v),
+                    DownsampleStep::SynchronizedViaNumber(f) => CDownsampleStep::Synchronized(f),
                 });
                 Ok(palace_core::operators::resample::create_lod(
                     self.clone().into_core(),
@@ -751,14 +772,14 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
     };
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject)]
 pub enum MaybeScalarDType {
     Scalar(ScalarType),
     DType(DType),
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject)]
 pub enum SliceArg {
     Scalar(u32),

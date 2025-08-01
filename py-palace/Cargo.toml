@@ -10,7 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = { version = "0.25.1" }
-pyo3-stub-gen = { version = "0.11.1", features = ["numpy"] }
+#pyo3-stub-gen = { version = "0.11.1", features = ["numpy"] }
+pyo3-stub-gen = { git = "https://github.com/ftilde/pyo3-stub-gen", features = ["numpy"] }
 numpy = "0.25"
 derive_more = "0.99"
 palace-core = { path = "../palace-core" }

@@ -2,9 +2,9 @@ use crate::types::*;
 use palace_core::jit::{BinOp, JitTensorOperator, TernaryOp, UnaryOp};
 use palace_core::{dim::*, jit as cjit};
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::gen_stub_pyclass_complex_enum;
+use pyo3_stub_gen::derive::gen_stub_type_union_enum;
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject, Clone)]
 pub enum JitArgument {
     Tensor(MaybeEmbeddedTensorOperatorArg),

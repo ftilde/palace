@@ -7,7 +7,7 @@ use palace_core::{
 };
 use pyo3::{exceptions::PyException, prelude::*, types::PyFunction};
 use pyo3_stub_gen::derive::{
-    gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pyclass_enum, gen_stub_pymethods,
+    gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods, gen_stub_type_union_enum,
 };
 
 #[gen_stub_pyclass]
@@ -108,7 +108,7 @@ impl Into<palace_core::event::MouseButton> for MouseButton {
     }
 }
 
-#[gen_stub_pyclass_complex_enum]
+#[gen_stub_type_union_enum]
 #[derive(FromPyObject, Clone, Debug, From)]
 enum Behaviour {
     OnMouseDrag(OnMouseDrag),
