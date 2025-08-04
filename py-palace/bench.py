@@ -13,6 +13,7 @@ parser.add_argument('--tfmax', type=float, default=1.0)
 parser.add_argument('--width', type=int, default=800)
 parser.add_argument('--height', type=int, default=600)
 parser.add_argument('--normalized-size', action='store_true')
+parser.add_argument('--save-image', type=str, default=None)
 parser.add_argument('--camera-distance', type=float, default=None)
 parser.add_argument('--fov', type=float, default=30)
 palace_util.add_runtime_args(parser)
@@ -69,7 +70,8 @@ camera_state = pc.CameraState.for_volume(l0md, l0ed, args.fov).store(store)
 
 if args.camera_distance:
     camera_state.trackball().eye().write([-args.camera_distance, 0.0, 0.0])
-    camera_state.trackball().up().write(-np.array(camera_state.trackball().up().load()))
+    #camera_state.trackball().center().write(np.array([1.0]*3))
+    camera_state.trackball().up().write(np.array([0.0, -1.0, 0.0]))
 
 def fit_tf_to_values(vol):
     palace_util.fit_tf_range(rt, vol.levels[0], tf)
@@ -86,8 +88,13 @@ def render(size, events):
     #camera_state.trackball().mutate(lambda v: v.pan_around([0, 10]))
 
     frame = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices)
+    print(np.linalg.norm(camera_state.trackball().eye().load()))
 
     return frame(size, events)
 
-elapsed = rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=(args.width,args.height))
+image_size = (args.width,args.height)
+elapsed = rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=image_size)
 print("Elapsed time: {}s".format(elapsed))
+if args.save_image:
+    frame = render(image_size, pc.Events.none()).unfold_dtype()[:,:,:3]
+    palace_util.save_screenshot(rt, args.save_image, frame, image_size)

@@ -118,14 +118,6 @@ pub struct TensorOperator {
     inner: MaybeJitTensorOperator,
 }
 
-impl TensorOperator {
-    pub fn nd(&self) -> PyResult<usize> {
-        let nd = self.metadata()?.dimensions.len();
-        assert_eq!(nd, self.metadata()?.chunk_size.len());
-        Ok(nd)
-    }
-}
-
 impl From<CTensorOperator<DDyn, DType>> for TensorOperator {
     fn from(t: CTensorOperator<DDyn, DType>) -> Self {
         Self {
@@ -671,6 +663,10 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
             pub fn metadata(&self) -> PyResult<PyTensorMetaData> {
                 self.inner.metadata()
             }
+            pub fn nd(&self) -> PyResult<usize> {
+                self.inner.nd()
+            }
+
             fn single_level_lod(&self) -> PyResult<LODTensorOperator> {
                 Ok(LODTensorOperator {
                     levels: vec![self.clone()],
@@ -700,9 +696,6 @@ macro_rules! impl_embedded_tensor_operator_with_delegate {
                     inner: self.inner.distribute_on_gpus(devices),
                     embedding_data: self.embedding_data.clone(),
                 }
-            }
-            pub fn nd(&self) -> PyResult<usize> {
-                self.inner.nd()
             }
 
             #[pyo3(signature = (num_samples=None))]
@@ -817,6 +810,13 @@ impl TensorOperator {
             MaybeJitTensorOperator::Tensor(i) => i.dtype(),
         }
     }
+
+    pub fn nd(&self) -> PyResult<usize> {
+        let nd = self.metadata()?.dimensions.len();
+        assert_eq!(nd, self.metadata()?.chunk_size.len());
+        Ok(nd)
+    }
+
     #[getter]
     pub fn metadata(&self) -> PyResult<PyTensorMetaData> {
         Ok(match &self.inner {

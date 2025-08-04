@@ -1,6 +1,7 @@
 import palace as pc
 import numpy as np
 import re
+from PIL import Image
 
 # General pattern for renderable components:
 # component: size, events -> frame operator
@@ -126,6 +127,12 @@ def alpha_blending(render_over, render_under):
         return ((over * alpha + under * one_minus_alpha) * max_val).cast(pc.ScalarType.U8.vec(4))
 
     return inner
+
+def save_screenshot(rt, path, frame, size):
+    frame = frame.rechunk([pc.ChunkSizeFull()] * frame.nd())
+    screenshot_tensor = rt.resolve(frame, [[0]*3])[0]
+    im = Image.fromarray(screenshot_tensor)
+    im.save(path)
 
 def pad_dtype_channels_to(image, n, pad_value):
     current_channels = image.dtype.size
