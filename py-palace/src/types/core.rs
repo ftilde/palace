@@ -185,7 +185,7 @@ impl RunTime {
         bench: bool,
         display_device: Option<usize>,
         window_size: Option<(u32, u32)>,
-    ) -> PyResult<()> {
+    ) -> PyResult<f64> {
         let mut rt = self.inner.clone();
         let display_device = {
             let rt = rt.borrow();
@@ -197,12 +197,16 @@ impl RunTime {
                 None
             }
         };
+        let mut start = None;
         palace_winit::run_with_window_wrapper(
             &mut rt,
             Duration::from_millis(timeout_ms),
             display_device,
             window_size,
             |_event_loop, window, rt, events, timeout| {
+                if start.is_none() {
+                    start = Some(std::time::Instant::now());
+                }
                 let size = window.size();
                 let size = [size.y().raw, size.x().raw];
                 let events = Events(events);
@@ -224,8 +228,9 @@ impl RunTime {
                     _event_loop.exit();
                 }
 
-                Ok(version)
+                Ok::<_, PyErr>(version)
             },
-        )
+        )?;
+        Ok(start.unwrap().elapsed().as_secs_f64())
     }
 }

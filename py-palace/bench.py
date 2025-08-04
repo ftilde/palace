@@ -89,7 +89,5 @@ def render(size, events):
 
     return frame(size, events)
 
-start = time.time()
-rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=(args.width,args.height))
-end = time.time()
-print("Elapsed time: {}s".format(end - start))
+elapsed = rt.run_with_window(render, timeout_ms=10, bench=True, record_task_stream=False, window_size=(args.width,args.height))
+print("Elapsed time: {}s".format(elapsed))
