@@ -6,18 +6,30 @@ import xml.etree.ElementTree as ET
 import time
 from pathlib import Path
 
-def read_vge(path):
+def read_vge(path, l0ed):
     root = ET.parse(path)
+    spacing = l0ed.spacing
+    def extract_row(i):
+        row = root.findall('.//transformationMatrix.row' + str(i))[0]
+        return np.array([float(row.attrib['x']),float(row.attrib['y']),float(row.attrib['z']),float(row.attrib['w'])])
+
+    mat = np.array([extract_row(i) for i in range(4)])
+    print(mat)
+
     points = []
     for elem in root.findall('.//item/item'):
-        points.append([float(elem.attrib['z']), float(elem.attrib['y']), float(elem.attrib['x'])])
-    #print(points)
+        point = np.array([float(elem.attrib['x']), float(elem.attrib['y']), float(elem.attrib['z']), 1.0])
+        point_transformed = mat.dot(point)
+        point_zyx = np.flip(point_transformed[0:3])
+        point_physical = point_zyx * spacing
+        #print(point_physical)
+        points.append(point_physical)
     return np.array(points, dtype=np.float32)
 
-def read_seeds(path):
+def read_seeds(path, l0ed):
     match Path(path).suffix:
         case ".vge":
-            return read_vge(path)
+            return read_vge(path, l0ed)
         case ".npy":
             return np.load(path)
         case o:
@@ -58,14 +70,6 @@ for level in vol.levels:
 
 dim_t = vol.fine_metadata().dimensions[0]
 
-foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
-background_seeds = np.empty(shape=[0,nd], dtype=np.float32)
-
-if args.foreground_seeds:
-    foreground_seeds = np.concat([foreground_seeds, read_seeds(args.foreground_seeds)])
-if args.background_seeds:
-    background_seeds = np.concat([background_seeds, read_seeds(args.background_seeds)])
-
 def select_vol_from_ts(v, ts):
     match nd:
         case 3:
@@ -78,6 +82,14 @@ def select_vol_from_ts(v, ts):
 v0 = select_vol_from_ts(vol, 0)
 l0md: pc.TensorMetaData = v0.fine_metadata()
 l0ed = v0.fine_embedding_data()
+
+foreground_seeds = np.empty(shape=[0,nd], dtype=np.float32)
+background_seeds = np.empty(shape=[0,nd], dtype=np.float32)
+
+if args.foreground_seeds:
+    foreground_seeds = np.concat([foreground_seeds, read_seeds(args.foreground_seeds, l0ed)])
+if args.background_seeds:
+    background_seeds = np.concat([background_seeds, read_seeds(args.background_seeds, l0ed)])
 
 vol = vol.map(lambda vol: vol.cast(pc.ScalarType.F32))
 #vol = vol.map(lambda vol: vol * (1.0/(1 << 16)))
