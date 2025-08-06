@@ -273,13 +273,15 @@ fn main() {
                 }),
 
                 FileMode::Lod { lod_steps } => {
+                    let recreate_lod =
+                        matches!(lod_origin, LodOrigin::Dynamic) || lod_steps.is_some();
                     write_hints.lod_downsample_steps = lod_steps.map(parse_lod_steps);
                     palace_zarr::save_lod_tensor(
                         &mut runtime,
                         &args.output_path,
                         input_lod,
                         write_hints,
-                        matches!(lod_origin, LodOrigin::Dynamic),
+                        recreate_lod,
                     )
                 }
             }
@@ -305,13 +307,15 @@ fn main() {
                 }),
 
                 FileMode::Lod { lod_steps } => {
+                    let recreate_lod =
+                        matches!(lod_origin, LodOrigin::Dynamic) || lod_steps.is_some();
                     write_hints.lod_downsample_steps = lod_steps.map(parse_lod_steps);
                     palace_hdf5::save_lod_tensor(
                         &mut runtime,
                         &args.output_path,
                         input_lod,
                         &write_hints,
-                        matches!(lod_origin, LodOrigin::Dynamic),
+                        recreate_lod,
                     )
                 }
             }
