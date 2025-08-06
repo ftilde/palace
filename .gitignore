@@ -5,6 +5,7 @@ flamegraph*.svg
 heaptrack*.zst
 massif.*
 task_graph.svg
+task_graph_detailed.svg
 *taskeventstream.json
 foo.png
 validator_output.txt
