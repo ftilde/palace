@@ -40,6 +40,9 @@ declare_push_consts(consts);
 bool at_cuboid_border(uint[N] position, uint[N] size) {
     return any(equal(position, fill(position, 0))) || any(equal(add(position, fill(position, 1)), size));
 }
+bool inside_cuboid(float[N] position, float[N] lower, float[N] upper) {
+    return all(less_than_equal(lower, position)) && all(less_than(position, upper));
+}
 
 bool at_voxel(float[N] voxel, float[N] point_voxel) {
     float[N] diff = abs(sub(voxel, point_voxel));
@@ -51,6 +54,10 @@ bool at_voxel(float[N] voxel, float[N] point_voxel) {
 
 shared uint shared_min;
 shared uint shared_max;
+
+const uint LOCAL_SIZE = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
+shared float[LOCAL_SIZE][N] shared_positions;
+shared uint inside_batch_count;
 
 void main() {
     uint gID = global_position_linear;
@@ -102,27 +109,60 @@ void main() {
 
             }
         }
-
         bool is_foreground = false;
-        for(int i=0; i<consts.num_points_fg; ++i) {
-            if(at_voxel(to_float(global_pos), points_foreground.values[i])) {
-                is_foreground = true;
+        bool is_background = false;
 
-                max_val = max(max_val, 1.0);
-
-                break;
+        float[N] p05 = fill(sample_pos, 0.5);
+        float[N] out_begin_f = sub(to_float(consts.out_begin), p05);
+        float[N] out_end_f = add(to_float(add(consts.out_begin, consts.out_chunk_size_logical)), p05);
+        for(uint i=0; i<consts.num_points_fg; i+=LOCAL_SIZE) {
+            if(lID == 0) {
+                inside_batch_count = 0;
             }
+
+            barrier();
+            uint j = i+lID;
+            if(j < consts.num_points_fg) {
+                float[N] seed_point_f = points_foreground.values[j];
+                if(inside_cuboid(seed_point_f, out_begin_f, out_end_f)) {
+                    uint shared_i = atomicAdd(inside_batch_count, 1u);
+                    shared_positions[shared_i] = seed_point_f;
+                }
+            }
+            barrier();
+            for(uint k=0; k<inside_batch_count; ++k) {
+                if(at_voxel(to_float(global_pos), shared_positions[k])) {
+                    is_foreground = true;
+                    max_val = max(max_val, 1.0);
+                    break;
+                }
+            }
+            barrier();
         }
 
-        bool is_background = false;
-        for(int i=0; i<consts.num_points_bg; ++i) {
-            if(at_voxel(to_float(global_pos), points_background.values[i])) {
-
-                min_val = min(min_val, 0.0);
-
-                is_background = true;
-                break;
+        for(uint i=0; i<consts.num_points_bg; i+=LOCAL_SIZE) {
+            if(lID == 0) {
+                inside_batch_count = 0;
             }
+
+            barrier();
+            uint j = i+lID;
+            if(j < consts.num_points_bg) {
+                float[N] seed_point_f = points_background.values[j];
+                if(inside_cuboid(seed_point_f, out_begin_f, out_end_f)) {
+                    uint shared_i = atomicAdd(inside_batch_count, 1u);
+                    shared_positions[shared_i] = seed_point_f;
+                }
+            }
+            barrier();
+            for(uint k=0; k<inside_batch_count; ++k) {
+                if(at_voxel(to_float(global_pos), shared_positions[k])) {
+                    is_background = true;
+                    min_val = min(min_val, 0.0);
+                    break;
+                }
+            }
+            barrier();
         }
 
         if (is_foreground != is_background) {

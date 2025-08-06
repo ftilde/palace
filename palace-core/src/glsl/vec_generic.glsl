@@ -398,3 +398,11 @@ uint[_N] to_uint(int[_N] v) {
     }
     return res;
 }
+
+uint[_N] to_uint(float[_N] v) {
+    uint[_N] res;
+    for(int i=0; i<_N; i+= 1) {
+        res[i] = uint(v[i]);
+    }
+    return res;
+}
