@@ -44,6 +44,8 @@ parser.add_argument('volume_file')
 parser.add_argument('-fg', '--foreground_seeds', required=False)
 parser.add_argument('-bg', '--background_seeds', required=False)
 parser.add_argument('-b', '--batch', type=int, default=128)
+parser.add_argument('--max-iter', type=int, default=1000)
+parser.add_argument('--max-residuum-norm', type=float, default=1e-3)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -147,7 +149,7 @@ def apply_weight_function(volume):
 fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
 bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
 weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
-rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
+rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm).cache_coarse_levels()
 
 
 print("Chunk size is: {}".format(l0md.chunk_size))

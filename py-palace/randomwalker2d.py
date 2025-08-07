@@ -6,6 +6,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('img_file')
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('--max-iter', type=int, default=1000)
+parser.add_argument('--max-residuum-norm', type=float, default=1e-3)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -145,12 +147,12 @@ def apply_rw_mode(input):
             md: pc.TensorMetaData = i.inner.metadata
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
-            rw_result = pc.randomwalker(weights, seeds, max_iter=1000, max_residuum_norm=0.001)
+            rw_result = pc.randomwalker(weights, seeds, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
             return (input, rw_result.create_lod(lod_args))
 
         case "hierarchical":
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
-            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor).cache_coarse_levels()
+            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm).cache_coarse_levels()
             return (input, rw_result)
 
 
