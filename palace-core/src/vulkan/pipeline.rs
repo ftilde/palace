@@ -567,7 +567,7 @@ impl AsBufferDescriptor for Allocation {
 
 pub struct NullBuf;
 
-impl<'a> AsBufferDescriptor for NullBuf {
+impl AsBufferDescriptor for NullBuf {
     fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
         vk::DescriptorBufferInfo::default()
             .buffer(vk::Buffer::default())
@@ -596,6 +596,32 @@ impl<'a> AsBufferDescriptor for StateCacheHandle<'a> {
         vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(self.size as _)
+    }
+}
+
+pub struct FixedBufferDescriptor {
+    inner: vk::DescriptorBufferInfo,
+}
+
+impl AsBufferDescriptor for FixedBufferDescriptor {
+    fn gen_buffer_info(&self) -> vk::DescriptorBufferInfo {
+        self.inner
+    }
+}
+
+pub trait AsBufferDescriptorExt {
+    fn with_offset_and_size(&self, offset: u64, size: u64) -> FixedBufferDescriptor;
+}
+
+impl<T: AsBufferDescriptor> AsBufferDescriptorExt for T {
+    fn with_offset_and_size(&self, offset: u64, size: u64) -> FixedBufferDescriptor {
+        let inner = self.gen_buffer_info();
+        let new_offset = inner.offset + offset;
+        // Only allow reducing the range
+        assert!(new_offset + size <= inner.offset + inner.range);
+        FixedBufferDescriptor {
+            inner: inner.offset(new_offset).range(size),
+        }
     }
 }
 

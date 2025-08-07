@@ -1,6 +1,7 @@
 use crate::data::{ChunkCoordinate, GlobalCoordinate, LocalCoordinate, Matrix, Vector};
 use crate::dim::*;
 
+#[derive(Clone)]
 pub struct ChunkInfo<D: DynDimension> {
     pub mem_dimensions: Vector<D, LocalCoordinate>,
     pub logical_dimensions: Vector<D, LocalCoordinate>,

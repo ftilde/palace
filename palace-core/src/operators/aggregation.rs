@@ -3,14 +3,17 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use ash::vk;
 use futures::StreamExt;
 use id::Identify;
+use itertools::Itertools;
 use rand::SeedableRng;
 
 use crate::{
-    array::{ChunkIndex, ChunkInfo},
+    array::{ChunkIndex, ChunkInfo, TensorMetaData},
+    data::{ChunkCoordinate, LocalCoordinate},
     dim::DynDimension,
-    dtypes::StaticElementType,
+    dtypes::{DType, ElementType, StaticElementType},
     op_descriptor,
     operator::{DataParam, OperatorDescriptor},
+    vec::Vector,
     vulkan::{
         pipeline::{
             AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
@@ -99,6 +102,7 @@ pub fn max<'op, D: DynDimension>(
 pub async unsafe fn aggregation_on_chunk<D: DynDimension>(
     buf: &impl AsBufferDescriptor,
     result: &impl AsBufferDescriptor,
+    output_element_offset: u32,
     device: &DeviceContext,
     chunk_info: ChunkInfo<D>,
     method: AggretationMethod,
@@ -118,7 +122,7 @@ layout(std430, binding = 0) readonly buffer InputBuffer{
 } sourceData;
 
 layout(std430, binding = 1) buffer OutputBuffer{
-    uint value;
+    uint value[];
 } sum;
 
 declare_push_consts(consts);
@@ -153,7 +157,7 @@ void main()
     barrier();
 
     if(lID == 0) {
-        AGG_FUNCTION(sum.value, uintBitsToFloat(shared_sum));
+        AGG_FUNCTION(sum.value[consts.output_element_offset], uintBitsToFloat(shared_sum));
     }
 }
 "#;
@@ -161,34 +165,38 @@ void main()
     let push_constants = DynPushConstants::new()
         .vec::<u32>(nd, "mem_dim")
         .vec::<u32>(nd, "logical_dim")
+        .scalar::<u32>("output_element_offset")
         .scalar::<f32>("norm_factor");
 
-    let pipeline = device.request_state(
-        (
-            &push_constants,
-            chunk_info.mem_dimensions.hmul(),
-            method,
-            nd,
-        ),
-        |device, (push_constants, mem_size, method, nd)| {
-            let neutral_val_str = format!("uintBitsToFloat({})", method.neutral_val().to_bits());
-            ComputePipelineBuilder::new(
-                Shader::new(SHADER)
-                    .push_const_block_dyn(push_constants)
-                    .define("BRICK_MEM_SIZE", mem_size)
-                    .define("ND", nd)
-                    .define("AGG_FUNCTION", method.aggregration_function_glsl())
-                    .define(
-                        "AGG_FUNCTION_SUBGROUP",
-                        method.subgroup_aggregration_function_glsl(),
-                    )
-                    .define("NEUTRAL_VAL", neutral_val_str),
-            )
-            .local_size(LocalSizeConfig::Large)
-            .use_push_descriptor(true)
-            .build(device)
-        },
-    )?;
+    let pipeline = device
+        .request_state(
+            (
+                &push_constants,
+                chunk_info.mem_dimensions.hmul(),
+                method,
+                nd,
+            ),
+            |device, (push_constants, mem_size, method, nd)| {
+                let neutral_val_str =
+                    format!("uintBitsToFloat({})", method.neutral_val().to_bits());
+                ComputePipelineBuilder::new(
+                    Shader::new(SHADER)
+                        .push_const_block_dyn(push_constants)
+                        .define("BRICK_MEM_SIZE", mem_size)
+                        .define("ND", nd)
+                        .define("AGG_FUNCTION", method.aggregration_function_glsl())
+                        .define(
+                            "AGG_FUNCTION_SUBGROUP",
+                            method.subgroup_aggregration_function_glsl(),
+                        )
+                        .define("NEUTRAL_VAL", neutral_val_str),
+                )
+                .local_size(LocalSizeConfig::Large)
+                .use_push_descriptor(true)
+                .build(device)
+            },
+        )
+        .unwrap();
 
     device.with_cmd_buffer(|cmd| {
         let descriptor_config = DescriptorConfig::new([buf, result]);
@@ -201,6 +209,7 @@ void main()
             pipeline.push_constant_dyn(&push_constants, |consts| {
                 consts.vec(&chunk_info.mem_dimensions.into_elem::<u32>())?;
                 consts.vec(&chunk_info.logical_dimensions.into_elem::<u32>())?;
+                consts.scalar(output_element_offset)?;
                 consts.scalar(normalization_factor)?;
                 Ok(())
             });
@@ -299,6 +308,7 @@ fn scalar_aggregation<'op, D: DynDimension>(
                         aggregation_on_chunk(
                             &gpu_brick_in,
                             &sum,
+                            0,
                             device,
                             brick_info,
                             **method,
@@ -330,10 +340,136 @@ fn scalar_aggregation<'op, D: DynDimension>(
     )
 }
 
+pub fn chunk_aggregation<'op, D: DynDimension>(
+    input: TensorOperator<D, StaticElementType<f32>>,
+    out_chunk_size: Vector<D, LocalCoordinate>,
+    method: AggretationMethod,
+) -> TensorOperator<D, StaticElementType<f32>> {
+    let md = TensorMetaData {
+        dimensions: input.metadata.dimension_in_chunks().raw().global(),
+        chunk_size: out_chunk_size,
+    };
+    crate::operators::tensor::TensorOperator::with_state(
+        op_descriptor!(),
+        Default::default(),
+        md.clone(),
+        (input, DataParam(md), DataParam(method)),
+        move |ctx, positions, loc, (input, md_out, method)| {
+            <crate::task::Task<'_>>::from(async move {
+                let device = ctx.preferred_device(loc);
+
+                let m_in = &input.metadata;
+                let nd = input.metadata.dimensions.len();
+                let dtype: DType = input.dtype().into();
+
+                for pos in positions {
+                    let out_chunk_md = md_out.chunk_info(pos);
+
+                    let begin = out_chunk_md.begin.raw().chunk();
+                    let end = out_chunk_md.end();
+
+                    let in_chunk_positions = (0..nd)
+                        .into_iter()
+                        .map(|i| begin[i].raw..end[i].raw)
+                        .multi_cartesian_product()
+                        .map(|coordinates| {
+                            m_in.chunk_index(
+                                &Vector::<D, ChunkCoordinate>::try_from(coordinates).unwrap(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    let mut stream =
+                        ctx.submit_unordered_with_data(in_chunk_positions.iter().map(|pos| {
+                            (
+                                input.chunks.request_gpu(
+                                    device.id,
+                                    *pos,
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ,
+                                    },
+                                ),
+                                *pos,
+                            )
+                        }));
+                    let out_buf = ctx
+                        .submit(ctx.alloc_slot_gpu(device, pos, &md_out.chunk_size))
+                        .await;
+
+                    let elm_size = dtype.element_layout().size() as u64;
+
+                    device.with_cmd_buffer(|cmd| unsafe {
+                        cmd.functions().cmd_fill_buffer(
+                            cmd.raw(),
+                            out_buf.buffer,
+                            0,
+                            md_out.num_chunk_elements() as u64 * elm_size,
+                            method.neutral_val().to_bits(),
+                        );
+                    });
+
+                    ctx.submit(device.barrier(
+                        SrcBarrierInfo {
+                            stage: vk::PipelineStageFlags2::TRANSFER,
+                            access: vk::AccessFlags2::TRANSFER_WRITE,
+                        },
+                        DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                        },
+                    ))
+                    .await;
+
+                    while let Some((gpu_brick_in, in_pos)) = stream.next().await {
+                        let brick_info = m_in.chunk_info(in_pos);
+
+                        let normalization_factor =
+                            method.norm_factor(brick_info.logical_dimensions.hmul());
+
+                        let global_pos_out = m_in.chunk_pos_from_index(in_pos).raw().global();
+                        let pos_in_chunk_out = &out_chunk_md.in_chunk(&global_pos_out);
+                        let offset =
+                            crate::vec::to_linear(pos_in_chunk_out, &out_chunk_md.mem_dimensions)
+                                as u64;
+                        unsafe {
+                            super::aggregation::aggregation_on_chunk(
+                                &gpu_brick_in,
+                                &out_buf,
+                                offset.try_into().unwrap(),
+                                device,
+                                brick_info.clone(),
+                                **method,
+                                normalization_factor,
+                            )
+                            .await?;
+                        }
+                    }
+                    unsafe {
+                        out_buf.initialized(
+                            *ctx,
+                            SrcBarrierInfo {
+                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                access: vk::AccessFlags2::SHADER_WRITE,
+                            },
+                        )
+                    };
+                }
+
+                Ok(())
+            })
+        },
+    )
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::data::{LocalVoxelPosition, VoxelPosition};
+    use crate::{
+        data::{LocalVoxelPosition, VoxelPosition},
+        dim::D3,
+        test_util::compare_tensor_fn,
+    };
 
     #[test]
     fn test_mean_gpu() {
@@ -371,5 +507,46 @@ mod test {
         let rel_diff = diff / (mean.max(expected));
         println!("Rel diff: {}", rel_diff);
         assert!(rel_diff < 0.0001);
+    }
+
+    #[test]
+    fn test_chunk_agg() {
+        let size = VoxelPosition::fill(7.into());
+        let brick_size = LocalVoxelPosition::fill(2.into());
+        let dim_in_chunks = TensorMetaData {
+            dimensions: size,
+            chunk_size: brick_size,
+        }
+        .dimension_in_chunks();
+
+        let input = crate::operators::rasterize_function::voxel(size, brick_size, move |v| {
+            let v = crate::vec::to_linear(&v, &size);
+            v as f32
+        });
+
+        let output = chunk_aggregation(input, brick_size, AggretationMethod::Min);
+
+        compare_tensor_fn(output, |comp| {
+            for z in 0..dim_in_chunks.z().raw {
+                for y in 0..dim_in_chunks.y().raw {
+                    for x in 0..dim_in_chunks.x().raw {
+                        let pos = Vector::<D3, u32>::new([x, y, z]);
+                        let mut min = f32::MAX;
+                        for dz in 0..brick_size.z().raw {
+                            for dy in 0..brick_size.y().raw {
+                                for dx in 0..brick_size.x().raw {
+                                    let offset = Vector::<D3, u32>::new([dx, dy, dz]);
+                                    let input_pos = pos * brick_size.raw() + offset;
+
+                                    let v = crate::vec::to_linear(&input_pos.global(), &size);
+                                    min = min.min(v as f32)
+                                }
+                            }
+                        }
+                        comp[pos.global().as_index()] = min;
+                    }
+                }
+            }
+        });
     }
 }
