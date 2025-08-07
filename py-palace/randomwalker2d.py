@@ -117,7 +117,7 @@ def apply_weight_function(tensor):
     match wf:
         case "grady":
             return pc.randomwalker_weights(i, min_edge_weight.load(), beta.load())
-        case "custom":
+        case "grady rgb":
             pairs = pc.randomwalker_weight_pairs(i)
             n = pairs.dtype.size
             n2 = n//2;
