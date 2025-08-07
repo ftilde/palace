@@ -87,6 +87,13 @@ struct CliArgs {
     #[arg(long)]
     size_hint: Option<u32>,
 
+    /// Generate a const chunk table (instead of full tensor) with the specified chunk size
+    #[arg(long)]
+    gen_const_chunk_table: Option<String>,
+
+    #[arg(long)]
+    const_chunk_table_max_diff: Option<f32>,
+
     #[arg(long)]
     max_parallel_tasks: Option<usize>,
 
@@ -242,6 +249,25 @@ fn main() {
                     .unwrap()
             })
         });
+    }
+
+    if let Some(chunk_size_str) = args.gen_const_chunk_table {
+        let chunk_size = parse_chunk_size(&chunk_size_str);
+        let chunk_size = match (chunk_size.dim().n(), nd) {
+            (1, n) => Vector::fill_with_len(chunk_size[0], n),
+            (l, r) if l == r => chunk_size,
+            (_l, _r) => panic!(
+                "Invalid chunk specification for tensor of dim {}: {}",
+                nd, chunk_size_str
+            ),
+        };
+
+        input_lod = palace_core::operators::const_chunks::const_chunk_table(
+            input_lod.try_into().unwrap(),
+            chunk_size,
+            args.const_chunk_table_max_diff.unwrap_or(0.0),
+        )
+        .into();
     }
 
     let input = input_lod.levels[0].clone().into_dyn();
