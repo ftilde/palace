@@ -76,6 +76,7 @@ pub enum UnaryOp {
     Log,
     Exp,
     Sqrt,
+    Reinterpret(DType),
     Cast(DType),
     Index(u32),
     IndexRange(u32, u32),
@@ -158,6 +159,24 @@ impl UnaryOp {
                 }
             }
             UnaryOp::Fold(_) => input.scalar.into(),
+            UnaryOp::Reinterpret(output) => {
+                if input.size != output.size {
+                    return Err(format!(
+                        "Input ({:?}) and output ({:?}) must have the same vector size",
+                        input, output
+                    )
+                    .into());
+                }
+
+                match (input.scalar, output.scalar) {
+                    (ScalarType::U32, ScalarType::F32) | (ScalarType::F32, ScalarType::U32) => {
+                        *output
+                    }
+                    _ => {
+                        return Err(format!("Cannot reinterpret {:?} as {:?}", input, output).into())
+                    }
+                }
+            }
         })
     }
 }
@@ -187,16 +206,21 @@ impl Display for WriteUnary {
                 } else {
                     let fold = WriteFold(fold_op, self.0, v.0);
                     write!(
-                        f,
-                        "{input}[0]; for(int {var} = 1; {var} < {size}; ++{var}) {{ {out} = {fold};}}",
-                        input = v.0,
-                        size = v.1.size,
-                        out = self.0,
-                        fold = fold,
-                        var = FOLD_LOOP_VARIABLE_NAME
-                    )
+                                f,
+                                "{input}[0]; for(int {var} = 1; {var} < {size}; ++{var}) {{ {out} = {fold};}}",
+                                input = v.0,
+                                size = v.1.size,
+                                out = self.0,
+                                fold = fold,
+                                var = FOLD_LOOP_VARIABLE_NAME
+                            )
                 }
             }
+            UnaryOp::Reinterpret(dtype) => match dtype.scalar {
+                ScalarType::F32 => write!(f, "uintBitsToFloat({})", v),
+                ScalarType::U32 => write!(f, "floatBitsToUint({})", v),
+                _ => panic!("Unsupported dtype (should not get here)"),
+            },
         }
     }
 }
@@ -751,6 +775,9 @@ impl<D: DynDimension> JitTensorOperator<D> {
     }
     pub fn cast(self, to: DType) -> Result<Self, crate::Error> {
         Self::unary_op(UnaryOp::Cast(to), self)
+    }
+    pub fn reinterpret(self, to: DType) -> Result<Self, crate::Error> {
+        Self::unary_op(UnaryOp::Reinterpret(to), self)
     }
     pub fn splat(self, size: u32) -> Self {
         Self::unary_op(UnaryOp::Splat(size), self).unwrap()
@@ -1436,6 +1463,31 @@ mod test {
             .unwrap();
 
         let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |v| f(v));
+
+        compare_tensor(output.try_into().unwrap(), expected);
+    }
+
+    #[test]
+    fn reinterpret() {
+        let s = [1, 1, 1];
+        let size = VoxelPosition::from(s);
+        let brick_size = LocalVoxelPosition::from(s);
+        let val = 0xffff_abcd;
+
+        let output = super::scalar(ConstValueScalar::U32(val))
+            .with_md(TensorMetaData {
+                dimensions: size,
+                chunk_size: brick_size,
+            })
+            .unwrap()
+            .reinterpret(ScalarType::F32.into())
+            .unwrap()
+            .compile()
+            .unwrap();
+
+        let expected = crate::operators::rasterize_function::voxel(size, brick_size, move |_| {
+            f32::from_bits(val)
+        });
 
         compare_tensor(output.try_into().unwrap(), expected);
     }
