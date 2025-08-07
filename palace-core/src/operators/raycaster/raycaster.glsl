@@ -6,6 +6,8 @@
 
 #define ChunkValue INPUT_DTYPE
 
+#define MARKER_NOT_CONST_BITS 0xffffabcd
+
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
@@ -19,8 +21,10 @@ layout(buffer_reference, std430) buffer QueryTableType {
 struct LOD {
     PageTablePage page_table_root;
     UseTableType use_table;
+    PageTablePage const_brick_table_page_table_root;
     UVec3 dimensions;
     UVec3 chunk_size;
+    UVec3 const_brick_table_chunk_size;
     Vec3 spacing;
     uint _padding;
 };
@@ -158,6 +162,7 @@ void main()
     uint gID = out_pos.x + out_pos.y * out_mem_dim.x;
 
     QueryTableType request_table = QueryTableType(consts.request_table);
+    QueryTableType cbt_request_table = QueryTableType(consts.const_brick_table_request_table);
 
     EEPoint eep;
 
@@ -243,6 +248,34 @@ void main()
                     float[3] pos_voxel = from_glsl(pos_voxel_g);
 
                     float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
+
+                    #ifdef CONST_TABLE_DTYPE
+                    TensorMetaData(3) const_table_m_in;
+                    float[3] sample_chunk_pos = div(pos_voxel, to_float(m_in.chunk_size));
+                    const_table_m_in.dimensions = dim_in_bricks(m_in);
+                    const_table_m_in.chunk_size = level.const_brick_table_chunk_size.vals;
+
+                    int cbt_res;
+                    uint64_t cbt_sample_brick_pos_linear;
+
+                    CONST_TABLE_DTYPE sampled_chunk_value;
+                    //TODO: need to use usetable
+                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, UseTableType(0), 0, cbt_res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+
+                    if(cbt_res == SAMPLE_RES_FOUND) {
+                        if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
+                            t += step;
+                            continue;
+                            //TODO: DO update state with an appropriate value for step;
+                        }
+                    } else if(cbt_res == SAMPLE_RES_NOT_PRESENT) {
+                        uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, level_num);
+                        try_insert_into_hash_table(cbt_request_table.values, REQUEST_TABLE_SIZE, query_value);
+                        break;
+                    } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                        // Should only happen at the border of the volume due to rounding errors
+                    }
+                    #endif
 
                     int res;
                     uint64_t sample_brick_pos_linear;

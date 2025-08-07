@@ -572,6 +572,12 @@ fn dispatch_page_table_release(
 #[derive(Debug, Copy, Clone, Pod, Zeroable, Hash, PartialEq, Eq, PartialOrd, Ord, Identify)]
 pub struct BufferAddress(pub u64);
 
+impl BufferAddress {
+    pub fn null() -> Self {
+        Self(0)
+    }
+}
+
 unsafe impl crevice::glsl::Glsl for BufferAddress {
     const NAME: &'static str = "uint64_t";
 }

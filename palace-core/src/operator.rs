@@ -90,6 +90,16 @@ impl OperatorParameter for () {
     }
 }
 
+impl<T: OperatorParameter> OperatorParameter for Option<T> {
+    fn data_longevity(&self) -> DataLongevity {
+        if let Some(s) = self {
+            s.data_longevity()
+        } else {
+            DataLongevity::Stable
+        }
+    }
+}
+
 impl<const N: usize, E: OperatorParameter> OperatorParameter for [E; N] {
     fn data_longevity(&self) -> DataLongevity {
         self.iter()

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use palace_core::data::{LocalVoxelPosition, Vector, VoxelPosition};
-use palace_core::dtypes::StaticElementType;
+use palace_core::dtypes::{DType, StaticElementType};
 use palace_core::event::{EventStream, Key, MouseButton, OnKeyPress, OnMouseDrag, OnWheelMove};
 use palace_core::jit::jit;
 use palace_core::operators::raycaster::{CameraState, CompositingMode, RaycasterConfig, Shading};
@@ -73,6 +73,10 @@ struct CliArgs {
     /// Transfer function (voreen .tfi file)
     #[arg(short, long)]
     transfunc_path: Option<PathBuf>,
+
+    /// Transfer function (voreen .tfi file)
+    #[arg(long)]
+    const_chunk_table: Option<PathBuf>,
 
     /// Use the vulkan devices with the specified ids
     #[arg(long, value_delimiter = ',', num_args=1..)]
@@ -152,6 +156,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let const_chunk_table = if let Some(const_chunk_table) = args.const_chunk_table {
+        Some(
+            palace_io::open_lod(const_chunk_table, Default::default())
+                .unwrap()
+                .try_into_static()
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+
     let mut camera_state =
         CameraState::for_volume(vol.fine_metadata(), vol.fine_embedding_data(), 30.0);
     let mut scale = 1.0;
@@ -172,6 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rt,
                 window,
                 vol.clone(),
+                const_chunk_table.clone(),
                 &mut camera_state,
                 &mut scale,
                 &mut offset,
@@ -193,6 +209,7 @@ fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
     vol: LODVolumeOperator<StaticElementType<f32>>,
+    const_chunk_table: Option<LODVolumeOperator<DType>>,
     camera_state: &mut CameraState,
     scale: &mut f32,
     offset: &mut f32,
@@ -254,7 +271,13 @@ fn eval_network(
     let mut config = RaycasterConfig::default();
     config.compositing_mode = CompositingMode::DVR;
     config.shading = Shading::Phong;
-    let frame = palace_core::operators::raycaster::raycast(vol, eep, tf.clone(), config)?;
+    let frame = palace_core::operators::raycaster::raycast(
+        vol,
+        eep,
+        const_chunk_table,
+        tf.clone(),
+        config,
+    )?;
     let frame = operators::rechunk::rechunk(frame, Vector::fill(ChunkSize::Full));
 
     let slice_ref = &frame;

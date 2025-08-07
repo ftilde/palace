@@ -7,6 +7,7 @@ import time
 parser = argparse.ArgumentParser()
 parser.add_argument('volume_file')
 parser.add_argument('-t', '--transfunc', type=str)
+parser.add_argument('--const-chunk-table', type=str, default=None)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -44,6 +45,8 @@ else:
         steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, evol.nd())]))
         vol = evol.create_lod(steps)
         #vol = vol.single_level_lod()
+
+const_chunk_table = pc.open_lod(args.const_chunk_table) if args.const_chunk_table else None
 
 
 #for l in vol.levels:
@@ -236,7 +239,7 @@ def render(size, events):
     slice0 = render_slice(v, slice_state0, tf, tile_size=tile_size, devices=devices)
     slice1 = render_slice(v, slice_state1, tf, tile_size=tile_size, devices=devices)
     slice2 = render_slice(v, slice_state2, tf, tile_size=tile_size, devices=devices)
-    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices)
+    ray = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices, const_brick_table=const_chunk_table)
 
     match view.load():
         case "quad":

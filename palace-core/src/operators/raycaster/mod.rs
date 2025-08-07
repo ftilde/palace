@@ -658,6 +658,7 @@ impl From<RawRaycastingState> for RaycastingState {
 pub fn raycast<E: ElementType>(
     input: LODVolumeOperator<E>,
     entry_exit_points: ImageOperator<StaticElementType<[f32; 8]>>,
+    const_brick_table: Option<LODVolumeOperator<E>>,
     tf: TransFuncOperator,
     config: RaycasterConfig,
 ) -> Result<FrameOperator, Error> {
@@ -665,6 +666,7 @@ pub fn raycast<E: ElementType>(
     #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
         request_table: BufferAddress,
+        const_brick_table_request_table: BufferAddress,
         out_mem_dim: Vector<D2, u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
@@ -679,10 +681,12 @@ pub fn raycast<E: ElementType>(
     struct LOD {
         page_table_root: BufferAddress,
         use_table: BufferAddress,
+        const_brick_table_page_table_root: BufferAddress,
         dim: Vector<D3, u32>,
         chunk_dim: Vector<D3, u32>,
+        const_brick_table_chunk_dim: Vector<D3, u32>,
         spacing: Vector<D3, f32>,
-        _padding: u32,
+        _padding: [u32; 2],
     }
 
     let dtype: DType = input.dtype().into();
@@ -691,407 +695,555 @@ pub fn raycast<E: ElementType>(
         return Err(format!("Tensor element must be one-dimensional: {:?}", dtype).into());
     }
 
-    Ok(TensorOperator::unbatched(
-        op_descriptor!(),
-        Default::default(),
-        entry_exit_points.metadata,
-        (
-            input,
-            entry_exit_points.clone(),
-            DataParam(tf),
-            DataParam(config),
-            DataParam(dtype),
-        ),
-        |ctx, pos, loc, (input, entry_exit_points, tf, config, dtype)| {
-            async move {
-                let device = ctx.preferred_device(loc);
+    let const_table_dtype = if let Some(const_brick_table) = &const_brick_table {
+        let const_table_dtype: DType = input.dtype().into();
+        if dtype.size != 1 {
+            return Err(format!(
+                "const_brick_table element must be one-dimensional: {:?}",
+                dtype
+            )
+            .into());
+        }
 
-                let global_progress_state = ctx
-                    .submit(ctx.access_state_cache_shared::<RawSharedRaycastingState>(
-                        "global_progress_state",
-                        1,
-                    ))
-                    .await;
-                let [ref global_progress_state] = &*global_progress_state else {
-                    panic!("Invalid size");
-                };
+        if input.levels.len() != const_brick_table.levels.len() {
+            return Err(format!("Input tensor and const_brick_table must have the same number of levels, but have {} and {}", input.levels.len(), const_brick_table.levels.len()).into());
+        }
+        for (level, (i, c)) in input
+            .levels
+            .iter()
+            .zip(const_brick_table.levels.iter())
+            .enumerate()
+        {
+            if i.metadata.dimension_in_chunks().raw() != c.metadata.dimensions.raw() {
+                return Err(format!(
+                    "Level {}: const_brick_table should have size {:?}, but has size {:?}",
+                    level,
+                    i.metadata.dimension_in_chunks().raw(),
+                    c.metadata.dimensions.raw()
+                )
+                .into());
+            }
+        }
+        Some(const_table_dtype)
+    } else {
+        None
+    };
 
-                let progress_state = ctx
-                    .submit(ctx.access_state_cache::<RawRaycastingState>(pos, "progress_state", 1))
-                    .await;
-                let mut progress_state = unsafe {
-                    progress_state.init(|r| {
-                        crate::data::fill_uninit(r, RaycastingState::Empty.into());
-                    })
-                };
-                let [ref mut progress_state] = &mut *progress_state else {
-                    panic!("Invalid size");
-                };
+    Ok(
+        TensorOperator::unbatched(
+            op_descriptor!(),
+            Default::default(),
+            entry_exit_points.metadata,
+            (
+                input,
+                entry_exit_points.clone(),
+                const_brick_table,
+                DataParam(tf),
+                DataParam(config),
+                DataParam(dtype),
+                DataParam(const_table_dtype),
+            ),
+            |ctx,
+             pos,
+             loc,
+             (
+                input,
+                entry_exit_points,
+                const_brick_table,
+                tf,
+                config,
+                dtype,
+                const_table_dtype,
+            )| {
+                async move {
+                    let device = ctx.preferred_device(loc);
 
-                let lod_coarseness = match progress_state.unpack() {
-                    RaycastingState::Empty | RaycastingState::RenderingPreview => {
-                        config.lod_coarseness * config.preview_lod_coarseness_modifier
-                    }
-                    _ => config.lod_coarseness,
-                };
-
-                let mut reset_state = matches!(
-                    progress_state.unpack(),
-                    RaycastingState::Empty | RaycastingState::PreviewDone
-                );
-                let m_out = entry_exit_points.metadata;
-
-                let in_preview = progress_state.unpack() < RaycastingState::RenderingFull;
-
-                let state_ray = ctx
-                    .submit(ctx.access_state_cache_gpu(
-                        device,
-                        pos,
-                        "state_ray",
-                        Layout::array::<f32>(m_out.chunk_size.hmul()).unwrap(),
-                    ))
-                    .await;
-                let state_ray = state_ray.init(|v| {
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        device.functions().cmd_fill_buffer(
-                            cmd.raw(),
-                            v.buffer,
-                            0,
-                            vk::WHOLE_SIZE,
-                            0,
-                        );
-                        // Reset state if we lose cache
-                        *progress_state = RaycastingState::Empty.into();
-                    });
-                });
-
-                let state_img = ctx
-                    .submit(ctx.access_state_cache_gpu(
-                        device,
-                        pos,
-                        "state_img",
-                        Layout::array::<Vector<D4, u8>>(m_out.chunk_size.hmul()).unwrap(),
-                    ))
-                    .await;
-                let state_img = state_img.init(|v| {
-                    device.with_cmd_buffer(|cmd| unsafe {
-                        device.functions().cmd_fill_buffer(
-                            cmd.raw(),
-                            v.buffer,
-                            0,
-                            vk::WHOLE_SIZE,
-                            0,
-                        );
-                        // Reset state if we lose cache
-                        *progress_state = RaycastingState::Empty.into();
-                    });
-                });
-                let out_info = m_out.chunk_info(pos);
-
-                let request_table_size = 2048;
-                let use_table_size = 2048;
-                let raw_request_table = ctx
-                    .submit(ctx.access_state_cache_gpu(
-                        device,
-                        pos,
-                        "request_table",
-                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
-                    ))
-                    .await;
-                let mut request_table = RequestTable::new(device, raw_request_table);
-                let request_table_addr = request_table.buffer_address();
-
-                let raw_use_tables = ctx
-                    .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
-                        ctx.access_state_cache_gpu(
-                            device,
-                            pos,
-                            &format!("use_table{}", i),
-                            Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
-                        )
-                    })))
-                    .await;
-                let use_tables = raw_use_tables
-                    .into_iter()
-                    .map(|raw| UseTable::new(device, raw))
-                    .collect::<Vec<_>>();
-
-                let pipeline = device.request_state(
-                    (
-                        input.levels.len(),
-                        request_table_size,
-                        use_table_size,
-                        config,
-                        dtype,
-                    ),
-                    |device, (num_levels, request_table_size, use_table_size, config, dtype)| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(include_str!("raycaster.glsl"))
-                                .push_const_block::<PushConstants>()
-                                .define("NUM_LEVELS", num_levels)
-                                .define("USE_TABLE_SIZE", use_table_size)
-                                .define("REQUEST_TABLE_SIZE", request_table_size)
-                                .define(config.compositing_mode.define_name(), 1)
-                                .define(config.shading.define_name(), 1)
-                                .define("INPUT_DTYPE", dtype.glsl_type())
-                                .ext(dtype.glsl_ext()),
-                        )
-                        .local_size(LocalSizeConfig::Auto2D)
-                        .build(device)
-                    },
-                )?;
-
-                let reuse_res = ctx.alloc_try_reuse_gpu(device, pos, out_info.mem_elements());
-                let gpu_brick_out = ctx.submit(reuse_res.request).await;
-                if reuse_res.new {
-                    device.with_cmd_buffer(|cmd| {
-                        unsafe {
-                            device.functions().cmd_fill_buffer(
-                                cmd.raw(),
-                                gpu_brick_out.buffer,
-                                0,
-                                gpu_brick_out.size,
-                                0x0,
-                            )
-                        };
-                    });
-                }
-
-                let wait_for_others = !global_progress_state.preview_all_done(ctx.current_frame)
-                    && progress_state.unpack() >= RaycastingState::PreviewDone;
-
-                let should_progress = ctx.past_deadline(in_preview).is_none() && !wait_for_others;
-
-                if reuse_res.new || should_progress {
-                    let request_batch_size = ctx
-                        .submit(ctx.access_state_cache(pos, "request_batch_size", 1))
+                    let global_progress_state = ctx
+                        .submit(ctx.access_state_cache_shared::<RawSharedRaycastingState>(
+                            "global_progress_state",
+                            1,
+                        ))
                         .await;
-                    let mut request_batch_size = unsafe {
-                        request_batch_size.init(|r| {
-                            crate::data::fill_uninit(r, 1usize);
+                    let [ref global_progress_state] = &*global_progress_state else {
+                        panic!("Invalid size");
+                    };
+
+                    let progress_state = ctx
+                        .submit(ctx.access_state_cache::<RawRaycastingState>(
+                            pos,
+                            "progress_state",
+                            1,
+                        ))
+                        .await;
+                    let mut progress_state = unsafe {
+                        progress_state.init(|r| {
+                            crate::data::fill_uninit(r, RaycastingState::Empty.into());
                         })
                     };
-                    let request_batch_size = &mut request_batch_size[0];
-
-                    let dst_info = DstBarrierInfo {
-                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        access: vk::AccessFlags2::SHADER_READ,
+                    let [ref mut progress_state] = &mut *progress_state else {
+                        panic!("Invalid size");
                     };
 
-                    let eep = ctx
-                        .submit(
-                            entry_exit_points
-                                .chunks
-                                .request_gpu(device.id, pos, dst_info),
-                        )
+                    let lod_coarseness = match progress_state.unpack() {
+                        RaycastingState::Empty | RaycastingState::RenderingPreview => {
+                            config.lod_coarseness * config.preview_lod_coarseness_modifier
+                        }
+                        _ => config.lod_coarseness,
+                    };
+
+                    let mut reset_state = matches!(
+                        progress_state.unpack(),
+                        RaycastingState::Empty | RaycastingState::PreviewDone
+                    );
+                    let m_out = entry_exit_points.metadata;
+
+                    let in_preview = progress_state.unpack() < RaycastingState::RenderingFull;
+
+                    let state_ray = ctx
+                        .submit(ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            "state_ray",
+                            Layout::array::<f32>(m_out.chunk_size.hmul()).unwrap(),
+                        ))
                         .await;
+                    let state_ray = state_ray.init(|v| {
+                        device.with_cmd_buffer(|cmd| unsafe {
+                            device.functions().cmd_fill_buffer(
+                                cmd.raw(),
+                                v.buffer,
+                                0,
+                                vk::WHOLE_SIZE,
+                                0,
+                            );
+                            // Reset state if we lose cache
+                            *progress_state = RaycastingState::Empty.into();
+                        });
+                    });
 
-                    assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
-                    let tf_data_gpu = ctx
-                        .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
+                    let state_img = ctx
+                        .submit(ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            "state_img",
+                            Layout::array::<Vector<D4, u8>>(m_out.chunk_size.hmul()).unwrap(),
+                        ))
                         .await;
+                    let state_img = state_img.init(|v| {
+                        device.with_cmd_buffer(|cmd| unsafe {
+                            device.functions().cmd_fill_buffer(
+                                cmd.raw(),
+                                v.buffer,
+                                0,
+                                vk::WHOLE_SIZE,
+                                0,
+                            );
+                            // Reset state if we lose cache
+                            *progress_state = RaycastingState::Empty.into();
+                        });
+                    });
+                    let out_info = m_out.chunk_info(pos);
 
-                    let chunk_size = out_info.mem_dimensions.raw();
-                    let tf_data = tf.data();
+                    let request_table_size = 2048;
+                    let use_table_size = 2048;
 
-                    let mut lods = Vec::new();
-                    let mut lod_data = Vec::new();
-                    for (level, use_table) in input.levels.iter().zip(use_tables.into_iter()) {
-                        let m_in = level.metadata;
-                        let emd = level.embedding_data;
-                        //let dim_in_bricks = m_in.dimension_in_chunks();
+                    let raw_request_table = ctx
+                        .submit(ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            "request_table",
+                            Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
+                        ))
+                        .await;
+                    let mut request_table = RequestTable::new(device, raw_request_table);
+                    let request_table_addr = request_table.buffer_address();
 
-                        let brick_index = device
-                            .storage
-                            .get_page_table(*ctx, device, level.chunks.descriptor(), dst_info)
-                            .await;
+                    let cbt_raw_request_table = ctx
+                        .submit(ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            "cbt_request_table",
+                            Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
+                        ))
+                        .await;
+                    let mut cbt_request_table = RequestTable::new(device, cbt_raw_request_table);
+                    let cbt_request_table_addr = cbt_request_table.buffer_address();
 
-                        let page_table_root = buffer_address(device, brick_index.buffer);
-                        let use_table_addr = use_table.buffer_address();
+                    let raw_use_tables = ctx
+                        .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
+                            ctx.access_state_cache_gpu(
+                                device,
+                                pos,
+                                &format!("use_table{}", i),
+                                Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
+                            )
+                        })))
+                        .await;
+                    let use_tables = raw_use_tables
+                        .into_iter()
+                        .map(|raw| UseTable::new(device, raw))
+                        .collect::<Vec<_>>();
 
-                        lod_data.push((brick_index, use_table, m_in));
+                    let pipeline = device.request_state(
+                        (
+                            input.levels.len(),
+                            request_table_size,
+                            use_table_size,
+                            config,
+                            dtype,
+                            const_table_dtype,
+                        ),
+                        |device,
+                         (
+                            num_levels,
+                            request_table_size,
+                            use_table_size,
+                            config,
+                            dtype,
+                            const_table_dtype,
+                        )| {
+                            ComputePipelineBuilder::new({
+                                let s = Shader::new(include_str!("raycaster.glsl"))
+                                    .push_const_block::<PushConstants>()
+                                    .define("NUM_LEVELS", num_levels)
+                                    .define("USE_TABLE_SIZE", use_table_size)
+                                    .define("REQUEST_TABLE_SIZE", request_table_size)
+                                    .define(config.compositing_mode.define_name(), 1)
+                                    .define(config.shading.define_name(), 1)
+                                    .define("INPUT_DTYPE", dtype.glsl_type())
+                                    .ext(dtype.glsl_ext());
+                                if let Some(const_table_dtype) = &**const_table_dtype {
+                                    s.define("CONST_TABLE_DTYPE", const_table_dtype.glsl_type())
+                                        .ext(const_table_dtype.glsl_ext())
+                                } else {
+                                    s
+                                }
+                            })
+                            .local_size(LocalSizeConfig::Auto2D)
+                            .build(device)
+                        },
+                    )?;
 
-                        lods.push(LOD {
-                            page_table_root,
-                            use_table: use_table_addr,
-                            dim: m_in.dimensions.raw().into(),
-                            chunk_dim: m_in.chunk_size.raw().into(),
-                            spacing: emd.spacing.into(),
-                            _padding: 0,
+                    let reuse_res = ctx.alloc_try_reuse_gpu(device, pos, out_info.mem_elements());
+                    let gpu_brick_out = ctx.submit(reuse_res.request).await;
+                    if reuse_res.new {
+                        device.with_cmd_buffer(|cmd| {
+                            unsafe {
+                                device.functions().cmd_fill_buffer(
+                                    cmd.raw(),
+                                    gpu_brick_out.buffer,
+                                    0,
+                                    gpu_brick_out.size,
+                                    0x0,
+                                )
+                            };
                         });
                     }
 
-                    let layout = Layout::array::<LOD>(lods.len()).unwrap();
-                    let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
-                        | ash::vk::BufferUsageFlags::TRANSFER_DST;
+                    let wait_for_others = !global_progress_state
+                        .preview_all_done(ctx.current_frame)
+                        && progress_state.unpack() >= RaycastingState::PreviewDone;
 
-                    let location = crate::storage::gpu::MemoryLocation::GpuOnly;
-                    let lod_data_gpu = TempRessource::new(
-                        device,
-                        ctx.submit(
-                            device
-                                .storage
-                                .request_allocate_raw(device, layout, flags, location),
-                        )
-                        .await,
-                    );
+                    let should_progress =
+                        ctx.past_deadline(in_preview).is_none() && !wait_for_others;
 
-                    let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
-                    let in_ptr = in_bytes.as_ptr().cast();
-                    unsafe {
-                        crate::vulkan::memory::copy_to_gpu(
-                            *ctx,
-                            device,
-                            in_ptr,
-                            layout,
-                            lod_data_gpu.buffer,
-                        )
-                        .await
-                    };
-                    let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+                    if reuse_res.new || should_progress {
+                        let request_batch_size = ctx
+                            .submit(ctx.access_state_cache(pos, "request_batch_size", 1))
+                            .await;
+                        let mut request_batch_size = unsafe {
+                            request_batch_size.init(|r| {
+                                crate::data::fill_uninit(r, 1usize);
+                            })
+                        };
+                        let request_batch_size = &mut request_batch_size[0];
 
-                    // Actual rendering
-                    let timed_out = 'outer: loop {
-                        // Make requests visible
-                        ctx.submit(device.barrier(
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_WRITE
-                                    | vk::AccessFlags2::SHADER_READ,
-                            },
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER
-                                    | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::TRANSFER_READ
-                                    | vk::AccessFlags2::SHADER_WRITE,
-                            },
-                        ))
-                        .await;
+                        let dst_info = DstBarrierInfo {
+                            stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                            access: vk::AccessFlags2::SHADER_READ,
+                        };
 
-                        let tensors_and_pts = input
-                            .levels
-                            .iter()
-                            .map(|t| &t.inner)
-                            .zip(lod_data.iter().map(|d| &d.0))
-                            .collect::<Vec<_>>();
-
-                        let request_result = request_table
-                            .download_and_insert(
-                                *ctx,
-                                device,
-                                tensors_and_pts,
-                                request_batch_size,
-                                in_preview,
-                                reset_state,
+                        let eep = ctx
+                            .submit(
+                                entry_exit_points
+                                    .chunks
+                                    .request_gpu(device.id, pos, dst_info),
                             )
                             .await;
 
-                        for data in lod_data.iter_mut().rev() {
-                            data.1.download_and_note_use(*ctx, device, &data.0).await;
+                        assert_eq!(tf.table.metadata.dimension_in_chunks()[0].raw, 1);
+                        let tf_data_gpu = ctx
+                            .submit(tf.table.chunks.request_scalar_gpu(device.id, dst_info))
+                            .await;
+
+                        let chunk_size = out_info.mem_dimensions.raw();
+                        let tf_data = tf.data();
+
+                        let mut lods = Vec::new();
+                        let mut lod_data = Vec::new();
+                        let const_brick_table_levels = const_brick_table
+                            .as_ref()
+                            .map(|t| t.levels.iter().map(|v| Some(v)).collect::<Vec<_>>())
+                            .unwrap_or(input.levels.iter().map(|_| None).collect::<Vec<_>>());
+                        for ((level, use_table), const_brick_table_level) in input
+                            .levels
+                            .iter()
+                            .zip(use_tables.into_iter())
+                            .zip(const_brick_table_levels)
+                        {
+                            let m_in = level.metadata;
+                            let emd = level.embedding_data;
+                            //let dim_in_bricks = m_in.dimension_in_chunks();
+
+                            let brick_index = device
+                                .storage
+                                .get_page_table(*ctx, device, level.chunks.descriptor(), dst_info)
+                                .await;
+                            let const_brick_table_brick_index =
+                                if let Some(const_brick_table_level) = const_brick_table_level {
+                                    let brick_index = device
+                                        .storage
+                                        .get_page_table(
+                                            *ctx,
+                                            device,
+                                            const_brick_table_level.chunks.descriptor(),
+                                            dst_info,
+                                        )
+                                        .await;
+                                    Some(brick_index)
+                                } else {
+                                    None
+                                };
+
+                            let page_table_root = buffer_address(device, brick_index.buffer);
+                            let const_brick_table_page_table_root = const_brick_table_brick_index
+                                .as_ref()
+                                .map(|i| buffer_address(device, i.buffer))
+                                .unwrap_or(BufferAddress::null());
+                            let const_brick_table_chunk_dim =
+                                if let Some(const_brick_table_level) = const_brick_table_level {
+                                    const_brick_table_level.metadata.chunk_size.raw().into()
+                                } else {
+                                    Vector::<D3, u32>::fill(0).into()
+                                };
+                            let use_table_addr = use_table.buffer_address();
+
+                            lod_data.push((
+                                brick_index,
+                                use_table,
+                                m_in,
+                                const_brick_table_brick_index,
+                            ));
+
+                            lods.push(LOD {
+                                page_table_root,
+                                use_table: use_table_addr,
+                                dim: m_in.dimensions.raw().into(),
+                                chunk_dim: m_in.chunk_size.raw().into(),
+                                spacing: emd.spacing.into(),
+                                const_brick_table_page_table_root,
+                                const_brick_table_chunk_dim,
+                                _padding: Default::default(),
+                            });
                         }
 
-                        // Make writes to the request table visible (including initialization)
-                        ctx.submit(device.barrier(
-                            SrcBarrierInfo {
-                                stage: vk::PipelineStageFlags2::TRANSFER
-                                    | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::TRANSFER_WRITE
-                                    | vk::AccessFlags2::SHADER_WRITE,
-                            },
-                            DstBarrierInfo {
-                                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                access: vk::AccessFlags2::SHADER_READ
-                                    | vk::AccessFlags2::SHADER_WRITE,
-                            },
-                        ))
-                        .await;
+                        let layout = Layout::array::<LOD>(lods.len()).unwrap();
+                        let flags = ash::vk::BufferUsageFlags::STORAGE_BUFFER
+                            | ash::vk::BufferUsageFlags::TRANSFER_DST;
 
-                        // Now first try a render pass to collect bricks to load (or just to finish the
-                        // rendering
-                        device.with_cmd_buffer(|cmd| {
-                            let descriptor_config = DescriptorConfig::new([
-                                &gpu_brick_out,
-                                &eep,
-                                &*lod_data_gpu,
-                                &state_ray,
-                                &state_img,
-                                &tf_data_gpu,
-                            ]);
+                        let location = crate::storage::gpu::MemoryLocation::GpuOnly;
+                        let lod_data_gpu = TempRessource::new(
+                            device,
+                            ctx.submit(
+                                device
+                                    .storage
+                                    .request_allocate_raw(device, layout, flags, location),
+                            )
+                            .await,
+                        );
 
-                            let consts = PushConstants {
-                                request_table: request_table_addr,
-                                tf_min: tf_data.min,
-                                tf_max: tf_data.max,
-                                tf_len: tf_data.len,
-                                out_mem_dim: chunk_size.into(),
-                                oversampling_factor: config.oversampling_factor,
-                                lod_coarseness,
-                                reset_state: reset_state as u32,
+                        let in_bytes: &[u8] = bytemuck::cast_slice(lods.as_slice());
+                        let in_ptr = in_bytes.as_ptr().cast();
+                        unsafe {
+                            crate::vulkan::memory::copy_to_gpu(
+                                *ctx,
+                                device,
+                                in_ptr,
+                                layout,
+                                lod_data_gpu.buffer,
+                            )
+                            .await
+                        };
+                        let global_size = [1, chunk_size.y(), chunk_size.x()].into();
+
+                        // Actual rendering
+                        let timed_out = 'outer: loop {
+                            // Make requests visible
+                            ctx.submit(device.barrier(
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_WRITE
+                                        | vk::AccessFlags2::SHADER_READ,
+                                },
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER
+                                        | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::TRANSFER_READ
+                                        | vk::AccessFlags2::SHADER_WRITE,
+                                },
+                            ))
+                            .await;
+
+                            let tensors_and_pts = input
+                                .levels
+                                .iter()
+                                .map(|t| &t.inner)
+                                .zip(lod_data.iter().map(|d| &d.0))
+                                .collect::<Vec<_>>();
+
+                            let mut request_result = request_table
+                                .download_and_insert(
+                                    *ctx,
+                                    device,
+                                    tensors_and_pts,
+                                    request_batch_size,
+                                    in_preview,
+                                    reset_state,
+                                )
+                                .await;
+
+                            if let Some(const_brick_table) = const_brick_table {
+                                let cbt_tensors_and_pts = const_brick_table
+                                    .levels
+                                    .iter()
+                                    .map(|t| &t.inner)
+                                    .zip(lod_data.iter().map(|d| d.3.as_ref().unwrap()))
+                                    .collect::<Vec<_>>();
+                                let res = cbt_request_table
+                                    .download_and_insert(
+                                        *ctx,
+                                        device,
+                                        cbt_tensors_and_pts,
+                                        request_batch_size,
+                                        in_preview,
+                                        reset_state,
+                                    )
+                                    .await;
+                                request_result.combine(res);
                             };
-                            reset_state = false;
 
-                            unsafe {
-                                let mut pipeline = pipeline.bind(cmd);
-
-                                pipeline.push_constant(consts);
-                                pipeline.write_descriptor_set(0, descriptor_config);
-                                pipeline.dispatch3d(global_size);
+                            for data in lod_data.iter_mut().rev() {
+                                data.1.download_and_note_use(*ctx, device, &data.0).await;
                             }
-                        });
 
-                        match request_result {
-                            RequestTableResult::Done => break 'outer false,
-                            RequestTableResult::Timeout => break 'outer true,
-                            RequestTableResult::Continue => {}
-                        }
+                            // Make writes to the request table visible (including initialization)
+                            ctx.submit(device.barrier(
+                                SrcBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::TRANSFER
+                                        | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::TRANSFER_WRITE
+                                        | vk::AccessFlags2::SHADER_WRITE,
+                                },
+                                DstBarrierInfo {
+                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                    access: vk::AccessFlags2::SHADER_READ
+                                        | vk::AccessFlags2::SHADER_WRITE,
+                                },
+                            ))
+                            .await;
+
+                            // Now first try a render pass to collect bricks to load (or just to finish the
+                            // rendering
+                            device.with_cmd_buffer(|cmd| {
+                                let descriptor_config = DescriptorConfig::new([
+                                    &gpu_brick_out,
+                                    &eep,
+                                    &*lod_data_gpu,
+                                    &state_ray,
+                                    &state_img,
+                                    &tf_data_gpu,
+                                ]);
+
+                                let consts = PushConstants {
+                                    request_table: request_table_addr,
+                                    const_brick_table_request_table: cbt_request_table_addr,
+                                    tf_min: tf_data.min,
+                                    tf_max: tf_data.max,
+                                    tf_len: tf_data.len,
+                                    out_mem_dim: chunk_size.into(),
+                                    oversampling_factor: config.oversampling_factor,
+                                    lod_coarseness,
+                                    reset_state: reset_state as u32,
+                                };
+                                reset_state = false;
+
+                                unsafe {
+                                    let mut pipeline = pipeline.bind(cmd);
+
+                                    pipeline.push_constant(consts);
+                                    pipeline.write_descriptor_set(0, descriptor_config);
+                                    pipeline.dispatch3d(global_size);
+                                }
+                            });
+
+                            match request_result {
+                                RequestTableResult::Done => break 'outer false,
+                                RequestTableResult::Timeout => break 'outer true,
+                                RequestTableResult::Continue => {}
+                            }
+                        };
+
+                        let new_state = match progress_state.unpack() {
+                            RaycastingState::Empty | RaycastingState::RenderingPreview => {
+                                if timed_out {
+                                    RaycastingState::RenderingPreview
+                                } else {
+                                    RaycastingState::PreviewDone
+                                }
+                            }
+                            RaycastingState::PreviewDone | RaycastingState::RenderingFull => {
+                                if timed_out {
+                                    RaycastingState::RenderingFull
+                                } else {
+                                    RaycastingState::Done
+                                }
+                            }
+                            RaycastingState::Done => RaycastingState::Done,
+                        };
+                        //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
+                        *progress_state = new_state.into();
+
+                        //println!(
+                        //    "Request table size ================ {:?}",
+                        //    &*request_batch_size
+                        //);
+                    }
+
+                    if progress_state.unpack() < RaycastingState::PreviewDone {
+                        global_progress_state.mark_preview_not_done();
+                    }
+
+                    let src_info = SrcBarrierInfo {
+                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        access: vk::AccessFlags2::SHADER_WRITE,
                     };
 
-                    let new_state = match progress_state.unpack() {
-                        RaycastingState::Empty | RaycastingState::RenderingPreview => {
-                            if timed_out {
-                                RaycastingState::RenderingPreview
-                            } else {
-                                RaycastingState::PreviewDone
-                            }
-                        }
-                        RaycastingState::PreviewDone | RaycastingState::RenderingFull => {
-                            if timed_out {
-                                RaycastingState::RenderingFull
-                            } else {
-                                RaycastingState::Done
-                            }
-                        }
-                        RaycastingState::Done => RaycastingState::Done,
-                    };
-                    //println!("{:?} -> {:?}", progress_state.unpack(), new_state);
-                    *progress_state = new_state.into();
+                    if matches!(progress_state.unpack(), RaycastingState::Done) {
+                        unsafe { gpu_brick_out.initialized(*ctx, src_info) };
+                    } else {
+                        unsafe {
+                            gpu_brick_out.initialized_version(
+                                *ctx,
+                                src_info,
+                                DataVersionType::Preview,
+                            )
+                        };
+                    }
 
-                    //println!(
-                    //    "Request table size ================ {:?}",
-                    //    &*request_batch_size
-                    //);
+                    Ok(())
                 }
-
-                if progress_state.unpack() < RaycastingState::PreviewDone {
-                    global_progress_state.mark_preview_not_done();
-                }
-
-                let src_info = SrcBarrierInfo {
-                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    access: vk::AccessFlags2::SHADER_WRITE,
-                };
-
-                if matches!(progress_state.unpack(), RaycastingState::Done) {
-                    unsafe { gpu_brick_out.initialized(*ctx, src_info) };
-                } else {
-                    unsafe {
-                        gpu_brick_out.initialized_version(*ctx, src_info, DataVersionType::Preview)
-                    };
-                }
-
-                Ok(())
-            }
-            .into()
-        },
-    ))
+                .into()
+            },
+        ),
+    )
 }

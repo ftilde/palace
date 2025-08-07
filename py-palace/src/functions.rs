@@ -55,10 +55,11 @@ pub fn entry_exit_points(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (vol, entry_exit_points, config=None, tf=None))]
+#[pyo3(signature = (vol, entry_exit_points, const_brick_table=None, config=None, tf=None))]
 pub fn raycast(
     vol: LODTensorOperator,
     entry_exit_points: TensorOperator,
+    const_brick_table: Option<LODTensorOperator>,
     config: Option<RaycasterConfig>,
     tf: Option<TransFuncOperator>,
 ) -> PyResult<TensorOperator> {
@@ -68,10 +69,16 @@ pub fn raycast(
 
     let eep = entry_exit_points.into_core();
     let eep = try_into_static_err(eep)?;
+    let const_brick_table = if let Some(const_brick_table) = const_brick_table {
+        Some(const_brick_table.try_into_core_static()?)
+    } else {
+        None
+    };
     Ok(
         crate::map_result(palace_core::operators::raycaster::raycast(
             vol.try_into_core_static()?,
             eep.try_into()?,
+            const_brick_table,
             tf,
             config.unwrap_or_default(),
         ))?
