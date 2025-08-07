@@ -1,5 +1,6 @@
 pub mod aggregation;
 pub mod array;
+pub mod const_chunks;
 pub mod conv;
 pub mod geometry;
 pub mod gui;
