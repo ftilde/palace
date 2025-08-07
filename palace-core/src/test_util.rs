@@ -84,7 +84,7 @@ pub fn compare_tensor_approx<D: Dimension>(
                     let b_r = &*b_r;
                     for (i, (l, r)) in b_l.iter().zip(b_r.iter()).enumerate() {
                         let diff = (l - r).abs();
-                        if diff > max_diff {
+                        if diff > max_diff || l.is_nan() != r.is_nan() {
                             panic!(
                                 "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}: {} vs. {}",
                                 b_l, b_r, diff, max_diff, i, l, r
