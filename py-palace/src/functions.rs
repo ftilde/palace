@@ -89,6 +89,21 @@ pub fn raycast(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
+#[pyo3(signature = (tensor, chunk_size, diff_threshold=0.0))]
+pub fn const_chunk_table(
+    tensor: LODTensorOperator,
+    chunk_size: Vec<ChunkSize>,
+    diff_threshold: f32,
+) -> PyResult<LODTensorOperator> {
+    let chunk_size = Vector::from_fn_and_len(chunk_size.len(), |i| chunk_size[i].0);
+    let tensor = tensor.try_into()?;
+    palace_core::operators::const_chunks::const_chunk_table(tensor, chunk_size, diff_threshold)
+        .into_dyn()
+        .try_into()
+}
+
+#[gen_stub_pyfunction]
+#[pyfunction]
 #[pyo3(signature = (input, result_metadata, projection_mat, tf=None, coarse_lod_factor=1.0))]
 pub fn render_slice(
     input: LODTensorOperator,
