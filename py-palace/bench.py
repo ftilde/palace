@@ -16,6 +16,7 @@ parser.add_argument('--normalized-size', action='store_true')
 parser.add_argument('--save-image', type=str, default=None)
 parser.add_argument('--camera-distance', type=float, default=None)
 parser.add_argument('--fov', type=float, default=30)
+parser.add_argument('--const-chunk-table', type=str, default=None)
 palace_util.add_runtime_args(parser)
 
 args = parser.parse_args()
@@ -29,6 +30,8 @@ except:
     steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, vol.nd())]))
     vol = vol.create_lod(steps)
     #vol = vol.single_level_lod()
+
+const_chunk_table = pc.open_lod(args.const_chunk_table) if args.const_chunk_table else None
 
 
 #vol = vol.map(lambda v: v.cast(pc.ScalarType.F32))
@@ -87,7 +90,7 @@ def render(size, events):
 
     #camera_state.trackball().mutate(lambda v: v.pan_around([0, 10]))
 
-    frame = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices)
+    frame = palace_util.render_raycast(v, camera_state, raycaster_config, tf, tile_size=tile_size, devices=devices, const_brick_table=const_chunk_table)
     print(np.linalg.norm(camera_state.trackball().eye().load()))
 
     return frame(size, events)
