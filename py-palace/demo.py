@@ -14,6 +14,8 @@ args = parser.parse_args()
 
 rt = palace_util.build_runtime_from_args(args)
 
+const_chunk_table = pc.open_lod(args.const_chunk_table) if args.const_chunk_table else None
+
 if args.volume_file == "fill":
     b = 32
     s = 1000
@@ -36,6 +38,7 @@ elif args.volume_file == "mandelbulb":
     ed = pc.TensorEmbeddingData([1.0]*nd)
     md = pc.TensorMetaData([s]*nd, [b]*nd)
     vol = pc.mandelbulb(md, ed)
+    const_chunk_table = pc.const_chunk_table(vol, [4]*nd)
 
 else:
     try:
@@ -45,9 +48,6 @@ else:
         steps = list(reversed([2.0 if i < 3 else pc.FixedStep(2.0) for i in range(0, evol.nd())]))
         vol = evol.create_lod(steps)
         #vol = vol.single_level_lod()
-
-const_chunk_table = pc.open_lod(args.const_chunk_table) if args.const_chunk_table else None
-
 
 #for l in vol.levels:
 #    print(l.inner.metadata.dimensions)
