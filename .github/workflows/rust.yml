@@ -41,6 +41,7 @@ jobs:
         clang19-dev \
         mesa-vulkan-swrast \
         vulkan-validation-layers \
+        graphviz \
 
     - uses: actions/checkout@v4
     - name: Build
