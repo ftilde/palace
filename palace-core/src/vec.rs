@@ -398,7 +398,7 @@ impl<D: DynDimension, T: Copy> IntoIterator for Vector<D, T> {
 }
 
 impl<D: DynDimension, T: Copy> Vector<D, T> {
-    pub fn iter(&self) -> std::slice::Iter<T> {
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.0.as_slice().iter()
     }
 }

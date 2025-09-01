@@ -360,7 +360,7 @@ impl<'a> Behavior for DragVec2<'a> {
 }
 
 impl<'a> Vector<D2, f32> {
-    pub fn drag(&mut self, button: MouseButton) -> DragVec2 {
+    pub fn drag(&mut self, button: MouseButton) -> DragVec2<'_> {
         DragVec2(button, self)
     }
 }

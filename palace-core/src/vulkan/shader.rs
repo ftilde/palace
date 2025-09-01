@@ -223,7 +223,7 @@ pub struct DescriptorSetLayoutBindings {
 }
 
 impl DescriptorSetLayoutBindings {
-    fn binding_array(&self) -> Vec<vk::DescriptorSetLayoutBinding> {
+    fn binding_array(&self) -> Vec<vk::DescriptorSetLayoutBinding<'_>> {
         let len = self.inner.len() as u32;
         let max_binding = self.inner.last_key_value().map(|(k, _)| *k).unwrap_or(0);
         assert_eq!(

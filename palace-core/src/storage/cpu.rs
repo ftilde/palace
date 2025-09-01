@@ -1085,7 +1085,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &self,
         current_frame: FrameNumber,
         id: DataId,
-    ) -> AccessToken<Allocator> {
+    ) -> AccessToken<'_, Allocator> {
         {
             let mut index = self.index.borrow_mut();
             let entry = index.entry(id);
@@ -1102,7 +1102,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &self,
         descriptor: DataDescriptor,
         layout: Layout,
-    ) -> Result<(*mut MaybeUninit<u8>, AccessToken<Allocator>), ()> {
+    ) -> Result<(*mut MaybeUninit<u8>, AccessToken<'_, Allocator>), ()> {
         let key = descriptor.id;
 
         let data = {
@@ -1161,7 +1161,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &self,
         key: DataDescriptor,
         layout: Layout,
-    ) -> Result<RawWriteHandleUninit<Allocator>, ()> {
+    ) -> Result<RawWriteHandleUninit<'_, Allocator>, ()> {
         let (ptr, access) = self.alloc(key, layout)?;
 
         Ok(RawWriteHandleUninit {
@@ -1175,7 +1175,7 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         &self,
         key: DataDescriptor,
         size: usize,
-    ) -> Result<WriteHandleUninit<[MaybeUninit<T>], Allocator>, ()> {
+    ) -> Result<WriteHandleUninit<'_, [MaybeUninit<T>], Allocator>, ()> {
         let layout = Layout::array::<T>(size).unwrap();
         let (ptr, access) = self.alloc(key, layout)?;
 

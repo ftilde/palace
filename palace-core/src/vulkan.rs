@@ -580,7 +580,7 @@ impl DeviceContext {
         &self.physical_device_properties
     }
 
-    pub fn physical_device_properties_13(&self) -> &vk::PhysicalDeviceVulkan13Properties {
+    pub fn physical_device_properties_13(&self) -> &vk::PhysicalDeviceVulkan13Properties<'_> {
         &self.physical_device_properties_13
     }
 

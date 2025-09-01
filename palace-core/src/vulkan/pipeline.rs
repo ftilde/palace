@@ -678,11 +678,11 @@ impl DescriptorConfig {
         let buffer_infos = buffers.into_iter().map(|b| b.gen_buffer_info()).collect();
         Self { buffer_infos }
     }
-    pub fn writes_for_push(&self) -> Vec<vk::WriteDescriptorSet> {
+    pub fn writes_for_push(&self) -> Vec<vk::WriteDescriptorSet<'_>> {
         self.writes_for_set(vk::DescriptorSet::null())
     }
 
-    pub fn writes_for_set(&self, set: vk::DescriptorSet) -> Vec<vk::WriteDescriptorSet> {
+    pub fn writes_for_set(&self, set: vk::DescriptorSet) -> Vec<vk::WriteDescriptorSet<'_>> {
         self.buffer_infos
             .iter()
             .enumerate()
@@ -793,7 +793,7 @@ impl DynPushConstants {
         out
     }
 
-    pub fn writer(&self) -> DynPushConstantsWriter {
+    pub fn writer(&self) -> DynPushConstantsWriter<'_> {
         DynPushConstantsWriter {
             consts: self,
             pos: 0,

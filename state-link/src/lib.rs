@@ -338,7 +338,7 @@ impl Store {
         self.walk_inner(root, p, MAX_LINK_FOLLOWS)
     }
 
-    fn to_val_inner(&self, root: NodeRef, link_budget: usize) -> Result<ResolveResult> {
+    fn to_val_inner(&self, root: NodeRef, link_budget: usize) -> Result<ResolveResult<'_>> {
         match &self.elms[root.index] {
             Node::Dir(s) => Ok(ResolveResult::Struct(&s)),
             Node::Seq(s) => Ok(ResolveResult::Seq(&s)),
@@ -347,7 +347,7 @@ impl Store {
             Node::Link(_l) => Err(Error::LinkReferenceCycle),
         }
     }
-    pub fn to_val(&self, root: NodeRef) -> Result<ResolveResult> {
+    pub fn to_val(&self, root: NodeRef) -> Result<ResolveResult<'_>> {
         self.to_val_inner(root, MAX_LINK_FOLLOWS)
     }
 }
