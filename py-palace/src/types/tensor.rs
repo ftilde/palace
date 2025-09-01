@@ -1,4 +1,3 @@
-use id::Identify;
 use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 use palace_core::array::{PyTensorEmbeddingData, PyTensorMetaData};
 use palace_core::dtypes::{DType, ElementType, ScalarType, StaticElementType};
@@ -85,25 +84,6 @@ impl ScalarOperator {
                     std::any::type_name::<T>()
                 ))
             })
-    }
-}
-
-#[derive(FromPyObject)]
-pub enum MaybeConstScalarOperator<T> {
-    Const(T),
-    Operator(ScalarOperator),
-}
-
-impl<T: Identify + palace_core::storage::Element> TryInto<CScalarOperator<StaticElementType<T>>>
-    for MaybeConstScalarOperator<T>
-{
-    type Error = PyErr;
-
-    fn try_into(self) -> Result<CScalarOperator<StaticElementType<T>>, Self::Error> {
-        match self {
-            MaybeConstScalarOperator::Const(c) => Ok(palace_core::operators::scalar::constant(c)),
-            MaybeConstScalarOperator::Operator(o) => o.try_into(),
-        }
     }
 }
 
