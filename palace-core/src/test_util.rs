@@ -59,6 +59,9 @@ pub fn compare_tensor_approx<D: Dimension>(
         .finish(1 << 30, 1 << 30)
         .unwrap();
 
+    assert_eq!(result.metadata, expected.metadata);
+    let md = result.metadata;
+
     runtime
         .resolve(None, false, |ctx, _| {
             let result = &result;
@@ -80,15 +83,20 @@ pub fn compare_tensor_approx<D: Dimension>(
                     let b_l = ctx.submit(result.chunks.request(pos)).await;
                     let b_r = ctx.submit(expected.chunks.request(pos)).await;
 
+                    let chunk_info = md.chunk_info(pos);
+
                     let b_l = &*b_l;
                     let b_r = &*b_r;
                     for (i, (l, r)) in b_l.iter().zip(b_r.iter()).enumerate() {
                         let diff = (l - r).abs();
-                        if diff > max_diff || l.is_nan() != r.is_nan() {
-                            panic!(
-                                "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}: {} vs. {}",
-                                b_l, b_r, diff, max_diff, i, l, r
-                            );
+                        let in_chunk_pos = crate::vec::from_linear(i, &chunk_info.mem_dimensions);
+                        if in_chunk_pos.zip(&chunk_info.logical_dimensions, |l, r| l<r).hand() {
+                            if diff > max_diff || l.is_nan() != r.is_nan() {
+                                panic!(
+                                    "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}: {} vs. {}",
+                                    b_l, b_r, diff, max_diff, i, l, r
+                                );
+                            }
                         }
                     }
                 }
