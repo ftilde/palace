@@ -256,8 +256,7 @@ void main()
                     uint64_t cbt_sample_brick_pos_linear;
 
                     CONST_TABLE_DTYPE sampled_chunk_value;
-                    //TODO: need to use usetable
-                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, UseTableType(0), 0, cbt_res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_res, cbt_sample_brick_pos_linear, sampled_chunk_value);
 
                     if(cbt_res == SAMPLE_RES_FOUND) {
                         if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {

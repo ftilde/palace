@@ -89,8 +89,7 @@ void main()
             uint64_t cbt_sample_brick_pos_linear;
 
             CONST_TABLE_DTYPE sampled_chunk_value;
-            //TODO: need to use usetable
-            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(0), 0, res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, cbt_sample_brick_pos_linear, sampled_chunk_value);
 
             sampled_intensity = float(sampled_chunk_value);
 
