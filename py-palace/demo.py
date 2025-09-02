@@ -221,7 +221,7 @@ def render(size, events):
         mouse_pos_and_value = None
 
     def render_slice(v, state, tf, tile_size=None, devices=None):
-        out = palace_util.render_slice(v, state, tf=tf, coarse_lod_factor=1.0, tile_size=tile_size, devices=devices)
+        out = palace_util.render_slice(v, state, tf=tf, const_chunk_table=const_chunk_table, coarse_lod_factor=1.0, tile_size=tile_size, devices=devices)
 
         def inspect(size, events):
             global mouse_pos_and_value
