@@ -160,7 +160,6 @@ void main()
     uint gID = out_pos.x + out_pos.y * out_mem_dim.x;
 
     QueryTableType request_table = QueryTableType(consts.request_table);
-    QueryTableType cbt_request_table = QueryTableType(consts.const_brick_table_request_table);
 
     EEPoint eep;
 
@@ -267,8 +266,8 @@ void main()
                             //TODO: DO update state with an appropriate value for step;
                         }
                     } else if(cbt_res == SAMPLE_RES_NOT_PRESENT) {
-                        uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, level_num);
-                        try_insert_into_hash_table(cbt_request_table.values, REQUEST_TABLE_SIZE, query_value);
+                        uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, level_num + NUM_LEVELS);
+                        try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                         break;
                     } else /*res == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors

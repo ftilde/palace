@@ -666,7 +666,6 @@ pub fn raycast<E: ElementType>(
     #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
         request_table: BufferAddress,
-        const_brick_table_request_table: BufferAddress,
         out_mem_dim: Vector<D2, u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
@@ -832,17 +831,6 @@ pub fn raycast<E: ElementType>(
                         .await;
                     let mut request_table = RequestTable::new(device, raw_request_table);
                     let request_table_addr = request_table.buffer_address();
-
-                    let cbt_raw_request_table = ctx
-                        .submit(ctx.access_state_cache_gpu(
-                            device,
-                            pos,
-                            "cbt_request_table",
-                            Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
-                        ))
-                        .await;
-                    let mut cbt_request_table = RequestTable::new(device, cbt_raw_request_table);
-                    let cbt_request_table_addr = cbt_request_table.buffer_address();
 
                     let raw_use_tables = ctx
                         .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
@@ -1052,121 +1040,111 @@ pub fn raycast<E: ElementType>(
                         let global_size = [1, chunk_size.y(), chunk_size.x()].into();
 
                         // Actual rendering
-                        let timed_out = 'outer: loop {
-                            // Make requests visible
-                            ctx.submit(device.barrier(
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_WRITE
-                                        | vk::AccessFlags2::SHADER_READ,
-                                },
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::TRANSFER
-                                        | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::TRANSFER_READ
-                                        | vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            ))
-                            .await;
-
-                            let tensors_and_pts = input
-                                .levels
-                                .iter()
-                                .map(|t| &t.inner)
-                                .zip(lod_data.iter().map(|d| &d.0))
-                                .collect::<Vec<_>>();
-
-                            let mut request_result = request_table
-                                .download_and_insert(
-                                    *ctx,
-                                    device,
-                                    tensors_and_pts,
-                                    request_batch_size,
-                                    in_preview,
-                                    reset_state,
-                                )
+                        let timed_out =
+                            'outer: loop {
+                                // Make requests visible
+                                ctx.submit(device.barrier(
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_WRITE
+                                            | vk::AccessFlags2::SHADER_READ,
+                                    },
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::TRANSFER
+                                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::TRANSFER_READ
+                                            | vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                ))
                                 .await;
 
-                            if let Some(const_brick_table) = const_brick_table {
-                                let cbt_tensors_and_pts = const_brick_table
+                                let iter = input
                                     .levels
                                     .iter()
                                     .map(|t| &t.inner)
-                                    .zip(lod_data.iter().map(|d| d.3.as_ref().unwrap()))
-                                    .collect::<Vec<_>>();
-                                let res = cbt_request_table
+                                    .zip(lod_data.iter().map(|d| &d.0));
+                                let iter: Box<dyn Iterator<Item = _>> =
+                                    if let Some(const_brick_table) = const_brick_table {
+                                        Box::new(iter.chain(
+                                            const_brick_table.levels.iter().map(|t| &t.inner).zip(
+                                                lod_data.iter().map(|d| d.3.as_ref().unwrap()),
+                                            ),
+                                        ))
+                                    } else {
+                                        Box::new(iter)
+                                    };
+                                let tensors_and_pts = iter.collect::<Vec<_>>();
+
+                                let request_result = request_table
                                     .download_and_insert(
                                         *ctx,
                                         device,
-                                        cbt_tensors_and_pts,
+                                        tensors_and_pts,
                                         request_batch_size,
                                         in_preview,
                                         reset_state,
                                     )
                                     .await;
-                                request_result.combine(res);
-                            };
 
-                            for data in lod_data.iter_mut().rev() {
-                                data.1.download_and_note_use(*ctx, device, &data.0).await;
-                            }
-
-                            // Make writes to the request table visible (including initialization)
-                            ctx.submit(device.barrier(
-                                SrcBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::TRANSFER
-                                        | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::TRANSFER_WRITE
-                                        | vk::AccessFlags2::SHADER_WRITE,
-                                },
-                                DstBarrierInfo {
-                                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                                    access: vk::AccessFlags2::SHADER_READ
-                                        | vk::AccessFlags2::SHADER_WRITE,
-                                },
-                            ))
-                            .await;
-
-                            // Now first try a render pass to collect bricks to load (or just to finish the
-                            // rendering
-                            device.with_cmd_buffer(|cmd| {
-                                let descriptor_config = DescriptorConfig::new([
-                                    &gpu_brick_out,
-                                    &eep,
-                                    &*lod_data_gpu,
-                                    &state_ray,
-                                    &state_img,
-                                    &tf_data_gpu,
-                                ]);
-
-                                let consts = PushConstants {
-                                    request_table: request_table_addr,
-                                    const_brick_table_request_table: cbt_request_table_addr,
-                                    tf_min: tf_data.min,
-                                    tf_max: tf_data.max,
-                                    tf_len: tf_data.len,
-                                    out_mem_dim: chunk_size.into(),
-                                    oversampling_factor: config.oversampling_factor,
-                                    lod_coarseness,
-                                    reset_state: reset_state as u32,
-                                };
-                                reset_state = false;
-
-                                unsafe {
-                                    let mut pipeline = pipeline.bind(cmd);
-
-                                    pipeline.push_constant(consts);
-                                    pipeline.write_descriptor_set(0, descriptor_config);
-                                    pipeline.dispatch3d(global_size);
+                                for data in lod_data.iter_mut().rev() {
+                                    data.1.download_and_note_use(*ctx, device, &data.0).await;
                                 }
-                            });
 
-                            match request_result {
-                                RequestTableResult::Done => break 'outer false,
-                                RequestTableResult::Timeout => break 'outer true,
-                                RequestTableResult::Continue => {}
-                            }
-                        };
+                                // Make writes to the request table visible (including initialization)
+                                ctx.submit(device.barrier(
+                                    SrcBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::TRANSFER
+                                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::TRANSFER_WRITE
+                                            | vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                    DstBarrierInfo {
+                                        stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                                        access: vk::AccessFlags2::SHADER_READ
+                                            | vk::AccessFlags2::SHADER_WRITE,
+                                    },
+                                ))
+                                .await;
+
+                                // Now first try a render pass to collect bricks to load (or just to finish the
+                                // rendering
+                                device.with_cmd_buffer(|cmd| {
+                                    let descriptor_config = DescriptorConfig::new([
+                                        &gpu_brick_out,
+                                        &eep,
+                                        &*lod_data_gpu,
+                                        &state_ray,
+                                        &state_img,
+                                        &tf_data_gpu,
+                                    ]);
+
+                                    let consts = PushConstants {
+                                        request_table: request_table_addr,
+                                        tf_min: tf_data.min,
+                                        tf_max: tf_data.max,
+                                        tf_len: tf_data.len,
+                                        out_mem_dim: chunk_size.into(),
+                                        oversampling_factor: config.oversampling_factor,
+                                        lod_coarseness,
+                                        reset_state: reset_state as u32,
+                                    };
+                                    reset_state = false;
+
+                                    unsafe {
+                                        let mut pipeline = pipeline.bind(cmd);
+
+                                        pipeline.push_constant(consts);
+                                        pipeline.write_descriptor_set(0, descriptor_config);
+                                        pipeline.dispatch3d(global_size);
+                                    }
+                                });
+
+                                match request_result {
+                                    RequestTableResult::Done => break 'outer false,
+                                    RequestTableResult::Timeout => break 'outer true,
+                                    RequestTableResult::Continue => {}
+                                }
+                            };
 
                         let new_state = match progress_state.unpack() {
                             RaycastingState::Empty | RaycastingState::RenderingPreview => {
