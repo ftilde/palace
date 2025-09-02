@@ -520,16 +520,6 @@ pub fn render_slice<E: ElementType>(
                 let mut use_table = UseTable::new(device, raw_use_table);
                 let use_table_addr = use_table.buffer_address();
 
-                let cbt_raw_request_table = ctx
-                    .submit(ctx.access_state_cache_gpu(
-                        device,
-                        pos,
-                        "cbt_request_table",
-                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
-                    ))
-                    .await;
-                let mut cbt_request_table = RequestTable::new(device, cbt_raw_request_table);
-
                 let tf_data = tf.data();
 
                 let gpu_brick_out = ctx
@@ -553,33 +543,24 @@ pub fn render_slice<E: ElementType>(
                     ))
                     .await;
 
-                    let (mut request_result, ()) = futures::join!(
+                    let mut tensors_and_pts = vec![(&level.inner, &page_table)];
+                    if let Some(const_brick_table) = &const_brick_table {
+                        tensors_and_pts.push((
+                            &const_brick_table.inner,
+                            const_brick_table_page_table.as_ref().unwrap(),
+                        ));
+                    }
+                    let (request_result, ()) = futures::join!(
                         request_table.download_and_insert(
                             *ctx,
                             device,
-                            vec![(level, &page_table)],
+                            tensors_and_pts,
                             request_batch_size,
                             true,
                             false,
                         ),
                         use_table.download_and_note_use(*ctx, device)
                     );
-
-                    if let Some(const_brick_table_page_table) =
-                        const_brick_table_page_table.as_ref()
-                    {
-                        let res = cbt_request_table
-                            .download_and_insert(
-                                *ctx,
-                                device,
-                                vec![(const_brick_table.unwrap(), &const_brick_table_page_table)],
-                                request_batch_size,
-                                true,
-                                false,
-                            )
-                            .await;
-                        request_result.combine(res);
-                    };
 
                     // Make writes to the request table, use table and page table visible
                     // (including initialization)
@@ -600,19 +581,13 @@ pub fn render_slice<E: ElementType>(
                     // Now first try a render pass to collect bricks to load (or just to finish the
                     // rendering
                     device.with_cmd_buffer(|cmd| {
-                        let mut descriptor_config: Vec<
-                            &dyn crate::vulkan::pipeline::AsDescriptors,
-                        > = vec![
+                        let descriptor_config = DescriptorConfig::new([
                             &gpu_brick_out,
                             &request_table,
                             &state_initialized,
                             &state_values,
                             &tf_data_gpu,
-                        ];
-                        if const_brick_table.is_some() {
-                            descriptor_config.push(&cbt_request_table);
-                        }
-                        let descriptor_config = DescriptorConfig::from_vec(descriptor_config);
+                        ]);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);

@@ -34,10 +34,6 @@ layout(std430, binding = 4) buffer TFTableBuffer {
     u8vec4 values[];
 } tf_table;
 
-layout(std430, binding = 5) buffer CBTQueryTable {
-    uint64_t values[REQUEST_TABLE_SIZE];
-} cbt_request_table;
-
 declare_push_consts(consts);
 
 #define UNINIT 0
@@ -98,7 +94,8 @@ void main()
                     //do_sample_volume = false;
                 }
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                try_insert_into_hash_table(cbt_request_table.values, REQUEST_TABLE_SIZE, cbt_sample_brick_pos_linear);
+                uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, 1);
+                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                 do_sample_volume = false;
             } else /*res == SAMPLE_RES_OUTSIDE*/ {
                 // Should only happen at the border of the volume due to rounding errors
@@ -115,7 +112,8 @@ void main()
                 sampled_intensity = float(sampled_intensity_raw);
 
                 if(res == SAMPLE_RES_NOT_PRESENT) {
-                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                    uint64_t query_value = pack_tensor_query_value(sample_brick_pos_linear, 0);
+                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                 }
             }
 
