@@ -104,11 +104,12 @@ pub fn const_chunk_table(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (input, result_metadata, projection_mat, tf=None, coarse_lod_factor=1.0))]
+#[pyo3(signature = (input, result_metadata, projection_mat, const_brick_table=None, tf=None, coarse_lod_factor=1.0))]
 pub fn render_slice(
     input: LODTensorOperator,
     result_metadata: PyTensorMetaData,
     projection_mat: Matrix<D4, f32>,
+    const_brick_table: Option<LODTensorOperator>,
     tf: Option<TransFuncOperator>,
     coarse_lod_factor: f32,
 ) -> PyResult<TensorOperator> {
@@ -116,11 +117,17 @@ pub fn render_slice(
         .map(|tf| tf.try_into())
         .unwrap_or_else(|| Ok(CTransFuncOperator::grey_ramp(0.0, 1.0)))?;
 
+    let const_brick_table = if let Some(const_brick_table) = const_brick_table {
+        Some(const_brick_table.try_into_core_static()?)
+    } else {
+        None
+    };
     Ok(
         crate::map_result(palace_core::operators::sliceviewer::render_slice(
             input.try_into_core_static()?,
             result_metadata.try_into_dim()?,
             projection_mat.try_into()?,
+            const_brick_table,
             tf,
             RenderConfig2D { coarse_lod_factor },
         ))?

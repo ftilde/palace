@@ -1,7 +1,7 @@
 use crate::{
     array::TensorEmbeddingData,
     dim::DynDimension,
-    dtypes::{ScalarType, StaticElementType},
+    dtypes::{DType, ElementType, ScalarType, StaticElementType},
     jit::jit,
     vec::Vector,
 };
@@ -71,4 +71,40 @@ pub fn const_chunk_table<'op, D: DynDimension>(
             })
             .collect(),
     }
+}
+
+pub fn ensure_compatibility<D: DynDimension, E: ElementType>(
+    input: &LODTensorOperator<D, E>,
+    const_brick_table: &LODTensorOperator<D, E>,
+) -> Result<DType, crate::Error> {
+    let dtype = input.dtype().into();
+    let const_table_dtype: DType = input.dtype().into();
+    if dtype.size != 1 {
+        return Err(format!(
+            "const_brick_table element must be one-dimensional: {:?}",
+            dtype
+        )
+        .into());
+    }
+
+    if input.levels.len() != const_brick_table.levels.len() {
+        return Err(format!("Input tensor and const_brick_table must have the same number of levels, but have {} and {}", input.levels.len(), const_brick_table.levels.len()).into());
+    }
+    for (level, (i, c)) in input
+        .levels
+        .iter()
+        .zip(const_brick_table.levels.iter())
+        .enumerate()
+    {
+        if i.metadata.dimension_in_chunks().raw() != c.metadata.dimensions.raw() {
+            return Err(format!(
+                "Level {}: const_brick_table should have size {:?}, but has size {:?}",
+                level,
+                i.metadata.dimension_in_chunks().raw(),
+                c.metadata.dimensions.raw()
+            )
+            .into());
+        }
+    }
+    Ok(const_table_dtype)
 }

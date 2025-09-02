@@ -696,35 +696,10 @@ pub fn raycast<E: ElementType>(
     }
 
     let const_table_dtype = if let Some(const_brick_table) = &const_brick_table {
-        let const_table_dtype: DType = input.dtype().into();
-        if dtype.size != 1 {
-            return Err(format!(
-                "const_brick_table element must be one-dimensional: {:?}",
-                dtype
-            )
-            .into());
-        }
-
-        if input.levels.len() != const_brick_table.levels.len() {
-            return Err(format!("Input tensor and const_brick_table must have the same number of levels, but have {} and {}", input.levels.len(), const_brick_table.levels.len()).into());
-        }
-        for (level, (i, c)) in input
-            .levels
-            .iter()
-            .zip(const_brick_table.levels.iter())
-            .enumerate()
-        {
-            if i.metadata.dimension_in_chunks().raw() != c.metadata.dimensions.raw() {
-                return Err(format!(
-                    "Level {}: const_brick_table should have size {:?}, but has size {:?}",
-                    level,
-                    i.metadata.dimension_in_chunks().raw(),
-                    c.metadata.dimensions.raw()
-                )
-                .into());
-            }
-        }
-        Some(const_table_dtype)
+        Some(crate::operators::const_chunks::ensure_compatibility(
+            &input,
+            &const_brick_table,
+        )?)
     } else {
         None
     };

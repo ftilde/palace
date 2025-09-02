@@ -93,8 +93,8 @@ pub fn compare_tensor_approx<D: Dimension>(
                         if in_chunk_pos.zip(&chunk_info.logical_dimensions, |l, r| l<r).hand() {
                             if diff > max_diff || l.is_nan() != r.is_nan() {
                                 panic!(
-                                    "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {}: {} vs. {}",
-                                    b_l, b_r, diff, max_diff, i, l, r
+                                    "{:?}\nand\n{:?}\ndiffer by {}, i.e. more than {} at position {:?} in chunk {:?}: {} vs. {}",
+                                    b_l, b_r, diff, max_diff, in_chunk_pos, pos, l, r
                                 );
                             }
                         }

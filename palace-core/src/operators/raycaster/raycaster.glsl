@@ -6,8 +6,6 @@
 
 #define ChunkValue INPUT_DTYPE
 
-#define MARKER_NOT_CONST_BITS 0xffffabcd
-
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>

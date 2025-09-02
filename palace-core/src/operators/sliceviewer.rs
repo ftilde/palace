@@ -17,7 +17,10 @@ use crate::{
     op_descriptor,
     operator::{DataParam, OpaqueOperator, OperatorDescriptor},
     operators::tensor::TensorOperator,
-    storage::DataVersionType,
+    storage::{
+        gpu::{buffer_address, BufferAddress},
+        DataVersionType,
+    },
     transfunc::TransFuncOperator,
     vulkan::{
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, LocalSizeConfig},
@@ -293,11 +296,13 @@ pub fn render_slice<E: ElementType>(
     input: LODVolumeOperator<E>,
     result_metadata: ImageMetaData,
     projection_mat: Matrix<D4, f32>,
+    const_brick_table: Option<LODVolumeOperator<E>>,
     tf: TransFuncOperator,
     config: RenderConfig2D,
 ) -> Result<FrameOperator, Error> {
     let push_constants = DynPushConstants::new()
         .scalar::<u64>("page_table_root")
+        .scalar::<u64>("cbt_page_table_root")
         .scalar::<u64>("use_table")
         .mat::<f32>(4, "transform")
         .vec::<u32>(3, "vol_dim")
@@ -306,6 +311,7 @@ pub fn render_slice<E: ElementType>(
         .scalar::<f32>("tf_max")
         .vec::<u32>(2, "out_begin")
         .vec::<u32>(2, "out_mem_dim")
+        .vec::<u32>(3, "cbt_chunk_size")
         .scalar::<u32>("tf_len");
 
     const SHADER: &'static str = r#"
@@ -345,6 +351,10 @@ layout(std430, binding = 4) buffer TFTableBuffer {
     u8vec4 values[];
 } tf_table;
 
+layout(std430, binding = 5) buffer CBTQueryTable {
+    uint64_t values[REQUEST_TABLE_SIZE];
+} cbt_request_table;
+
 declare_push_consts(consts);
 
 #define UNINIT 0
@@ -383,14 +393,49 @@ void main()
             vec3 sample_pos_g = floor(sample_pos_f + vec3(0.5));
             float[3] sample_pos = from_glsl(sample_pos_g);
 
-            ivec3 vol_dim = ivec3(to_glsl(consts.vol_dim));
-
+            bool do_sample_volume = true;
+            float sampled_intensity;
             int res;
-            uint64_t sample_brick_pos_linear;
-            INPUT_DTYPE sampled_intensity_raw;
-            try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
 
-            float sampled_intensity = float(sampled_intensity_raw);
+            #ifdef CONST_TABLE_DTYPE
+            TensorMetaData(3) const_table_m_in;
+            float[3] sample_chunk_pos = div(sample_pos, to_float(m_in.chunk_size));
+            const_table_m_in.dimensions = dim_in_bricks(m_in);
+            const_table_m_in.chunk_size = consts.cbt_chunk_size;
+
+            uint64_t cbt_sample_brick_pos_linear;
+
+            CONST_TABLE_DTYPE sampled_chunk_value;
+            //TODO: need to use usetable
+            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(0), 0, res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+
+            sampled_intensity = float(sampled_chunk_value);
+
+            if(res == SAMPLE_RES_FOUND) {
+                if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
+                    //do_sample_volume = false;
+                }
+            } else if(res == SAMPLE_RES_NOT_PRESENT) {
+                try_insert_into_hash_table(cbt_request_table.values, REQUEST_TABLE_SIZE, cbt_sample_brick_pos_linear);
+                do_sample_volume = false;
+            } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                // Should only happen at the border of the volume due to rounding errors
+            }
+            #endif
+
+            if(do_sample_volume) {
+                ivec3 vol_dim = ivec3(to_glsl(consts.vol_dim));
+
+                uint64_t sample_brick_pos_linear;
+                INPUT_DTYPE sampled_intensity_raw;
+                try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+
+                sampled_intensity = float(sampled_intensity_raw);
+
+                if(res == SAMPLE_RES_NOT_PRESENT) {
+                    try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+                }
+            }
 
             if(res == SAMPLE_RES_FOUND) {
                 classify(sampled_intensity, val);
@@ -398,7 +443,6 @@ void main()
                 state.values[gID] = INIT_VAL;
                 brick_values.values[gID] = sampled_intensity;
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
                 val = COLOR_NOT_LOADED;
             } else /* SAMPLE_RES_OUTSIDE */ {
                 val = checkered_color(out_pos);
@@ -418,23 +462,44 @@ void main()
         return Err(format!("Tensor element must be one-dimensional: {:?}", dtype).into());
     }
 
+    let const_table_dtype = if let Some(const_brick_table) = &const_brick_table {
+        Some(crate::operators::const_chunks::ensure_compatibility(
+            &input,
+            &const_brick_table,
+        )?)
+    } else {
+        None
+    };
+
     Ok(TensorOperator::unbatched(
         op_descriptor!().unstable(),
         Default::default(),
         result_metadata,
         (
             input,
+            const_brick_table,
             DataParam(result_metadata),
             DataParam(projection_mat),
             DataParam(tf),
             DataParam(config),
             DataParam(dtype),
             DataParam(push_constants),
+            DataParam(const_table_dtype),
         ),
         move |ctx,
               pos,
               loc,
-              (input, result_metadata, projection_mat, tf, config, dtype, push_constants)| {
+              (
+            input,
+            const_brick_table,
+            result_metadata,
+            projection_mat,
+            tf,
+            config,
+            dtype,
+            push_constants,
+            const_table_dtype,
+        )| {
             async move {
                 let device = ctx.preferred_device(loc);
 
@@ -455,6 +520,8 @@ void main()
                     &[[0.0, 0.0, 1.0].into(), [0.0, 1.0, 0.0].into()],
                     **config,
                 );
+                let const_brick_table =
+                    const_brick_table.as_ref().map(|cbt| &cbt.levels[level_num]);
 
                 let m_in = level.metadata;
 
@@ -474,6 +541,26 @@ void main()
 
                 let page_table_addr = page_table.root();
 
+                let const_brick_table_page_table =
+                    if let Some(const_brick_table_level) = const_brick_table {
+                        let brick_index = device
+                            .storage
+                            .get_page_table(
+                                *ctx,
+                                device,
+                                const_brick_table_level.chunks.operator_descriptor(),
+                                dst_info,
+                            )
+                            .await;
+                        Some(brick_index)
+                    } else {
+                        None
+                    };
+                let const_brick_table_page_table_root = const_brick_table_page_table
+                    .as_ref()
+                    .map(|i| buffer_address(device, i.buffer))
+                    .unwrap_or(BufferAddress::null());
+
                 let request_table_size = 256;
                 let use_table_size = 2048;
 
@@ -484,17 +571,32 @@ void main()
                         use_table_size,
                         dtype,
                         push_constants,
+                        const_table_dtype,
                     ),
-                    |device, (mem_size, request_table_size, use_table_size, dtype, push_constants)| {
-                        ComputePipelineBuilder::new(
-                            Shader::new(SHADER)
+                    |device,
+                     (
+                        mem_size,
+                        request_table_size,
+                        use_table_size,
+                        dtype,
+                        push_constants,
+                        const_table_dtype,
+                    )| {
+                        ComputePipelineBuilder::new({
+                            let s = Shader::new(SHADER)
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
                                 .define("USE_TABLE_SIZE", use_table_size)
                                 .define("INPUT_DTYPE", dtype.glsl_type())
-                                .ext(dtype.glsl_ext()),
-                        )
+                                .ext(dtype.glsl_ext());
+                            if let Some(const_table_dtype) = &**const_table_dtype {
+                                s.define("CONST_TABLE_DTYPE", const_table_dtype.glsl_type())
+                                    .ext(const_table_dtype.glsl_ext())
+                            } else {
+                                s
+                            }
+                        })
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
                     },
@@ -560,6 +662,16 @@ void main()
                 let mut use_table = UseTable::new(device, raw_use_table);
                 let use_table_addr = use_table.buffer_address();
 
+                let cbt_raw_request_table = ctx
+                    .submit(ctx.access_state_cache_gpu(
+                        device,
+                        pos,
+                        "cbt_request_table",
+                        Layout::array::<FeedbackTableElement>(request_table_size).unwrap(),
+                    ))
+                    .await;
+                let mut cbt_request_table = RequestTable::new(device, cbt_raw_request_table);
+
                 let tf_data = tf.data();
 
                 let gpu_brick_out = ctx
@@ -583,7 +695,7 @@ void main()
                     ))
                     .await;
 
-                    let (request_result, ()) = futures::join!(
+                    let (mut request_result, ()) = futures::join!(
                         request_table.download_and_insert(
                             *ctx,
                             device,
@@ -594,6 +706,22 @@ void main()
                         ),
                         use_table.download_and_note_use(*ctx, device, &page_table)
                     );
+
+                    if let Some(const_brick_table_page_table) =
+                        const_brick_table_page_table.as_ref()
+                    {
+                        let res = cbt_request_table
+                            .download_and_insert(
+                                *ctx,
+                                device,
+                                vec![(const_brick_table.unwrap(), &const_brick_table_page_table)],
+                                request_batch_size,
+                                true,
+                                false,
+                            )
+                            .await;
+                        request_result.combine(res);
+                    };
 
                     // Make writes to the request table, use table and page table visible
                     // (including initialization)
@@ -614,19 +742,26 @@ void main()
                     // Now first try a render pass to collect bricks to load (or just to finish the
                     // rendering
                     device.with_cmd_buffer(|cmd| {
-                        let descriptor_config = DescriptorConfig::new([
+                        let mut descriptor_config: Vec<
+                            &dyn crate::vulkan::pipeline::AsDescriptors,
+                        > = vec![
                             &gpu_brick_out,
                             &request_table,
                             &state_initialized,
                             &state_values,
                             &tf_data_gpu,
-                        ]);
+                        ];
+                        if const_brick_table.is_some() {
+                            descriptor_config.push(&cbt_request_table);
+                        }
+                        let descriptor_config = DescriptorConfig::from_vec(descriptor_config);
 
                         unsafe {
                             let mut pipeline = pipeline.bind(cmd);
 
                             pipeline.push_constant_dyn(&push_constants, |consts| {
                                 consts.scalar(page_table_addr.0)?;
+                                consts.scalar(const_brick_table_page_table_root.0)?;
                                 consts.scalar(use_table_addr.0)?;
                                 consts.mat(&transform)?;
                                 consts.vec(&m_in.dimensions.raw().into())?;
@@ -635,6 +770,12 @@ void main()
                                 consts.scalar(tf_data.max)?;
                                 consts.vec(&out_info.begin.raw().into())?;
                                 consts.vec(&out_info.mem_dimensions.raw().into())?;
+                                consts.vec(
+                                    &const_brick_table
+                                        .map(|t| t.metadata.chunk_size.raw())
+                                        .unwrap_or(Vector::fill(0))
+                                        .into(),
+                                )?;
                                 consts.scalar(tf_data.len)?;
                                 Ok(())
                             });
@@ -728,6 +869,7 @@ mod test {
                     .single_level_lod(),
                 img_meta.into(),
                 slice_proj,
+                None,
                 crate::transfunc::TransFuncOperator::grey_ramp(0.0, 1.0),
                 Default::default(),
             )

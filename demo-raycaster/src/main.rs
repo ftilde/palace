@@ -74,7 +74,7 @@ struct CliArgs {
     #[arg(short, long)]
     transfunc_path: Option<PathBuf>,
 
-    /// Transfer function (voreen .tfi file)
+    /// Tensor with one entry per chunk in the actual input
     #[arg(long)]
     const_chunk_table: Option<PathBuf>,
 

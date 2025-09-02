@@ -40,4 +40,6 @@ void swap(inout float v1, inout float v2) {
 #define POS_INFINITY (uintBitsToFloat(0x7F800000))
 #define NEG_INFINITY (uintBitsToFloat(0xFF800000))
 
+#define MARKER_NOT_CONST_BITS 0xffffabcd
+
 #endif

@@ -74,6 +74,10 @@ struct CliArgs {
     #[arg(short, long)]
     compute_pool_size: Option<usize>,
 
+    /// Tensor with one entry per chunk in the actual input
+    #[arg(long)]
+    const_chunk_table: Option<PathBuf>,
+
     /// Stop after rendering a complete frame
     #[arg(short, long)]
     bench: bool,
@@ -180,6 +184,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut coarse_lod_factor: f32 = 1.0;
     let mut gui = GuiState::new();
 
+    let const_chunk_table = if let Some(const_chunk_table) = args.const_chunk_table {
+        Some({
+            let vol = palace_io::open_lod(const_chunk_table, Default::default()).unwrap();
+            vol.map(|v| {
+                v.map_inner(|v| {
+                    palace_core::jit::jit(v)
+                        .cast(ScalarType::F32.into())
+                        .unwrap()
+                        .compile()
+                        .unwrap()
+                })
+            })
+            .try_into_static()
+            .unwrap()
+            .try_into()
+            .unwrap()
+        })
+    } else {
+        None
+    };
+
     let res = palace_winit::run_with_window(
         &mut runtime,
         Duration::from_millis(10),
@@ -188,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rt,
                 window,
                 vol.clone(),
+                const_chunk_table.clone(),
                 &mut angle,
                 &mut slice_num,
                 &mut slice_offset,
@@ -216,6 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn slice_viewer_z(
     vol: LODVolumeOperator<StaticElementType<f32>>,
+    const_chunk_table: Option<LODVolumeOperator<StaticElementType<f32>>>,
     md: ImageMetaData,
     render_config: RenderConfig2D,
     slice_num: &mut i32,
@@ -263,6 +290,7 @@ fn slice_viewer_z(
         vol,
         md,
         slice_proj_z,
+        const_chunk_table,
         tf.clone(),
         render_config,
     )
@@ -274,6 +302,7 @@ fn slice_viewer_z(
 
 fn slice_viewer_rot(
     vol: LODVolumeOperator<StaticElementType<f32>>,
+    const_chunk_table: Option<LODVolumeOperator<StaticElementType<f32>>>,
     md: ImageMetaData,
     render_config: RenderConfig2D,
     angle: &mut f32,
@@ -304,6 +333,7 @@ fn slice_viewer_rot(
         vol,
         md.into(),
         slice_proj_rot,
+        const_chunk_table,
         tf.clone(),
         render_config,
     )
@@ -316,6 +346,7 @@ fn eval_network(
     runtime: &mut RunTime,
     window: &mut Window,
     vol: LODVolumeOperator<StaticElementType<f32>>,
+    const_chunk_table: Option<LODVolumeOperator<StaticElementType<f32>>>,
     angle: &mut f32,
     slice_num: &mut i32,
     slice_offset: &mut Vector<D2, f32>,
@@ -401,6 +432,7 @@ fn eval_network(
 
     let left = slice_viewer_z(
         vol.clone(),
+        const_chunk_table.clone(),
         splitter.metadata_first(),
         render_config,
         slice_num,
@@ -413,6 +445,7 @@ fn eval_network(
     let left = gui.render(left);
     let right = slice_viewer_rot(
         vol,
+        const_chunk_table.clone(),
         splitter.metadata_last(),
         render_config,
         angle,

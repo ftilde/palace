@@ -292,6 +292,7 @@ fn slice_viewer_z(
         vol,
         md.into(),
         slice_proj_z,
+        None,
         tf.clone(),
         Default::default(),
     )
