@@ -48,7 +48,7 @@ def render_raycast(vol, camera_state, config, tf, const_brick_table=None, tile_s
     return inner
 
 # Slice render component
-def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=None, devices=None):
+def render_slice(vol, slice_state, tf=None, const_chunk_table=None, coarse_lod_factor=1.0, tile_size=None, devices=None):
     def inner(size, events):
         events.act([
             pc.OnMouseDrag(pc.MouseButton.Left, lambda pos, delta: slice_state.mutate(lambda s: s.drag(delta))),
@@ -62,7 +62,7 @@ def render_slice(vol, slice_state, tf=None, coarse_lod_factor=1.0, tile_size=Non
 
         proj = slice_state.load().projection_mat(vol.fine_metadata(), vol.fine_embedding_data(), size)
 
-        frame = pc.render_slice(vol, md, proj, tf, coarse_lod_factor)
+        frame = pc.render_slice(vol, md, proj, const_brick_table=const_chunk_table, tf=tf, coarse_lod_factor=coarse_lod_factor)
         if devices:
             frame = frame.distribute_on_gpus(devices)
         frame = frame.rechunk([pc.ChunkSizeFull()]*2)

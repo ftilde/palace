@@ -292,8 +292,8 @@ def render(size, events: pc.Events):
     def overlay_slice(state):
         tile_size = 512
 
-        slice = palace_util.render_slice(v, state, tf, lod_coarseness_2d.load(), tile_size=tile_size)
-        slice_rw = palace_util.render_slice(rw_result, state, tf_prob, lod_coarseness_2d.load(), tile_size=tile_size)
+        slice = palace_util.render_slice(v, state, tf=tf, coarse_lod_factor=lod_coarseness_2d.load(), tile_size=tile_size)
+        slice_rw = palace_util.render_slice(rw_result, state, tf=tf_prob, coarse_lod_factor=lod_coarseness_2d.load(), tile_size=tile_size)
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
