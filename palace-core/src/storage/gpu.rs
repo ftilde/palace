@@ -475,7 +475,6 @@ struct PageTableChild {
 pub struct PageTableState {
     root_storage: StorageInfo,
     visibility: Visibility,
-    children: Map<BufferAddress, PageTableChild>,
     access: AccessState,
 }
 
@@ -669,34 +668,8 @@ impl PageTableState {
         Self {
             root_storage: storage,
             visibility,
-            children: Default::default(),
             access: AccessState::Some(0),
         }
-    }
-
-    fn note_use(&mut self, buffer_addr: BufferAddress, page_table_lru: &mut PageTableLRU) {
-        // Chunk may not be present anymore due to intermittent garbage collection
-        if let Some(pt_entry) = self.children.get_mut(&buffer_addr) {
-            pt_entry.page_table_lru_index =
-                Some(page_table_lru.note_use(pt_entry.page_table_lru_index.unwrap()));
-        }
-    }
-
-    // Safety: Caller needs to remove page from page table in this cmdbuffer epoch
-    unsafe fn release(
-        &mut self,
-        device: &DeviceContext,
-        data_index: &mut Map<DataId, Entry>,
-        page_table_lru: &mut PageTableLRU,
-        chunk_lru: &mut LRUManager<LRUItem>,
-        addr: BufferAddress,
-    ) -> PageTableChildType {
-        //println!("Remove {:?}", addr);
-        let pt_entry = self.children.remove(&addr).unwrap();
-
-        // Safety: Caller must uphold
-        unsafe { unref_in_page_table(device, data_index, page_table_lru, chunk_lru, &pt_entry) };
-        pt_entry.type_
     }
 }
 
@@ -964,12 +937,10 @@ impl<'a> PageTableHandle<'a> {
         );
 
         for (pos, chunk) in pos_and_chunk {
-            let mut index = self.device.storage.page_table_index.borrow_mut();
-            let entry = index.get_mut(&self.op).unwrap();
-
             let chunk_buffer_addr = buffer_address(self.device, chunk.buffer);
 
-            if !entry.children.contains_key(&chunk_buffer_addr) {
+            let mut ptp = self.device.storage.page_table_pages.borrow_mut();
+            if !ptp.contains_key(&chunk_buffer_addr) {
                 let data_id = chunk.access.id;
                 assert_eq!(data_id, DataId::new(self.op, pos));
 
@@ -982,7 +953,7 @@ impl<'a> PageTableHandle<'a> {
                     .add((self.op, chunk_buffer_addr));
 
                 // Insert page in index so that following calls return in the `contains_key` guard above.
-                entry.children.insert(
+                ptp.insert(
                     chunk_buffer_addr,
                     PageTableChild {
                         page_table_lru_index: Some(lru_index),
@@ -1036,8 +1007,7 @@ impl<'a> PageTableHandle<'a> {
 
         let to_insert_lru = bufs.into_iter().zip(page_pool_buf_addrs.into_iter());
 
-        let mut index = self.device.storage.page_table_index.borrow_mut();
-        let entry = index.get_mut(&self.op).unwrap();
+        let mut ptp = self.device.storage.page_table_pages.borrow_mut();
         for (buf, buf_addr) in to_insert_lru {
             let lru_index = self
                 .device
@@ -1046,7 +1016,7 @@ impl<'a> PageTableHandle<'a> {
                 .borrow_mut()
                 .add((self.op, buf_addr));
 
-            entry.children.insert(
+            ptp.insert(
                 buf_addr,
                 PageTableChild {
                     page_table_lru_index: Some(lru_index),
@@ -1062,12 +1032,14 @@ impl<'a> PageTableHandle<'a> {
     }
 
     pub fn note_use<'h>(&self, buffer_addr: BufferAddress) {
-        let mut page_table_index = self.device.storage.page_table_index.borrow_mut();
-        let index_entry = page_table_index.get_mut(&self.op).unwrap();
-
         let mut page_table_lru = self.device.storage.page_table_lru.borrow_mut();
+        let mut ptp = self.device.storage.page_table_pages.borrow_mut();
 
-        index_entry.note_use(buffer_addr, &mut page_table_lru);
+        // Chunk may not be present anymore due to intermittent garbage collection
+        if let Some(pt_entry) = ptp.get_mut(&buffer_addr) {
+            pt_entry.page_table_lru_index =
+                Some(page_table_lru.note_use(pt_entry.page_table_lru_index.unwrap()));
+        }
     }
 }
 impl<'a> Drop for PageTableHandle<'a> {
@@ -1102,6 +1074,7 @@ pub struct Storage {
         Map<DataId, BTreeMap<FrameNumber, (StorageEntryState, Option<LRUIndex>, CmdBufferEpoch)>>,
     >,
     page_table_index: RefCell<Map<OperatorId, PageTableState>>,
+    page_table_pages: RefCell<Map<BufferAddress, PageTableChild>>,
     // Manage (unreferenced) items (chunks as well as page tables) and free them once we are able
     lru_manager: RefCell<super::LRUManager<LRUItem>>,
     // Purpose: Keep track of when chunks in page table were used and possibly remove them from the
@@ -1122,6 +1095,7 @@ impl Storage {
             data_index: Default::default(),
             old_preview_data_index: Default::default(),
             page_table_index: Default::default(),
+            page_table_pages: Default::default(),
             lru_manager: Default::default(),
             page_table_lru: Default::default(),
             barrier_manager: BarrierManager::new(),
@@ -1199,16 +1173,11 @@ impl Storage {
     /// references is done!
     pub unsafe fn free_vram(&self) {
         {
-            let mut pti = self.page_table_index.borrow_mut();
-            for (operator, buf_addr) in
+            let mut ptp = self.page_table_pages.borrow_mut();
+            for (_operator, buf_addr) in
                 std::mem::take(&mut *self.page_table_lru.borrow_mut()).drain_lru()
             {
-                let child = pti
-                    .get_mut(&operator)
-                    .unwrap()
-                    .children
-                    .remove(&buf_addr)
-                    .unwrap();
+                let child = ptp.remove(&buf_addr).unwrap();
                 match child.type_ {
                     PageTableChildType::Inner(allocation) => {
                         self.allocator.deallocate(allocation);
@@ -1331,8 +1300,8 @@ impl Storage {
         let mut index = self.data_index.borrow_mut();
         let mut old_preview_index = self.old_preview_data_index.borrow_mut();
         let mut page_table_index = self.page_table_index.borrow_mut();
+        let mut ptp = self.page_table_pages.borrow_mut();
 
-        let mut page_tables_to_unref = Vec::new();
         for (longevity, inner_lru) in lru.inner_mut() {
             let mut collected_local = 0;
 
@@ -1412,8 +1381,7 @@ impl Storage {
                         }
 
                         let entry = page_table_index.remove(&key).unwrap();
-
-                        page_tables_to_unref.push(entry.children);
+                        // Referenced pages will be collected after falling out of the LRU below
 
                         entry.root_storage
                     }
@@ -1443,44 +1411,37 @@ impl Storage {
                 );
             }
         }
-        // Unref all chunks that were used in a page table deleted above
-        for pt_entries in page_tables_to_unref {
-            for (_pos, pt_entry) in pt_entries {
-                unsafe {
-                    unref_in_page_table(
-                        device,
-                        &mut index,
-                        &mut page_table_lru,
-                        &mut lru,
-                        &pt_entry,
-                    );
-
-                    if let PageTableChildType::Inner(allocation) = pt_entry.type_ {
-                        self.page_table_page_cache.insert(device, allocation);
-                        //std::mem::drop(TempRessource::new(device, allocation));
-                    }
-                };
-            }
-        }
 
         // Potentially unref chunks from indices that are still active
         let mut unindexed = 0;
 
         let mut pt_release_batcher = PageTableReleaseBatcher::default();
         if goal_in_bytes > collected {
-            // Pop items one by one from the respective indices. Note that since chunks are
-            // inserted in the lru only when they are first inserted into the index, we effectively
-            // a "least recently added" strategy here. This is probably not what we actually
-            // want... However, we (so far) have no feedback about chunks being used via the index.
+            // Pop items one by one from the respective indices.
             while let Some((op, buf_addr)) = page_table_lru.get_next() {
-                let page_table = page_table_index.get_mut(&op).unwrap();
-
                 // Releasing the chunk also removes it from the page table queue
-                let child = unsafe {
-                    page_table.release(device, &mut index, &mut *page_table_lru, &mut lru, buf_addr)
+                let child = {
+                    let pt_entry = ptp.remove(&buf_addr).unwrap();
+
+                    // Safety: Either we remove the entry below, or the index has already been
+                    // deleted.
+                    unsafe {
+                        unref_in_page_table(
+                            device,
+                            &mut *index,
+                            &mut *page_table_lru,
+                            &mut lru,
+                            &pt_entry,
+                        )
+                    };
+                    pt_entry.type_
                 };
 
-                pt_release_batcher.add(page_table, buf_addr, &child);
+                // Root may already have been deleted. In that case we don't have to remove the
+                // entry
+                if let Some(page_table) = page_table_index.get_mut(&op) {
+                    pt_release_batcher.add(page_table, buf_addr, &child);
+                }
 
                 let size = match child {
                     PageTableChildType::Leaf(data_id, _) => {
