@@ -219,15 +219,16 @@ impl<'a> UseTable<'a> {
         &mut self,
         ctx: OpaqueTaskContext<'cref, 'inv>,
         device: &'cref DeviceContext,
-        page_table_handle: &PageTableHandle<'_>,
     ) {
         if !self.0.newly_initialized {
             let used_linear = self.0.download_inserted(ctx, device).await;
+            let used_linear = used_linear
+                .into_iter()
+                .map(BufferAddress)
+                .collect::<Vec<_>>();
 
             if !used_linear.is_empty() {
-                for used in used_linear {
-                    page_table_handle.note_use(BufferAddress(used));
-                }
+                device.storage.note_use(used_linear);
 
                 device.with_cmd_buffer(|cmd| self.0.clear(cmd));
             }

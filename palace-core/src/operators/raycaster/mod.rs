@@ -666,6 +666,7 @@ pub fn raycast<E: ElementType>(
     #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
     struct PushConstants {
         request_table: BufferAddress,
+        use_table: BufferAddress,
         out_mem_dim: Vector<D2, u32>,
         lod_coarseness: f32,
         oversampling_factor: f32,
@@ -679,7 +680,6 @@ pub fn raycast<E: ElementType>(
     #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
     struct LOD {
         page_table_root: BufferAddress,
-        use_table: BufferAddress,
         const_brick_table_page_table_root: BufferAddress,
         dim: Vector<D3, u32>,
         chunk_dim: Vector<D3, u32>,
@@ -832,20 +832,16 @@ pub fn raycast<E: ElementType>(
                     let mut request_table = RequestTable::new(device, raw_request_table);
                     let request_table_addr = request_table.buffer_address();
 
-                    let raw_use_tables = ctx
-                        .submit(ctx.group((0..input.levels.len()).into_iter().map(|i| {
-                            ctx.access_state_cache_gpu(
-                                device,
-                                pos,
-                                &format!("use_table{}", i),
-                                Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
-                            )
-                        })))
+                    let raw_use_table = ctx
+                        .submit(ctx.access_state_cache_gpu(
+                            device,
+                            pos,
+                            "use_table",
+                            Layout::array::<FeedbackTableElement>(use_table_size).unwrap(),
+                        ))
                         .await;
-                    let use_tables = raw_use_tables
-                        .into_iter()
-                        .map(|raw| UseTable::new(device, raw))
-                        .collect::<Vec<_>>();
+                    let mut use_table = UseTable::new(device, raw_use_table);
+                    let use_table_addr = use_table.buffer_address();
 
                     let pipeline = device.request_state(
                         (
@@ -948,11 +944,8 @@ pub fn raycast<E: ElementType>(
                             .as_ref()
                             .map(|t| t.levels.iter().map(|v| Some(v)).collect::<Vec<_>>())
                             .unwrap_or(input.levels.iter().map(|_| None).collect::<Vec<_>>());
-                        for ((level, use_table), const_brick_table_level) in input
-                            .levels
-                            .iter()
-                            .zip(use_tables.into_iter())
-                            .zip(const_brick_table_levels)
+                        for (level, const_brick_table_level) in
+                            input.levels.iter().zip(const_brick_table_levels)
                         {
                             let m_in = level.metadata;
                             let emd = level.embedding_data;
@@ -989,18 +982,10 @@ pub fn raycast<E: ElementType>(
                                 } else {
                                     Vector::<D3, u32>::fill(0).into()
                                 };
-                            let use_table_addr = use_table.buffer_address();
-
-                            lod_data.push((
-                                brick_index,
-                                use_table,
-                                m_in,
-                                const_brick_table_brick_index,
-                            ));
+                            lod_data.push((brick_index, m_in, const_brick_table_brick_index));
 
                             lods.push(LOD {
                                 page_table_root,
-                                use_table: use_table_addr,
                                 dim: m_in.dimensions.raw().into(),
                                 chunk_dim: m_in.chunk_size.raw().into(),
                                 spacing: emd.spacing.into(),
@@ -1067,7 +1052,7 @@ pub fn raycast<E: ElementType>(
                                     if let Some(const_brick_table) = const_brick_table {
                                         Box::new(iter.chain(
                                             const_brick_table.levels.iter().map(|t| &t.inner).zip(
-                                                lod_data.iter().map(|d| d.3.as_ref().unwrap()),
+                                                lod_data.iter().map(|d| d.2.as_ref().unwrap()),
                                             ),
                                         ))
                                     } else {
@@ -1075,20 +1060,17 @@ pub fn raycast<E: ElementType>(
                                     };
                                 let tensors_and_pts = iter.collect::<Vec<_>>();
 
-                                let request_result = request_table
-                                    .download_and_insert(
+                                let (request_result, ()) = futures::join!(
+                                    request_table.download_and_insert(
                                         *ctx,
                                         device,
                                         tensors_and_pts,
                                         request_batch_size,
                                         in_preview,
                                         reset_state,
-                                    )
-                                    .await;
-
-                                for data in lod_data.iter_mut().rev() {
-                                    data.1.download_and_note_use(*ctx, device, &data.0).await;
-                                }
+                                    ),
+                                    use_table.download_and_note_use(*ctx, device)
+                                );
 
                                 // Make writes to the request table visible (including initialization)
                                 ctx.submit(device.barrier(
@@ -1120,6 +1102,7 @@ pub fn raycast<E: ElementType>(
 
                                     let consts = PushConstants {
                                         request_table: request_table_addr,
+                                        use_table: use_table_addr,
                                         tf_min: tf_data.min,
                                         tf_max: tf_data.max,
                                         tf_len: tf_data.len,

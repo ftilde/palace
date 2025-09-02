@@ -18,7 +18,6 @@ layout(buffer_reference, std430) buffer QueryTableType {
 
 struct LOD {
     PageTablePage page_table_root;
-    UseTableType use_table;
     PageTablePage const_brick_table_page_table_root;
     UVec3 dimensions;
     UVec3 chunk_size;
@@ -160,6 +159,7 @@ void main()
     uint gID = out_pos.x + out_pos.y * out_mem_dim.x;
 
     QueryTableType request_table = QueryTableType(consts.request_table);
+    UseTableType use_table = UseTableType(consts.use_table);
 
     EEPoint eep;
 
@@ -280,11 +280,11 @@ void main()
 
                     #ifdef SHADING_NONE
                     INPUT_DTYPE sampled_intensity_raw;
-                    try_sample(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+                    try_sample(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
                     sampled_intensity = float(sampled_intensity_raw);
                     #else
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, level.use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
                     #endif
 
 

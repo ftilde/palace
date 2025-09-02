@@ -562,7 +562,7 @@ pub fn render_slice<E: ElementType>(
                             true,
                             false,
                         ),
-                        use_table.download_and_note_use(*ctx, device, &page_table)
+                        use_table.download_and_note_use(*ctx, device)
                     );
 
                     if let Some(const_brick_table_page_table) =

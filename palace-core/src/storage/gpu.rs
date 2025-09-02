@@ -1030,17 +1030,6 @@ impl<'a> PageTableHandle<'a> {
             .page_table_page_cache
             .insert_unused(unused);
     }
-
-    pub fn note_use<'h>(&self, buffer_addr: BufferAddress) {
-        let mut page_table_lru = self.device.storage.page_table_lru.borrow_mut();
-        let mut ptp = self.device.storage.page_table_pages.borrow_mut();
-
-        // Chunk may not be present anymore due to intermittent garbage collection
-        if let Some(pt_entry) = ptp.get_mut(&buffer_addr) {
-            pt_entry.page_table_lru_index =
-                Some(page_table_lru.note_use(pt_entry.page_table_lru_index.unwrap()));
-        }
-    }
 }
 impl<'a> Drop for PageTableHandle<'a> {
     fn drop(&mut self) {
@@ -1926,6 +1915,23 @@ impl Storage {
             buffer,
             op: op.id,
             device,
+        }
+    }
+
+    pub fn note_use<'h>(&self, buffer_addrs: Vec<BufferAddress>) {
+        let mut page_table_lru = self.page_table_lru.borrow_mut();
+        let mut ptp = self.page_table_pages.borrow_mut();
+
+        for buffer_addr in buffer_addrs {
+            // Chunk may not be present anymore due to intermittent garbage collection
+            if let Some(pt_entry) = ptp.get_mut(&buffer_addr) {
+                pt_entry.page_table_lru_index =
+                    Some(page_table_lru.note_use(pt_entry.page_table_lru_index.unwrap()));
+
+                //println!("Noting use: {:?}", buffer_addr);
+            } else {
+                //println!("Not present for use notice: {:?}", buffer_addr);
+            }
         }
     }
 

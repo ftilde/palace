@@ -323,7 +323,7 @@ pub fn view_image(
                             true,
                             false,
                         ),
-                        use_table.download_and_note_use(*ctx, device, &page_table)
+                        use_table.download_and_note_use(*ctx, device)
                     );
 
                     // Make writes to the request table, use table and page table visible
