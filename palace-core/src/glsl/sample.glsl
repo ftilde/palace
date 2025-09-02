@@ -133,7 +133,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
         (sample_brick_pos_linear) = to_linear64(sample_brick, dim_in_bricks);\
 \
         Chunk brick;\
-        (found) = try_find_chunk(bricks, sample_brick_pos_linear, UseTableType(0UL), 12, brick);\
+        (found) = try_find_chunk(bricks, sample_brick_pos_linear, use_table, use_table_size, brick);\
         if((found) == SAMPLE_RES_FOUND) {\
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] local = sub(sample_pos, brick_begin);\
