@@ -311,15 +311,22 @@ pub async fn request_to_page_table_with_timeout<'cref, 'inv, D: Dimension, E: El
     //let total_to_insert = pos_and_chunk.values().map(|v| v.len()).sum::<usize>();
     //println!("Inserting {} total", total_to_insert);
 
-    let tensor_and_pt = &tensor_and_pt;
-    futures::future::join_all(
-        pos_and_chunk
-            .into_iter()
-            .map(move |(level, pac)| async move {
-                tensor_and_pt[level].1.insert(*ctx, pac).await;
-            }),
-    )
-    .await;
+    // We do NOT use the following, because for a large pos_and_chunk (bigger than 30 currently) it
+    // uses FuturesUnordered, which requires "notifications" (via the wakers of futures) for
+    // futures to be polled again, which we do not provide (currently).
+    //let tensor_and_pt = &tensor_and_pt;
+    //futures::future::join_all(
+    //    pos_and_chunk
+    //        .into_iter()
+    //        .map(move |(level, pac)| async move {
+    //            tensor_and_pt[level].1.insert(*ctx, pac).await;
+    //        }),
+    //)
+    //.await;
+
+    for (level, pac) in pos_and_chunk.into_iter() {
+        tensor_and_pt[level].1.insert(*ctx, pac).await;
+    }
 
     res
 }
