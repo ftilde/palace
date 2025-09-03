@@ -25,7 +25,6 @@ const int SAMPLE_RES_OUTSIDE = 1;
 const int SAMPLE_RES_NOT_PRESENT = 2;
 
 int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_table, uint use_table_size, out Chunk chunk) {
-    //TODO: Avoid thrashing the hash table by saving the last position and do not insert then.
     uvec3 level_indices = page_table_index_to_level_indices(chunk_index);
 
     PageTablePage l1 = PageTablePage(root.values[level_indices[0]]);
@@ -60,6 +59,28 @@ int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_ta
     return SAMPLE_RES_FOUND;
 }
 
+struct ChunkSampleState {
+    Chunk chunk;
+    uint64_t chunk_pos_linear;
+    int result;
+};
+
+#define INVALID_CHUNK_POS 0xffffffffffffffffUL
+ChunkSampleState init_chunk_sample_state() {
+    ChunkSampleState ret;
+    ret.chunk = Chunk(0UL);
+    ret.chunk_pos_linear = INVALID_CHUNK_POS;
+    ret.result = SAMPLE_RES_NOT_PRESENT;
+    return ret;
+}
+
+void update_chunk_sample_state(inout ChunkSampleState state, PageTablePage root, UseTableType use_table, uint use_table_size, uint64_t new_chunk_pos_linear) {
+    if(new_chunk_pos_linear != state.chunk_pos_linear) {
+        state.chunk_pos_linear = new_chunk_pos_linear;
+        state.result = try_find_chunk(root, state.chunk_pos_linear, use_table, use_table_size, state.chunk);
+    }
+}
+
 /*
 //#define sample_local(brick, local, vm, o) {\
 //    uint local_index = to_linear((local), (vm).chunk_size);\
@@ -84,7 +105,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
     return o;
 }
 
-#define try_sample_with_grad(N, sample_pos_in, vm, bricks, use_table, use_table_size, found, sample_brick_pos_linear, value, grad) {\
+#define try_sample_with_grad(N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value, grad) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \
     if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
@@ -93,35 +114,34 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
         uint[N] sample_brick = div(sample_pos, (vm).chunk_size);\
         uint[N] dim_in_bricks = dim_in_bricks((vm));\
 \
-        (sample_brick_pos_linear) = to_linear64(sample_brick, dim_in_bricks);\
+        uint64_t new_sample_brick_pos_linear = to_linear64(sample_brick, dim_in_bricks);\
+        update_chunk_sample_state(sample_state, bricks, use_table, use_table_size, new_sample_brick_pos_linear);\
 \
-        Chunk brick;\
-        (found) = try_find_chunk(bricks, sample_brick_pos_linear, use_table, use_table_size, brick);\
-        if((found) == SAMPLE_RES_FOUND) {\
+        if(sample_state.result == SAMPLE_RES_FOUND) {\
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] brick_end = min(mul(add(sample_brick, fill(sample_brick, 1)), (vm).chunk_size), (vm).dimensions);\
             uint[N] local = sub(sample_pos, brick_begin);\
             uint[N] local_end = sub(brick_end, brick_begin);\
             /*uint local_index = to_linear(local, (vm).chunk_size);\
-            float v = brick.values[local_index];*/\
-            ChunkValue v = sample_local(brick, local, vm);\
+            float v = sample_state.chunk.values[local_index];*/\
+            ChunkValue v = sample_local(sample_state.chunk, local, vm);\
 \
             for(int d = 0; d<N; ++d) {\
                 bool clamped = false;\
-                float p = sample_local(brick, offset_in_chunk(local, d,  1, local_end, clamped), vm);\
-                float m = sample_local(brick, offset_in_chunk(local, d, -1, local_end, clamped), vm);\
+                float p = sample_local(sample_state.chunk, offset_in_chunk(local, d,  1, local_end, clamped), vm);\
+                float m = sample_local(sample_state.chunk, offset_in_chunk(local, d, -1, local_end, clamped), vm);\
                 float div_inv = clamped ? 1.0 : 0.5;\
                 grad[d] = (p-m)*div_inv;\
             }\
-            (found) = SAMPLE_RES_FOUND;\
+            sample_state.result = SAMPLE_RES_FOUND;\
             (value) = v;\
         }\
     } else {\
-        (found) = SAMPLE_RES_OUTSIDE;\
+        sample_state.result = SAMPLE_RES_OUTSIDE;\
     }\
 }
 
-#define try_sample(N, sample_pos_in, vm, bricks, use_table, use_table_size, found, sample_brick_pos_linear, value) {\
+#define try_sample(N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \
     if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
@@ -130,20 +150,19 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
         uint[N] sample_brick = div(sample_pos, (vm).chunk_size);\
         uint[N] dim_in_bricks = dim_in_bricks((vm));\
 \
-        (sample_brick_pos_linear) = to_linear64(sample_brick, dim_in_bricks);\
+        uint64_t new_sample_brick_pos_linear = to_linear64(sample_brick, dim_in_bricks);\
+        update_chunk_sample_state(sample_state, bricks, use_table, use_table_size, new_sample_brick_pos_linear);\
 \
-        Chunk brick;\
-        (found) = try_find_chunk(bricks, sample_brick_pos_linear, use_table, use_table_size, brick);\
-        if((found) == SAMPLE_RES_FOUND) {\
+        if(sample_state.result == SAMPLE_RES_FOUND) {\
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] local = sub(sample_pos, brick_begin);\
             uint local_index = to_linear(local, (vm).chunk_size);\
-            ChunkValue v = brick.values[local_index];\
-            (found) = SAMPLE_RES_FOUND;\
+            ChunkValue v = sample_state.chunk.values[local_index];\
+            sample_state.result = SAMPLE_RES_FOUND;\
             (value) = v;\
         }\
     } else {\
-        (found) = SAMPLE_RES_OUTSIDE;\
+        sample_state.result = SAMPLE_RES_OUTSIDE;\
     }\
 }
 

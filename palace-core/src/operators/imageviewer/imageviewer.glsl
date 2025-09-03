@@ -61,15 +61,15 @@ void main()
 
             ivec2 input_dim = ivec2(to_glsl(consts.input_dim));
 
-            int res;
-            uint64_t sample_brick_pos_linear;
-            try_sample(2, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, val);
 
-            if(res == SAMPLE_RES_FOUND) {
+            ChunkSampleState sample_state = init_chunk_sample_state();
+            try_sample(2, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, val);
+
+            if(sample_state.result == SAMPLE_RES_FOUND) {
                 state.values[gID] = INIT_VAL;
                 out_values.values[gID] = val;
-            } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_brick_pos_linear);
+            } else if(sample_state.result == SAMPLE_RES_NOT_PRESENT) {
+                try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, sample_state.chunk_pos_linear);
                 val = COLOR_NOT_LOADED;
             } else /* SAMPLE_RES_OUTSIDE */ {
                 val = checkered_color(out_pos);

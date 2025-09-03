@@ -75,6 +75,7 @@ void main()
             bool do_sample_volume = true;
             float sampled_intensity;
             int res;
+            Chunk chunk;
 
             #ifdef CONST_TABLE_DTYPE
             TensorMetaData(3) const_table_m_in;
@@ -82,10 +83,11 @@ void main()
             const_table_m_in.dimensions = dim_in_bricks(m_in);
             const_table_m_in.chunk_size = consts.cbt_chunk_size;
 
-            uint64_t cbt_sample_brick_pos_linear;
+            ChunkSampleState cbt_sample_state = init_chunk_sample_state();
 
             CONST_TABLE_DTYPE sampled_chunk_value;
-            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
+            res = cbt_sample_state.result;
 
             sampled_intensity = float(sampled_chunk_value);
 
@@ -94,7 +96,7 @@ void main()
                     //do_sample_volume = false;
                 }
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, 1);
+                uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, 1);
                 try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                 do_sample_volume = false;
             } else /*res == SAMPLE_RES_OUTSIDE*/ {
@@ -105,14 +107,16 @@ void main()
             if(do_sample_volume) {
                 ivec3 vol_dim = ivec3(to_glsl(consts.vol_dim));
 
-                uint64_t sample_brick_pos_linear;
                 INPUT_DTYPE sampled_intensity_raw;
-                try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+                ChunkSampleState sample_state = init_chunk_sample_state();
+
+                try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
+                res = sample_state.result;
 
                 sampled_intensity = float(sampled_intensity_raw);
 
                 if(res == SAMPLE_RES_NOT_PRESENT) {
-                    uint64_t query_value = pack_tensor_query_value(sample_brick_pos_linear, 0);
+                    uint64_t query_value = pack_tensor_query_value(sample_state.chunk_pos_linear, 0);
                     try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                 }
             }

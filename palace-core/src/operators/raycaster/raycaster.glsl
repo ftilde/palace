@@ -216,7 +216,11 @@ void main()
                 float oversampling_factor = consts.oversampling_factor;
 
                 uint level_num = 0;
-                uint64_t prev_sample_brick_pos = 0xffffffffffffffffL;
+
+                // Cache chunk access between try_sample calls
+                ChunkSampleState sample_state = init_chunk_sample_state();
+                ChunkSampleState cbt_sample_state = init_chunk_sample_state();
+
                 while(t <= t_end) {
                     float alpha = t/t_end;
                     float pixel_dist_x = start_pixel_dist_x * (1.0-alpha) + end_pixel_dist_x * alpha;
@@ -252,42 +256,37 @@ void main()
                     const_table_m_in.dimensions = dim_in_bricks(m_in);
                     const_table_m_in.chunk_size = level.const_brick_table_chunk_size.vals;
 
-                    int cbt_res;
-                    uint64_t cbt_sample_brick_pos_linear;
-
                     CONST_TABLE_DTYPE sampled_chunk_value;
-                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_res, cbt_sample_brick_pos_linear, sampled_chunk_value);
+                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
 
-                    if(cbt_res == SAMPLE_RES_FOUND) {
+                    if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
                         if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
                             t += step;
                             continue;
                             //TODO: DO update state with an appropriate value for step;
                         }
-                    } else if(cbt_res == SAMPLE_RES_NOT_PRESENT) {
-                        uint64_t query_value = pack_tensor_query_value(cbt_sample_brick_pos_linear, level_num + NUM_LEVELS);
+                    } else if(cbt_sample_state.result == SAMPLE_RES_NOT_PRESENT) {
+                        uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, level_num + NUM_LEVELS);
                         try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                         break;
-                    } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                    } else /*cbt_sample_state.result == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors
                     }
                     #endif
 
-                    int res;
-                    uint64_t sample_brick_pos_linear;
                     float sampled_intensity;
 
                     #ifdef SHADING_NONE
                     INPUT_DTYPE sampled_intensity_raw;
-                    try_sample(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity_raw);
+                    try_sample(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
                     sampled_intensity = float(sampled_intensity_raw);
                     #else
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, res, sample_brick_pos_linear, sampled_intensity, grad_f);
+                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity, grad_f);
                     #endif
 
 
-                    if(res == SAMPLE_RES_FOUND) {
+                    if(sample_state.result == SAMPLE_RES_FOUND) {
                         u8vec4 sample_col = classify(sampled_intensity);
 
                         #ifdef SHADING_PHONG
@@ -302,11 +301,11 @@ void main()
 
                         float norm_step = step / diag;
                         update_state(t, state_color, sample_col, norm_step);
-                    } else if(res == SAMPLE_RES_NOT_PRESENT) {
-                        uint64_t query_value = pack_tensor_query_value(sample_brick_pos_linear, level_num);
+                    } else if(sample_state.result == SAMPLE_RES_NOT_PRESENT) {
+                        uint64_t query_value = pack_tensor_query_value(sample_state.chunk_pos_linear, level_num);
                         try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
                         break;
-                    } else /*res == SAMPLE_RES_OUTSIDE*/ {
+                    } else /*sample_state.result == SAMPLE_RES_OUTSIDE*/ {
                         // Should only happen at the border of the volume due to rounding errors
                     }
 
