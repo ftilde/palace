@@ -133,7 +133,6 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
                 float div_inv = clamped ? 1.0 : 0.5;\
                 grad[d] = (p-m)*div_inv;\
             }\
-            sample_state.result = SAMPLE_RES_FOUND;\
             (value) = v;\
         }\
     } else {\
@@ -158,7 +157,6 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] local = sub(sample_pos, brick_begin);\
             uint local_index = to_linear(local, (vm).chunk_size);\
             ChunkValue v = sample_state.chunk.values[local_index];\
-            sample_state.result = SAMPLE_RES_FOUND;\
             (value) = v;\
         }\
     } else {\
