@@ -62,21 +62,24 @@ int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_ta
 struct ChunkSampleState {
     Chunk chunk;
     uint64_t chunk_pos_linear;
+    PageTablePage root;
     int result;
 };
 
-#define INVALID_CHUNK_POS 0xffffffffffffffffUL
 ChunkSampleState init_chunk_sample_state() {
     ChunkSampleState ret;
     ret.chunk = Chunk(0UL);
-    ret.chunk_pos_linear = INVALID_CHUNK_POS;
-    ret.result = SAMPLE_RES_NOT_PRESENT;
+    ret.root = PageTablePage(0UL);
+    //ret.chunk_pos_linear = ...;
+    //ret.result = SAMPLE_RES_NOT_PRESENT;
     return ret;
 }
 
 void update_chunk_sample_state(inout ChunkSampleState state, PageTablePage root, UseTableType use_table, uint use_table_size, uint64_t new_chunk_pos_linear) {
-    if(new_chunk_pos_linear != state.chunk_pos_linear) {
+    if(uint64_t(root) != uint64_t(state.root) || new_chunk_pos_linear != state.chunk_pos_linear) {
         state.chunk_pos_linear = new_chunk_pos_linear;
+        state.chunk = Chunk(0UL);
+        state.root = root;
         state.result = try_find_chunk(root, state.chunk_pos_linear, use_table, use_table_size, state.chunk);
     }
 }
