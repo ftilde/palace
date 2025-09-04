@@ -262,8 +262,12 @@ void main()
                     if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
                         if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
                             t += step;
+
+                            u8vec4 sample_col = classify(sampled_chunk_value);
+                            float norm_step = step / diag;
+                            update_state(t, state_color, sample_col, norm_step);
+
                             continue;
-                            //TODO: DO update state with an appropriate value for step;
                         }
                     } else if(cbt_sample_state.result == SAMPLE_RES_NOT_PRESENT) {
                         uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, level_num + NUM_LEVELS);
