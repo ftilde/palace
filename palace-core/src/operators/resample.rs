@@ -261,15 +261,14 @@ void main() {
     m_in.dimensions = consts.vol_dim_in;
     m_in.chunk_size = consts.chunk_dim_in;
 
-    int res;
-    uint64_t sample_brick_pos_linear;
+    ChunkSampleState sample_state = init_chunk_sample_state();
 
     T sampled_intensity;
-    try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, res, sample_brick_pos_linear, sampled_intensity);
+    try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, sampled_intensity);
 
-    if(res == SAMPLE_RES_FOUND) {
+    if(sample_state.result == SAMPLE_RES_FOUND) {
         // Nothing to do!
-    } else if(res == SAMPLE_RES_NOT_PRESENT) {
+    } else if(sample_state.result == SAMPLE_RES_NOT_PRESENT) {
         // This SHOULD not happen...
         sampled_intensity = default_val;
     } else /* SAMPLE_RES_OUTSIDE */ {
