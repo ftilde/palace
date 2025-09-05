@@ -148,19 +148,20 @@ def apply_rw_mode(input):
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
-            return (input, rw_result.create_lod(lod_args))
+            return (input, rw_result.create_lod(lod_args), None)
 
         case "hierarchical":
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
-            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm).cache_coarse_levels()
-            return (input, rw_result)
+            rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
+            return (input, rw_result.cache_coarse_levels(), rw_cct.cache())
 
 
 def render(size, events: pc.Events):
     global mouse_pos_and_value
 
 
-    v, rw_result = apply_rw_mode(img)
+    v, rw_result, _rw_cct = apply_rw_mode(img)
+    #TODO use rw_cct when imageviewer is updated
 
     v = select_from_ts(v, timestep.load())
     rw_result = select_from_ts(rw_result, timestep.load())
