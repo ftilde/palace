@@ -93,7 +93,7 @@ void main()
 
             if(res == SAMPLE_RES_FOUND) {
                 if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
-                    //do_sample_volume = false;
+                    do_sample_volume = false;
                 }
             } else if(res == SAMPLE_RES_NOT_PRESENT) {
                 uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, 1);
