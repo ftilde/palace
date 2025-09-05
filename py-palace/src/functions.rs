@@ -427,7 +427,7 @@ pub fn hierarchical_randomwalker(
     points_bg: TensorOperator,
     max_iter: Option<usize>,
     max_residuum_norm: Option<f32>,
-) -> PyResult<LODTensorOperator> {
+) -> PyResult<(LODTensorOperator, LODTensorOperator)> {
     let weights = weights.try_into()?;
     let points_fg = points_fg.try_into_core_static()?;
     let points_bg = points_bg.try_into_core_static()?;
@@ -439,13 +439,15 @@ pub fn hierarchical_randomwalker(
     if let Some(max_residuum_norm) = max_residuum_norm {
         config.max_residuum_norm = max_residuum_norm;
     }
-    let res: palace_core::operators::tensor::LODTensorOperator<DDyn, DType> =
-        palace_core::operators::randomwalker::hierarchical_random_walker_solver(
-            weights, points_fg, points_bg, config,
-        )
-        .try_into()?;
+    let res = palace_core::operators::randomwalker::hierarchical_random_walker_solver(
+        weights, points_fg, points_bg, config,
+    );
+    let res_full: palace_core::operators::tensor::LODTensorOperator<DDyn, DType> =
+        res.full.try_into()?;
+    let res_cct: palace_core::operators::tensor::LODTensorOperator<DDyn, DType> =
+        res.const_chunk_table.try_into()?;
 
-    res.try_into()
+    Ok((res_full.try_into()?, res_cct.try_into()?))
 }
 
 #[gen_stub_pyfunction]

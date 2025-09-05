@@ -212,21 +212,23 @@ def apply_rw_mode(input):
             weights = apply_weight_function(i)
             seeds = pc.rasterize_seed_points(fg_seeds_tensor, bg_seeds_tensor, md, ed)
             rw_result = pc.randomwalker(weights, seeds, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
-            return (input, rw_result.single_level_lod())
+            return (input, (rw_result.single_level_lod(), None))
 
         case "hierarchical":
             weights = input.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache_coarse_levels()
-            rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm).cache()
-            return (input, rw_result)
+            rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
+            return (input, (rw_result.cache(), rw_cct))
 
 def render(size, events: pc.Events):
     global mouse_reading_enabled
     global mouse_pos_and_value
 
-    v, rw_result = apply_rw_mode(vol)
+    v, (rw_result, rw_cct) = apply_rw_mode(vol)
 
     v = select_vol_from_ts(v, timestep.load())
     rw_result = select_vol_from_ts(rw_result, timestep.load())
+    if rw_cct:
+        rw_cct = select_vol_from_ts(rw_cct, timestep.load()) #TODO: won't quite work for 4d i think
 
     # GUI stuff
     widgets = []
@@ -293,7 +295,7 @@ def render(size, events: pc.Events):
         tile_size = 512
 
         slice = palace_util.render_slice(v, state, tf=tf, coarse_lod_factor=lod_coarseness_2d.load(), tile_size=tile_size)
-        slice_rw = palace_util.render_slice(rw_result, state, tf=tf_prob, coarse_lod_factor=lod_coarseness_2d.load(), tile_size=tile_size)
+        slice_rw = palace_util.render_slice(rw_result, state, tf=tf_prob, coarse_lod_factor=lod_coarseness_2d.load(), tile_size=tile_size, const_chunk_table=rw_cct)
 
         #slice_edge = palace_util.render_slice(edge_w, 0, slice_state0, tf)
 
@@ -315,7 +317,7 @@ def render(size, events: pc.Events):
 
     def overlay_ray(state):
         ray = palace_util.render_raycast(v, state, raycaster_config, tf)
-        ray_rw = palace_util.render_raycast(rw_result, state, raycaster_config_rw, tf_prob3d)
+        ray_rw = palace_util.render_raycast(rw_result, state, raycaster_config_rw, tf_prob3d, const_brick_table=rw_cct)
 
         return palace_util.alpha_blending(ray_rw, ray)
         #return ray_rw

@@ -13,15 +13,19 @@ use crate::{
     data::GlobalCoordinate,
     dim::{DynDimension, LargerDim, D1},
     dtypes::{DType, ScalarType, StaticElementType},
+    jit::jit,
     op_descriptor,
     operator::{DataParam, OpaqueOperator, Operator, OperatorDescriptor, OperatorNetworkNode},
     operators::{
+        aggregation::AggretationMethod,
+        const_chunks::is_const_chunk_value,
         randomwalker::random_walker_on_chunk,
         resample::resample_transform,
         tensor::{EmbeddedTensorOperator, LODTensorOperator, TensorOperator},
     },
     storage::gpu::InplaceHandle,
-    vec::Vector,
+    task::OpaqueTaskContext,
+    vec::{to_linear, Vector},
     vulkan::{
         memory::TempRessource,
         pipeline::{ComputePipelineBuilder, DescriptorConfig, DynPushConstants, NullBuf},
@@ -32,12 +36,19 @@ use crate::{
 
 use super::SolverConfig;
 
+const DETERMINED_THRESHOLD: f32 = 0.1;
+
+pub struct HierarchicalRWResult<D: DynDimension> {
+    pub full: LODTensorOperator<D, StaticElementType<f32>>,
+    pub const_chunk_table: LODTensorOperator<D, StaticElementType<f32>>,
+}
+
 pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
     weights: LODTensorOperator<D::Larger, StaticElementType<f32>>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     cfg: SolverConfig,
-) -> LODTensorOperator<D, StaticElementType<f32>> {
+) -> HierarchicalRWResult<D> {
     let mut levels = weights.levels.into_iter().rev();
     let root_level = levels.next().unwrap();
 
@@ -49,13 +60,24 @@ pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
         root_level.metadata.clone().pop_dim_small(),
         root_level.embedding_data.clone().pop_dim_small(),
     );
-    let root_result = super::random_walker_single_chunk(root_level.inner, root_seeds.into(), cfg)
-        .embedded(root_level.embedding_data.pop_dim_small());
+    let root_result_full =
+        super::random_walker_single_chunk(root_level.inner, root_seeds.into(), cfg)
+            .embedded(root_level.embedding_data.pop_dim_small());
+    let root_cct = determined_cct(
+        root_result_full.clone(),
+        rw_cct_size(root_result_full.metadata.dim()),
+        DETERMINED_THRESHOLD,
+    );
 
     let mut output = VecDeque::new();
-    output.push_front(root_result.clone());
+    let mut ccts = VecDeque::new();
+    output.push_front(root_result_full.clone());
+    ccts.push_front(root_cct.clone());
 
-    let mut prev_result = root_result;
+    let mut prev_result = StepResult {
+        full: root_result_full,
+        const_chunk_table: root_cct,
+    };
     for level in levels {
         let result = level_step(
             level,
@@ -64,12 +86,20 @@ pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
             points_bg.clone(),
             cfg,
         );
-        output.push_front(result.clone());
+        output.push_front(result.full.clone());
+        ccts.push_front(result.const_chunk_table.clone());
         prev_result = result;
     }
 
-    LODTensorOperator {
+    let full = LODTensorOperator {
         levels: output.into(),
+    };
+    let const_chunk_table = LODTensorOperator {
+        levels: ccts.into(),
+    };
+    HierarchicalRWResult {
+        full,
+        const_chunk_table,
     }
 }
 
@@ -603,7 +633,7 @@ fn run_rw<D: DynDimension + LargerDim>(
                         };
 
                         let [min, max] = min_max_cpu;
-                        let dt = 0.1;
+                        let dt = DETERMINED_THRESHOLD;
 
                         let skip = min > 0.5 + dt || max < 0.5 - dt;
 
@@ -773,13 +803,169 @@ fn shrink<D: DynDimension>(
     )
 }
 
+async fn sample_chunk<'req, 'inv, D: DynDimension>(
+    ctx: OpaqueTaskContext<'req, 'inv>,
+    tensor: &'inv EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    at: &Vector<D, GlobalCoordinate>,
+) -> f32 {
+    let chunk_pos = tensor.metadata.chunk_pos(at);
+    let chunk_id = tensor.metadata.chunk_index(&chunk_pos);
+    let chunk_info = tensor.metadata.chunk_info(chunk_id);
+
+    let chunk = ctx.submit(tensor.chunks.request(chunk_id)).await;
+
+    let local_pos = chunk_info.in_chunk(at);
+    let sample_pos = to_linear(&local_pos, &chunk_info.mem_dimensions);
+    chunk[sample_pos]
+}
+
+fn rw_const_chunk_table<D: DynDimension + LargerDim>(
+    upper_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    upper_result_cct: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    this_level_md: TensorMetaData<D>,
+    this_level_ed: TensorEmbeddingData<D>,
+    out_chunk_size: Vector<D, LocalCoordinate>,
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+    let determined = determined_cct(
+        upper_result,
+        upper_result_cct.metadata.chunk_size.clone(),
+        DETERMINED_THRESHOLD,
+    );
+
+    let out_ed = crate::operators::const_chunks::cct_embedding_data(&this_level_md, &this_level_ed);
+
+    let out_md = TensorMetaData {
+        dimensions: this_level_md.dimension_in_chunks().raw().global(),
+        chunk_size: out_chunk_size,
+    };
+
+    TensorOperator::with_state(
+        op_descriptor!(),
+        Default::default(),
+        out_md.clone(),
+        (
+            determined,
+            upper_result_cct,
+            DataParam(out_md),
+            DataParam(out_ed.clone()),
+        ),
+        |ctx, positions, _loc, (determined_derived, determined_hierarchical, out_md, out_ed)| {
+            async move {
+                let nd = determined_derived.dim().n();
+
+                let this_level_to_upper_level =
+                    determined_derived.embedding_data.physical_to_voxel()
+                        * &out_ed.voxel_to_physical();
+
+                for pos in positions {
+                    let mut out_chunk = ctx
+                        .submit(ctx.alloc_slot(pos, &out_md.chunk_size))
+                        .await
+                        .unwrap();
+                    let out_chunk_info = out_md.chunk_info(pos);
+
+                    let chunk_positions_this_level = (0..nd)
+                        .into_iter()
+                        .map(|i| out_chunk_info.begin[i].raw..out_chunk_info.end()[i].raw)
+                        .multi_cartesian_product()
+                        .map(|coordinates| {
+                            Vector::<D, GlobalCoordinate>::try_from(coordinates).unwrap()
+                        });
+
+                    for pos_this_level in chunk_positions_this_level {
+                        let this_level_local = out_chunk_info.in_chunk(&pos_this_level);
+                        let this_level_linear_pos =
+                            crate::vec::to_linear(&this_level_local, &out_md.chunk_size);
+
+                        let pos_upper_level = this_level_to_upper_level
+                            .clone()
+                            .transform(&pos_this_level.raw().f32())
+                            .map(|v| v.floor() as u32)
+                            .global();
+
+                        //TODO: we should really check all overlapping chunks
+
+                        let mut val =
+                            sample_chunk(*ctx, &determined_hierarchical, &pos_upper_level).await;
+
+                        if !is_const_chunk_value(val) {
+                            val = sample_chunk(*ctx, &determined_derived, &pos_upper_level).await;
+                        }
+
+                        out_chunk[this_level_linear_pos].write(val);
+                    }
+
+                    unsafe { out_chunk.initialized(*ctx) };
+                }
+
+                Ok(())
+            }
+            .into()
+        },
+    )
+    .embedded(out_ed)
+}
+
+fn determined_cct<D: DynDimension>(
+    tensor: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    out_chunk_size: Vector<D, LocalCoordinate>,
+    dt: f32,
+) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+    let ed = crate::operators::const_chunks::cct_embedding_data(
+        &tensor.metadata,
+        &tensor.embedding_data,
+    );
+    let min = jit(crate::operators::aggregation::chunk_aggregation(
+        tensor.inner.clone(),
+        out_chunk_size.clone(),
+        AggretationMethod::Min,
+    )
+    .into());
+    let max = jit(crate::operators::aggregation::chunk_aggregation(
+        tensor.inner.clone(),
+        out_chunk_size.clone(),
+        AggretationMethod::Max,
+    )
+    .into());
+    let mean = jit(crate::operators::aggregation::chunk_aggregation(
+        tensor.inner.clone(),
+        out_chunk_size.clone(),
+        AggretationMethod::Mean,
+    )
+    .into());
+    max.lt_eq((0.5 - dt).into())
+        .or(min.gt_eq((0.5 + dt).into()))
+        .unwrap()
+        .select(
+            mean,
+            crate::jit::scalar(crate::operators::const_chunks::MARKER_NOT_CONST_BITS)
+                .reinterpret(ScalarType::F32.into())
+                .unwrap(),
+        )
+        .unwrap()
+        .compile()
+        .unwrap()
+        .embedded(ed)
+        .try_into()
+        .unwrap()
+}
+
+fn rw_cct_size<D: DynDimension>(d: D) -> Vector<D, LocalCoordinate> {
+    Vector::fill_with_len(LocalCoordinate::from(2), d.n())
+}
+
+struct StepResult<D: DynDimension> {
+    full: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    const_chunk_table: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+}
+
 fn level_step<D: DynDimension + LargerDim>(
     current_level_weights: EmbeddedTensorOperator<D::Larger, StaticElementType<f32>>,
-    upper_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
+    upper_result: StepResult<D>,
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     cfg: SolverConfig,
-) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
+) -> StepResult<D> {
     let level_md = current_level_weights.metadata.clone().pop_dim_small();
     let level_ed = current_level_weights.embedding_data.clone().pop_dim_small();
     let expansion_by = level_md
@@ -791,10 +977,10 @@ fn level_step<D: DynDimension + LargerDim>(
     );
 
     let current_to_upper =
-        upper_result.embedding_data.physical_to_voxel() * &level_ed.voxel_to_physical();
+        upper_result.full.embedding_data.physical_to_voxel() * &level_ed.voxel_to_physical();
 
     let upper_resampled = resample_transform(
-        upper_result.inner.clone(),
+        upper_result.full.inner.clone(),
         level_md.clone(),
         current_to_upper,
         crate::operators::conv::BorderHandling::Repeat,
@@ -808,13 +994,24 @@ fn level_step<D: DynDimension + LargerDim>(
     let expanded_result = run_rw(
         expanded_weights,
         upper_expanded,
-        upper_result,
+        upper_result.full.clone(),
         points_fg,
         points_bg,
         level_ed.clone(),
         cfg,
     );
-    shrink(expanded_result).embedded(level_ed)
+    let full = shrink(expanded_result).embedded(level_ed.clone());
+    let const_chunk_table = rw_const_chunk_table(
+        upper_result.full.clone(),
+        upper_result.const_chunk_table,
+        level_md,
+        level_ed,
+        rw_cct_size(upper_result.full.metadata.dim()),
+    );
+    StepResult {
+        full,
+        const_chunk_table,
+    }
 }
 
 #[cfg(test)]

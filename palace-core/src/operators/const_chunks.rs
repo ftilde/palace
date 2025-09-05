@@ -1,5 +1,5 @@
 use crate::{
-    array::TensorEmbeddingData,
+    array::{TensorEmbeddingData, TensorMetaData},
     dim::DynDimension,
     dtypes::{DType, ElementType, ScalarType, StaticElementType},
     jit::jit,
@@ -12,8 +12,21 @@ use super::{
     tensor::LODTensorOperator,
 };
 
-const MARKER_NOT_CONST_BITS: u32 = 0xff_ff_ab_cd;
+pub const MARKER_NOT_CONST_BITS: u32 = 0xff_ff_ab_cd;
 //const MARKER_NOT_CONST: f32 = f32::from_bits(MARKER_NOT_CONST_BITS);
+//
+pub fn is_const_chunk_value(val: f32) -> bool {
+    val.to_bits() != MARKER_NOT_CONST_BITS
+}
+
+pub fn cct_embedding_data<D: DynDimension>(
+    md: &TensorMetaData<D>,
+    ed: &TensorEmbeddingData<D>,
+) -> TensorEmbeddingData<D> {
+    TensorEmbeddingData {
+        spacing: ed.spacing.clone() * md.chunk_size.raw().f32(),
+    }
+}
 
 /// If max(chunk)-min(chunk) < diff_threshold, then the corresponding voxel value is mean(chunk).
 /// Otherwise it is MARKER_NOT_CONST. Use this for operators that can be accelerated by such a
@@ -30,10 +43,7 @@ pub fn const_chunk_table<'op, D: DynDimension>(
             .map(|level| {
                 let out_chunk_size =
                     out_chunk_size.zip(&level.inner.metadata.dimensions, |cs, d| cs.apply(d));
-                let ed = TensorEmbeddingData {
-                    spacing: level.embedding_data.spacing
-                        * level.inner.metadata.chunk_size.raw().f32(),
-                };
+                let ed = cct_embedding_data(&level.metadata, &level.embedding_data);
                 let min = jit(chunk_aggregation(
                     level.inner.clone(),
                     out_chunk_size.clone(),
