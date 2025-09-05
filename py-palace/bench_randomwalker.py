@@ -149,7 +149,11 @@ def apply_weight_function(volume):
 fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
 bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
 weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
-rw_result = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm).cache_coarse_levels()
+rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
+rw_result = rw_result.cache_coarse_levels()
+rw_cct = rw_cct.cache()
+
+cct_l0md = rw_cct.levels[0].metadata
 
 
 print("Chunk size is: {}".format(l0md.chunk_size))
@@ -158,7 +162,7 @@ print("DType: {}".format(rw_result.levels[0].dtype))
 chunk_elements = functools.reduce(lambda a, b: a*b, l0md.chunk_size, 1)
 chunk_size_bytes = np.astype(chunk_elements * rw_result.levels[0].dtype.size_in_bytes(), np.uint64)
 
-dim_in_chunks = list(map(lambda x: math.ceil(x[0]/x[1]), zip(l0md.dimensions, l0md.chunk_size)))
+dim_in_chunks = list(map(lambda l,r: math.ceil(l/r), l0md.dimensions, l0md.chunk_size))
 batch_size = args.batch
 
 def sizeof_fmt(num, suffix="B"):
@@ -171,10 +175,22 @@ def sizeof_fmt(num, suffix="B"):
 start = time.time()
 begin = start
 total_size = 0
-for batch in itertools.batched(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)), batch_size):
+total_skipped = 0
+total_considered = 0
+
+
+for full_batch in itertools.batched(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)), batch_size):
+    cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
+    cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
+    cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions)
+    is_const = map(lambda cct_chunk, in_chunk_pos: not math.isnan(cct_chunk[tuple(in_chunk_pos)]), cct_chunks, cct_in_chunks_positions)
+    batch = [pos for pos, is_const in zip(full_batch, is_const) if not is_const]
+
     chunks = rt.resolve(rw_result.levels[0], batch)
     end = time.time()
-    io_size = len(chunks) * chunk_size_bytes
+    total_considered += len(full_batch)
+    total_skipped += len(full_batch) - len(batch)
+    io_size = len(full_batch) * chunk_size_bytes
     total_size += io_size
 
     io_per_s = io_size / (end - begin)
@@ -185,5 +201,5 @@ for batch in itertools.batched(itertools.product(*map(lambda end: range(0, end),
 
     total_io_str = sizeof_fmt(total_size, suffix="B")
 
-    print("Got {} chunks, {} \t| total {} \t| sum {}".format(len(chunks), io_per_s_str, total_io_per_s_str, total_io_str))
+    print("Got {} chunks, {} total, {} skipped \t| {} \t| total {} \t| sum {}".format(len(full_batch), total_considered, total_skipped, io_per_s_str, total_io_per_s_str, total_io_str))
     begin = end
