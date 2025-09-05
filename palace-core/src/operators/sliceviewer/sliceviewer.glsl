@@ -75,7 +75,6 @@ void main()
             bool do_sample_volume = true;
             float sampled_intensity;
             int res;
-            Chunk chunk;
 
             #ifdef CONST_TABLE_DTYPE
             TensorMetaData(3) const_table_m_in;
