@@ -80,13 +80,15 @@ pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
         full: root_result_full,
         const_chunk_table: root_cct,
     };
-    for level in levels {
+    let last_level = levels.len() - 1;
+    for (i, level) in levels.into_iter().enumerate() {
         let result = level_step(
             level,
             prev_result,
             points_fg.clone(),
             points_bg.clone(),
             cfg,
+            i == last_level,
         );
         output.push_front(result.full.clone());
         ccts.push_front(result.const_chunk_table.clone());
@@ -826,6 +828,7 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
     upper_result_cct: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     this_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     out_chunk_size: Vector<D, LocalCoordinate>,
+    use_this_result_fallback: bool,
 ) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let this_level_md = this_result.metadata.clone();
     let this_level_ed = this_result.embedding_data.clone();
@@ -853,8 +856,18 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
             upper_result_cct,
             DataParam(out_md),
             DataParam(out_ed.clone()),
+            DataParam(use_this_result_fallback),
         ),
-        |ctx, positions, _loc, (determined_derived, determined_hierarchical, out_md, out_ed)| {
+        |ctx,
+         positions,
+         _loc,
+         (
+            determined_derived,
+            determined_hierarchical,
+            out_md,
+            out_ed,
+            use_this_result_fallback,
+        )| {
             async move {
                 let nd = determined_derived.dim().n();
 
@@ -893,7 +906,7 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
                         let mut val =
                             sample_chunk(*ctx, &determined_hierarchical, &pos_upper_level).await;
 
-                        if !is_const_chunk_value(val) {
+                        if !is_const_chunk_value(val) && **use_this_result_fallback {
                             val = sample_chunk(*ctx, &determined_derived, &pos_this_level).await;
                         }
 
@@ -979,6 +992,7 @@ fn level_step<D: DynDimension + LargerDim>(
     points_fg: TensorOperator<D1, DType>,
     points_bg: TensorOperator<D1, DType>,
     cfg: SolverConfig,
+    last_step: bool,
 ) -> StepResult<D> {
     let level_md = current_level_weights.metadata.clone().pop_dim_small();
     let level_ed = current_level_weights.embedding_data.clone().pop_dim_small();
@@ -1019,6 +1033,7 @@ fn level_step<D: DynDimension + LargerDim>(
         upper_result.const_chunk_table,
         full.clone(),
         rw_cct_size(upper_result.full.metadata.dim()),
+        !last_step,
     );
     StepResult {
         full,
