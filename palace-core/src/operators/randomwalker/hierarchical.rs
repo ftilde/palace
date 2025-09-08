@@ -36,7 +36,8 @@ use crate::{
 
 use super::SolverConfig;
 
-const DETERMINED_THRESHOLD: f32 = 0.1;
+const DETERMINED_THRESHOLD: f32 = 0.01;
+const HOMOGENEITY_THRESHOLD: f32 = 0.01;
 
 pub struct HierarchicalRWResult<D: DynDimension> {
     pub full: LODTensorOperator<D, StaticElementType<f32>>,
@@ -67,6 +68,7 @@ pub fn hierarchical_random_walker_solver<D: DynDimension + LargerDim>(
         root_result_full.clone(),
         rw_cct_size(root_result_full.metadata.dim()),
         DETERMINED_THRESHOLD,
+        HOMOGENEITY_THRESHOLD,
     );
 
     let mut output = VecDeque::new();
@@ -635,7 +637,8 @@ fn run_rw<D: DynDimension + LargerDim>(
                         let [min, max] = min_max_cpu;
                         let dt = DETERMINED_THRESHOLD;
 
-                        let skip = min > 0.5 + dt || max < 0.5 - dt;
+                        let skip =
+                            min > 0.5 + dt || max < 0.5 - dt || max - min < HOMOGENEITY_THRESHOLD;
 
                         if skip {
                             let access_info = DstBarrierInfo {
@@ -827,7 +830,12 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
     let this_level_md = this_result.metadata.clone();
     let this_level_ed = this_result.embedding_data.clone();
 
-    let determined = determined_cct(this_result, out_chunk_size.clone(), DETERMINED_THRESHOLD);
+    let determined = determined_cct(
+        this_result,
+        out_chunk_size.clone(),
+        DETERMINED_THRESHOLD,
+        HOMOGENEITY_THRESHOLD,
+    );
 
     let out_ed = crate::operators::const_chunks::cct_embedding_data(&this_level_md, &this_level_ed);
 
@@ -907,6 +915,7 @@ fn determined_cct<D: DynDimension>(
     tensor: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     out_chunk_size: Vector<D, LocalCoordinate>,
     dt: f32,
+    homogeneity_threshold: f32,
 ) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
     let ed = crate::operators::const_chunks::cct_embedding_data(
         &tensor.metadata,
@@ -930,8 +939,10 @@ fn determined_cct<D: DynDimension>(
         AggretationMethod::Mean,
     )
     .into());
-    max.lt_eq((0.5 - dt).into())
-        .or(min.gt_eq((0.5 + dt).into()))
+    max.clone()
+        .lt_eq((0.5 - dt).into())
+        .or(min.clone().gt_eq((0.5 + dt).into()))
+        .or(max.sub(min).unwrap().lt(homogeneity_threshold.into()))
         .unwrap()
         .select(
             mean,
