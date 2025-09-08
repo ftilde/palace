@@ -14,7 +14,6 @@ def read_vge(path, l0ed):
         return np.array([float(row.attrib['x']),float(row.attrib['y']),float(row.attrib['z']),float(row.attrib['w'])])
 
     mat = np.array([extract_row(i) for i in range(4)])
-    print(mat)
 
     points = []
     for elem in root.findall('.//item/item'):
