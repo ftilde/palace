@@ -182,11 +182,11 @@ total_considered = 0
 for full_batch in itertools.batched(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)), batch_size):
     cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
     cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
-    cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions)
+    cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions, record_task_stream=False)
     is_const = map(lambda cct_chunk, in_chunk_pos: not math.isnan(cct_chunk[tuple(in_chunk_pos)]), cct_chunks, cct_in_chunks_positions)
     batch = [pos for pos, is_const in zip(full_batch, is_const) if not is_const]
 
-    chunks = rt.resolve(rw_result.levels[0], batch)
+    chunks = rt.resolve(rw_result.levels[0], batch, record_task_stream=False)
     end = time.time()
     total_considered += len(full_batch)
     total_skipped += len(full_batch) - len(batch)

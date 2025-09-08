@@ -26,9 +26,10 @@ impl RunTime {
         py: Python,
         op_ref: &palace_core::operators::tensor::TensorOperator<DDyn, StaticElementType<T>>,
         chunk_indices: Vec<ChunkIndex>,
+        record_task_stream: bool,
     ) -> PyResult<PyObject> {
         let mut rt = self.inner.borrow_mut();
-        let chunk_data = map_result(rt.resolve(None, false, |ctx, _| {
+        let chunk_data = map_result(rt.resolve(None, record_task_stream, |ctx, _| {
             async move {
                 let mut chunks = ctx
                     .run_unordered(chunk_indices.into_iter().enumerate().map(
@@ -99,14 +100,16 @@ impl RunTime {
         })
     }
 
+    #[pyo3(signature=(tensor, positions, record_task_stream=false))]
     fn resolve(
         &self,
         py: Python,
-        v: MaybeEmbeddedTensorOperatorArg,
+        tensor: MaybeEmbeddedTensorOperatorArg,
         positions: Vec<Vec<u32>>,
+        record_task_stream: bool,
     ) -> PyResult<PyObject> {
-        let v = v.unpack().into_inner();
-        let op: palace_core::operators::tensor::TensorOperator<DDyn, DType> = v.try_into()?;
+        let tensor = tensor.unpack().into_inner();
+        let op: palace_core::operators::tensor::TensorOperator<DDyn, DType> = tensor.try_into()?;
         let dim_in_chunks = op.metadata.dimension_in_chunks();
 
         let dtype = op.dtype();
@@ -143,15 +146,60 @@ impl RunTime {
             .collect::<Result<Vec<_>, _>>()?;
 
         match dtype.scalar {
-            ScalarType::U8 => self.resolve_static::<u8>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::I8 => self.resolve_static::<i8>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::U16 => self.resolve_static::<u16>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::I16 => self.resolve_static::<i16>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::F32 => self.resolve_static::<f32>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::U32 => self.resolve_static::<u32>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::I32 => self.resolve_static::<i32>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::U64 => self.resolve_static::<u64>(py, &op.try_into().unwrap(), chunk_ids),
-            ScalarType::I64 => self.resolve_static::<i64>(py, &op.try_into().unwrap(), chunk_ids),
+            ScalarType::U8 => self.resolve_static::<u8>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::I8 => self.resolve_static::<i8>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::U16 => self.resolve_static::<u16>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::I16 => self.resolve_static::<i16>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::F32 => self.resolve_static::<f32>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::U32 => self.resolve_static::<u32>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::I32 => self.resolve_static::<i32>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::U64 => self.resolve_static::<u64>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
+            ScalarType::I64 => self.resolve_static::<i64>(
+                py,
+                &op.try_into().unwrap(),
+                chunk_ids,
+                record_task_stream,
+            ),
         }
     }
 
