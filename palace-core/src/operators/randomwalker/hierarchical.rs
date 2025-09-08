@@ -820,17 +820,14 @@ async fn sample_chunk<'req, 'inv, D: DynDimension>(
 }
 
 fn rw_const_chunk_table<D: DynDimension + LargerDim>(
-    upper_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     upper_result_cct: EmbeddedTensorOperator<D, StaticElementType<f32>>,
-    this_level_md: TensorMetaData<D>,
-    this_level_ed: TensorEmbeddingData<D>,
+    this_result: EmbeddedTensorOperator<D, StaticElementType<f32>>,
     out_chunk_size: Vector<D, LocalCoordinate>,
 ) -> EmbeddedTensorOperator<D, StaticElementType<f32>> {
-    let determined = determined_cct(
-        upper_result,
-        upper_result_cct.metadata.chunk_size.clone(),
-        DETERMINED_THRESHOLD,
-    );
+    let this_level_md = this_result.metadata.clone();
+    let this_level_ed = this_result.embedding_data.clone();
+
+    let determined = determined_cct(this_result, out_chunk_size.clone(), DETERMINED_THRESHOLD);
 
     let out_ed = crate::operators::const_chunks::cct_embedding_data(&this_level_md, &this_level_ed);
 
@@ -854,7 +851,7 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
                 let nd = determined_derived.dim().n();
 
                 let this_level_to_upper_level =
-                    determined_derived.embedding_data.physical_to_voxel()
+                    determined_hierarchical.embedding_data.physical_to_voxel()
                         * &out_ed.voxel_to_physical();
 
                 for pos in positions {
@@ -889,7 +886,7 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
                             sample_chunk(*ctx, &determined_hierarchical, &pos_upper_level).await;
 
                         if !is_const_chunk_value(val) {
-                            val = sample_chunk(*ctx, &determined_derived, &pos_upper_level).await;
+                            val = sample_chunk(*ctx, &determined_derived, &pos_this_level).await;
                         }
 
                         out_chunk[this_level_linear_pos].write(val);
@@ -981,7 +978,7 @@ fn level_step<D: DynDimension + LargerDim>(
 
     let upper_resampled = resample_transform(
         upper_result.full.inner.clone(),
-        level_md.clone(),
+        level_md,
         current_to_upper,
         crate::operators::conv::BorderHandling::Repeat,
     );
@@ -1000,12 +997,10 @@ fn level_step<D: DynDimension + LargerDim>(
         level_ed.clone(),
         cfg,
     );
-    let full = shrink(expanded_result).embedded(level_ed.clone());
+    let full = shrink(expanded_result).embedded(level_ed);
     let const_chunk_table = rw_const_chunk_table(
-        upper_result.full.clone(),
         upper_result.const_chunk_table,
-        level_md,
-        level_ed,
+        full.clone(),
         rw_cct_size(upper_result.full.metadata.dim()),
     );
     StepResult {
