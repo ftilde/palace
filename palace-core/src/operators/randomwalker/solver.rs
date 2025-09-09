@@ -17,8 +17,8 @@ use crate::{
     vulkan::{
         memory::TempRessource,
         pipeline::{
-            AsBufferDescriptor, ComputePipelineBuilder, DescriptorConfig, DynPushConstants,
-            LocalSizeConfig,
+            AsBufferDescriptor, ComputePipeline, ComputePipelineBuilder, DescriptorConfig,
+            DynPushConstants, LocalSizeConfig,
         },
         shader::Shader,
         state::VulkanState,
@@ -651,40 +651,35 @@ async fn conjugate_gradient<'req, 'inv>(
     //dbg!(super::download::<f32>(ctx, device, x).await);
     //dbg!(super::download::<f32>(ctx, device, b).await);
 
+    let cg_init = CGInit::new(device, mat)?;
+    let dot_product_init = DotProductInit::new(device)?;
+    let dot_product_finish = DotProductFinish::new(device)?;
+    let cg_alpha = CGAlpha::new(device, mat)?;
+    let cg_beta = CGBeta::new(device)?;
+    let scale_and_sum_quotient = ScaleAndSumQuotient::new(device)?;
+
     ctx.submit(device.barrier(srw_src, srw_dst)).await;
-    cg_init(device, mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
-    dot_product_finish(ctx, device, &rth).await?;
+    cg_init.run(mat, x, b, &*c, &*r, &*h, &*d, &*rth)?;
+    dot_product_finish.run(ctx, &rth).await;
 
     let mut total_it = cfg.max_iterations;
     for iteration in 0..cfg.max_iterations {
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
-        cg_alpha(device, mat, &d, &z, &dtz)?;
-        dot_product_finish(ctx, device, &dtz).await?;
+        cg_alpha.run(mat, &d, &z, &dtz);
+        dot_product_finish.run(ctx, &dtz).await;
 
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
-        cg_beta(
-            device,
-            mat.num_rows,
-            &z,
-            &d,
-            &c,
-            &rth,
-            &dtz,
-            &x,
-            &r,
-            &h,
-            &rth_p1,
-        )?;
-        dot_product_finish(ctx, device, &rth_p1).await?;
+        cg_beta.run(mat.num_rows, &z, &d, &c, &rth, &dtz, &x, &r, &h, &rth_p1);
+        dot_product_finish.run(ctx, &rth_p1).await;
 
         ctx.submit(device.barrier(srw_src, srw_dst)).await;
 
         // read ||r_n||_2^2
         if iteration % cfg.residuum_check_period == 0 {
-            dot_product_init(device, &r, &r, &r_norm_sq_buf)?;
-            dot_product_finish(ctx, device, &r_norm_sq_buf).await?;
+            dot_product_init.run(&r, &r, &r_norm_sq_buf);
+            dot_product_finish.run(ctx, &r_norm_sq_buf).await;
 
             // Make u (i.e., o_n) visible
             ctx.submit(device.barrier(
@@ -707,7 +702,7 @@ async fn conjugate_gradient<'req, 'inv>(
             }
         }
 
-        scale_and_sum_quotient(device, &rth_p1, &rth, &d, &h, &d)?;
+        scale_and_sum_quotient.run(&rth_p1, &rth, &d, &h, &d);
 
         std::mem::swap(&mut rth, &mut rth_p1);
     }
@@ -740,245 +735,292 @@ struct PushConstsNumRows {
     num_rows: u32,
 }
 
-fn cg_init(
-    device: &DeviceContext,
-    // Input
-    a: &SparseMatrix,
-    x0: &Allocation,
-    b: &Allocation,
-    // Results
-    c: &Allocation,
-    r: &Allocation,
-    h: &Allocation,
-    d: &Allocation,
-    rth: &Allocation,
-) -> Result<(), crate::Error> {
-    let num_rows = a.num_rows;
-
-    let pipeline = device.request_state(a.max_entries_per_row, |device, max_entries_per_row| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("cg_init.glsl"))
-                .define("MAX_ENTRIES_PER_ROW", max_entries_per_row)
-                .push_const_block::<PushConstsNumRows>(),
-        )
-        .local_size(LocalSizeConfig::Large)
-        .build(device)
-    })?;
-
-    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d, rth]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.push_constant(PushConstsNumRows { num_rows });
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
+struct CGInit<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
 }
 
-fn cg_alpha(
-    device: &DeviceContext,
-    // Input
-    a: &SparseMatrix,
-    d: &Allocation,
-    // Results
-    z: &Allocation,
-    dtz: &Allocation,
-) -> Result<(), crate::Error> {
-    let num_rows = a.num_rows;
-
-    let pipeline = device.request_state(a.max_entries_per_row, |device, max_entries_per_row| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("cg_alpha.glsl"))
-                .define("MAX_ENTRIES_PER_ROW", max_entries_per_row)
-                .push_const_block::<PushConstsNumRows>(),
-        )
-        .local_size(LocalSizeConfig::Large)
-        .build(device)
-    })?;
-
-    let descriptor_config = DescriptorConfig::new([&a.values, &a.index, d, z, dtz]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.push_constant(PushConstsNumRows { num_rows });
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
-
-fn cg_beta(
-    device: &DeviceContext,
-    num_rows: u32,
-    // Input
-    z: &Allocation,
-    d: &Allocation,
-    c: &Allocation,
-    rth: &Allocation,
-    dtz: &Allocation,
-    // Input/Output
-    x: &Allocation,
-    r: &Allocation,
-    // Results
-    h: &Allocation,
-    rth_p1: &Allocation,
-) -> Result<(), crate::Error> {
-    let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("cg_beta.glsl")).push_const_block::<PushConstsNumRows>(),
-        )
-        .local_size(LocalSizeConfig::Large)
-        .build(device)
-    })?;
-
-    let descriptor_config = DescriptorConfig::new([z, d, c, rth, dtz, x, r, h, rth_p1]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.push_constant(PushConstsNumRows { num_rows });
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
-}
-
-async fn dot_product_finish<'req, 'inv>(
-    ctx: OpaqueTaskContext<'req, 'inv>,
-    device: &DeviceContext,
-    x: &Allocation,
-) -> Result<(), crate::Error> {
-    #[repr(C)]
-    #[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
-    struct PushConstantsStep {
-        stride: u32,
-        num_values: u32,
+impl<'a> CGInit<'a> {
+    fn new(device: &'a DeviceContext, a: &SparseMatrix) -> Result<Self, crate::Error> {
+        let pipeline =
+            device.request_state(a.max_entries_per_row, |device, max_entries_per_row| {
+                ComputePipelineBuilder::new(
+                    Shader::new(include_str!("cg_init.glsl"))
+                        .define("MAX_ENTRIES_PER_ROW", max_entries_per_row)
+                        .push_const_block::<PushConstsNumRows>(),
+                )
+                .local_size(LocalSizeConfig::Large)
+                .build(device)
+            })?;
+        Ok(Self { pipeline, device })
     }
 
-    let x_info = x.gen_buffer_info();
+    fn run(
+        &self,
+        // Input
+        a: &SparseMatrix,
+        x0: &Allocation,
+        b: &Allocation,
+        // Results
+        c: &Allocation,
+        r: &Allocation,
+        h: &Allocation,
+        d: &Allocation,
+        rth: &Allocation,
+    ) -> Result<(), crate::Error> {
+        let num_rows = a.num_rows;
 
-    let size = x_info.range;
+        let descriptor_config =
+            DescriptorConfig::new([&a.values, &a.index, x0, b, c, r, h, d, rth]);
 
-    let num_values = (size as usize / std::mem::size_of::<f32>()) as u32;
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = self.pipeline.bind(cmd);
 
-    let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("dot_product_step.glsl"))
-                .push_const_block::<PushConstantsStep>(),
-        )
-        .local_size(LocalSizeConfig::Large)
-        .build(device)
-    })?;
-
-    let mut stride = 1u32;
-
-    while stride < num_values {
-        ctx.submit(device.barrier(
-            SrcBarrierInfo {
-                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-            },
-            DstBarrierInfo {
-                stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
-                access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-            },
-        ))
-        .await;
-
-        let descriptor_config = DescriptorConfig::new([&*x]);
-        device.with_cmd_buffer(|cmd| unsafe {
-            let mut pipeline = pipeline.bind(cmd);
-
-            pipeline.push_constant(PushConstantsStep { stride, num_values });
+            pipeline.push_constant(PushConstsNumRows { num_rows });
             pipeline.write_descriptor_set(0, descriptor_config);
-            pipeline.dispatch(device, (num_values / stride) as _);
+            pipeline.dispatch(self.device, num_rows as _);
         });
 
-        stride *= pipeline.local_size().x();
+        Ok(())
+    }
+}
+
+struct CGAlpha<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
+}
+
+impl<'a> CGAlpha<'a> {
+    fn new(device: &'a DeviceContext, a: &SparseMatrix) -> Result<Self, crate::Error> {
+        let pipeline =
+            device.request_state(a.max_entries_per_row, |device, max_entries_per_row| {
+                ComputePipelineBuilder::new(
+                    Shader::new(include_str!("cg_alpha.glsl"))
+                        .define("MAX_ENTRIES_PER_ROW", max_entries_per_row)
+                        .push_const_block::<PushConstsNumRows>(),
+                )
+                .local_size(LocalSizeConfig::Large)
+                .build(device)
+            })?;
+
+        Ok(Self { pipeline, device })
     }
 
-    Ok(())
+    fn run(
+        &self,
+        // Input
+        a: &SparseMatrix,
+        d: &Allocation,
+        // Results
+        z: &Allocation,
+        dtz: &Allocation,
+    ) {
+        let num_rows = a.num_rows;
+
+        let descriptor_config = DescriptorConfig::new([&a.values, &a.index, d, z, dtz]);
+
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = self.pipeline.bind(cmd);
+
+            pipeline.push_constant(PushConstsNumRows { num_rows });
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(self.device, num_rows as _);
+        });
+    }
 }
 
-fn dot_product_init(
-    device: &DeviceContext,
-    x: &Allocation,
-    y: &Allocation,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    let x_info = x.gen_buffer_info();
-    let y_info = y.gen_buffer_info();
-
-    let size = x_info.range;
-    assert_eq!(size, y_info.range);
-
-    let num_rows = (size as usize / std::mem::size_of::<f32>()) as u32;
-
-    let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("dot_product.glsl")).push_const_block::<PushConstsNumRows>(),
-        )
-        .local_size(LocalSizeConfig::Large)
-        .build(device)
-    })?;
-
-    let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
-
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
-
-        pipeline.push_constant(PushConstsNumRows { num_rows });
-
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
-
-    Ok(())
+struct CGBeta<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
 }
 
-// result := (o/u) *x + y
-fn scale_and_sum_quotient(
-    device: &DeviceContext,
-    o: &Allocation,
-    u: &Allocation,
-    x: &Allocation,
-    y: &Allocation,
-    result: &Allocation,
-) -> Result<(), crate::Error> {
-    let x_info = x.gen_buffer_info();
-    let y_info = y.gen_buffer_info();
-    let result_info = result.gen_buffer_info();
+impl<'a> CGBeta<'a> {
+    fn new(device: &'a DeviceContext) -> Result<Self, crate::Error> {
+        let pipeline = device.request_state((), |device, ()| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("cg_beta.glsl")).push_const_block::<PushConstsNumRows>(),
+            )
+            .local_size(LocalSizeConfig::Large)
+            .build(device)
+        })?;
 
-    let size = x_info.range;
-    assert_eq!(size, y_info.range);
-    assert_eq!(size, result_info.range);
+        Ok(Self { pipeline, device })
+    }
 
-    let num_rows = (size as usize / std::mem::size_of::<f32>()) as u32;
+    fn run(
+        &self,
+        num_rows: u32,
+        // Input
+        z: &Allocation,
+        d: &Allocation,
+        c: &Allocation,
+        rth: &Allocation,
+        dtz: &Allocation,
+        // Input/Output
+        x: &Allocation,
+        r: &Allocation,
+        // Results
+        h: &Allocation,
+        rth_p1: &Allocation,
+    ) {
+        let descriptor_config = DescriptorConfig::new([z, d, c, rth, dtz, x, r, h, rth_p1]);
 
-    let pipeline = device.request_state((), |device, ()| {
-        ComputePipelineBuilder::new(
-            Shader::new(include_str!("scale_and_sum_quotient.glsl"))
-                .push_const_block::<PushConstsNumRows>(),
-        )
-        .build(device)
-    })?;
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = self.pipeline.bind(cmd);
 
-    let descriptor_config = DescriptorConfig::new([&*o, &*u, &*x, &*y, &*result]);
+            pipeline.push_constant(PushConstsNumRows { num_rows });
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(self.device, num_rows as _);
+        });
+    }
+}
 
-    device.with_cmd_buffer(|cmd| unsafe {
-        let mut pipeline = pipeline.bind(cmd);
+struct DotProductFinish<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
+}
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, GlslStruct)]
+struct PushConstantsStep {
+    stride: u32,
+    num_values: u32,
+}
 
-        pipeline.push_constant(PushConstsNumRows { num_rows });
+impl<'a> DotProductFinish<'a> {
+    fn new(device: &'a DeviceContext) -> Result<Self, crate::Error> {
+        let pipeline = device.request_state((), |device, ()| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("dot_product_step.glsl"))
+                    .push_const_block::<PushConstantsStep>(),
+            )
+            .local_size(LocalSizeConfig::Large)
+            .build(device)
+        })?;
 
-        pipeline.write_descriptor_set(0, descriptor_config);
-        pipeline.dispatch(device, num_rows as _);
-    });
+        Ok(Self { pipeline, device })
+    }
 
-    Ok(())
+    async fn run<'req, 'inv>(&self, ctx: OpaqueTaskContext<'req, 'inv>, x: &Allocation) {
+        let x_info = x.gen_buffer_info();
+
+        let size = x_info.range;
+
+        let num_values = (size as usize / std::mem::size_of::<f32>()) as u32;
+        let mut stride = 1u32;
+
+        while stride < num_values {
+            ctx.submit(self.device.barrier(
+                SrcBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                },
+                DstBarrierInfo {
+                    stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                },
+            ))
+            .await;
+
+            let descriptor_config = DescriptorConfig::new([&*x]);
+            self.device.with_cmd_buffer(|cmd| unsafe {
+                let mut pipeline = self.pipeline.bind(cmd);
+
+                pipeline.push_constant(PushConstantsStep { stride, num_values });
+                pipeline.write_descriptor_set(0, descriptor_config);
+                pipeline.dispatch(self.device, (num_values / stride) as _);
+            });
+
+            stride *= self.pipeline.local_size().x();
+        }
+    }
+}
+
+struct DotProductInit<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
+}
+
+impl<'a> DotProductInit<'a> {
+    fn new(device: &'a DeviceContext) -> Result<Self, crate::Error> {
+        let pipeline = device.request_state((), |device, ()| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("dot_product.glsl"))
+                    .push_const_block::<PushConstsNumRows>(),
+            )
+            .local_size(LocalSizeConfig::Large)
+            .build(device)
+        })?;
+
+        Ok(Self { pipeline, device })
+    }
+
+    fn run(&self, x: &Allocation, y: &Allocation, result: &Allocation) {
+        let x_info = x.gen_buffer_info();
+        let y_info = y.gen_buffer_info();
+
+        let size = x_info.range;
+        assert_eq!(size, y_info.range);
+
+        let num_rows = (size as usize / std::mem::size_of::<f32>()) as u32;
+
+        let descriptor_config = DescriptorConfig::new([&*x, &*y, &*result]);
+
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = self.pipeline.bind(cmd);
+
+            pipeline.push_constant(PushConstsNumRows { num_rows });
+
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(self.device, num_rows as _);
+        });
+    }
+}
+
+struct ScaleAndSumQuotient<'a> {
+    pipeline: &'a ComputePipeline,
+    device: &'a DeviceContext,
+}
+
+impl<'a> ScaleAndSumQuotient<'a> {
+    fn new(device: &'a DeviceContext) -> Result<Self, crate::Error> {
+        let pipeline = device.request_state((), |device, ()| {
+            ComputePipelineBuilder::new(
+                Shader::new(include_str!("scale_and_sum_quotient.glsl"))
+                    .push_const_block::<PushConstsNumRows>(),
+            )
+            .build(device)
+        })?;
+
+        Ok(Self { pipeline, device })
+    }
+
+    fn run(
+        &self,
+        o: &Allocation,
+        u: &Allocation,
+        x: &Allocation,
+        y: &Allocation,
+        result: &Allocation,
+    ) {
+        let x_info = x.gen_buffer_info();
+        let y_info = y.gen_buffer_info();
+        let result_info = result.gen_buffer_info();
+
+        let size = x_info.range;
+        assert_eq!(size, y_info.range);
+        assert_eq!(size, result_info.range);
+
+        let num_rows = (size as usize / std::mem::size_of::<f32>()) as u32;
+
+        let descriptor_config = DescriptorConfig::new([&*o, &*u, &*x, &*y, &*result]);
+
+        self.device.with_cmd_buffer(|cmd| unsafe {
+            let mut pipeline = self.pipeline.bind(cmd);
+
+            pipeline.push_constant(PushConstsNumRows { num_rows });
+
+            pipeline.write_descriptor_set(0, descriptor_config);
+            pipeline.dispatch(self.device, num_rows as _);
+        });
+    }
 }
