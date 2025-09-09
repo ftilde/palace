@@ -1114,6 +1114,9 @@ impl Storage {
             dbg!(block.allocations.len());
         }
 
+        println!("Cache: ");
+        self.allocator.bucket_cache.borrow().print_report();
+
         let lru = self.lru_manager.borrow();
         for inner in &lru.inner {
             println!("{:?}", inner);
@@ -2087,36 +2090,36 @@ struct AllocationCache {
 }
 
 impl AllocationCache {
-    //fn print_report(&self) {
-    //    println!("Alloc report:");
-    //    let mut descs = self.buckets.keys().collect::<Vec<_>>();
-    //    descs.sort_by_key(|v| v.layout.size());
+    fn print_report(&self) {
+        println!("Alloc report:");
+        let mut descs = self.buckets.keys().collect::<Vec<_>>();
+        descs.sort_by_key(|v| v.layout.size());
 
-    //    for desc in descs {
-    //        let bucket = &self.buckets[desc];
-    //        println!(
-    //            "Bucket {:?}: size {}/{} {:?}",
-    //            desc,
-    //            bucket.cached.len(),
-    //            bucket.capacity,
-    //            bucket.sizing_state
-    //        );
-    //    }
-    //    println!(
-    //        "Alloc: {} success | {} fail | {}%",
-    //        self.alloc_success_count,
-    //        self.alloc_fail_count,
-    //        self.alloc_success_count as f32 * 100.0
-    //            / (self.alloc_success_count + self.alloc_fail_count) as f32
-    //    );
-    //    println!(
-    //        "Dealloc: {} success | {} fail | {}%",
-    //        self.dealloc_success_count,
-    //        self.dealloc_fail_count,
-    //        self.dealloc_success_count as f32 * 100.0
-    //            / (self.dealloc_success_count + self.dealloc_fail_count) as f32
-    //    );
-    //}
+        for desc in descs {
+            let bucket = &self.buckets[desc];
+            println!(
+                "Bucket {:?}: size {}/{} {:?}",
+                desc,
+                bucket.cached.len(),
+                bucket.capacity,
+                bucket.sizing_state
+            );
+        }
+        //println!(
+        //    "Alloc: {} success | {} fail | {}%",
+        //    self.alloc_success_count,
+        //    self.alloc_fail_count,
+        //    self.alloc_success_count as f32 * 100.0
+        //        / (self.alloc_success_count + self.alloc_fail_count) as f32
+        //);
+        //println!(
+        //    "Dealloc: {} success | {} fail | {}%",
+        //    self.dealloc_success_count,
+        //    self.dealloc_fail_count,
+        //    self.dealloc_success_count as f32 * 100.0
+        //        / (self.dealloc_success_count + self.dealloc_fail_count) as f32
+        //);
+    }
     fn flush(&mut self) -> (usize, Vec<gpu_allocator::vulkan::Allocation>) {
         let mut to_release = Vec::new();
         let mut total_size = 0;
