@@ -1,4 +1,4 @@
-use std::{any::Any, rc::Rc};
+use std::{any::Any, cell::Cell, rc::Rc};
 
 use crate::{
     array::ChunkIndex,
@@ -133,7 +133,6 @@ impl_for_tuples!(I1, I2, I3, I4, I5, I6, I7, I8, I9, I10,);
 pub struct OperatorDescriptor {
     pub id: OperatorId,
     pub data_longevity: DataLongevity,
-    pub cache_results: bool,
 }
 
 #[macro_export]
@@ -161,7 +160,6 @@ impl OperatorDescriptor {
         Self {
             id,
             data_longevity: DataLongevity::Stable,
-            cache_results: false,
         }
     }
     pub fn dependent_on(self, v: &dyn OperatorNetworkNode) -> Self {
@@ -169,22 +167,16 @@ impl OperatorDescriptor {
         Self {
             id: self.id.dependent_on(d.id.into()),
             data_longevity: self.data_longevity.min(d.data_longevity),
-            cache_results: self.cache_results,
         }
     }
     pub fn dependent_on_data(self, v: &(impl Identify + ?Sized)) -> Self {
         Self {
             id: self.id.dependent_on(v.id()),
             data_longevity: self.data_longevity,
-            cache_results: self.cache_results,
         }
     }
     pub fn data_longevity(mut self, data_longevity: DataLongevity) -> Self {
         self.data_longevity = data_longevity;
-        self
-    }
-    pub fn cache_results(mut self, cache_results: bool) -> Self {
-        self.cache_results = cache_results;
         self
     }
     pub fn ephemeral(self) -> Self {
@@ -192,6 +184,22 @@ impl OperatorDescriptor {
     }
     pub fn unstable(self) -> Self {
         self.data_longevity(DataLongevity::Unstable)
+    }
+}
+
+pub struct OperatorProperties {
+    cache_results: Cell<bool>,
+}
+impl OperatorProperties {
+    pub fn cache_results(&self) -> bool {
+        self.cache_results.get()
+    }
+}
+impl Default for OperatorProperties {
+    fn default() -> Self {
+        Self {
+            cache_results: Cell::new(false),
+        }
     }
 }
 
@@ -259,9 +267,9 @@ pub trait OpaqueOperator {
         OperatorDescriptor {
             id: self.op_id(),
             data_longevity: self.longevity(),
-            cache_results: self.cache_results(),
         }
     }
+    fn properties(&self) -> Rc<OperatorProperties>;
     fn granularity(&self) -> ItemGranularity;
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
@@ -273,6 +281,7 @@ pub trait OpaqueOperator {
 
 pub struct Operator<OutputType> {
     descriptor: OperatorDescriptor,
+    properties: Rc<OperatorProperties>,
     state: Rc<dyn Any>,
     granularity: ItemGranularity,
     compute: ComputeFunction<OutputType>,
@@ -282,6 +291,7 @@ impl<OutputType: Clone> Clone for Operator<OutputType> {
     fn clone(&self) -> Self {
         Self {
             descriptor: self.descriptor.clone(),
+            properties: self.properties.clone(),
             state: self.state.clone(),
             granularity: self.granularity.clone(),
             compute: self.compute.clone(),
@@ -443,6 +453,7 @@ impl<OutputType: 'static> Operator<OutputType> {
     pub fn move_device(self, how: impl Fn(&[ChunkIndex]) -> DataLocation + 'static) -> Self {
         Self {
             descriptor: self.descriptor,
+            properties: self.properties,
             state: self.state,
             granularity: self.granularity,
             dtype: self.dtype,
@@ -484,6 +495,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
         Self {
             descriptor,
             dtype,
+            properties: Default::default(),
             state: Rc::new(state),
             granularity: ItemGranularity::Batched,
             compute: Rc::new(move |ctx, items, loc, state| {
@@ -509,6 +521,7 @@ impl<OutputType: ElementType> Operator<OutputType> {
         Self {
             descriptor,
             dtype,
+            properties: Default::default(),
             state: Rc::new(state),
             granularity: ItemGranularity::Single,
             compute: Rc::new(move |ctx, items, loc, state| {
@@ -659,6 +672,7 @@ where
         let old_dtype = value.dtype;
         Ok(Operator {
             descriptor: value.descriptor,
+            properties: value.properties,
             state: value.state,
             granularity: value.granularity,
             compute: Rc::new(move |ctx, items, loc, tr| {
@@ -680,6 +694,7 @@ where
         let old_dtype = value.dtype;
         Operator {
             descriptor: value.descriptor,
+            properties: value.properties,
             state: value.state,
             granularity: value.granularity,
             compute: Rc::new(move |ctx, items, loc, tr| {
@@ -700,6 +715,7 @@ impl Operator<DType> {
         );
         Operator {
             descriptor: self.descriptor,
+            properties: self.properties,
             state: self.state,
             granularity: self.granularity,
             compute: Rc::new(move |ctx, items, loc, tr| {
@@ -721,7 +737,7 @@ impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
         self.granularity
     }
     fn cache_results(&self) -> bool {
-        self.descriptor.cache_results
+        self.properties.cache_results.get()
     }
     unsafe fn compute<'cref, 'inv>(
         &'inv self,
@@ -732,9 +748,13 @@ impl<OutputType: Clone> OpaqueOperator for Operator<OutputType> {
         let ctx = TaskContext::new(ctx, self.dtype.clone());
         (self.compute)(ctx, items, location, &*self.state)
     }
+
+    fn properties(&self) -> Rc<OperatorProperties> {
+        self.properties.clone()
+    }
 }
 
-pub fn cache<'op, OutputType>(mut input: Operator<OutputType>) -> Operator<OutputType> {
-    input.descriptor.cache_results = true;
+pub fn cache<'op, OutputType>(input: Operator<OutputType>) -> Operator<OutputType> {
+    input.properties.cache_results.set(true);
     input
 }

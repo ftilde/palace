@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     num::NonZeroU64,
     path::Path,
+    rc::Rc,
     sync::mpsc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     time::{Duration, Instant},
@@ -11,7 +12,7 @@ use std::{
 
 use crate::{
     array::ChunkIndex,
-    operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId},
+    operator::{DataId, OpaqueOperator, OperatorDescriptor, OperatorId, OperatorProperties},
     storage::{disk, gpu::BarrierEpoch, ram, CpuDataLocation, DataLocation, VisibleDataLocation},
     task::{DataRequest, OpaqueTaskContext, Request, RequestInfo, RequestType, Task},
     task_graph::{Priority, RequestId, TaskClass, TaskGraph, TaskId, VisibleDataId},
@@ -507,7 +508,7 @@ struct Executor<'cref, 'inv> {
     task_graph: TaskGraph,
     transfer_manager: crate::vulkan::memory::TransferManager,
     statistics: Statistics,
-    operator_info: Map<OperatorId, OperatorDescriptor>,
+    operator_info: Map<OperatorId, (OperatorDescriptor, Rc<OperatorProperties>)>,
     waker: Waker,
     deadline: Deadline,
     start: Instant,
@@ -528,7 +529,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
             thread_pool: &self.data.thread_spawner,
             device_contexts: self.data.device_contexts,
             current_task,
-            current_op: self.operator_info.get(&current_task.operator()).cloned(),
+            current_op: self
+                .operator_info
+                .get(&current_task.operator())
+                .map(|v| v.0),
             current_frame: self.data.frame,
             predicted_preview_tasks: &self.data.predicted_preview_tasks,
             deadline: self.deadline,
@@ -597,7 +601,7 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     && self
                         .operator_info
                         .get(&task_id.operator())
-                        .map(|o| o.cache_results)
+                        .map(|o| o.1.cache_results())
                         .unwrap_or(false);
 
                 match task.as_mut().poll(&mut ctx) {
@@ -987,9 +991,10 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                     .is_currently_being_fulfilled(from, data_request.id)
                 {
                     let op_id = data_request.source.op_id();
-                    self.operator_info
-                        .entry(op_id)
-                        .or_insert(data_request.source.operator_descriptor());
+                    self.operator_info.entry(op_id).or_insert((
+                        data_request.source.operator_descriptor(),
+                        data_request.source.properties(),
+                    ));
 
                     let data_id = data_request.id;
                     let data_req_loc = data_request.location;
