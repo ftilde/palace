@@ -7,6 +7,7 @@ import time
 import itertools
 import functools
 import math
+from functools import cmp_to_key
 from pathlib import Path
 
 def read_vge(path, l0ed):
@@ -177,8 +178,30 @@ total_size = 0
 total_skipped = 0
 total_considered = 0
 
+def sorted_zorder(chunks):
+    def less_msb(x: int, y: int) -> bool:
+        return x < y and x < (x ^ y)
 
-for full_batch in itertools.batched(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)), batch_size):
+    def cmp_zorder(lhs, rhs):
+        """Compare z-ordering."""
+        # Assume lhs and rhs array-like objects of indices.
+        assert len(lhs) == len(rhs)
+        # Will contain the most significant dimension.
+        msd = 0
+        # Loop over the other dimensions.
+        for dim in range(1, len(lhs)):
+            # Check if the current dimension is more significant
+            # by comparing the most significant bits.
+            if less_msb(lhs[msd] ^ rhs[msd], lhs[dim] ^ rhs[dim]):
+                msd = dim
+        return lhs[msd] - rhs[msd]
+
+    return sorted(chunks, key=cmp_to_key(cmp_zorder))
+
+all_chunks = list(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)))
+all_chunks = sorted_zorder(all_chunks)
+
+for full_batch in itertools.batched(all_chunks, batch_size):
     cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
     cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
     cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions, record_task_stream=False)
