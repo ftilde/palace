@@ -941,8 +941,14 @@ fn determined_cct<D: DynDimension>(
     .into());
     max.clone()
         .lt_eq((0.5 - dt).into())
-        .or(min.clone().gt_eq((0.5 + dt).into()))
-        .or(max.sub(min).unwrap().lt(homogeneity_threshold.into()))
+        .unwrap()
+        .or(min.clone().gt_eq((0.5 + dt).into()).unwrap())
+        .unwrap()
+        .or(max
+            .sub(min)
+            .unwrap()
+            .lt(homogeneity_threshold.into())
+            .unwrap())
         .unwrap()
         .select(
             mean,

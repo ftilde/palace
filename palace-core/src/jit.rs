@@ -754,6 +754,12 @@ impl<D: DynDimension> JitTensorOperator<D> {
     pub fn concat(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
         Self::bin_op(BinOp::Concat, self, other)
     }
+    pub fn and(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Mul, self, other)
+    }
+    pub fn or(self, other: JitTensorOperator<D>) -> Result<Self, crate::Error> {
+        Self::bin_op(BinOp::Add, self, other)
+    }
 
     pub fn square(self) -> Self {
         self.clone().mul(self).unwrap()
