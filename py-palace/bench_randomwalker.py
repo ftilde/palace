@@ -68,7 +68,7 @@ except:
 nd = vol.nd()
 
 # Reduce the LOD hierarchy and compute root on a larger full volume. This is still manageable in terms of computation time, but increases the "range" of labels in smaller structures quite a bit.
-max_level = len(vol.levels) - 2
+max_level = len(vol.levels) - 1
 vol.levels = [l if i != max_level else l.rechunk([pc.ChunkSizeFull()] * nd) for i, l in enumerate(vol.levels) if i <= max_level]
 
 for level in vol.levels:
@@ -148,10 +148,10 @@ def apply_weight_function(volume):
 
 fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
 bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
-weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
-rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm)
+weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache()
+rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm, residuum_check_period=8)
 rw_result = rw_result.cache_coarse_levels()
-rw_cct = rw_cct.cache()
+rw_cct = rw_cct.cache_coarse_levels()
 
 cct_l0md = rw_cct.levels[0].metadata
 
@@ -175,7 +175,7 @@ def sizeof_fmt(num, suffix="B"):
 start = time.time()
 begin = start
 total_size = 0
-total_skipped = 0
+total_computed = 0
 total_considered = 0
 
 def sorted_zorder(chunks):
@@ -198,21 +198,38 @@ def sorted_zorder(chunks):
 
     return sorted(chunks, key=cmp_to_key(cmp_zorder))
 
+#dim_in_chunks = [800//l0md.chunk_size[0]]*3
+
 all_chunks = list(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)))
 all_chunks = sorted_zorder(all_chunks)
 
-for full_batch in itertools.batched(all_chunks, batch_size):
-    cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
-    cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
-    cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions, record_task_stream=False)
-    is_const = map(lambda cct_chunk, in_chunk_pos: not math.isnan(cct_chunk[tuple(in_chunk_pos)]), cct_chunks, cct_in_chunks_positions)
-    batch = [pos for pos, is_const in zip(full_batch, is_const) if not is_const]
+inner_batch_size = batch_size
 
+def non_empty(all_chunks, cct_batch_size):
+    current_batch = []
+    full_chunks = 0
+    for full_batch in itertools.batched(all_chunks, cct_batch_size):
+        cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
+        cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
+        cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions, record_task_stream=False)
+        is_const = list(map(lambda cct_chunk, in_chunk_pos: not math.isnan(cct_chunk[tuple(in_chunk_pos)]), cct_chunks, cct_in_chunks_positions))
+        current_batch = current_batch + [pos for pos, is_const in zip(full_batch, is_const) if not is_const]
+        full_chunks += len(full_batch)
+
+        while len(current_batch) >= batch_size:
+            yield full_chunks, current_batch[:batch_size]
+            current_batch = current_batch[batch_size:]
+            full_chunks = 0
+
+    yield full_chunks, current_batch
+
+for num_full_chunks, batch in non_empty(all_chunks, batch_size*8):
     chunks = rt.resolve(rw_result.levels[0], batch, record_task_stream=False)
+
     end = time.time()
-    total_considered += len(full_batch)
-    total_skipped += len(full_batch) - len(batch)
-    io_size = len(full_batch) * chunk_size_bytes
+    total_considered += num_full_chunks
+    total_computed += len(batch)
+    io_size = num_full_chunks * chunk_size_bytes
     total_size += io_size
 
     io_per_s = io_size / (end - begin)
@@ -223,5 +240,5 @@ for full_batch in itertools.batched(all_chunks, batch_size):
 
     total_io_str = sizeof_fmt(total_size, suffix="B")
 
-    print("Got {} chunks, {} total, {} skipped \t| {} \t| total {} \t| sum {}".format(len(full_batch), total_considered, total_skipped, io_per_s_str, total_io_per_s_str, total_io_str))
+    print("Got {} chunks, {} total, {} computed \t| {} \t| total {} \t| sum {}".format(num_full_chunks, total_considered, total_computed, io_per_s_str, total_io_per_s_str, total_io_str))
     begin = end
