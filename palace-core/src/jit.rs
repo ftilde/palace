@@ -10,7 +10,7 @@ use crate::{
     dim::{DDyn, DynDimension},
     dtypes::{AsDynType, DType, ElementType, ScalarType},
     op_descriptor,
-    operator::{DataParam, OperatorDescriptor, OperatorParameter},
+    operator::{DataParam, DataParamWithExternalId, OperatorDescriptor, OperatorParameter},
     operators::tensor::TensorOperator,
     storage::{
         gpu::{InplaceHandle, InplaceResult, WriteHandle},
@@ -488,12 +488,18 @@ impl<T: Identify> OrderedSet<T> {
 }
 
 //TODO: Rc for cheap clone?
-#[derive(Identify, Clone)]
+#[derive(Clone)]
 pub struct JitTensorOperator<D: DynDimension> {
     metadata: Option<TensorMetaData<D>>,
     dtype: DType,
     operators: OrderedSet<TensorOperator<D, DType>>,
     instructions: Vec<Instruction>,
+    id: Id,
+}
+impl<D: DynDimension> Identify for JitTensorOperator<D> {
+    fn id(&self) -> Id {
+        self.id
+    }
 }
 
 fn merge_instructions<D: DynDimension>(
@@ -584,6 +590,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
         }
 
         Ok({
+            let id = Id::combine(&[op.id(), inner.id()]);
             let dtype = op.dtype(inner.dtype)?;
             let op = Instruction::Unary(dtype, op, InstructionOffset(1));
             let mut ops = inner.instructions;
@@ -593,6 +600,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                 dtype,
                 operators: inner.operators,
                 instructions: ops,
+                id,
             }
         })
     }
@@ -602,6 +610,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
         r: JitTensorOperator<D>,
     ) -> Result<Self, crate::Error> {
         Ok({
+            let id = Id::combine(&[op.id(), l.id(), r.id()]);
             let dtype = op.dtype(l.dtype, r.dtype)?;
 
             let (inputs, mut ops, offset_l, offset_r) =
@@ -620,6 +629,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                 dtype,
                 operators: inputs,
                 instructions: ops,
+                id,
             }
         })
     }
@@ -630,6 +640,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
         a2: JitTensorOperator<D>,
     ) -> Result<Self, crate::Error> {
         Ok({
+            let id = Id::combine(&[op.id(), a0.id(), a1.id(), a2.id()]);
             let dtype = op.dtype(a0.dtype, a1.dtype, a2.dtype)?;
 
             let (inputs_initial, ops_initial, offset_0_initial, _) =
@@ -656,6 +667,7 @@ impl<D: DynDimension> JitTensorOperator<D> {
                 dtype,
                 operators: inputs,
                 instructions: ops,
+                id,
             }
         })
     }
@@ -665,12 +677,14 @@ impl<D: DynDimension> From<ConstValue> for JitTensorOperator<D> {
     fn from(c: ConstValue) -> Self {
         let dtype = c.dtype();
         let op = Instruction::NullAry(c.dtype(), NullaryOp::Const(c));
+        let id = op.id();
         let ops = vec![op];
         Self {
             instructions: ops,
             metadata: None,
             dtype,
             operators: OrderedSet(Vec::new()),
+            id,
         }
     }
 }
@@ -695,24 +709,28 @@ pub fn const_vec<D: DynDimension, V: Into<ConstValue>>(value: V) -> JitTensorOpe
 pub fn dimensions<D: DynDimension>(d: D) -> JitTensorOperator<D> {
     let dtype = ScalarType::U32.vec(d.n() as _);
     let op = Instruction::NullAry(dtype, NullaryOp::Dimensions);
+    let id = op.id();
     let ops = vec![op];
     JitTensorOperator {
         instructions: ops,
         metadata: None,
         dtype,
         operators: OrderedSet(Vec::new()),
+        id,
     }
 }
 
 pub fn position<D: DynDimension>(d: D) -> JitTensorOperator<D> {
     let dtype = ScalarType::U32.vec(d.n() as _);
     let op = Instruction::NullAry(dtype, NullaryOp::Position);
+    let id = op.id();
     let ops = vec![op];
     JitTensorOperator {
         instructions: ops,
         metadata: None,
         dtype,
         operators: OrderedSet(Vec::new()),
+        id,
     }
 }
 
@@ -722,12 +740,15 @@ impl<D: DynDimension> From<TensorOperator<D, DType>> for JitTensorOperator<D> {
         let metadata = Some(c.metadata.clone());
 
         let op = Instruction::NullAry(dtype, NullaryOp::Read(InputId(0)));
+        let id = Id::combine(&[c.id(), op.id()]);
         let ops = vec![op];
+
         Self {
             instructions: ops,
             metadata,
             dtype,
             operators: OrderedSet(vec![c]),
+            id,
         }
     }
 }
@@ -1121,12 +1142,12 @@ impl<D: DynDimension> JitTensorOperator<D> {
                     let pipeline = device.request_state(
                         (
                             &input_dtypes,
-                            &jit_operator.instructions,
+                            DataParamWithExternalId(&jit_operator.instructions, jit_operator.id),
                             num_chunk_elements,
                             push_constants,
                         ),
                         |device, (input_dtypes, instructions, num_chunk_elements, push_constants)| {
-                            let (shader, config) = compile(instructions, input_dtypes)?;
+                            let (shader, config) = compile(*instructions, input_dtypes)?;
                             //println!("{}", shader.as_str());
                             ComputePipelineBuilder::new(
                                 Shader::new(shader.as_str())
