@@ -420,13 +420,14 @@ pub fn randomwalker(
 
 #[gen_stub_pyfunction]
 #[pyfunction]
-#[pyo3(signature = (weights, points_fg, points_bg, max_iter=None, max_residuum_norm=None))]
+#[pyo3(signature = (weights, points_fg, points_bg, max_iter=None, max_residuum_norm=None, residuum_check_period=None))]
 pub fn hierarchical_randomwalker(
     weights: LODTensorOperator,
     points_fg: TensorOperator,
     points_bg: TensorOperator,
     max_iter: Option<usize>,
     max_residuum_norm: Option<f32>,
+    residuum_check_period: Option<usize>,
 ) -> PyResult<(LODTensorOperator, LODTensorOperator)> {
     let weights = weights.try_into()?;
     let points_fg = points_fg.try_into_core_static()?;
@@ -438,6 +439,9 @@ pub fn hierarchical_randomwalker(
     }
     if let Some(max_residuum_norm) = max_residuum_norm {
         config.max_residuum_norm = max_residuum_norm;
+    }
+    if let Some(residuum_check_period) = residuum_check_period {
+        config.residuum_check_period = residuum_check_period;
     }
     let res = palace_core::operators::randomwalker::hierarchical_random_walker_solver(
         weights, points_fg, points_bg, config,
