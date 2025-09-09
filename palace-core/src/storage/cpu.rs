@@ -871,6 +871,24 @@ impl<Allocator: CpuAllocator> Storage<Allocator> {
         }
     }
 
+    pub fn stored_size(&self) -> usize {
+        let index = self.index.borrow();
+        let mut sum = 0;
+        for v in index.values() {
+            let s = match v.state {
+                StorageEntryState::Registered => 0,
+                StorageEntryState::Initializing(storage_info, _write_access_count) => {
+                    storage_info.layout.size()
+                }
+                StorageEntryState::Initialized(storage_info, _data_version) => {
+                    storage_info.layout.size()
+                }
+            };
+            sum += s;
+        }
+        sum
+    }
+
     pub fn print_usage(&self) {
         #[derive(Debug)]
         #[allow(unused)] //For some reason the Debug does not silence unused warnings
