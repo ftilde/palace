@@ -92,6 +92,10 @@ if args.foreground_seeds:
 if args.background_seeds:
     background_seeds = np.concat([background_seeds, read_seeds(args.background_seeds, l0ed)])
 
+fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
+bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
+
+
 vol = vol.map(lambda vol: vol.cast(pc.ScalarType.F32))
 #vol = vol.map(lambda vol: vol * (1.0/(1 << 16)))
 
@@ -200,9 +204,6 @@ def apply_weight_function(volume):
             return pc.randomwalker_weights_ttest(volume, min_edge_weight.load(), ext)
 
 def apply_rw_mode(input):
-    fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
-    bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
-
     match mode.load():
         case "normal":
             i = input.levels[0].rechunk([pc.ChunkSizeFull()]*nd)
@@ -268,7 +269,7 @@ def render(size, events: pc.Events):
     widgets.append(pc.Horizontal(mouse_widgets))
 
     def add_seed_point(slice_state, embedded_tensor, pos, frame_size, foreground):
-        global foreground_seeds, background_seeds
+        global foreground_seeds, background_seeds, fg_seeds_tensor, bg_seeds_tensor
 
         pos3d = palace_util.mouse_to_volume_pos(slice_state.load(), embedded_tensor, pos, frame_size)
         if pos3d is not None:
@@ -289,6 +290,9 @@ def render(size, events: pc.Events):
                 foreground_seeds = np.concat([foreground_seeds, pos_nd])
             else:
                 background_seeds = np.concat([background_seeds, pos_nd])
+        fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
+        bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
+
 
     def overlay_slice(state):
         tile_size = 512
