@@ -141,7 +141,9 @@ raycaster_config_rw.compositing_mode().write("DVR")
 
 mode = store.store_primitive("hierarchical")
 #mode = store.store_primitive("normal")
-weight_function = store.store_primitive("bhatt_var_gaussian")
+#weight_function = store.store_primitive("bhatt_var_gaussian")
+#weight_function = store.store_primitive("ttest")
+weight_function = store.store_primitive("bian_mean")
 min_edge_weight = store.store_primitive(1e-5)
 
 beta = store.store_primitive(128.0)
