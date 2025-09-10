@@ -1266,16 +1266,24 @@ impl<'cref, 'inv> Executor<'cref, 'inv> {
                                 let garbage_collect_goal = c as usize
                                     / crate::storage::GARBAGE_COLLECT_GOAL_FRACTION as usize;
 
+                                let mut flush_cache = false;
                                 loop {
                                     if device.storage.try_garbage_collect(
                                         device,
                                         garbage_collect_goal,
                                         frame,
+                                        flush_cache,
                                     ) > 0
                                     {
                                         break;
                                     } else {
-                                        ctx.submit(Request::external_progress()).await;
+                                        if flush_cache {
+                                            ctx.submit(Request::external_progress()).await;
+                                        } else {
+                                            // If we have not tried with flushing cache, try again
+                                            // immediately (now with flush)
+                                            flush_cache = true;
+                                        }
                                     }
                                 }
                                 ctx.completed_requests.add(req_id);

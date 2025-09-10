@@ -1280,9 +1280,14 @@ impl Storage {
         device: &DeviceContext,
         goal_in_bytes: usize,
         current_frame: FrameNumber,
+        flush_cache: bool,
     ) -> usize {
         let mut collected = self.manual_garbage_returns.get() as usize;
         self.manual_garbage_returns.set(0);
+
+        if flush_cache {
+            collected += self.allocator.flush_cache();
+        }
 
         let mut lru = self.lru_manager.borrow_mut();
         let mut page_table_lru = self.page_table_lru.borrow_mut();
@@ -2055,11 +2060,153 @@ impl Storage {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+struct AllocationRequestDescriptor {
+    layout: Layout,
+    location: MemoryLocation,
+}
+#[derive(Debug)]
+enum BucketSizingState {
+    Adequate,
+    ShouldGrow,
+}
+
+struct AllocationCacheBucket {
+    cached: Vec<gpu_allocator::vulkan::Allocation>,
+    capacity: usize,
+    sizing_state: BucketSizingState,
+}
+
+#[derive(Default)]
+struct AllocationCache {
+    buckets: Map<AllocationRequestDescriptor, AllocationCacheBucket>,
+    //alloc_success_count: usize,
+    //alloc_fail_count: usize,
+    //dealloc_success_count: usize,
+    //dealloc_fail_count: usize,
+}
+
+impl AllocationCache {
+    //fn print_report(&self) {
+    //    println!("Alloc report:");
+    //    let mut descs = self.buckets.keys().collect::<Vec<_>>();
+    //    descs.sort_by_key(|v| v.layout.size());
+
+    //    for desc in descs {
+    //        let bucket = &self.buckets[desc];
+    //        println!(
+    //            "Bucket {:?}: size {}/{} {:?}",
+    //            desc,
+    //            bucket.cached.len(),
+    //            bucket.capacity,
+    //            bucket.sizing_state
+    //        );
+    //    }
+    //    println!(
+    //        "Alloc: {} success | {} fail | {}%",
+    //        self.alloc_success_count,
+    //        self.alloc_fail_count,
+    //        self.alloc_success_count as f32 * 100.0
+    //            / (self.alloc_success_count + self.alloc_fail_count) as f32
+    //    );
+    //    println!(
+    //        "Dealloc: {} success | {} fail | {}%",
+    //        self.dealloc_success_count,
+    //        self.dealloc_fail_count,
+    //        self.dealloc_success_count as f32 * 100.0
+    //            / (self.dealloc_success_count + self.dealloc_fail_count) as f32
+    //    );
+    //}
+    fn flush(&mut self) -> (usize, Vec<gpu_allocator::vulkan::Allocation>) {
+        let mut to_release = Vec::new();
+        let mut total_size = 0;
+        let mut buckets_to_remove = Vec::new();
+        for (desc, bucket) in &mut self.buckets.iter_mut() {
+            let Some(new_capacity) = bucket.capacity.checked_shr(1) else {
+                buckets_to_remove.push(*desc);
+                continue;
+            };
+            bucket.capacity = new_capacity;
+            total_size += bucket.cached.len() * desc.layout.size();
+
+            to_release.extend(std::mem::take(&mut bucket.cached));
+        }
+        for desc in buckets_to_remove {
+            self.buckets.remove(&desc);
+        }
+
+        (total_size, to_release)
+    }
+    fn try_alloc(
+        &mut self,
+        desc: AllocationRequestDescriptor,
+    ) -> Option<gpu_allocator::vulkan::Allocation> {
+        match self.buckets.entry(desc) {
+            std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                let e = occupied_entry.get_mut();
+                let ret = e.cached.pop();
+                if ret.is_none() {
+                    e.sizing_state = BucketSizingState::ShouldGrow;
+                    //self.alloc_fail_count += 1;
+                    //println!("Alloc fail: {:?} empty, cap {}", desc, e.capacity);
+                } else {
+                    //self.alloc_success_count += 1;
+                }
+                ret
+            }
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(AllocationCacheBucket {
+                    cached: Vec::new(),
+                    capacity: 1,
+                    sizing_state: BucketSizingState::ShouldGrow,
+                });
+                //println!("Alloc fail: no bucket");
+                //self.alloc_fail_count += 1;
+                None
+            }
+        }
+    }
+    fn try_dealloc(
+        &mut self,
+        alloc: gpu_allocator::vulkan::Allocation,
+        alloc_layout: Layout,
+        location: MemoryLocation,
+    ) -> Option<gpu_allocator::vulkan::Allocation> {
+        let desc = AllocationRequestDescriptor {
+            layout: alloc_layout,
+            location: location,
+        };
+        if let Some(bucket) = self.buckets.get_mut(&desc) {
+            if bucket.cached.len() == bucket.capacity
+                && matches!(bucket.sizing_state, BucketSizingState::ShouldGrow)
+            {
+                bucket.capacity = (bucket.capacity << 1).max(1);
+                bucket.sizing_state = BucketSizingState::Adequate;
+            }
+
+            if bucket.cached.len() < bucket.capacity {
+                bucket.cached.push(alloc);
+                //self.dealloc_success_count += 1;
+                None
+            } else {
+                //self.dealloc_fail_count += 1;
+                Some(alloc)
+            }
+        } else {
+            //self.dealloc_fail_count += 1;
+            Some(alloc)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Allocation {
     // Always init except after VulkanState::deinitialize is called
     allocation: MaybeUninit<gpu_allocator::vulkan::Allocation>,
+    flags: vk::BufferUsageFlags,
+    location: MemoryLocation,
     pub size: u64,
+    alloc_layout: Layout, //size may differ from size property
     pub buffer: vk::Buffer,
 }
 
@@ -2073,7 +2220,10 @@ impl VulkanState for Allocation {
     unsafe fn deinitialize(&mut self, context: &DeviceContext) {
         let alloc = Allocation {
             allocation: std::mem::replace(&mut self.allocation, MaybeUninit::uninit()),
+            flags: self.flags,
+            location: self.location,
             size: self.size,
+            alloc_layout: self.alloc_layout,
             buffer: self.buffer,
         };
         context
@@ -2107,6 +2257,7 @@ impl VulkanState for ImageAllocation {
 
 pub struct Allocator {
     allocator: RefCell<Option<gpu_allocator::vulkan::Allocator>>,
+    bucket_cache: RefCell<AllocationCache>,
     device: ash::Device,
     allocator_capacity: Cell<u64>,
     max_capacity: u64,
@@ -2139,8 +2290,19 @@ impl Allocator {
             device,
             allocator_capacity,
             max_capacity: capacity,
+            bucket_cache: Default::default(),
         }
     }
+    pub fn flush_cache(&self) -> usize {
+        let (total_size, to_release) = self.bucket_cache.borrow_mut().flush();
+        let mut allocator = self.allocator.borrow_mut();
+        let allocator = allocator.as_mut().unwrap();
+        for alloc in to_release {
+            allocator.free(alloc).unwrap();
+        }
+        total_size
+    }
+
     pub fn allocate(
         &self,
         layout: Layout,
@@ -2148,17 +2310,27 @@ impl Allocator {
         location: MemoryLocation,
     ) -> gpu_allocator::Result<Allocation> {
         assert_ne!(layout.size(), 0);
+        let use_flags = use_flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+
+        // round up size into well sized buckets:
+        let round_to = layout.size().next_power_of_two() >> 8;
+        let alloc_layout = if round_to > 0 {
+            let new_size = layout.size().next_multiple_of(round_to);
+            Layout::from_size_align(new_size, layout.align()).unwrap()
+        } else {
+            layout
+        };
 
         let size = layout.size() as u64;
+        assert!(alloc_layout.size() >= size as _);
 
         // Setup vulkan info
-        let vk_info = vk::BufferCreateInfo::default()
-            .size(size)
-            .usage(use_flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS);
+        let vk_info = vk::BufferCreateInfo::default().size(size).usage(use_flags);
 
         let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
         let mut requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         requirements.alignment = requirements.alignment.max(layout.align() as u64);
+        requirements.size = alloc_layout.size() as u64;
 
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
@@ -2170,23 +2342,32 @@ impl Allocator {
         let allow_capacity_increase = self.allocator_capacity.get() < self.max_capacity
             || location != MemoryLocation::GpuOnly;
 
-        let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-            name: "buffer allocation",
-            requirements,
+        let mut bucket_cache = self.bucket_cache.borrow_mut();
+        let allocation = if let Some(alloc) = bucket_cache.try_alloc(AllocationRequestDescriptor {
+            layout: alloc_layout,
             location,
-            linear: true, // Buffers are always linear
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            allow_capacity_increase,
-        });
-        let allocation = match allocation {
-            Ok(a) => a,
-            Err(e) => {
-                //println!(
-                //    "Allocation with layout {:?} failed, flags: {:?}, location: {:?}: {:?}",
-                //    layout, use_flags, location, e
-                //);
-                unsafe { self.device.destroy_buffer(buffer, None) };
-                return Err(e);
+        }) {
+            alloc
+        } else {
+            //bucket_cache.print_report();
+            let allocation = allocator.allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                name: "buffer allocation",
+                requirements,
+                location,
+                linear: true, // Buffers are always linear
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+                allow_capacity_increase,
+            });
+            match allocation {
+                Ok(a) => a,
+                Err(e) => {
+                    //println!(
+                    //    "Allocation with layout {:?} failed, flags: {:?}, location: {:?}: {:?}",
+                    //    layout, use_flags, location, e
+                    //);
+                    unsafe { self.device.destroy_buffer(buffer, None) };
+                    return Err(e);
+                }
             }
         };
 
@@ -2201,17 +2382,27 @@ impl Allocator {
 
         Ok(Allocation {
             allocation: MaybeUninit::new(allocation),
+            flags: use_flags,
+            location,
             size,
+            alloc_layout,
             buffer,
         })
     }
 
     /// Safety: Allocation must come from this allocator
-    pub unsafe fn deallocate(&self, allocation: Allocation) {
+    unsafe fn deallocate(&self, allocation: Allocation) {
         let mut allocator = self.allocator.borrow_mut();
         let allocator = allocator.as_mut().unwrap();
         let allocation_inner = allocation.allocation.assume_init();
-        allocator.free(allocation_inner).unwrap();
+
+        if let Some(allocation_inner) = self.bucket_cache.borrow_mut().try_dealloc(
+            allocation_inner,
+            allocation.alloc_layout,
+            allocation.location,
+        ) {
+            allocator.free(allocation_inner).unwrap();
+        }
         unsafe { self.device.destroy_buffer(allocation.buffer, None) };
 
         self.allocator_capacity.set(allocator_capacity(&allocator));
@@ -2281,6 +2472,7 @@ impl Allocator {
     }
 
     pub fn deinitialize(&mut self) {
+        self.flush_cache();
         let mut a = self.allocator.borrow_mut();
         let mut tmp = None;
         std::mem::swap(&mut *a, &mut tmp);
