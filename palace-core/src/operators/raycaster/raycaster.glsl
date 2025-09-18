@@ -241,53 +241,83 @@ void main()
                     m_in.dimensions = level.dimensions.vals;
                     m_in.chunk_size = level.chunk_size.vals;
 
+                    float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
+
+                    #ifdef CONST_TABLE_DTYPE
+                    uint skip_level_num = level_num;
+                    bool break_outer = false;
+                    while(t <= t_end) {
+                        LOD skip_level = vol.levels[skip_level_num];
+
+                        TensorMetaData(3) level_m_in;
+                        level_m_in.dimensions = skip_level.dimensions.vals;
+                        level_m_in.chunk_size = skip_level.chunk_size.vals;
+
+                        TensorMetaData(3) const_table_m_in;
+                        const_table_m_in.dimensions = dim_in_bricks(level_m_in);
+                        const_table_m_in.chunk_size = skip_level.const_brick_table_chunk_size.vals;
+
+                        vec3 p = start + t*dir;
+                        vec3 pos_voxel_g = round(world_to_voxel(p, skip_level));
+                        float[3] pos_voxel = from_glsl(pos_voxel_g);
+                        float[3] sample_chunk_pos = div(pos_voxel, to_float(level_m_in.chunk_size));
+
+                        CONST_TABLE_DTYPE sampled_chunk_value;
+                        try_sample(CONST_TABLE_DTYPE, 3, sample_chunk_pos, const_table_m_in, skip_level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
+
+                        if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
+                            if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
+                                float[3] bbsize = to_float(level_m_in.chunk_size);
+                                float[3] in_bb_pos = mod(pos_voxel, bbsize);
+                                float[3] space_minus = neg(in_bb_pos);
+                                float[3] space_plus = sub(bbsize, in_bb_pos);
+                                float[3] p_dir = from_glsl(dir);
+                                float[3] steps_minus = div(space_minus, p_dir);
+                                float[3] steps_plus = div(space_plus, p_dir);
+                                float[3] min_per_dim = max(steps_minus, steps_plus);
+                                float[3] spacing = level.spacing.vals;
+                                float[3] min_per_dim_rw = mul(min_per_dim, spacing);
+                                float skip_step = hmin(min_per_dim_rw);
+                                float final_step = floor(skip_step/step) * step + step; //Go back onto step grid
+
+                                t += final_step;
+
+                                u8vec4 sample_col = classify(sampled_chunk_value);
+                                float norm_step = final_step / diag;
+                                update_state(t, state_color, sample_col, norm_step);
+
+                                if(skip_level_num < NUM_LEVELS-1) {
+                                    // Maybe we can skip even more, try again at a coarser level
+                                    skip_level_num += 1;
+                                }
+                            } else {
+                                if(skip_level_num == level_num) {
+                                    // Already at finest level that we want to look at.
+                                    break;
+                                } else {
+                                    // Cannot skip current level, try finer.
+                                    skip_level_num -= 1;
+                                }
+                            }
+                        } else if(cbt_sample_state.result == SAMPLE_RES_NOT_PRESENT) {
+                            uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, skip_level_num + NUM_LEVELS);
+                            try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
+                            break_outer = true;
+                            break;
+                        } else /*cbt_sample_state.result == SAMPLE_RES_OUTSIDE*/ {
+                            // Should only happen at the border of the volume due to rounding errors
+                            break;
+                        }
+                    }
+                    if(break_outer) {
+                        break;
+                    }
+                    #endif
+
                     vec3 p = start + t*dir;
 
                     vec3 pos_voxel_g = round(world_to_voxel(p, level));
                     float[3] pos_voxel = from_glsl(pos_voxel_g);
-
-                    float step = length(abs(dir) * to_glsl_vec3(level.spacing)) / oversampling_factor;
-
-                    #ifdef CONST_TABLE_DTYPE
-                    TensorMetaData(3) const_table_m_in;
-                    float[3] sample_chunk_pos = div(pos_voxel, to_float(m_in.chunk_size));
-                    const_table_m_in.dimensions = dim_in_bricks(m_in);
-                    const_table_m_in.chunk_size = level.const_brick_table_chunk_size.vals;
-
-                    CONST_TABLE_DTYPE sampled_chunk_value;
-                    try_sample(CONST_TABLE_DTYPE, 3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
-
-                    if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
-                        if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
-                            float[3] bbsize = to_float(m_in.chunk_size);
-                            float[3] in_bb_pos = mod(pos_voxel, bbsize);
-                            float[3] space_minus = neg(in_bb_pos);
-                            float[3] space_plus = sub(bbsize, in_bb_pos);
-                            float[3] p_dir = from_glsl(dir);
-                            float[3] steps_minus = div(space_minus, p_dir);
-                            float[3] steps_plus = div(space_plus, p_dir);
-                            float[3] min_per_dim = max(steps_minus, steps_plus);
-                            float[3] spacing = level.spacing.vals;
-                            float[3] min_per_dim_rw = mul(min_per_dim, spacing);
-                            float skip_step = hmin(min_per_dim_rw);
-                            float final_step = floor(skip_step/step) * step + step; //Go back onto step grid
-
-                            t += final_step;
-
-                            u8vec4 sample_col = classify(sampled_chunk_value);
-                            float norm_step = final_step / diag;
-                            update_state(t, state_color, sample_col, norm_step);
-
-                            continue;
-                        }
-                    } else if(cbt_sample_state.result == SAMPLE_RES_NOT_PRESENT) {
-                        uint64_t query_value = pack_tensor_query_value(cbt_sample_state.chunk_pos_linear, level_num + NUM_LEVELS);
-                        try_insert_into_hash_table(request_table.values, REQUEST_TABLE_SIZE, query_value);
-                        break;
-                    } else /*cbt_sample_state.result == SAMPLE_RES_OUTSIDE*/ {
-                        // Should only happen at the border of the volume due to rounding errors
-                    }
-                    #endif
 
                     float sampled_intensity;
 
