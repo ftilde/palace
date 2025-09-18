@@ -102,6 +102,15 @@ float[_N] div(float[_N] l, float[_N] r) {
     return res;
 }
 
+float[_N] mod(float[_N] l, float[_N] r) {
+    float[_N] res;
+    for(int i=0; i<_N; i+=1) {
+        float div = l[i] / r[i];
+        res[i] = fract(div) * r[i];
+    }
+    return res;
+}
+
 float[_N] min(float[_N] l, float[_N] r) {
     float[_N] res;
     for(int i=0; i<_N; i+=1) {
@@ -338,6 +347,21 @@ uint hmul(uint[_N] v) {
     uint res = 1;
     for(int i=0; i<_N; i+=1) {
         res *= v[i];
+    }
+    return res;
+}
+
+float hmin(float[_N] v) {
+    float res = v[0];
+    for(int i=1; i<_N; i+=1) {
+        res = min(res, v[i]);
+    }
+    return res;
+}
+float hmax(float[_N] v) {
+    float res = v[0];
+    for(int i=1; i<_N; i+=1) {
+        res = max(res, v[i]);
     }
     return res;
 }

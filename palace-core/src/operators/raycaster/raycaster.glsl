@@ -259,10 +259,20 @@ void main()
 
                     if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
                         if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
-                            t += step;
+                            float[3] bbsize = to_float(m_in.chunk_size);
+                            float[3] in_bb_pos = mod(pos_voxel, bbsize);
+                            float[3] space_minus = neg(in_bb_pos);
+                            float[3] space_plus = sub(bbsize, in_bb_pos);
+                            float[3] p_dir = from_glsl(dir);
+                            float[3] steps_minus = div(space_minus, p_dir);
+                            float[3] steps_plus = div(space_plus, p_dir);
+                            float skip_step = hmin(max(steps_minus, steps_plus));
+                            float final_step = floor(skip_step/step) * step + step; //Go back onto step grid
+
+                            t += final_step;
 
                             u8vec4 sample_col = classify(sampled_chunk_value);
-                            float norm_step = step / diag;
+                            float norm_step = final_step / diag;
                             update_state(t, state_color, sample_col, norm_step);
 
                             continue;
