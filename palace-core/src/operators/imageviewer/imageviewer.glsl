@@ -5,8 +5,6 @@
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
-#define ChunkValue u8vec4
-
 #include <util.glsl>
 #include <util2d.glsl>
 #include <color.glsl>
@@ -63,7 +61,7 @@ void main()
 
 
             ChunkSampleState sample_state = init_chunk_sample_state();
-            try_sample(2, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, val);
+            try_sample(u8vec4, 2, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, val);
 
             if(sample_state.result == SAMPLE_RES_FOUND) {
                 state.values[gID] = INIT_VAL;

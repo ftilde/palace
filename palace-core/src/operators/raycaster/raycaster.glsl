@@ -4,8 +4,6 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 
-#define ChunkValue INPUT_DTYPE
-
 #include <util.glsl>
 #include <hash.glsl>
 #include <sample.glsl>
@@ -257,7 +255,7 @@ void main()
                     const_table_m_in.chunk_size = level.const_brick_table_chunk_size.vals;
 
                     CONST_TABLE_DTYPE sampled_chunk_value;
-                    try_sample(3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
+                    try_sample(CONST_TABLE_DTYPE, 3, sample_chunk_pos, const_table_m_in, level.const_brick_table_page_table_root, use_table, USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
 
                     if(cbt_sample_state.result == SAMPLE_RES_FOUND) {
                         if (floatBitsToUint(sampled_chunk_value) != MARKER_NOT_CONST_BITS) {
@@ -282,11 +280,11 @@ void main()
 
                     #ifdef SHADING_NONE
                     INPUT_DTYPE sampled_intensity_raw;
-                    try_sample(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
+                    try_sample(INPUT_DTYPE, 3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
                     sampled_intensity = float(sampled_intensity_raw);
                     #else
                     float[3] grad_f;
-                    try_sample_with_grad(3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity, grad_f);
+                    try_sample_with_grad(INPUT_DTYPE, 3, pos_voxel, m_in, level.page_table_root, use_table, USE_TABLE_SIZE, sample_state, sampled_intensity, grad_f);
                     #endif
 
 

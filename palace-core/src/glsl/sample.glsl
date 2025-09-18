@@ -3,18 +3,10 @@
 #ifndef GLSL_SAMPLE
 #define GLSL_SAMPLE
 
-#ifndef ChunkValue
-#error ChunkValue is not defined
-#endif
-
 #include<page_table.glsl>
 #include<vec.glsl>
 #include<tensormetadata.glsl>
 #include<hash.glsl>
-
-layout(buffer_reference, std430) buffer Chunk {
-    ChunkValue values[];
-};
 
 layout(buffer_reference, std430) buffer UseTableType {
     uint64_t values[];
@@ -24,12 +16,28 @@ const int SAMPLE_RES_FOUND = 0;
 const int SAMPLE_RES_OUTSIDE = 1;
 const int SAMPLE_RES_NOT_PRESENT = 2;
 
-int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_table, uint use_table_size, out Chunk chunk) {
+#define CONCAT_(A, B) A ## B
+#define CONCAT(A, B) CONCAT_(A, B)
+#define Chunk(_type) CONCAT(Chunk_, _type)
+
+struct ChunkSampleState {
+    uint64_t chunk;
+    uint64_t chunk_pos_linear;
+    PageTablePage root;
+    int result;
+};\
+
+#define declare_chunk_type(_type)\
+layout(buffer_reference, std430) buffer Chunk(_type) {\
+    _type values[]; \
+};\
+
+int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_table, uint use_table_size, out uint64_t chunk) {
     uvec3 level_indices = page_table_index_to_level_indices(chunk_index);
 
     PageTablePage l1 = PageTablePage(root.values[level_indices[0]]);
     if(uint64_t(l1) == 0) {
-        //debugPrintfEXT("not found l1 %lu: %d\n", uint64_t(chunk), level_indices[0]);
+        /*debugPrintfEXT("not found l1 %lu: %dn", uint64_t(chunk), level_indices[0]);*/
         return SAMPLE_RES_NOT_PRESENT;
     }
     if(uint64_t(use_table) != 0) {
@@ -38,67 +46,73 @@ int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_ta
 
     PageTablePage l2 = PageTablePage(l1.values[level_indices[1]]);
     if(uint64_t(l2) == 0) {
-        //debugPrintfEXT("not found l2 %lu: %d\n", uint64_t(chunk), level_indices[1]);
+        /*debugPrintfEXT("not found l2 %lu: %dn", uint64_t(chunk), level_indices[1]);*/
         return SAMPLE_RES_NOT_PRESENT;
     }
     if(uint64_t(use_table) != 0) {
         try_insert_into_hash_table(use_table.values, use_table_size, uint64_t(l2));
     }
 
-    chunk = Chunk(l2.values[level_indices[2]]);
-    if(uint64_t(chunk) == 0) {
-        //debugPrintfEXT("not found leaf %lu: %d\n", uint64_t(chunk), level_indices[2]);
+    chunk = l2.values[level_indices[2]];
+    if(chunk == 0) {
+        /*debugPrintfEXT("not found leaf %lu: %dn", uint64_t(chunk), level_indices[2]);*/
         return SAMPLE_RES_NOT_PRESENT;
     }
     if(uint64_t(use_table) != 0) {
-        try_insert_into_hash_table(use_table.values, use_table_size, uint64_t(chunk));
+        try_insert_into_hash_table(use_table.values, use_table_size, chunk);
     }
 
-    //debugPrintfEXT("found %lu: %d %d %d \n", uint64_t(chunk), level_indices[0], level_indices[1], level_indices[2]);
+    /*debugPrintfEXT("found %lu: %d %d %d n", uint64_t(chunk), level_indices[0], level_indices[1], level_indices[2]);*/
 
     return SAMPLE_RES_FOUND;
 }
 
-struct ChunkSampleState {
-    Chunk chunk;
-    uint64_t chunk_pos_linear;
-    PageTablePage root;
-    int result;
-};
 
 ChunkSampleState init_chunk_sample_state() {
     ChunkSampleState ret;
-    ret.chunk = Chunk(0UL);
+    ret.chunk = 0UL;
     ret.root = PageTablePage(0UL);
-    //ret.chunk_pos_linear = ...;
-    //ret.result = SAMPLE_RES_NOT_PRESENT;
+    /*ret.chunk_pos_linear = ...;*/
+    /*ret.result = SAMPLE_RES_NOT_PRESENT;*/
     return ret;
 }
 
 void update_chunk_sample_state(inout ChunkSampleState state, PageTablePage root, UseTableType use_table, uint use_table_size, uint64_t new_chunk_pos_linear) {
     if(uint64_t(root) != uint64_t(state.root) || new_chunk_pos_linear != state.chunk_pos_linear) {
         state.chunk_pos_linear = new_chunk_pos_linear;
-        state.chunk = Chunk(0UL);
+        state.chunk = 0UL;
         state.root = root;
         state.result = try_find_chunk(root, state.chunk_pos_linear, use_table, use_table_size, state.chunk);
     }
 }
 
-/*
-//#define sample_local(brick, local, vm, o) {\
-//    uint local_index = to_linear((local), (vm).chunk_size);\
-//    (o) = (brick).values[local_index];\
-//}
-*/
+
+#define sample_local(brick, local, vm, o) {\
+    uint local_index = to_linear((local), (vm).chunk_size);\
+    (o) = (brick).values[local_index];\
+}
+
+
+declare_chunk_type(uint)
+declare_chunk_type(int)
+declare_chunk_type(float)
+#ifdef GL_EXT_shader_explicit_arithmetic_types_int8_enabled
+declare_chunk_type(uint8_t)
+declare_chunk_type(int8_t)
+declare_chunk_type(u8vec4)
+#endif
+#ifdef GL_EXT_shader_explicit_arithmetic_types_int16_enabled
+declare_chunk_type(uint16_t)
+declare_chunk_type(int16_t)
+#endif
+#ifdef GL_EXT_shader_explicit_arithmetic_types_int64_enabled
+declare_chunk_type(uint64_t)
+declare_chunk_type(int64_t)
+#endif
 
 #define MAX_CHUNK_ID_BITS 48
 uint64_t pack_tensor_query_value(uint64_t chunk_id, uint level) {
     return (uint64_t(level) << MAX_CHUNK_ID_BITS) | (chunk_id & ((1UL << MAX_CHUNK_ID_BITS) - 1));
-}
-
-ChunkValue sample_local(Chunk brick, uint[3] loc, TensorMetaData(3) vm) {
-    uint local_index = to_linear(loc, vm.chunk_size);
-    return brick.values[local_index];
 }
 
 uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool clamped) {
@@ -108,7 +122,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
     return o;
 }
 
-#define try_sample_with_grad(N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value, grad) {\
+#define try_sample_with_grad(_type, N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value, grad) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \
     if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
@@ -127,12 +141,14 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] local_end = sub(brick_end, brick_begin);\
             /*uint local_index = to_linear(local, (vm).chunk_size);\
             float v = sample_state.chunk.values[local_index];*/\
-            ChunkValue v = sample_local(sample_state.chunk, local, vm);\
+            _type v;\
+            sample_local(Chunk(_type)(sample_state.chunk), local, vm, v);\
 \
             for(int d = 0; d<N; ++d) {\
                 bool clamped = false;\
-                float p = sample_local(sample_state.chunk, offset_in_chunk(local, d,  1, local_end, clamped), vm);\
-                float m = sample_local(sample_state.chunk, offset_in_chunk(local, d, -1, local_end, clamped), vm);\
+                float p,m;\
+                sample_local(Chunk(_type)(sample_state.chunk), offset_in_chunk(local, d,  1, local_end, clamped), vm, p);\
+                sample_local(Chunk(_type)(sample_state.chunk), offset_in_chunk(local, d, -1, local_end, clamped), vm, m);\
                 float div_inv = clamped ? 1.0 : 0.5;\
                 grad[d] = (p-m)*div_inv;\
             }\
@@ -143,7 +159,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
     }\
 }
 
-#define try_sample(N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value) {\
+#define try_sample(_type, N, sample_pos_in, vm, bricks, use_table, use_table_size, sample_state, value) {\
     int[N] sample_pos_u = to_int(sample_pos_in);\
 \
     if(all(less_than_equal(fill(sample_pos_u, 0), sample_pos_u)) && all(less_than(sample_pos_u, to_int((vm).dimensions)))) {\
@@ -159,7 +175,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] local = sub(sample_pos, brick_begin);\
             uint local_index = to_linear(local, (vm).chunk_size);\
-            ChunkValue v = sample_state.chunk.values[local_index];\
+            _type v = Chunk(_type)(sample_state.chunk).values[local_index];\
             (value) = v;\
         }\
     } else {\

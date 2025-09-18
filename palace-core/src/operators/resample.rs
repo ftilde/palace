@@ -224,8 +224,6 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
 #include <util.glsl>
 #include <size_util.glsl>
 
-#define ChunkValue T
-
 #define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
@@ -264,7 +262,7 @@ void main() {
     ChunkSampleState sample_state = init_chunk_sample_state();
 
     T sampled_intensity;
-    try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, sampled_intensity);
+    try_sample(T, N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, sampled_intensity);
 
     if(sample_state.result == SAMPLE_RES_FOUND) {
         // Nothing to do!

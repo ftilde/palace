@@ -12,8 +12,6 @@
 #include <randomwalker_shared.glsl>
 #include <atomic.glsl>
 
-#define ChunkValue float
-
 #define BRICK_MEM_SIZE BRICK_MEM_SIZE_IN
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
@@ -96,7 +94,7 @@ void main() {
                 PageTablePage page_table_root = PageTablePage(consts.page_table_root);
 
                 ChunkSampleState sample_state = init_chunk_sample_state();
-                try_sample(N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, seed_value);
+                try_sample(float, N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, seed_value);
 
                 if(sample_state.result == SAMPLE_RES_FOUND) {
                     min_val = min(min_val, seed_value);

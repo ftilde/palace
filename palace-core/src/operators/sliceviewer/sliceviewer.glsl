@@ -4,8 +4,6 @@
 #extension GL_EXT_shader_atomic_int64 : require
 #extension GL_EXT_scalar_block_layout : require
 
-#define ChunkValue INPUT_DTYPE
-
 #include <util.glsl>
 #include <util2d.glsl>
 #include <color.glsl>
@@ -85,7 +83,7 @@ void main()
             ChunkSampleState cbt_sample_state = init_chunk_sample_state();
 
             CONST_TABLE_DTYPE sampled_chunk_value;
-            try_sample(3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
+            try_sample(CONST_TABLE_DTYPE, 3, sample_chunk_pos, const_table_m_in, PageTablePage(consts.cbt_page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, cbt_sample_state, sampled_chunk_value);
             res = cbt_sample_state.result;
 
             sampled_intensity = float(sampled_chunk_value);
@@ -109,7 +107,7 @@ void main()
                 INPUT_DTYPE sampled_intensity_raw;
                 ChunkSampleState sample_state = init_chunk_sample_state();
 
-                try_sample(3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
+                try_sample(INPUT_DTYPE, 3, sample_pos, m_in, PageTablePage(consts.page_table_root), UseTableType(consts.use_table), USE_TABLE_SIZE, sample_state, sampled_intensity_raw);
                 res = sample_state.result;
 
                 sampled_intensity = float(sampled_intensity_raw);
