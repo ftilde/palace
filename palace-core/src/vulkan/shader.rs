@@ -104,6 +104,9 @@ impl<'a> Shader<'a> {
 
     pub fn ext(mut self, opt_ext: Option<&'static str>) -> Self {
         self.config = self.config.ext(opt_ext);
+        if let Some(ext) = opt_ext {
+            self.defines = self.defines.add(format!("{}_enabled", ext), "1");
+        }
         self
     }
 
