@@ -87,12 +87,18 @@ pub fn ensure_compatibility<D: DynDimension, E: ElementType>(
     input: &LODTensorOperator<D, E>,
     const_brick_table: &LODTensorOperator<D, E>,
 ) -> Result<DType, crate::Error> {
-    let dtype = input.dtype().into();
-    let const_table_dtype: DType = input.dtype().into();
-    if dtype.size != 1 {
+    let const_table_dtype: DType = const_brick_table.dtype().into();
+    if const_table_dtype.size != 1 {
         return Err(format!(
             "const_brick_table element must be one-dimensional: {:?}",
-            dtype
+            const_table_dtype
+        )
+        .into());
+    }
+    if const_table_dtype.scalar != ScalarType::F32 {
+        return Err(format!(
+            "const_brick_table dtype must be f32 but is {:?}",
+            const_table_dtype
         )
         .into());
     }
