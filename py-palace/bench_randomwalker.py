@@ -148,7 +148,7 @@ def apply_weight_function(volume):
 
 fg_seeds_tensor = pc.from_numpy(foreground_seeds).fold_into_dtype()
 bg_seeds_tensor = pc.from_numpy(background_seeds).fold_into_dtype()
-weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0])))).cache()
+weights = vol.map(lambda level: apply_weight_function(level.inner).embedded(pc.TensorEmbeddingData(np.append(level.embedding_data.spacing, [1.0]))))
 rw_result, rw_cct = pc.hierarchical_randomwalker(weights, fg_seeds_tensor, bg_seeds_tensor, max_iter=args.max_iter, max_residuum_norm=args.max_residuum_norm, residuum_check_period=8)
 rw_result = rw_result.cache_coarse_levels()
 rw_cct = rw_cct.cache_coarse_levels()
@@ -200,18 +200,15 @@ def sorted_zorder(chunks):
 
 #dim_in_chunks = [800//l0md.chunk_size[0]]*3
 
-all_chunks = list(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)))
-all_chunks = sorted_zorder(all_chunks)
-
 inner_batch_size = batch_size
 
-def non_empty(all_chunks, cct_batch_size):
+def non_empty(cct_level, all_chunks, cct_batch_size):
     current_batch = []
     full_chunks = 0
     for full_batch in itertools.batched(all_chunks, cct_batch_size):
         cct_chunks_positions = list(map(lambda c: list(map(lambda l,r: l//r, c, cct_l0md.chunk_size)), full_batch))
         cct_in_chunks_positions = list(map(lambda c: list(map(lambda l,r: l%r, c, cct_l0md.chunk_size)), full_batch))
-        cct_chunks = rt.resolve(rw_cct.levels[0], cct_chunks_positions, record_task_stream=False)
+        cct_chunks = rt.resolve(cct_level, cct_chunks_positions, record_task_stream=False)
         is_const = list(map(lambda cct_chunk, in_chunk_pos: not math.isnan(cct_chunk[tuple(in_chunk_pos)]), cct_chunks, cct_in_chunks_positions))
         current_batch = current_batch + [pos for pos, is_const in zip(full_batch, is_const) if not is_const]
         full_chunks += len(full_batch)
@@ -223,22 +220,31 @@ def non_empty(all_chunks, cct_batch_size):
 
     yield full_chunks, current_batch
 
-for num_full_chunks, batch in non_empty(all_chunks, batch_size*8):
-    chunks = rt.resolve(rw_result.levels[0], batch, record_task_stream=False)
+for i, (level, cct_level) in reversed(list(enumerate(zip(rw_result.levels, rw_cct.levels)))):
+#for i, (level, cct_level) in [(0, (rw_result.levels[0], rw_cct.levels[0]))]:
+    print(f" ========================= Level {i} ========================== ")
 
-    end = time.time()
-    total_considered += num_full_chunks
-    total_computed += len(batch)
-    io_size = num_full_chunks * chunk_size_bytes
-    total_size += io_size
+    dim_in_chunks = list(map(lambda l,r: math.ceil(l/r), level.metadata.dimensions, level.metadata.chunk_size))
 
-    io_per_s = io_size / (end - begin)
-    io_per_s_str = sizeof_fmt(io_per_s, suffix="B/s")
+    all_chunks = list(itertools.product(*map(lambda end: range(0, end), dim_in_chunks)))
+    all_chunks = sorted_zorder(all_chunks)
 
-    total_io_per_s = total_size / (end - start)
-    total_io_per_s_str = sizeof_fmt(total_io_per_s, suffix="B/s")
+    for num_full_chunks, batch in non_empty(cct_level, all_chunks, batch_size*8):
+        chunks = rt.resolve(level, batch, record_task_stream=False)
 
-    total_io_str = sizeof_fmt(total_size, suffix="B")
+        end = time.time()
+        total_considered += num_full_chunks
+        total_computed += len(batch)
+        io_size = num_full_chunks * chunk_size_bytes
+        total_size += io_size
 
-    print("Got {} chunks, {} total, {} computed \t| {} \t| total {} \t| sum {}".format(num_full_chunks, total_considered, total_computed, io_per_s_str, total_io_per_s_str, total_io_str))
-    begin = end
+        io_per_s = io_size / (end - begin)
+        io_per_s_str = sizeof_fmt(io_per_s, suffix="B/s")
+
+        total_io_per_s = total_size / (end - start)
+        total_io_per_s_str = sizeof_fmt(total_io_per_s, suffix="B/s")
+
+        total_io_str = sizeof_fmt(total_size, suffix="B")
+
+        print("Got {} chunks, {} total, {} computed \t| {} \t| total {} \t| sum {}".format(num_full_chunks, total_considered, total_computed, io_per_s_str, total_io_per_s_str, total_io_str))
+        begin = end
