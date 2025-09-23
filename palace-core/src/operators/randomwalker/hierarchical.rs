@@ -874,47 +874,55 @@ fn rw_const_chunk_table<D: DynDimension + LargerDim>(
                 let this_level_to_upper_level =
                     determined_hierarchical.embedding_data.physical_to_voxel()
                         * &out_ed.voxel_to_physical();
+                let this_level_to_upper_level = &this_level_to_upper_level;
 
-                for pos in positions {
-                    let mut out_chunk = ctx
-                        .submit(ctx.alloc_slot(pos, &out_md.chunk_size))
-                        .await
-                        .unwrap();
-                    let out_chunk_info = out_md.chunk_info(pos);
+                let _ = ctx
+                    .run_unordered(positions.into_iter().map(move |pos| {
+                        async move {
+                            let mut out_chunk = ctx
+                                .submit(ctx.alloc_slot(pos, &out_md.chunk_size))
+                                .await
+                                .unwrap();
+                            let out_chunk_info = out_md.chunk_info(pos);
 
-                    let chunk_positions_this_level = (0..nd)
-                        .into_iter()
-                        .map(|i| out_chunk_info.begin[i].raw..out_chunk_info.end()[i].raw)
-                        .multi_cartesian_product()
-                        .map(|coordinates| {
-                            Vector::<D, GlobalCoordinate>::try_from(coordinates).unwrap()
-                        });
+                            let chunk_positions_this_level = (0..nd)
+                                .into_iter()
+                                .map(|i| out_chunk_info.begin[i].raw..out_chunk_info.end()[i].raw)
+                                .multi_cartesian_product()
+                                .map(|coordinates| {
+                                    Vector::<D, GlobalCoordinate>::try_from(coordinates).unwrap()
+                                });
 
-                    for pos_this_level in chunk_positions_this_level {
-                        let this_level_local = out_chunk_info.in_chunk(&pos_this_level);
-                        let this_level_linear_pos =
-                            crate::vec::to_linear(&this_level_local, &out_md.chunk_size);
+                            for pos_this_level in chunk_positions_this_level {
+                                let this_level_local = out_chunk_info.in_chunk(&pos_this_level);
+                                let this_level_linear_pos =
+                                    crate::vec::to_linear(&this_level_local, &out_md.chunk_size);
 
-                        let pos_upper_level = this_level_to_upper_level
-                            .clone()
-                            .transform(&pos_this_level.raw().f32())
-                            .map(|v| v.floor() as u32)
-                            .global();
+                                let pos_upper_level = this_level_to_upper_level
+                                    .clone()
+                                    .transform(&pos_this_level.raw().f32())
+                                    .map(|v| v.floor() as u32)
+                                    .global();
 
-                        //TODO: we should really check all overlapping chunks
+                                //TODO: we should really check all overlapping chunks
 
-                        let mut val =
-                            sample_chunk(*ctx, &determined_hierarchical, &pos_upper_level).await;
+                                let mut val =
+                                    sample_chunk(*ctx, &determined_hierarchical, &pos_upper_level)
+                                        .await;
 
-                        if !is_const_chunk_value(val) && **use_this_result_fallback {
-                            val = sample_chunk(*ctx, &determined_derived, &pos_this_level).await;
+                                if !is_const_chunk_value(val) && **use_this_result_fallback {
+                                    val = sample_chunk(*ctx, &determined_derived, &pos_this_level)
+                                        .await;
+                                }
+
+                                out_chunk[this_level_linear_pos].write(val);
+                            }
+
+                            unsafe { out_chunk.initialized(*ctx) };
                         }
-
-                        out_chunk[this_level_linear_pos].write(val);
-                    }
-
-                    unsafe { out_chunk.initialized(*ctx) };
-                }
+                        .into()
+                    }))
+                    .await;
 
                 Ok(())
             }
