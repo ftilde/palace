@@ -827,6 +827,11 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
         .unwrap();
     let variance = variance(tensor.clone(), extent.clone());
 
+    for i in 0..extent.dim().n() {
+        assert_eq!(extent[0], extent[i], "Must be a square kernel");
+    }
+    let extent = extent[0];
+
     let nd = tensor.metadata.dim().n();
 
     let out_md = tensor
@@ -892,10 +897,8 @@ pub fn random_walker_weights_bian<D: DynDimension + LargerDim>(
 
                             let variance = ctx.submit(variance.request_scalar()).await;
 
-                            let size = extent.map(|e| 2 * e + 1);
-                            let kernel_size = size.hmul();
-                            let variance_correction_factor =
-                                2.0 / (kernel_size.pow(nd as u32 + 1) as f32);
+                            let size = 2 * **extent + 1;
+                            let variance_correction_factor = 2.0 / (size.pow(nd as u32 + 1) as f32);
                             let diff_variance =
                                 (variance * variance_correction_factor).max(std::f32::MIN_POSITIVE);
                             let diff_variance_inv = 1.0 / diff_variance;
