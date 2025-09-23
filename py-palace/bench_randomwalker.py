@@ -220,8 +220,8 @@ def non_empty(cct_level, all_chunks, cct_batch_size):
 
     yield full_chunks, current_batch
 
-for i, (level, cct_level) in reversed(list(enumerate(zip(rw_result.levels, rw_cct.levels)))):
-#for i, (level, cct_level) in [(0, (rw_result.levels[0], rw_cct.levels[0]))]:
+#for i, (level, cct_level) in reversed(list(enumerate(zip(rw_result.levels, rw_cct.levels)))):
+for i, (level, cct_level) in [(0, (rw_result.levels[0], rw_cct.levels[0]))]:
     print(f" ========================= Level {i} ========================== ")
 
     dim_in_chunks = list(map(lambda l,r: math.ceil(l/r), level.metadata.dimensions, level.metadata.chunk_size))
