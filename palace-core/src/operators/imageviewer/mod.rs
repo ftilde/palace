@@ -226,7 +226,8 @@ pub fn view_image(
                                 .push_const_block_dyn(push_constants)
                                 .define("BRICK_MEM_SIZE", mem_size)
                                 .define("REQUEST_TABLE_SIZE", request_table_size)
-                                .define("USE_TABLE_SIZE", use_table_size),
+                                .define("USE_TABLE_SIZE", use_table_size)
+                                .ext(Some(crate::vulkan::shader::ext::INT8_TYPES)),
                         )
                         .local_size(LocalSizeConfig::Auto2D)
                         .build(device)
