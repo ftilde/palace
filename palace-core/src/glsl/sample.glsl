@@ -19,6 +19,8 @@ const int SAMPLE_RES_NOT_PRESENT = 2;
 #define CONCAT_(A, B) A ## B
 #define CONCAT(A, B) CONCAT_(A, B)
 #define Chunk(_type) CONCAT(Chunk_, _type)
+#define ChunkArrayType(_type, N) CONCAT(_type, N)
+#define ChunkArray(_type, N) Chunk(ChunkArrayType(_type, N))
 
 struct ChunkSampleState {
     uint64_t chunk;
@@ -30,6 +32,11 @@ struct ChunkSampleState {
 #define declare_chunk_type(_type)\
 layout(buffer_reference, std430) buffer Chunk(_type) {\
     _type values[]; \
+};\
+
+#define declare_chunk_type_array(_type, N)\
+layout(buffer_reference, std430) buffer ChunkArray(_type, N) {\
+    _type [ N ] values[]; \
 };\
 
 int try_find_chunk(PageTablePage root, uint64_t chunk_index, UseTableType use_table, uint use_table_size, out uint64_t chunk) {
@@ -141,8 +148,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] local_end = sub(brick_end, brick_begin);\
             /*uint local_index = to_linear(local, (vm).chunk_size);\
             float v = sample_state.chunk.values[local_index];*/\
-            _type v;\
-            sample_local(Chunk(_type)(sample_state.chunk), local, vm, v);\
+            sample_local(Chunk(_type)(sample_state.chunk), local, vm, (value));\
 \
             for(int d = 0; d<N; ++d) {\
                 bool clamped = false;\
@@ -152,7 +158,6 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
                 float div_inv = clamped ? 1.0 : 0.5;\
                 grad[d] = (p-m)*div_inv;\
             }\
-            (value) = v;\
         }\
     } else {\
         sample_state.result = SAMPLE_RES_OUTSIDE;\
@@ -175,8 +180,7 @@ uint[3] offset_in_chunk(uint[3] pos, int dim, int by, uint[3] end, inout bool cl
             uint[N] brick_begin = mul(sample_brick, (vm).chunk_size);\
             uint[N] local = sub(sample_pos, brick_begin);\
             uint local_index = to_linear(local, (vm).chunk_size);\
-            _type v = Chunk(_type)(sample_state.chunk).values[local_index];\
-            (value) = v;\
+            (value) = Chunk(_type)(sample_state.chunk).values[local_index];\
         }\
     } else {\
         sample_state.result = SAMPLE_RES_OUTSIDE;\

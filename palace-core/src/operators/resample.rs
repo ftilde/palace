@@ -228,6 +228,13 @@ pub fn resample_transform<D: LargerDim, T: ElementType>(
 #include <sample.glsl>
 #undef BRICK_MEM_SIZE
 
+#if T_DIM==1
+#define T_Sample T_SCALAR
+#else
+declare_chunk_type_array(T_SCALAR, T_DIM)
+#define T_Sample ChunkArrayType(T_SCALAR, T_DIM)
+#endif
+
 layout(std430, binding = 0) buffer OutputBuffer{
     T values[];
 } outputData;
@@ -262,7 +269,7 @@ void main() {
     ChunkSampleState sample_state = init_chunk_sample_state();
 
     T sampled_intensity;
-    try_sample(T, N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, sampled_intensity);
+    try_sample(T_Sample, N, sample_pos, m_in, page_table_root, UseTableType(0UL), 0, sample_state, sampled_intensity);
 
     if(sample_state.result == SAMPLE_RES_FOUND) {
         // Nothing to do!
@@ -338,6 +345,8 @@ void main() {
                                 .define("BRICK_MEM_SIZE_IN", mem_size)
                                 .define("N", nd)
                                 .define("T", dtype_dyn.glsl_type())
+                                .define("T_SCALAR", dtype_dyn.scalar.glsl_type())
+                                .define("T_DIM", dtype_dyn.size)
                                 .define("DEFAULT_VAL_INIT", default_val_init)
                                 .push_const_block_dyn(&push_constants)
                                 .ext(dtype_dyn.glsl_ext())
