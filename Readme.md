@@ -39,7 +39,9 @@ Chunks of input or intermediate tensors which may, for example, be outside of th
 Palace is a library written in rust that can be used in a number of ways.
 
 ## Prerequisites
-Install [rust](https://www.rust-lang.org) (preferably using your operating system's package manager)
+    - Install [rust](https://www.rust-lang.org) (preferably using your operating system's package manager)
+    - (Optionally) install python
+    - Install missing build requirements (depending on enabled features and platform). Possible prerequisites include cmake, ninja, pkg-config, vcpkg. A windows build also requires "Visual Studio Build Tools".
 
 ## Run example applications
 Build and run an example application:
@@ -54,6 +56,10 @@ where `<application>` can be one of the following:
     - demo-sliceviewer
     - demo-raycaster
     - demo-mean
+
+By default, all available tensor file formats are enabled.
+If you do not want to compile all (because you would need to install the native libraries for those), you need to pass the `--no-default-features` and `features=...` flags to enable specific formats to cargo.
+Possible values are: `hdf5`, `vvd`, `nifti`, `zarr`, `png`, `video` (using ffmpeg).
 
 ## Python bindings
 
