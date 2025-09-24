@@ -12,3 +12,12 @@ palace-winit = { path = "../palace-winit" }
 clap = { version = "4.0", features = ["derive"] }
 cgmath = { version="0.18.0" }
 bytesize = "1.3.0"
+
+[features]
+default = ["hdf5", "vvd", "nifti", "zarr", "png", "video"]
+hdf5 = ["palace-io/hdf5"]
+vvd = ["palace-io/vvd"]
+nifti = ["palace-io/nifti"]
+zarr = ["palace-io/zarr"]
+png = ["palace-io/png"]
+video = ["palace-io/video"]

@@ -49,8 +49,15 @@ impl TryInto<CTransFuncOperator> for TransFuncOperator {
 #[gen_stub_pyfunction]
 #[pyfunction]
 pub fn load_tf(path: std::path::PathBuf) -> PyResult<TransFuncOperator> {
-    let raw_tf = crate::map_result(palace_vvd::load_tfi(&path))?;
-    Ok(raw_tf.into())
+    #[cfg(feature = "vvd")]
+    {
+        let raw_tf = crate::map_result(palace_vvd::load_tfi(&path))?;
+        Ok(raw_tf.into())
+    }
+    #[cfg(not(feature = "vvd"))]
+    {
+        Err(crate::map_err("VVD support not enabled".into()))
+    }
 }
 
 #[gen_stub_pyfunction]

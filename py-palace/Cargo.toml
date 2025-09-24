@@ -15,8 +15,17 @@ pyo3-stub-gen = { git = "https://github.com/ftilde/pyo3-stub-gen", features = ["
 numpy = "0.25"
 derive_more = "0.99"
 palace-core = { path = "../palace-core" }
-palace-vvd = { path = "../palace-vvd" }
+palace-vvd = { path = "../palace-vvd", optional=true }
 palace-io = { path = "../palace-io" }
 palace-winit = { path = "../palace-winit" }
 state-link = { path = "../state-link" }
 id = { path = "../id" }
+
+[features]
+default = ["hdf5", "vvd", "nifti", "zarr", "png", "video"]
+hdf5 = ["palace-io/hdf5"]
+vvd = ["palace-io/vvd", "dep:palace-vvd"]
+nifti = ["palace-io/nifti"]
+zarr = ["palace-io/zarr"]
+png = ["palace-io/png"]
+video = ["palace-io/video"]

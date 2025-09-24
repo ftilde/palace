@@ -6,9 +6,18 @@ license = "MPL-2.0"
 
 [dependencies]
 palace-core = { path = "../palace-core" }
-palace-hdf5 = { path = "../palace-hdf5" }
-palace-vvd = { path = "../palace-vvd" }
-palace-nifti = { path = "../palace-nifti" }
-palace-zarr = { path = "../palace-zarr" }
-palace-png = { path = "../palace-png" }
-palace-video = { path = "../palace-video" }
+palace-hdf5 = { path = "../palace-hdf5", optional=true }
+palace-vvd = { path = "../palace-vvd", optional=true }
+palace-nifti = { path = "../palace-nifti", optional=true }
+palace-zarr = { path = "../palace-zarr", optional=true }
+palace-png = { path = "../palace-png", optional=true }
+palace-video = { path = "../palace-video", optional=true }
+
+[features]
+#default = ["hdf5", "vvd", "nifti", "zarr", "png", "video"]
+hdf5 = ["dep:palace-hdf5"]
+vvd = ["dep:palace-vvd"]
+nifti = ["dep:palace-nifti"]
+zarr = ["dep:palace-zarr"]
+png = ["dep:palace-png"]
+video = ["dep:palace-video"]

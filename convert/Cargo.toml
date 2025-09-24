@@ -7,8 +7,17 @@ license = "MPL-2.0"
 [dependencies]
 palace-core = { path = "../palace-core" }
 palace-io = { path = "../palace-io" }
-palace-zarr = { path = "../palace-zarr" }
-palace-hdf5 = { path = "../palace-hdf5" }
-palace-vvd = { path = "../palace-vvd" }
+palace-zarr = { path = "../palace-zarr", optional=true }
+palace-hdf5 = { path = "../palace-hdf5", optional=true }
+palace-vvd = { path = "../palace-vvd", optional=true }
 clap = { version = "4.0", features = ["derive"] }
 bytesize = "1.3.0"
+
+[features]
+default = ["hdf5", "vvd", "nifti", "zarr", "png", "video"]
+hdf5 = ["palace-io/hdf5", "dep:palace-hdf5"]
+vvd = ["palace-io/vvd", "dep:palace-vvd"]
+nifti = ["palace-io/nifti"]
+zarr = ["palace-io/zarr", "dep:palace-zarr"]
+png = ["palace-io/png"]
+video = ["palace-io/video"]

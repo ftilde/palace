@@ -51,6 +51,7 @@ pub fn open_single_level(
     let segments = file.split('.').collect::<Vec<_>>();
 
     Ok(match segments[..] {
+        #[cfg(feature = "vvd")]
         [.., "vvd"] => palace_vvd::open(
             &path,
             hints
@@ -60,20 +61,26 @@ pub fn open_single_level(
                 .ok_or_else(|| "Chunk size hint must be 3-dimensional for vvd".to_owned())?,
         )?
         .into_dyn(),
+        #[cfg(feature = "nifti")]
         [.., "nii"] | [.., "nii", "gz"] => palace_nifti::open_single(path)?.into_dyn(),
+        #[cfg(feature = "nifti")]
         [.., "hdr"] => {
             let data = path.with_extension("img");
             palace_nifti::open_separate(path, data)?.into_dyn()
         }
+        #[cfg(feature = "hdf5")]
         [.., "h5" | "hdf5"] => palace_hdf5::open(path, hints.location)?,
+        #[cfg(feature = "zarr")]
         [.., "zarr"] | [.., "zarr", "zip"] => {
             palace_zarr::open(path, hints.location.unwrap_or("/array".to_owned()))?
         }
+        #[cfg(feature = "png")]
         [.., "png"] => palace_png::read(path)?
             .embedded(Default::default())
             .into_dyn()
             .try_into()
             .unwrap(),
+        #[cfg(feature = "video")]
         [.., "mp4" | "mkv"] => palace_video::open(path.to_string_lossy().as_ref())?
             .embedded(Default::default())
             .into_dyn()
@@ -110,7 +117,9 @@ pub fn open_lod(
     let location_hint = hints.location.unwrap_or("/level".to_owned());
 
     match segments[..] {
+        #[cfg(feature = "zarr")]
         [.., "zarr"] | [.., "zarr", "zip"] => palace_zarr::open_lod(path, location_hint),
+        #[cfg(feature = "hdf5")]
         [.., "h5"] | [.., "hdf5"] => palace_hdf5::open_lod(path, location_hint),
         _ => Err(format!(
             "Unknown lod tensor format for file {}",

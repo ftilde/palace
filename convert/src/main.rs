@@ -27,8 +27,11 @@ enum FileMode {
 
 #[derive(Clone)]
 enum FileFormat {
+    #[cfg(feature = "zarr")]
     Zarr,
+    #[cfg(feature = "hdf5")]
     HDF5,
+    #[cfg(feature = "vvd")]
     VVD,
 }
 
@@ -132,8 +135,11 @@ fn parse_file_type(path: &Path) -> Result<FileFormat, String> {
     let segments = path.split('.').collect::<Vec<_>>();
 
     match segments[..] {
+        #[cfg(feature = "zarr")]
         [.., "zarr"] | [.., "zarr", "zip"] => Ok(FileFormat::Zarr),
+        #[cfg(feature = "hdf5")]
         [.., "h5"] | [.., "hdf5"] => Ok(FileFormat::HDF5),
+        #[cfg(feature = "vvd")]
         [.., "vvd"] => Ok(FileFormat::VVD),
         _ => Err(format!("Unknown file format in file {}", path).into()),
     }
@@ -278,6 +284,7 @@ fn main() {
     let format = parse_file_type(&args.output_path).unwrap();
 
     match format {
+        #[cfg(feature = "zarr")]
         FileFormat::Zarr => {
             let mut write_hints = palace_zarr::WriteHints {
                 compression_level: args.compression_level,
@@ -312,6 +319,7 @@ fn main() {
                 }
             }
         }
+        #[cfg(feature = "hdf5")]
         FileFormat::HDF5 => {
             let mut write_hints = palace_hdf5::WriteHints {
                 compression_level: args.compression_level.try_into().unwrap(),
@@ -346,6 +354,7 @@ fn main() {
                 }
             }
         }
+        #[cfg(feature = "vvd")]
         FileFormat::VVD => match args.mode {
             FileMode::Single => {
                 let v: EmbeddedTensorOperator<palace_core::dim::D3, _> = input
