@@ -266,7 +266,10 @@ void main()
                             float[3] p_dir = from_glsl(dir);
                             float[3] steps_minus = div(space_minus, p_dir);
                             float[3] steps_plus = div(space_plus, p_dir);
-                            float skip_step = hmin(max(steps_minus, steps_plus));
+                            float[3] min_per_dim = max(steps_minus, steps_plus);
+                            float[3] spacing = level.spacing.vals;
+                            float[3] min_per_dim_rw = mul(min_per_dim, spacing);
+                            float skip_step = hmin(min_per_dim_rw);
                             float final_step = floor(skip_step/step) * step + step; //Go back onto step grid
 
                             t += final_step;
