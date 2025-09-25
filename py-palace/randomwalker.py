@@ -228,9 +228,10 @@ def render(size, events: pc.Events):
     v, rw_result, rw_cct = apply_rw_mode(vol)
 
     v = select_vol_from_ts(v, timestep.load())
-    rw_result = select_vol_from_ts(rw_result, timestep.load())
     if rw_cct:
-        rw_cct = select_vol_from_ts(rw_cct, timestep.load()) #TODO: won't quite work for 4d i think
+        cct_timestep = timestep.load() * rw_result.fine_embedding_data().spacing[0] / rw_cct.fine_embedding_data().spacing[0]
+        rw_cct = select_vol_from_ts(rw_cct, cct_timestep)
+    rw_result = select_vol_from_ts(rw_result, timestep.load())
 
     # GUI stuff
     widgets = []
